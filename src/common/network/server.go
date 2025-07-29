@@ -14,16 +14,9 @@ import (
 
 // MessageHandler defines what the application does with received messages
 type MessageHandler interface {
-	OnConnectionStart(connectionID uint32) error
-	OnMessage(connectionID uint32, message string) error
+	OnConnectionStart(config *common.Config, ctx context.Context, onnectionID uint32, scanner *bufio.Scanner, writer *bufio.Writer) error
+	OnMessage(connectionID uint32, message string) (response string, err error)
 	OnConnectionEnd(connectionID uint32) error
-}
-
-// Logger interface for the network library
-type Logger interface {
-	Info(format string, args ...interface{})
-	Debug(format string, args ...interface{})
-	Error(format string, args ...interface{})
 }
 
 // Server handles network connections - completely generic
@@ -34,20 +27,21 @@ type Server struct {
 	logger            *common.Logger
 	socketPath        string
 	listener          net.Listener
-
-	ctx    context.Context
-	cancel context.CancelFunc
+	config            *common.Config
+	ctx               context.Context
+	cancel            context.CancelFunc
 }
 
-func NewServer(port int, handler MessageHandler, logger *common.Logger) *Server {
-	ctx, cancel := context.WithCancel(context.Background())
-	
+func NewServer(config *common.Config, ctx context.Context, port int, handler MessageHandler) *Server {
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &Server{
 		port:       port,
 		handler:    handler,
-		logger:     logger,
+		logger:     ctx.Value("logger").(*common.Logger),
 		socketPath: fmt.Sprintf("/tmp/network_%d.sock", port),
 		ctx:        ctx,
+		config:     config,
 		cancel:     cancel,
 	}
 }
@@ -124,16 +118,17 @@ func (s *Server) handleConnection(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
 	writer := bufio.NewWriter(conn)
 
-	// Notify connection start
-	if err := s.handler.OnConnectionStart(connectionID); err != nil {
-		s.logger.Error("Handler OnConnectionStart failed: %v", err)
-		return
-	}
-
-	// Send connection ID to client
 	response := fmt.Sprintf("CONNECTION_ID:%d\n", connectionID)
 	writer.WriteString(response)
 	writer.Flush()
+	ctx := context.WithValue(s.ctx, "connectionId", connectionID)
+
+
+	// Notify connection start
+	if err := s.handler.OnConnectionStart(s.config, ctx, connectionID, scanner, writer); err != nil {
+		s.logger.Error("Handler OnConnectionStart failed: %v", err)
+		return
+	}
 
 	// Process messages
 	for scanner.Scan() {
@@ -144,9 +139,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Pass raw message to application
-		if err := s.handler.OnMessage(connectionID, message); err != nil {
+		response, err := s.handler.OnMessage(connectionID, message)
+		if err != nil {
 			s.logger.Error("Handler OnMessage failed: %v", err)
 			return
+		}
+
+		// Send response if handler provided one
+		if response != "" {
+			writer.WriteString(response + "\n")
+			writer.Flush()
 		}
 	}
 

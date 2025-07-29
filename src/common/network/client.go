@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/alex-sviridov/miniprotector/common"
 )
@@ -28,8 +29,20 @@ func NewClient(host string, port int, logger *common.Logger) *Client {
 type Connection struct {
 	id     uint32
 	writer *bufio.Writer
+	reader *bufio.Reader
 	conn   net.Conn
 	logger *common.Logger
+}
+
+func (c *Connection) WaitForResponse() (string, error) {
+	response, err := c.reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+
+	response = strings.TrimSpace(response)
+	c.logger.Debug("Received response: %s", response)
+	return response, nil
 }
 
 func (c *Connection) SendMessage(message string) error {
@@ -56,7 +69,7 @@ func (c *Connection) GetID() uint32 {
 }
 
 // CreateConnection opens a persistent connection
-func (c *Client) CreateConnection(ctx context.Context) (*Connection, error) {
+func (c *Client) CreateConnection(config *common.Config, ctx context.Context) (*Connection, error) {
 	// Connect to server
 	netConn, err := c.connect()
 	if err != nil {
@@ -65,6 +78,7 @@ func (c *Client) CreateConnection(ctx context.Context) (*Connection, error) {
 
 	scanner := bufio.NewScanner(netConn)
 	writer := bufio.NewWriter(netConn)
+	reader := bufio.NewReader(netConn)
 
 	// Read connection ID
 	if !scanner.Scan() {
@@ -80,15 +94,15 @@ func (c *Client) CreateConnection(ctx context.Context) (*Connection, error) {
 		return nil, fmt.Errorf("invalid response: %s", response)
 	}
 
-	c.logger.Info("Connected with ID: %d", connectionID)
-
 	// Create connection wrapper
 	conn := &Connection{
 		id:     connectionID,
 		writer: writer,
+		reader: reader,
 		conn:   netConn,
-		logger: c.logger,
+		logger: ctx.Value("logger").(*common.Logger),
 	}
+	conn.logger.Info("Connected with ID: %d", connectionID)
 
 	return conn, nil
 }

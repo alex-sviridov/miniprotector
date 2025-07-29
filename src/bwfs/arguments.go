@@ -18,6 +18,7 @@ type Arguments struct {
 	StoragePath string
 	Port        int
 	Debug       bool
+	Quiet       bool
 }
 
 // parseArguments uses Cobra to parse command line arguments
@@ -32,6 +33,7 @@ func parseArguments(config *common.Config) (*Arguments, error) {
 	// Add flags
 	cmd.Flags().IntVar(&port, "port", config.DefaultPort, "Port to listen on")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
+	cmd.Flags().BoolVar(&debug, "quiet", false, "Enable quiet mode")
 
 	// Parse arguments and flags
 	if err := cmd.Execute(); err != nil {

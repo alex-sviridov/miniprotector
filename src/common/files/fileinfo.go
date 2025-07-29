@@ -1,14 +1,11 @@
-package main
+package files
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"syscall"
 	"time"
 	"unsafe"
-
-	"github.com/alex-sviridov/miniprotector/common"
 )
 
 // FileInfo holds essential file attributes for backup
@@ -226,11 +223,8 @@ func estimateFileCount(path string) int {
 	return 1000
 }
 
-// listRecursive - maximum performance pure Go implementation
-func listRecursive(ctx context.Context, sourcePath string) ([]FileInfo, error) {
-	logger := ctx.Value("logger").(*common.Logger)
-	logger.Debug("Starting scanning %s", sourcePath)
-
+// ListRecursive - maximum performance pure Go implementation
+func ListRecursive(sourcePath string) ([]FileInfo, error) {
 	// Pre-allocate with estimated capacity
 	items := make([]FileInfo, 0, estimateFileCount(sourcePath))
 
@@ -249,13 +243,10 @@ func listRecursive(ctx context.Context, sourcePath string) ([]FileInfo, error) {
 		return nil
 	})
 
-	logger.Debug("Scan finished. Found %d items", len(items))
 	return items, err
 }
 
-func splitByStreams(ctx context.Context, files []FileInfo, streams int) [][]FileInfo {
-	logger := ctx.Value("logger").(*common.Logger)
-	logger.Debug("Splitting %d files into %d streams", len(files), streams)
+func SplitByStreams(files []FileInfo, streams int) [][]FileInfo {
 
 	if streams <= 0 {
 		return nil
@@ -299,6 +290,5 @@ func splitByStreams(ctx context.Context, files []FileInfo, streams int) [][]File
 		start = end
 	}
 
-	logger.Debug("Splitted into %d streams by %d files", streams, filesPerStream)
 	return result
 }

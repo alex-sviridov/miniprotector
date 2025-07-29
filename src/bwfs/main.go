@@ -20,7 +20,7 @@ func main() {
 		jobId      = "BackupWriterJob"
 	)
 
-	ctx := context.WithValue(context.Background(), "jobId", jobId)
+	ctx := context.WithValue(context.Background(), "appName", appName)
 
 	// Get configuration
 	config, err := common.ParseConfig(configPath)
@@ -28,7 +28,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
 		os.Exit(1)
 	}
-	ctx = context.WithValue(ctx, "config", config)
 
 	// Get arguments
 	arguments, err := parseArguments(config)
@@ -36,9 +35,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Arguments error: %v\n", err)
 		os.Exit(1)
 	}
+	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
+	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
 
 	// Initialize logger (quiet=false since writer needs to log received files)
-	logger, err := common.NewLogger(config, appName, ctx.Value("jobId").(string), arguments.Debug, false)
+	logger, err := common.NewLogger(config, ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -50,10 +51,10 @@ func main() {
 		arguments.StoragePath, arguments.Port)
 
 	// Create message handler
-	handler := NewBackupMessageHandler(logger, arguments.StoragePath)
+	handler := NewBackupMessageHandler(*config, ctx, arguments.StoragePath)
 
 	// Create generic network server
-	server := network.NewServer(arguments.Port, handler, logger)
+	server := network.NewServer(config, ctx, arguments.Port, handler)
 
 	// Make channel to catch Ctrl+C
 	stop := make(chan os.Signal, 1)

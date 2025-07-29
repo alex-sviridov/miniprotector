@@ -13,6 +13,7 @@ type Config struct {
 	DefaultPort    int
 	DefaultStreams int
 	LogFolder      string
+	ClientCRSQueryBatchSize int
 }
 
 // ParseConfig reads configuration from the specified config file
@@ -65,6 +66,13 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "logfolder":
 			config.LogFolder = value
 			foundFields["logfolder"] = true
+		case "ClientCRSQueryBatchSize":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid ClientCRSQueryBatchSize value at line %d: %s", lineNum, value)
+			}
+			config.ClientCRSQueryBatchSize = number
+			foundFields["ClientCRSQueryBatchSize"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

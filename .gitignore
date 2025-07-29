@@ -4,10 +4,10 @@
 *.dll
 *.so
 *.dylib
-bin/
+bin/*
 
 # Logs
-log/
+log/*
 
 # Test binary
 *.test

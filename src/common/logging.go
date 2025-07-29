@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -79,22 +80,40 @@ func logInitError(format string, v ...interface{}) {
 //
 // Each process gets its own log file identified by PID suffix, making it safe for concurrent usage
 // across multiple process instances.
-func NewLogger(config *Config, appName string, tag string, debugMode bool, quietMode bool) (*Logger, error) {
+func NewLogger(config *Config, ctx context.Context) (*Logger, error) {
 	var logOutput io.Writer = io.Discard
 	var logFile *os.File
 
 	// Get current process ID
 	pid := os.Getpid()
 
-	// Sanitize tag to ensure it only contains safe characters
+	debugMode := ctx.Value("debugMode").(bool)
+	quietMode := ctx.Value("quietMode").(bool)
+	appName := ctx.Value("appName").(string)
+	timestamp := time.Now().Format("2006-01-02")
+
+	tag := "default"
+
+	jobId := ctx.Value("jobId")
+	if jobId != nil {
+		tag = ctx.Value("jobId").(string)
+	}
+
+	streamId := ctx.Value("streamId")
+	// convert pid to string
+	filetag := fmt.Sprintf("%d", pid)
+	if streamId != nil {
+		tag = fmt.Sprintf("%s_%d", tag, streamId)
+		filetag = fmt.Sprintf("%s_%d", filetag, streamId)
+	}
+
 	sanitizedTag := sanitizeTag(tag)
 
+	logFileName := fmt.Sprintf("%s-%s.%s.log", appName, timestamp, filetag)
 	// Check if log folder exists and is writable
 	if config.LogFolder != "" {
 		if stat, err := os.Stat(config.LogFolder); err == nil && stat.IsDir() {
 			// Create log file with app name, timestamp, and PID suffix
-			timestamp := time.Now().Format("2006-01-02")
-			logFileName := fmt.Sprintf("%s-%s.%d.log", appName, timestamp, pid)
 			logFilePath := filepath.Join(config.LogFolder, logFileName)
 
 			file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -302,7 +321,7 @@ func (l *Logger) GetPID() int {
 
 // Info logs info level messages (fast path - no caller info)
 func (l *Logger) Info(format string, v ...interface{}) {
-	logMessage := l.formatLogMessage("INFO", false, format, v...)
+	logMessage := l.formatLogMessage("INFO", l.debugMode, format, v...)
 	l.infoLogger.Print(logMessage)
 }
 
