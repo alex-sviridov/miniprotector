@@ -11,7 +11,7 @@ import (
 func (b *BackupProcessor) Process(config *common.Config, ctx context.Context) error {
 	defer b.stream.CloseStream()
 
-	b.logger.Info("Stream %d processing %d files", b.streamId, len(b.files))
+	b.logger.Info("Stream starts file processing", "files_count", len(b.files))
 
 	batchSize := config.ClientCRSQueryBatchSize
 
@@ -50,9 +50,9 @@ func (b *BackupProcessor) Process(config *common.Config, ctx context.Context) er
 			return fmt.Errorf("unexpected response for batch: %s", response)
 		}
 
-		b.logger.Debug("Stream %d sent batch: %v (ACK received)", b.streamId, filenames)
+		b.logger.Debug("Stream sent batch (ACK received)", "files", filenames)
 	}
 
-	b.logger.Info("Stream %d completed successfully (%d files)", b.streamId, len(b.files))
+	b.logger.Info("Stream finished successfully", "files_count", len(b.files))
 	return nil
 }

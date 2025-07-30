@@ -3,7 +3,7 @@ package network
 import (
 	"context"
 	"fmt"
-
+	"log/slog"
 	"github.com/alex-sviridov/miniprotector/common"
 )
 
@@ -12,7 +12,7 @@ type Stream struct {
 	streamId   int
 	jobId      string
 	connection *Connection
-	logger     *common.Logger
+	logger     *slog.Logger
 }
 
 func NewStream(config *common.Config, ctx context.Context, client *Client) (s *Stream, err error) {
@@ -30,7 +30,7 @@ func NewStream(config *common.Config, ctx context.Context, client *Client) (s *S
 		streamId:   streamId,
 		jobId:      jobId,
 		connection: connection,
-		logger:     ctx.Value("logger").(*common.Logger),
+		logger:     ctx.Value("logger").(*slog.Logger),
 	}
 	if err := s.StartStream(); err != nil {
 		return nil, err

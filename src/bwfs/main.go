@@ -17,7 +17,6 @@ func main() {
 	const (
 		configPath = "/home/alasviridov/miniprotector/local.conf"
 		appName    = "bwfs"
-		jobId      = "BackupWriterJob"
 	)
 
 	ctx := context.WithValue(context.Background(), "appName", appName)
@@ -38,17 +37,19 @@ func main() {
 	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
 	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
 
-	// Initialize logger (quiet=false since writer needs to log received files)
-	logger, err := common.NewLogger(config, ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-		os.Exit(1)
-	}
+	// Initialize logger
+	logger, logfile, _ := common.NewLogger(config, ctx)  // Never fails
+	defer func() {
+		if logfile != nil {
+			logfile.Close()
+		}
+	}()	
 	ctx = context.WithValue(ctx, "logger", logger)
-	defer logger.Close()
 
-	logger.Info("Started backup writer with parameters: Storage=%s, Port=%d",
-		arguments.StoragePath, arguments.Port)
+	logger.Info("Backup writer started",
+		"StoragePath", arguments.StoragePath,
+		"serverPort", arguments.Port,
+	)
 
 	// Create message handler
 	handler := NewBackupMessageHandler(*config, ctx, arguments.StoragePath)
@@ -64,7 +65,7 @@ func main() {
 	go func() {
 		logger.Info("Starting backup writer server...")
 		if err := server.Start(); err != nil {
-			logger.Error("Server error: %v", err)
+			logger.Error("Server error", "error", err)
 		}
 	}()
 

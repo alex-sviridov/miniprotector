@@ -40,35 +40,39 @@ func main() {
 	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
 
 	// Initialize logger
-	logger, err := common.NewLogger(config, ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-		os.Exit(1)
-	}
+	logger, logfile, _ := common.NewLogger(config, ctx) // Never fails
+	defer func() {
+		if logfile != nil {
+			logfile.Close()
+		}
+	}()
 	ctx = context.WithValue(ctx, "logger", logger)
-	defer logger.Close()
 
-	logger.Info("Started with parameters: Source=%s, Dest=%s:%d, Streams=%d",
-		arguments.SourceFolder, arguments.WriterHost, arguments.WriterPort, arguments.Streams)
+	logger.Info("Backup reader started",
+		"sourceFolder", arguments.SourceFolder,
+		"writerHost", arguments.WriterHost,
+		"writerPort", arguments.WriterPort,
+		"streamsCount", arguments.Streams,
+	)
 
 	// Get files list
 	items, err := files.ListRecursive(arguments.SourceFolder)
-	logger.Info("Directory scanned. Found %d items", len(items))
+	logger.Info("Directory scanned", "filesCount", len(items))
 	if err != nil {
-		logger.Error("Error: %v\n", err)
+		logger.Error("Error", "error", err)
 		return
 	}
 
 	// Split into streams
 	streams := files.SplitByStreams(items, arguments.Streams)
-	logger.Info("Splitted into %d streams by %d files", arguments.Streams, len(streams[0]))
+	logger.Info("Splitted by streams", "streamsCount", arguments.Streams, "filesCount", len(streams[0]))
 
 	// Create network client
-	client := network.NewClient(arguments.WriterHost, arguments.WriterPort, logger)
+	client := network.NewClient(config, ctx, arguments.WriterHost, arguments.WriterPort)
 
 	// Process streams with persistent connections
 	if err := processStreams(config, ctx, client, streams); err != nil {
-		logger.Error("Processing error: %v", err)
+		logger.Error("Processing error", "error", err)
 		os.Exit(1)
 	}
 

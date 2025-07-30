@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 
@@ -14,14 +15,14 @@ import (
 type Client struct {
 	host   string
 	port   int
-	logger *common.Logger
+	logger *slog.Logger
 }
 
-func NewClient(host string, port int, logger *common.Logger) *Client {
+func NewClient(config *common.Config, ctx context.Context, host string, port int) *Client {
 	return &Client{
 		host:   host,
 		port:   port,
-		logger: logger,
+		logger: ctx.Value("logger").(*slog.Logger),
 	}
 }
 
@@ -31,7 +32,7 @@ type Connection struct {
 	writer *bufio.Writer
 	reader *bufio.Reader
 	conn   net.Conn
-	logger *common.Logger
+	logger *slog.Logger
 }
 
 func (c *Connection) WaitForResponse() (string, error) {
@@ -41,7 +42,7 @@ func (c *Connection) WaitForResponse() (string, error) {
 	}
 
 	response = strings.TrimSpace(response)
-	c.logger.Debug("Received response: %s", response)
+	c.logger.Debug("Response recieved", "response", response)
 	return response, nil
 }
 
@@ -53,7 +54,7 @@ func (c *Connection) SendMessage(message string) error {
 	// Flush immediately to ensure message is sent
 	err = c.writer.Flush()
 	if err == nil {
-		c.logger.Debug("Sent message: %s", message)
+		c.logger.Debug("Message sent", "message", message)
 	}
 	return err
 }
@@ -100,9 +101,9 @@ func (c *Client) CreateConnection(config *common.Config, ctx context.Context) (*
 		writer: writer,
 		reader: reader,
 		conn:   netConn,
-		logger: ctx.Value("logger").(*common.Logger),
+		logger: ctx.Value("logger").(*slog.Logger),
 	}
-	conn.logger.Info("Connected with ID: %d", connectionID)
+	conn.logger.Info("New connection", "connectionID", connectionID)
 
 	return conn, nil
 }
@@ -113,7 +114,7 @@ func (c *Client) connect() (net.Conn, error) {
 		socketPath := fmt.Sprintf("/tmp/network_%d.sock", c.port)
 		conn, err := net.Dial("unix", socketPath)
 		if err == nil {
-			c.logger.Debug("Connected via Unix socket")
+			c.logger.Debug("Network client connected", "method", "unix socket", "destination", socketPath)
 			return conn, nil
 		}
 	}
@@ -122,7 +123,7 @@ func (c *Client) connect() (net.Conn, error) {
 	address := fmt.Sprintf("%s:%d", c.host, c.port)
 	conn, err := net.Dial("tcp", address)
 	if err == nil {
-		c.logger.Debug("Connected via TCP to %s", address)
+		c.logger.Debug("Network client connected", "method", "TCP", "destination", address)
 	}
 	return conn, err
 }

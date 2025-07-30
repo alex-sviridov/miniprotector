@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/alex-sviridov/miniprotector/common"
@@ -14,7 +15,7 @@ type BackupProcessor struct {
 	streamId int
 	stream   *network.Stream
 	files    []files.FileInfo
-	logger   *common.Logger
+	logger   *slog.Logger
 }
 
 func NewBackupProcessor(config *common.Config, ctx context.Context, client *network.Client, filelist []files.FileInfo) (p *BackupProcessor, err error) {
@@ -28,7 +29,7 @@ func NewBackupProcessor(config *common.Config, ctx context.Context, client *netw
 		streamId: streamId,
 		stream:   stream,
 		files:    filelist,
-		logger:   ctx.Value("logger").(*common.Logger),
+		logger:   ctx.Value("logger").(*slog.Logger),
 	}
 	return p, nil
 }
@@ -37,19 +38,18 @@ func NewBackupProcessor(config *common.Config, ctx context.Context, client *netw
 func processStreams(config *common.Config, ctx context.Context, client *network.Client, streams [][]files.FileInfo) error {
 	var wg sync.WaitGroup
 	errors := make(chan error, len(streams))
-
+	logger := ctx.Value("logger").(*slog.Logger)
 	// Process each stream with its own persistent connection
 	for i, filelist := range streams {
 		wg.Add(1)
 		go func(streamIndex int, filelist []files.FileInfo) {
 			defer wg.Done()
 
-			// Create a stream context
+			// Create a stream context and logger
+			streamLogger := logger.With(slog.Int("streamId", streamIndex))
 			streamCtx := context.WithValue(ctx, "streamId", streamIndex)
-			streamLogger, err := common.NewLogger(config, streamCtx)
-			if err == nil {
-				streamCtx = context.WithValue(streamCtx, "logger", streamLogger)
-			}
+			streamCtx = context.WithValue(streamCtx, "logger", streamLogger)
+
 			// Create stream and get ack
 			processor, err := NewBackupProcessor(config, streamCtx, client, filelist)
 			if err != nil {
