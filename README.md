@@ -6,5 +6,5 @@ Miniprotector is a self-learning pet-project based on my Backup & Recovery exper
 
 ### Backup Workflow
 
-* **brfs** - Backup Reader for File System, handles all the operations related to listing files, creating snapshots, performing effecient reading and ensuring the files are consistend.
-* **bddup** - Backup Deduplicator, 
+* **brfs** - Backup Reader for File System, lists and sends files to Backup Writer.
+* **bwfs** - Backup Writer for File System, stores deduplicated data on the local filesystem.
