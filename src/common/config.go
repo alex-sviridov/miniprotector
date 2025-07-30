@@ -10,10 +10,10 @@ import (
 
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {
-	DefaultPort    int
-	DefaultStreams int
-	LogFolder      string
-	ClientCRSQueryBatchSize int
+	DefaultPort              int
+	DefaultStreams           int
+	LogFolder                string
+	ClientHashQueryBatchSize int
 }
 
 // ParseConfig reads configuration from the specified config file
@@ -66,13 +66,13 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "logfolder":
 			config.LogFolder = value
 			foundFields["logfolder"] = true
-		case "ClientCRSQueryBatchSize":
+		case "ClientHashQueryBatchSize":
 			number, err := strconv.Atoi(value)
 			if err != nil {
-				return nil, fmt.Errorf("invalid ClientCRSQueryBatchSize value at line %d: %s", lineNum, value)
+				return nil, fmt.Errorf("invalid ClientHashQueryBatchSize value at line %d: %s", lineNum, value)
 			}
-			config.ClientCRSQueryBatchSize = number
-			foundFields["ClientCRSQueryBatchSize"] = true
+			config.ClientHashQueryBatchSize = number
+			foundFields["ClientHashQueryBatchSize"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

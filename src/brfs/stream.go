@@ -13,7 +13,7 @@ func (b *BackupProcessor) Process(config *common.Config, ctx context.Context) er
 
 	b.logger.Info("Stream starts file processing", "files_count", len(b.files))
 
-	batchSize := config.ClientCRSQueryBatchSize
+	batchSize := config.ClientHashQueryBatchSize
 
 	// Send all files through this persistent connection
 	for i := 0; i < len(b.files); i += batchSize {
