@@ -1,3 +1,4 @@
+// backupreader reads backup data and sends it to writers.
 package main
 
 import (
@@ -10,11 +11,12 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/network"
 )
 
+// main goes
 func main() {
 
 	// Configuration constants
 	const (
-		configPath = "/home/alasviridov/miniprotector/local.conf"
+		configPath = "../.config/local.conf"
 		appName    = "brfs"
 		jobId      = "BackupJob"
 	)

@@ -2,6 +2,7 @@ package files
 
 import (
 	"os"
+	"io/fs"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -12,12 +13,7 @@ import (
 type FileInfo struct {
 	Path          string
 	Name          string
-	IsDir         bool
-	IsSymlink     bool
-	IsRegular     bool
-	IsDevice      bool
-	IsFifo        bool
-	IsSocket      bool
+	FileType      rune
 	Size          int64
 	Mode          uint32
 	Owner         uint32
@@ -25,9 +21,6 @@ type FileInfo struct {
 	ModTime       time.Time
 	AccessTime    time.Time
 	ChangeTime    time.Time
-	Links         uint64
-	DeviceID      uint64
-	Rdev          uint64
 	SymlinkTarget string
 }
 
@@ -102,39 +95,32 @@ func rawStatx(path string, stat *statx) error {
 	return nil
 }
 
-// getFileType extracts file type from mode - optimized with lookup
-var fileTypeLookup = [8]struct {
-	isDir, isSymlink, isRegular, isDevice, isFifo, isSocket bool
+var fileTypeLookup = [16]struct {
+	typeCode                                                rune
 }{
-	0: {},               // Unknown
-	1: {isFifo: true},   // S_IFIFO
-	2: {isDevice: true}, // S_IFCHR
-	3: {},               // Unused
-	4: {isDir: true},    // S_IFDIR
-	5: {},               // Unused
-	6: {isDevice: true}, // S_IFBLK
-	7: {},               // Unused
+	0:  {typeCode: '?'},                  // Unknown
+	1:  {typeCode: 'p'},    // S_IFIFO
+	2:  {typeCode: 'c'},  // S_IFCHR
+	3:  {typeCode: '?'},                  // Unused
+	4:  {typeCode: 'd'},     // S_IFDIR
+	5:  {typeCode: '?'},                  // Unused
+	6:  {typeCode: 'b'},  // S_IFBLK
+	7:  {typeCode: '?'},                  // Unused
+	8:  {typeCode: 'f'}, // S_IFREG
+	9:  {typeCode: '?'},                  // Unused
+	10: {typeCode: 'l'}, // S_IFLNK
+	11: {typeCode: '?'},                  // Unused
+	12: {typeCode: 's'},  // S_IFSOCK
+	13: {typeCode: '?'},                  // Unused
+	14: {typeCode: '?'},                  // Unused
+	15: {typeCode: '?'},                  // Unused
 }
 
-func getFileType(mode uint32) (isDir, isSymlink, isRegular, isDevice, isFifo, isSocket bool) {
+func getFileType(mode uint32) rune {
 	fileType := (mode >> 12) & 0xF
+	lookup := fileTypeLookup[fileType]
 
-	switch fileType {
-	case 8: // S_IFREG
-		isRegular = true
-	case 10: // S_IFLNK
-		isSymlink = true
-	case 12: // S_IFSOCK
-		isSocket = true
-	default:
-		if fileType < 8 {
-			lookup := fileTypeLookup[fileType]
-			isDir = lookup.isDir
-			isDevice = lookup.isDevice
-			isFifo = lookup.isFifo
-		}
-	}
-	return
+	return lookup.typeCode
 }
 
 // Pre-allocated byte slice pool for path conversions
@@ -150,47 +136,26 @@ func getFileInfoFast(path string) (FileInfo, error) {
 	}
 
 	mode := uint32(stat.Mode)
-	isDir, isSymlink, isRegular, isDevice, isFifo, isSocket := getFileType(mode)
+	fileType := getFileType(mode)
 
 	// Extract basename without allocation when possible
-	var name string
-	if lastSlash := len(path) - 1; lastSlash >= 0 {
-		for i := lastSlash; i >= 0; i-- {
-			if path[i] == '/' {
-				name = path[i+1:]
-				break
-			}
-		}
-		if name == "" {
-			name = path
-		}
-	} else {
-		name = path
-	}
+	name := filepath.Base(path)
 
 	fileInfo := FileInfo{
 		Path:       path,
 		Name:       name,
-		IsDir:      isDir,
-		IsSymlink:  isSymlink,
-		IsRegular:  isRegular,
-		IsDevice:   isDevice,
-		IsFifo:     isFifo,
-		IsSocket:   isSocket,
+		FileType:   fileType,
 		Size:       int64(stat.Size),
 		Mode:       mode,
 		Owner:      stat.Uid,
 		Group:      stat.Gid,
-		Links:      uint64(stat.Nlink),
-		DeviceID:   uint64(stat.DevMajor)<<32 | uint64(stat.DevMinor),
-		Rdev:       uint64(stat.RdevMajor)<<32 | uint64(stat.RdevMinor),
 		ModTime:    time.Unix(stat.Mtime.Sec, int64(stat.Mtime.Nsec)),
 		AccessTime: time.Unix(stat.Atime.Sec, int64(stat.Atime.Nsec)),
 		ChangeTime: time.Unix(stat.Ctime.Sec, int64(stat.Ctime.Nsec)),
 	}
 
 	// Get symlink target only if needed - optimized readlink
-	if isSymlink {
+	if (fileType == 'l') {
 		if len(pathBuffer) > len(path)+1 {
 			copy(pathBuffer, path)
 			pathBuffer[len(path)] = 0
@@ -228,12 +193,13 @@ func ListRecursive(sourcePath string) ([]FileInfo, error) {
 	// Pre-allocate with estimated capacity
 	items := make([]FileInfo, 0, estimateFileCount(sourcePath))
 
-	err := filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(sourcePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		
 
-		// Use high-performance direct syscall
+		// Use high-performance direct syscall for metadata
 		fileInfo, err := getFileInfoFast(path)
 		if err != nil {
 			return err

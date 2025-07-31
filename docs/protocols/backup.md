@@ -13,7 +13,7 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 **Why 512KB chunks?**
 - Optimal balance: large enough for network efficiency, small enough for granular deduplication
 - Memory-friendly: predictable RAM usage regardless of file size
-- **Future evolution**: Fixed 512KB will be replaced with variable chunk sizes (content-defined chunking) commonly used in advanced deduplication systems for better efficiency
+- **Future evolution**: Fixed 512KB will be replaced with variable chunk sizes based on https://github.com/PlakarKorp/go-cdc-chunkers
 
 **Why batch hashes but send chunks individually?**
 - Hashes are small (~32 bytes) → efficient to batch
@@ -40,7 +40,8 @@ sequenceDiagram
     Server-->>Client: START_STREAM_OK
     
     loop For Each File
-        Client->>Server: FILE:filepath,size,modtime,permissions
+        Client->>Server: FILE:type;size;perms;times;path
+        Note right of Server: FileType rune; Size int64; Mode uint32; Owner uint32; Group uint32; ModTime time; AccessTime time; ChangeTime time; Path string
         
         alt Server Needs File
             Server-->>Client: SEND_FILE

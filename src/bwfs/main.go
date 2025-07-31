@@ -15,7 +15,7 @@ import (
 func main() {
 	// Configuration constants
 	const (
-		configPath = "/home/alasviridov/miniprotector/local.conf"
+		configPath = "../.config/local.conf"
 		appName    = "bwfs"
 	)
 

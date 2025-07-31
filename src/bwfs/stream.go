@@ -2,27 +2,18 @@ package main
 
 import (
 	"strings"
+	"github.com/alex-sviridov/miniprotector/common/protocol"
 )
 
 func (h *BackupMessageHandler) OnMessage(connectionID uint32, message string) (string, error) {
 	// Parse backup-specific message format
 	s := *h.streams[connectionID]
-	if strings.HasPrefix(message, "BATCH:") {
-		// Parse batch message
-		fileList := message[6:] // Remove "BATCH:" prefix
-		filenames := strings.Split(fileList, ",")
-
-		// Process each file in the batch
-		for _, filename := range filenames {
-			// Print as requested: connectionid:filename
-			s.logger.Debug("procrssing file", "filename", filename)
+	if strings.HasPrefix(message, "FILE:") {
+		file, err := protocol.ParseFileMetadata(message)
+		if err != nil {
+			return "", err
 		}
-
-		s.logger.Debug("Received batch", "files_count", len(filenames))
-
-		// Send acknowledgment back to client
-		return "BATCH_OK", nil
-
+		s.logger.Debug("Received file metadata", "file", file)
 	} else {
 		s.logger.Debug("Received unknown message", "message", message)
 	}
