@@ -17,12 +17,16 @@ func (b *BackupProcessor) Process(config *common.Config, ctx context.Context) er
 
 	//iterate one file at a time
 	for _, file := range b.files {
-		fileNeeded, err := protocol.SendFileMetadata(b.stream, &file)
+		message, err := protocol.Encode(&file)
 		if err != nil {
-			return fmt.Errorf("error sending file metadata: %w", err)
+			return fmt.Errorf("error encoding file metadata: %w", err)
 		}
-		if !fileNeeded {
-			continue
+		response, err := b.stream.SendMessage(message)
+		if err != nil {
+			return err
+		}
+		if response != "FILE_OK" {
+			return fmt.Errorf("unexpected response: %s", response)
 		}
 	}
 

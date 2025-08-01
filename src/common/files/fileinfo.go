@@ -1,10 +1,10 @@
 package files
 
 import (
+	"fmt"
 	"io/fs"
 	"time"
 )
-
 
 // FileInfo holds essential file attributes for backup operations across platforms
 // To check file type, use: fileInfo.Mode.Type() == fs.ModeDir (directory), fs.ModeSymlink (symlink), etc.
@@ -21,8 +21,8 @@ type FileInfo struct {
 	CTime         time.Time // Unix: change time, Windows: creation time
 	SymlinkTarget string
 	// Platform-specific fields
-	Attributes    []byte // Platform-specific attributes (Windows file attributes, Unix extended attributes, etc.)
-	ACL           []byte // Platform-specific ACL data (Unix extended ACLs or Windows Security Descriptor)
+	Attributes []byte // Platform-specific attributes (Windows file attributes, Unix extended attributes, etc.)
+	ACL        []byte // Platform-specific ACL data (Unix extended ACLs or Windows Security Descriptor)
 }
 
 // File type mapping from fs.FileMode to single character representation
@@ -38,11 +38,25 @@ var fileTypeMap = map[fs.FileMode]rune{
 }
 
 // GetType returns a single character representing the file type
-// 'd' = directory, 'f' = regular file, 'l' = symlink, 'p' = named pipe, 
+// 'd' = directory, 'f' = regular file, 'l' = symlink, 'p' = named pipe,
 // 'c' = character device, 'b' = block device, 's' = socket, '?' = unknown
 func (fi FileInfo) GetType() rune {
 	if typeRune, exists := fileTypeMap[fi.Mode.Type()]; exists {
 		return typeRune
 	}
 	return '?' // Unknown file type
+}
+
+// Print returns a string containing basic file attributes in unix-like style
+// Format: drwxr-xr-x uid gid size mtime name
+func (fi FileInfo) Print() string {
+	return fmt.Sprintf("%c%s %d %d %d %s %s",
+		fi.GetType(),
+		fi.Mode.String(),
+		fi.Owner,
+		fi.Group,
+		fi.Size,
+		fi.ModTime.Format("Jan 02 15:04"),
+		fi.Name,
+	)
 }

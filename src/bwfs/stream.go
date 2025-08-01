@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+
 	"github.com/alex-sviridov/miniprotector/common/protocol"
 )
 
@@ -9,11 +10,13 @@ func (h *BackupMessageHandler) OnMessage(connectionID uint32, message string) (s
 	// Parse backup-specific message format
 	s := *h.streams[connectionID]
 	if strings.HasPrefix(message, "FILE:") {
-		file, err := protocol.ParseFileMetadata(message)
+		file, err := protocol.DecodeFileInfo(message)
 		if err != nil {
 			return "", err
 		}
-		s.logger.Debug("Received file metadata", "file", file)
+		s.logger.Debug("Received file metadata", "fileinfo", file.Print())
+		// respond FILE_OK
+		return "FILE_OK", nil
 	} else {
 		s.logger.Debug("Received unknown message", "message", message)
 	}
