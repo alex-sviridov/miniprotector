@@ -1,4 +1,4 @@
-package common
+package logging
 
 import (
 	"context"
@@ -8,7 +8,21 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/alex-sviridov/miniprotector/common/config"
 )
+
+type contextKey string
+
+const ContextKey contextKey = "logger"
+
+func GetLoggerFromContext(ctx context.Context) *slog.Logger {
+	logger, ok := ctx.Value(ContextKey).(*slog.Logger)
+	if !ok {
+		return nil
+	}
+	return logger
+}
 
 type multiHandler struct {
 	consoleHandler slog.Handler
@@ -63,7 +77,9 @@ func getLevel(debugMode bool) slog.Level {
 	return slog.LevelInfo
 }
 
-func NewLogger(config *Config, ctx context.Context) (*slog.Logger, io.Closer, error) {
+func NewLogger(ctx context.Context) (*slog.Logger, io.Closer, error) {
+	conf := config.GetConfigFromContext(ctx)
+
 	level := getLevel(ctx.Value("debugMode").(bool))
 	quietMode := ctx.Value("quietMode").(bool)
 	appName := ctx.Value("appName").(string)
@@ -86,10 +102,10 @@ func NewLogger(config *Config, ctx context.Context) (*slog.Logger, io.Closer, er
 	}
 
 	// File output (JSON format, optional - don't fail if unavailable)
-	if config.LogFolder != "" {
-		if err := os.MkdirAll(config.LogFolder, 0755); err == nil {
+	if conf.LogFolder != "" {
+		if err := os.MkdirAll(conf.LogFolder, 0755); err == nil {
 			filename := fmt.Sprintf("%s-%s.%d.log", appName, time.Now().Format("2006-01-02"), os.Getpid())
-			if file, err := os.OpenFile(filepath.Join(config.LogFolder, filename), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			if file, err := os.OpenFile(filepath.Join(conf.LogFolder, filename), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
 				handler.fileHandler = slog.NewJSONHandler(file, &slog.HandlerOptions{
 					Level:     level,
 					AddSource: level == slog.LevelDebug,

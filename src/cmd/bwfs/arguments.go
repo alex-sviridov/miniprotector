@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/alex-sviridov/miniprotector/common"
+	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +23,7 @@ type Arguments struct {
 }
 
 // parseArguments uses Cobra to parse command line arguments
-func parseArguments(config *common.Config) (*Arguments, error) {
+func parseArguments(conf *config.Config) (*Arguments, error) {
 	cmd := &cobra.Command{
 		Use:   "bwfs <storage_path>",
 		Short: "Backup writer tool for receiving files",
@@ -31,7 +32,7 @@ func parseArguments(config *common.Config) (*Arguments, error) {
 	}
 
 	// Add flags
-	cmd.Flags().IntVar(&port, "port", config.DefaultPort, "Port to listen on")
+	cmd.Flags().IntVar(&port, "port", conf.DefaultPort, "Port to listen on")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
 	cmd.Flags().BoolVar(&debug, "quiet", false, "Enable quiet mode")
 

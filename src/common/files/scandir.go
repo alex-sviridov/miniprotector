@@ -1,22 +1,27 @@
 package files
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
+	"os"
 )
 
 // ListRecursive traverses directory tree and returns file information
 func ListRecursive(sourcePath string) ([]FileInfo, error) {
+    if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+        return nil, fmt.Errorf("source path does not exist: %s", sourcePath)
+    }
 	var items []FileInfo
 
 	err := filepath.WalkDir(sourcePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to walk dir %s: %w", sourcePath, err)
 		}
 
 		fileInfo, err := getFileInfo(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get file info %s: %w", path, err)
 		}
 
 		items = append(items, fileInfo)

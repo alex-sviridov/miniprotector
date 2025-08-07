@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/alex-sviridov/miniprotector/common"
+	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +27,7 @@ type Arguments struct {
 }
 
 // parseArguments uses Cobra to parse command line arguments
-func parseArguments(config *common.Config) (*Arguments, error) {
+func parseArguments(conf *config.Config) (*Arguments, error) {
 	cmd := &cobra.Command{
 		Use:   "brfs <source_folder>",
 		Short: "Backup tool for reading files",
@@ -36,7 +37,7 @@ func parseArguments(config *common.Config) (*Arguments, error) {
 
 	// Add flags
 	cmd.Flags().StringVar(&destination, "destination", "", "Writer destination in format host:port")
-	cmd.Flags().IntVar(&streams, "streams", config.DefaultStreams, "Number of streams")
+	cmd.Flags().IntVar(&streams, "streams", conf.DefaultStreams, "Number of streams")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress stdout logging")
 
@@ -55,7 +56,7 @@ func parseArguments(config *common.Config) (*Arguments, error) {
 	}
 
 	// Parse destination
-	host, port, err := common.ParseDestination(destination, "localhost", config.DefaultPort)
+	host, port, err := common.ParseDestination(destination, "localhost", conf.DefaultPort)
 	if err != nil {
 		return nil, fmt.Errorf("invalid destination: %w", err)
 	}

@@ -1,7 +1,8 @@
-package common
+package config
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,6 +15,20 @@ type Config struct {
 	DefaultStreams           int
 	LogFolder                string
 	ClientHashQueryBatchSize int
+	ConnectionTimeOutSec     int
+	StopStreamOnFileError    bool
+}
+
+type contextKey string
+
+const ContextKey contextKey = "config"
+
+func GetConfigFromContext(ctx context.Context) *Config {
+	config, ok := ctx.Value(ContextKey).(*Config)
+	if !ok {
+		return nil
+	}
+	return config
 }
 
 // ParseConfig reads configuration from the specified config file
@@ -73,6 +88,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.ClientHashQueryBatchSize = number
 			foundFields["ClientHashQueryBatchSize"] = true
+		case "ConnectionTimeOutSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid ConnectionTimeOutSec value at line %d: %s", lineNum, value)
+			}
+			config.ConnectionTimeOutSec = number
+			foundFields["ConnectionTimeOutSec"] = true
+		case "StopStreamOnFileError":
+			config.StopStreamOnFileError = value == "true"
+			foundFields["StopStreamOnFileError"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

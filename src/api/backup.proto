@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package backupservice;
+
+option go_package = "./proto";
+
+service BackupService {
+  rpc ProcessBackupStream(stream FileRequest) returns (stream FileResponse);
+}
+
+message FileRequest {
+  int32 stream_id = 1;
+  oneof request_type {
+    FileInfo file_info = 2;
+    ChunkHash chunk_hash = 3;
+    ChunkData chunk_data = 4;
+  }
+}
+
+message FileInfo {
+  string filename = 1;
+}
+
+message ChunkHash {
+  string filename = 1;
+  string blake3_hash = 2;
+  int64 chunk_index = 3;
+  int64 chunk_size = 4;
+}
+
+message ChunkData {
+  string filename = 1;
+  string blake3_hash = 2;
+  int64 chunk_index = 3;
+  bytes data = 4;
+}
+
+message FileResponse {
+  int32 stream_id = 1;
+  oneof response_type {
+    FileNeeded file_needed = 2;
+    ChunkNeeded chunk_needed = 3;
+    ProcessingResult result = 4;
+  }
+}
+
+message FileNeeded {
+  string filename = 1;
+  bool needed = 2;
+}
+
+message ChunkNeeded {
+  string filename = 1;
+  string blake3_hash = 2;
+  bool send = 3; // true means "SEND", false means "skip"
+}
+
+message ProcessingResult {
+  string filename = 1;
+  string message = 2;
+  bool success = 3;
+}

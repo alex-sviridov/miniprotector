@@ -3,8 +3,10 @@
 package files
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -12,14 +14,15 @@ import (
 
 // getUnixFileInfo extracts detailed file information on Unix systems
 func getFileInfo(path string) (FileInfo, error) {
+	// print current path
 	info, err := os.Lstat(path)
 	if err != nil {
-		return FileInfo{}, err
+		return FileInfo{}, fmt.Errorf("os.Lstat(path): %v", err)
 	}
 
-	stat, ok := info.Sys().(*unix.Stat_t)
+	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return FileInfo{}, unix.ENOSYS
+		return FileInfo{}, fmt.Errorf("info.Sys().(*syscall.Stat_t): %v", unix.ENOSYS)
 	}
 
 	fileInfo := FileInfo{
