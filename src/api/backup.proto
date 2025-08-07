@@ -19,6 +19,9 @@ message FileRequest {
 
 message FileInfo {
   string filename = 1;
+  string hostname = 2;
+  int64 size = 3;
+  bytes attributes = 4;
 }
 
 message ChunkHash {

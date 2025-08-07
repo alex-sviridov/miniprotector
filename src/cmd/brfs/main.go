@@ -90,16 +90,30 @@ func main() {
 
 	// Process files concurrently using multiple streams
 	var wg sync.WaitGroup
+	streamErrorChan := make(chan error, len(streams))
 
-	for i, files := range streams {
-		if len(files) > 0 {
+	for i, stream := range streams {
+		if len(stream) > 0 {
 			wg.Add(1)
-			go processStream(ctx, client, files, int32(i+1), &wg)
+			go func(ctx context.Context, client pb.BackupServiceClient, stream []files.FileInfo, streamID int32) {
+				defer wg.Done()
+				if err := processStream(ctx, client, stream, streamID); err != nil {
+					logger.Error("Stream failed", "streamID", streamID, "error", err)
+					streamErrorChan <- err
+				}
+			}(ctx, client, stream, int32(i+1))
 		}
 	}
 
 	// Wait for all streams to complete
 	wg.Wait()
+	close(streamErrorChan)
 
-	logger.Info("All streams completed successfully")
+	if len(streamErrorChan) == len(streams) {
+		logger.Error("All streams failed")
+	} else if len(streamErrorChan) > 0 {
+		logger.Error("Some streams failed")
+	} else {
+		logger.Info("All streams completed successfully")
+	}
 }

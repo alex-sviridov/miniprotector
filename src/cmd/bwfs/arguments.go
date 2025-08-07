@@ -44,19 +44,13 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	// Get the storage path from parsed args
 	storagePath := cmd.Flags().Args()[0]
 
-	// Validate storage path
-	validatedStoragePath, err := common.ValidatePath(storagePath)
-	if err != nil {
-		return nil, fmt.Errorf("destination directory unavailable: %w", err)
-	}
-
 	// Validate port
 	if err := common.ValidatePort(port); err != nil {
 		return nil, fmt.Errorf("port error: %w", err)
 	}
 
 	return &Arguments{
-		StoragePath: validatedStoragePath,
+		StoragePath: storagePath,
 		Port:        port,
 		Debug:       debug,
 	}, nil

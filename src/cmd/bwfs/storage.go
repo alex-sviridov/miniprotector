@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/wfs"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 )
@@ -14,6 +15,7 @@ type BackupServer struct {
 	pb.UnimplementedBackupServiceServer
 	storagePath string
 	config      *config.Config
+	db          *wfs.FileDB
 	logger      *slog.Logger
 }
 
@@ -29,9 +31,15 @@ func NewBackupServer(conf *config.Config, logger *slog.Logger, storagePath strin
 		return nil, fmt.Errorf("failed to check storage directory %s: %w", storagePath, err)
 	}
 
+	db, err := wfs.NewFileDB(storagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+
 	return &BackupServer{
 		logger:      logger,
 		config:      conf,
 		storagePath: storagePath,
+		db:          db,
 	}, nil
 }

@@ -130,6 +130,9 @@ func (*FileRequest_ChunkData) isFileRequest_RequestType() {}
 type FileInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
+	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Size          int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	Attributes    []byte                 `protobuf:"bytes,4,opt,name=attributes,proto3" json:"attributes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -169,6 +172,27 @@ func (x *FileInfo) GetFilename() string {
 		return x.Filename
 	}
 	return ""
+}
+
+func (x *FileInfo) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *FileInfo) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *FileInfo) GetAttributes() []byte {
+	if x != nil {
+		return x.Attributes
+	}
+	return nil
 }
 
 type ChunkHash struct {
@@ -597,9 +621,14 @@ const file_api_backup_proto_rawDesc = "" +
 	"chunk_hash\x18\x03 \x01(\v2\x18.backupservice.ChunkHashH\x00R\tchunkHash\x129\n" +
 	"\n" +
 	"chunk_data\x18\x04 \x01(\v2\x18.backupservice.ChunkDataH\x00R\tchunkDataB\x0e\n" +
-	"\frequest_type\"&\n" +
+	"\frequest_type\"v\n" +
 	"\bFileInfo\x12\x1a\n" +
-	"\bfilename\x18\x01 \x01(\tR\bfilename\"\x88\x01\n" +
+	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1a\n" +
+	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\x12\x1e\n" +
+	"\n" +
+	"attributes\x18\x04 \x01(\fR\n" +
+	"attributes\"\x88\x01\n" +
 	"\tChunkHash\x12\x1a\n" +
 	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1f\n" +
 	"\vblake3_hash\x18\x02 \x01(\tR\n" +

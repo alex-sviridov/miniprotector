@@ -19,6 +19,8 @@ type BackupStream struct {
 	config         *config.Config
 	logger         *slog.Logger
 	filesProcessed int
+	clientStreamID int32
+	BackupServer   *BackupServer
 }
 
 // ProcessBackupStream handles the streaming connection
@@ -42,6 +44,8 @@ func (s *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 		config:         s.config,
 		logger:         s.logger,
 		filesProcessed: 0,
+		BackupServer:   s,
+		clientStreamID: -1,
 	}
 	bs.logger = s.logger.With(
 		slog.String("client_addr", clientAddr),
@@ -49,8 +53,6 @@ func (s *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 	)
 
 	bs.logger.Info("New backup stream connected")
-
-	var clientStreamID int32 = -1
 
 	for {
 		// Receive a message from client
@@ -66,9 +68,9 @@ func (s *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 		}
 
 		// Set stream ID from first message and update logger ONCE
-		if clientStreamID == -1 {
-			clientStreamID = req.StreamId
-			bs.logger = bs.logger.With(slog.Int("client_stream_id", int(clientStreamID)))
+		if bs.clientStreamID == -1 {
+			bs.clientStreamID = req.StreamId
+			bs.logger = bs.logger.With(slog.Int("client_stream_id", int(bs.clientStreamID)))
 		}
 
 		if err := bs.handleResponse(stream, req); err != nil {

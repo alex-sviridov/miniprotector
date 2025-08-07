@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
-	"sync"
 	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -14,8 +14,7 @@ import (
 )
 
 // ProcessStream is the main entry point for processing files
-func processStream(ctx context.Context, client pb.BackupServiceClient, fileList []files.FileInfo, streamID int32, wg *sync.WaitGroup) {
-	defer wg.Done()
+func processStream(ctx context.Context, client pb.BackupServiceClient, fileList []files.FileInfo, streamID int32) error {
 
 	logger := logging.GetLoggerFromContext(ctx).
 		With(slog.Int("streamId", int(streamID)))
@@ -31,16 +30,15 @@ func processStream(ctx context.Context, client pb.BackupServiceClient, fileList 
 
 	stream, err := client.ProcessBackupStream(streamCtx)
 	if err != nil {
-		logger.Error("Failed to create stream", "error", err)
-		return
+		return fmt.Errorf("failed to create stream: %w", err)
 	}
 
 	if err := sendFilesMetadata(streamCtx, stream, fileList); err != nil {
-		logger.Error("File processing failed", "error", err)
+		return fmt.Errorf("file processing failed: %w", err)
 	}
 
 	if err := stream.CloseSend(); err != nil {
-		logger.Error("Failed to close send", "error", err)
+		return fmt.Errorf("failed to close send: %w", err)
 	}
 
 	for {
@@ -51,19 +49,16 @@ func processStream(ctx context.Context, client pb.BackupServiceClient, fileList 
 			break
 		}
 		if err != nil {
-			logger.Error("Failed to receive response", "error", err)
-			break
+			return fmt.Errorf("failed to receive response: %w", err)
 		}
 		if response.StreamId != streamID {
-			logger.Error("Stream ID mismatch",
-				"expected", streamID,
-				"received", response.StreamId)
+			return fmt.Errorf("stream ID mismatch: expected %d, received %d", streamID, response.StreamId)
 		}
 		// Handle response
 		if err := handleResponse(streamCtx, stream, response); err != nil {
-			break
+			return fmt.Errorf("failed to handle response: %w", err)
 		}
 	}
 
-	logger.Info("Stream completed")
+	return nil
 }

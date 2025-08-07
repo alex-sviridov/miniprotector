@@ -10,6 +10,7 @@ import (
 // To check file type, use: fileInfo.Mode.Type() == fs.ModeDir (directory), fs.ModeSymlink (symlink), etc.
 // Or use fileInfo.GetType() for a single character representation
 type FileInfo struct {
+	Host          string
 	Path          string
 	Name          string
 	Size          int64
