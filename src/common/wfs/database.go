@@ -15,21 +15,21 @@ import (
 // FileMetadata represents file information stored in the database
 // This extends your FileInfo with database-specific fields
 type FileMetadata struct {
-	ID         int64          `json:"id"`
-	FileInfo   files.FileInfo `json:"file_info"`
-	SourceHost string         `json:"source_host"`
-	BackupTime time.Time      `json:"backup_time"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	ID                int64          `json:"id"`
+	FileInfo          files.FileInfo `json:"file_info"`
+	SourceHost        string         `json:"source_host"`
+	BackupTime        time.Time      `json:"backup_time"`
+	Checksum          string         `json:"checksum"`
+	MetadataUpdatedAt time.Time      `json:"metadata_updated_at"`
 }
 
-// FileDB provides SQLite operations for file metadata
-type FileDB struct {
+// fileDB provides SQLite operations for file metadata
+type fileDB struct {
 	db *sql.DB
 }
 
-// NewFileDB creates a new FileDB instance and initializes the database
-func NewFileDB(dbPath string) (*FileDB, error) {
+// newDB creates a new fileDB instance and initializes the database
+func newDB(dbPath string) (*fileDB, error) {
 	// If dbpath is directory, not file, add default dbname
 	fileInfo, err := os.Stat(dbPath)
 	if err != nil {
@@ -55,7 +55,7 @@ func NewFileDB(dbPath string) (*FileDB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	fileDB := &FileDB{db: db}
+	fileDB := &fileDB{db: db}
 
 	// Initialize the schema
 	if err := fileDB.initSchema(); err != nil {
@@ -66,7 +66,7 @@ func NewFileDB(dbPath string) (*FileDB, error) {
 }
 
 // initSchema creates the files table if it doesn't exist
-func (fdb *FileDB) initSchema() error {
+func (fdb *fileDB) initSchema() error {
 	createTableSQL := `
 	CREATE TABLE IF NOT EXISTS files (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,13 +82,14 @@ func (fdb *FileDB) initSchema() error {
 		acl TEXT NOT NULL DEFAULT '{}',
 		source_host TEXT NOT NULL,
 		backup_time DATETIME NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		checksum TEXT DEFAULT '',
+		metadata_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(path, source_host, backup_time)
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_path_sourcehost ON files(path, source_host);
 	CREATE INDEX IF NOT EXISTS idx_path_sourcehost_modtime ON files(path, source_host, modtime);
+	CREATE INDEX IF NOT EXISTS idx_checksum ON files(checksum);
 	`
 
 	_, err := fdb.db.Exec(createTableSQL)
@@ -96,69 +97,73 @@ func (fdb *FileDB) initSchema() error {
 }
 
 // AddFile inserts a new file record into the database
-func (fdb *FileDB) AddFile(fileInfo files.FileInfo, host string, backupTime time.Time) (*FileMetadata, error) {
+func (fdb *fileDB) addFile(fileInfo *files.FileInfo, checksum string) error {
 	// Serialize ACL to JSON
 	aclJSON, err := json.Marshal(fileInfo.ACL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize ACL: %w", err)
+		return fmt.Errorf("failed to serialize ACL: %w", err)
 	}
 
 	query := `
 	INSERT INTO files (
 		backup_time, source_host, path, name, size, mode, owner, group_id, 
-		modtime, access_time, ctime, acl, created_at, updated_at
+		modtime, access_time, ctime, acl, checksum, metadata_updated_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	now := time.Now()
 	result, err := fdb.db.Exec(query,
-		backupTime, host, fileInfo.Path, fileInfo.Name, fileInfo.Size, fileInfo.Mode,
+		now, fileInfo.Host, fileInfo.Path, fileInfo.Name, fileInfo.Size, fileInfo.Mode,
 		fileInfo.Owner, fileInfo.Group, fileInfo.ModTime, fileInfo.AccessTime, fileInfo.CTime,
-		string(aclJSON), now, now,
+		string(aclJSON), checksum, now,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to insert file: %w", err)
+		return fmt.Errorf("failed to insert file: %w", err)
 	}
 
-	id, err := result.LastInsertId()
+	_, err = result.LastInsertId()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get last insert ID: %w", err)
+		return fmt.Errorf("failed to get last insert ID: %w", err)
 	}
 
-	return &FileMetadata{
-		ID:         id,
-		FileInfo:   fileInfo,
-		SourceHost: host,
-		BackupTime: backupTime,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}, nil
+	return nil
 }
 
 // FileExists checks if a file with the given path exists in the database for a specific host
-func (fdb *FileDB) FileExists(path, host string, modtime time.Time, ctime time.Time) (bool, error) {
-    query := `SELECT ctime FROM files WHERE source_host = ? AND path = ? AND modtime = ?`
+func (fdb *fileDB) fileExists(fileinfo *files.FileInfo) (bool, error) {
+	query := `SELECT COUNT(*) FROM files WHERE source_host = ? AND path = ? AND modtime = ?`
 
-    var ctimeDb time.Time
-    err := fdb.db.QueryRow(query, host, path, modtime).Scan(&ctimeDb)
-    if err != nil {
-        if err == sql.ErrNoRows {
-            // File doesn't exist - this is not an error, just return false
-            return false, nil
-        }
-        // Actual error occurred
-        return false, fmt.Errorf("failed to check file existence: %w", err)
-    }
+	var count int
+	err := fdb.db.QueryRow(query, fileinfo.Host, fileinfo.Path, fileinfo.ModTime).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check file existence: %w", err)
+	}
 
-    // File exists, return true
-    return true, nil
+	return count > 0, nil
+}
+
+// FileExistsByChecksum checks if a file with the given checksum exists in the database
+func (fdb *fileDB) fileExistsByChecksum(checksum string) (bool, error) {
+	if checksum == "" {
+		return false, nil
+	}
+
+	query := `SELECT COUNT(*) FROM files WHERE checksum = ? AND checksum != ''`
+
+	var count int
+	err := fdb.db.QueryRow(query, checksum).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check file existence by checksum: %w", err)
+	}
+
+	return count > 0, nil
 }
 
 // GetFile retrieves the latest file metadata by path and host
-func (fdb *FileDB) GetFile(path, host string) (*FileMetadata, error) {
+func (fdb *fileDB) getFile(path, host string) (*FileMetadata, error) {
 	query := `
 	SELECT id, path, name, size, mode, owner, group_id, modtime, access_time, ctime, acl,
-	       source_host, backup_time, hash, created_at, updated_at
+	       source_host, backup_time, checksum, metadata_updated_at
 	FROM files 
 	WHERE path = ? AND source_host = ?
 	ORDER BY backup_time DESC
@@ -168,8 +173,26 @@ func (fdb *FileDB) GetFile(path, host string) (*FileMetadata, error) {
 	return fdb.scanFileRow(fdb.db.QueryRow(query, path, host))
 }
 
+// GetFileByChecksum retrieves a file metadata by checksum
+func (fdb *fileDB) getFileByChecksum(checksum string) (*FileMetadata, error) {
+	if checksum == "" {
+		return nil, nil
+	}
+
+	query := `
+	SELECT id, path, name, size, mode, owner, group_id, modtime, access_time, ctime, acl,
+	       source_host, backup_time, checksum, metadata_updated_at
+	FROM files 
+	WHERE checksum = ? AND checksum != ''
+	ORDER BY backup_time DESC
+	LIMIT 1
+	`
+
+	return fdb.scanFileRow(fdb.db.QueryRow(query, checksum))
+}
+
 // scanFileRow is a helper function to scan a file row
-func (fdb *FileDB) scanFileRow(row *sql.Row) (*FileMetadata, error) {
+func (fdb *fileDB) scanFileRow(row *sql.Row) (*FileMetadata, error) {
 	var file FileMetadata
 	var aclJSON string
 
@@ -187,8 +210,8 @@ func (fdb *FileDB) scanFileRow(row *sql.Row) (*FileMetadata, error) {
 		&aclJSON,
 		&file.SourceHost,
 		&file.BackupTime,
-		&file.CreatedAt,
-		&file.UpdatedAt,
+		&file.Checksum,
+		&file.MetadataUpdatedAt,
 	)
 
 	if err != nil {
@@ -206,38 +229,10 @@ func (fdb *FileDB) scanFileRow(row *sql.Row) (*FileMetadata, error) {
 	return &file, nil
 }
 
-// UpdateFile updates an existing file's metadata
-func (fdb *FileDB) UpdateFile(path, host string, backupTime time.Time, fileInfo files.FileInfo, hash string) error {
-	// Serialize ACL to JSON
-	aclJSON, err := json.Marshal(fileInfo.ACL)
-	if err != nil {
-		return fmt.Errorf("failed to serialize ACL: %w", err)
+// Close closes the database connection
+func (fdb *fileDB) close() error {
+	if fdb.db != nil {
+		return fdb.db.Close()
 	}
-
-	query := `
-	UPDATE files 
-	SET name = ?, size = ?, mode = ?, owner = ?, group_id = ?, 
-	    modtime = ?, access_time = ?, ctime = ?, acl = ?, hash = ?, updated_at = ?
-	WHERE path = ? AND source_host = ? AND backup_time = ?
-	`
-
-	result, err := fdb.db.Exec(query,
-		fileInfo.Name, fileInfo.Size, fileInfo.Mode, fileInfo.Owner, fileInfo.Group,
-		fileInfo.ModTime, fileInfo.AccessTime, fileInfo.CTime, string(aclJSON), hash, time.Now(),
-		path, host, backupTime,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update file: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("file not found: %s on host %s at %v", path, host, backupTime)
-	}
-
 	return nil
 }

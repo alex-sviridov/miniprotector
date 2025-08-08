@@ -16,7 +16,7 @@ func Encode(fileInfo *FileInfo) ([]byte, error) {
 }
 
 // DecodeFileInfo deserializes FileInfo from gob-encoded string
-func DecodeFileInfo(data []byte) (fileInfo FileInfo, err error) {
+func DecodeFileInfo(data []byte) (fileInfo *FileInfo, err error) {
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
 	err = dec.Decode(&fileInfo)

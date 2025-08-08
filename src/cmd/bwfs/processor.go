@@ -35,18 +35,13 @@ func (s *BackupStream) handleFileRequest(fi *pb.FileInfo) (*pb.FileResponse, err
 		return nil, err
 	}
 
-	if fi.Filename == "" {
-		err := fmt.Errorf("received empty filename")
-		return nil, err
-	}
-
 	s.filesProcessed++
 	logger.Debug("Received filename",
 		"filename", fileInfo.Path,
 		"file_number", s.filesProcessed,
 		"attributes", fileInfo.Print())
 
-	fileExists, err := s.BackupServer.db.FileExists(fileInfo.Path, fi.Hostname, fileInfo.ModTime, fileInfo.CTime)
+	fileExists, err := s.writer.FileExists(fileInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -57,8 +52,7 @@ func (s *BackupStream) handleFileRequest(fi *pb.FileInfo) (*pb.FileResponse, err
 		logger.Info(message)
 	} else {
 		message = fmt.Sprintf("File doesn't exist in database: %s", fileInfo.Path)
-		_, err := s.BackupServer.db.AddFile(fileInfo, fi.Hostname, fileInfo.ModTime)
-		if err != nil {
+		if err := s.writer.AddFile(fileInfo, ""); err != nil {
 			return nil, err
 		}
 		logger.Info(message)

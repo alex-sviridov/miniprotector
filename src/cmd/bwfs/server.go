@@ -9,6 +9,7 @@ import (
 
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/common/wfs"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"google.golang.org/grpc"
@@ -16,15 +17,35 @@ import (
 )
 
 type BackupStream struct {
+	pb.UnimplementedBackupServiceServer
+	storagePath    string
 	config         *config.Config
+	writer         *wfs.Writer
 	logger         *slog.Logger
 	filesProcessed int
 	clientStreamID int32
-	BackupServer   *BackupServer
+}
+
+func NewBackupStream(ctx context.Context, storagePath string) (*BackupStream, error) {
+	logger := logging.GetLoggerFromContext(ctx)
+	conf := config.GetConfigFromContext(ctx)
+
+	writer, err := wfs.NewWriter(ctx, storagePath)
+	if err != nil {
+		return nil, err
+	}
+	return &BackupStream{
+		logger:         logger,
+		config:         conf,
+		storagePath:    storagePath,
+		writer:         writer,
+		filesProcessed: 0,
+		clientStreamID: -1,
+	}, nil
 }
 
 // ProcessBackupStream handles the streaming connection
-func (s *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackupStreamServer) error {
+func (s *BackupStream) ProcessBackupStream(stream pb.BackupService_ProcessBackupStreamServer) error {
 	streamCtx := stream.Context()
 
 	// Get client connection info ONCE at start
@@ -38,28 +59,19 @@ func (s *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 			clientAuthType = peer.AuthInfo.AuthType()
 		}
 	}
-
-	// Create logger with connections info
-	bs := &BackupStream{
-		config:         s.config,
-		logger:         s.logger,
-		filesProcessed: 0,
-		BackupServer:   s,
-		clientStreamID: -1,
-	}
-	bs.logger = s.logger.With(
+	s.logger = s.logger.With(
 		slog.String("client_addr", clientAddr),
 		slog.Any("grpc_auth_type", clientAuthType),
 	)
 
-	bs.logger.Info("New backup stream connected")
+	s.logger.Info("New backup stream connected")
 
 	for {
 		// Receive a message from client
 		req, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.Info("Client stopped sending",
-				"total_files", bs.filesProcessed)
+				"total_files", s.filesProcessed)
 			return nil
 		}
 		if err != nil {
@@ -68,12 +80,12 @@ func (s *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 		}
 
 		// Set stream ID from first message and update logger ONCE
-		if bs.clientStreamID == -1 {
-			bs.clientStreamID = req.StreamId
-			bs.logger = bs.logger.With(slog.Int("client_stream_id", int(bs.clientStreamID)))
+		if s.clientStreamID == -1 {
+			s.clientStreamID = req.StreamId
+			s.logger = s.logger.With(slog.Int("client_stream_id", int(s.clientStreamID)))
 		}
 
-		if err := bs.handleResponse(stream, req); err != nil {
+		if err := s.handleResponse(stream, req); err != nil {
 			return err
 		}
 	}
@@ -84,8 +96,6 @@ func (s *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 // This is a blocking call that serves until an error occurs.
 func startServer(ctx context.Context, port int, storagePath string) error {
 	logger := logging.GetLoggerFromContext(ctx)
-	conf := config.GetConfigFromContext(ctx)
-
 	// Create TCP listener
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -96,11 +106,12 @@ func startServer(ctx context.Context, port int, storagePath string) error {
 
 	// Create and configure gRPC server and Backup server
 	grpcServer := grpc.NewServer()
-	backupServer, err := NewBackupServer(conf, logger, storagePath)
+	backupStream, err := NewBackupStream(ctx, storagePath)
 	if err != nil {
 		return err
 	}
-	pb.RegisterBackupServiceServer(grpcServer, backupServer)
+	defer backupStream.writer.Close()
+	pb.RegisterBackupServiceServer(grpcServer, backupStream)
 
 	logger.Info("Server ready, accepting connections")
 

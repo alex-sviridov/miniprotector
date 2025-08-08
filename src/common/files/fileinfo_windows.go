@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/alex-sviridov/miniprotector/common"
 	"golang.org/x/sys/windows"
 )
 
@@ -17,6 +19,7 @@ func getFileInfo(path string) (FileInfo, error) {
 	}
 
 	fileInfo := FileInfo{
+		Host:    common.GetHostname(),
 		Path:    path,
 		Name:    info.Name(),
 		Size:    info.Size(),
