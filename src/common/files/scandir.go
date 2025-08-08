@@ -4,15 +4,19 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+
 	"os"
+
+	"github.com/alex-sviridov/miniprotector/common"
 )
 
 // ListRecursive traverses directory tree and returns file information
 func ListRecursive(sourcePath string) ([]FileInfo, error) {
-    if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
-        return nil, fmt.Errorf("source path does not exist: %s", sourcePath)
-    }
+	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("source path does not exist: %s", sourcePath)
+	}
 	var items []FileInfo
+	hostname := common.GetHostname()
 
 	err := filepath.WalkDir(sourcePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -20,6 +24,7 @@ func ListRecursive(sourcePath string) ([]FileInfo, error) {
 		}
 
 		fileInfo, err := getFileInfo(path)
+		fileInfo.Host = hostname
 		if err != nil {
 			return fmt.Errorf("failed to get file info %s: %w", path, err)
 		}

@@ -13,13 +13,15 @@ import (
 )
 
 type Writer struct {
-	config *config.Config
+	conf   *config.Config
 	logger *slog.Logger
 	db     *fileDB
 }
 
 func NewWriter(ctx context.Context, storagePath string) (*Writer, error) {
 	// storagePath should be a directory or nonexisting
+	logger := logging.GetLoggerFromContext(ctx)
+	conf := config.GetConfigFromContext(ctx)
 	if _, err := os.Stat(storagePath); os.IsNotExist(err) {
 		if err := os.MkdirAll(storagePath, 0700); err != nil {
 			return nil, fmt.Errorf("failed to create storage directory %s: %w", storagePath, err)
@@ -28,13 +30,13 @@ func NewWriter(ctx context.Context, storagePath string) (*Writer, error) {
 		return nil, fmt.Errorf("failed to check storage directory %s: %w", storagePath, err)
 	}
 	dbPath := filepath.Join(storagePath, "wfs.db")
-	db, err := newDB(dbPath)
+	db, err := newDB(conf, logger, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 	return &Writer{
-		config: config.GetConfigFromContext(ctx),
-		logger: logging.GetLoggerFromContext(ctx),
+		conf:   conf,
+		logger: logger,
 		db:     db,
 	}, nil
 }

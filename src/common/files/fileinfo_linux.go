@@ -9,8 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alex-sviridov/miniprotector/common"
-
 	"golang.org/x/sys/unix"
 )
 
@@ -28,7 +26,6 @@ func getFileInfo(path string) (FileInfo, error) {
 	}
 
 	fileInfo := FileInfo{
-		Host:       common.GetHostname(),
 		Path:       path,
 		Name:       info.Name(),
 		Size:       info.Size(),

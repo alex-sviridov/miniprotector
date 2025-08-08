@@ -23,7 +23,6 @@ type BackupStream struct {
 	writer         *wfs.Writer
 	logger         *slog.Logger
 	filesProcessed int
-	clientStreamID int32
 }
 
 func NewBackupStream(ctx context.Context, storagePath string) (*BackupStream, error) {
@@ -40,7 +39,6 @@ func NewBackupStream(ctx context.Context, storagePath string) (*BackupStream, er
 		storagePath:    storagePath,
 		writer:         writer,
 		filesProcessed: 0,
-		clientStreamID: -1,
 	}, nil
 }
 
@@ -77,12 +75,6 @@ func (s *BackupStream) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 		if err != nil {
 			s.logger.Error("Error receiving", "error", err)
 			return err
-		}
-
-		// Set stream ID from first message and update logger ONCE
-		if s.clientStreamID == -1 {
-			s.clientStreamID = req.StreamId
-			s.logger = s.logger.With(slog.Int("client_stream_id", int(s.clientStreamID)))
 		}
 
 		if err := s.handleResponse(stream, req); err != nil {

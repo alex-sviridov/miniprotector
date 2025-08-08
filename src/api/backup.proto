@@ -18,21 +18,19 @@ message FileRequest {
 }
 
 message FileInfo {
-  string filename = 1;
-  string hostname = 2;
-  int64 size = 3;
-  bytes attributes = 4;
+  string file_id = 1; // hostname:fullpath:mtime
+  bytes attributes = 2;
 }
 
 message ChunkHash {
-  string filename = 1;
+  string file_id = 1;
   string blake3_hash = 2;
   int64 chunk_index = 3;
   int64 chunk_size = 4;
 }
 
 message ChunkData {
-  string filename = 1;
+  string file_id = 1;
   string blake3_hash = 2;
   int64 chunk_index = 3;
   bytes data = 4;
@@ -48,18 +46,18 @@ message FileResponse {
 }
 
 message FileNeeded {
-  string filename = 1;
+  string file_id = 1;
   bool needed = 2;
 }
 
 message ChunkNeeded {
-  string filename = 1;
+  string file_id = 1;
   string blake3_hash = 2;
-  bool send = 3; // true means "SEND", false means "skip"
+  bool needed = 3; 
 }
 
 message ProcessingResult {
-  string filename = 1;
+  string file_id = 1;
   string message = 2;
   bool success = 3;
 }

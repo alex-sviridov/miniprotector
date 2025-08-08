@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/files"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -25,11 +27,13 @@ type FileMetadata struct {
 
 // fileDB provides SQLite operations for file metadata
 type fileDB struct {
-	db *sql.DB
+	db     *sql.DB
+	config *config.Config
+	logger *slog.Logger
 }
 
 // newDB creates a new fileDB instance and initializes the database
-func newDB(dbPath string) (*fileDB, error) {
+func newDB(config *config.Config, logger *slog.Logger, dbPath string) (*fileDB, error) {
 	// If dbpath is directory, not file, add default dbname
 	fileInfo, err := os.Stat(dbPath)
 	if err != nil {
@@ -55,7 +59,11 @@ func newDB(dbPath string) (*fileDB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	fileDB := &fileDB{db: db}
+	fileDB := &fileDB{
+		db:     db,
+		config: config,
+		logger: logger,
+	}
 
 	// Initialize the schema
 	if err := fileDB.initSchema(); err != nil {
@@ -138,7 +146,6 @@ func (fdb *fileDB) fileExists(fileinfo *files.FileInfo) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("failed to check file existence: %w", err)
 	}
-
 	return count > 0, nil
 }
 

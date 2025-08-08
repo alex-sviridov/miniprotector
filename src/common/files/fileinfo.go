@@ -61,3 +61,7 @@ func (fi FileInfo) Print() string {
 		fi.Name,
 	)
 }
+
+func (fi FileInfo) GetId() string {
+	return fmt.Sprintf("%s:%s:%d", fi.Host, fi.Path, fi.ModTime.Unix())
+}

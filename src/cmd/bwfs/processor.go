@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 
 	"github.com/alex-sviridov/miniprotector/common/files"
 
@@ -13,7 +13,7 @@ func (s *BackupStream) handleResponse(stream pb.BackupService_ProcessBackupStrea
 
 	switch r := req.RequestType.(type) {
 	case *pb.FileRequest_FileInfo:
-		response, err := s.handleFileRequest(r.FileInfo)
+		response, err := s.handleFileInfoRequest(req)
 		if err != nil {
 			return err
 		}
@@ -28,8 +28,14 @@ func (s *BackupStream) handleResponse(stream pb.BackupService_ProcessBackupStrea
 	return nil
 }
 
-func (s *BackupStream) handleFileRequest(fi *pb.FileInfo) (*pb.FileResponse, error) {
-	logger := *s.logger
+func (s *BackupStream) handleFileInfoRequest(req *pb.FileRequest) (*pb.FileResponse, error) {
+
+	fi := req.GetFileInfo()
+	clientStreamID := req.StreamId
+	logger := *s.logger.
+		With(slog.String("file_id", fi.FileId)).
+		With(slog.Int("streamId", int(clientStreamID)))
+
 	fileInfo, err := files.DecodeFileInfo(fi.Attributes)
 	if err != nil {
 		return nil, err
@@ -37,7 +43,6 @@ func (s *BackupStream) handleFileRequest(fi *pb.FileInfo) (*pb.FileResponse, err
 
 	s.filesProcessed++
 	logger.Debug("Received filename",
-		"filename", fileInfo.Path,
 		"file_number", s.filesProcessed,
 		"attributes", fileInfo.Print())
 
@@ -46,26 +51,23 @@ func (s *BackupStream) handleFileRequest(fi *pb.FileInfo) (*pb.FileResponse, err
 		return nil, err
 	}
 
-	var message string
+	var needed bool
 	if fileExists {
-		message = fmt.Sprintf("File exists in database: %s", fileInfo.Path)
-		logger.Info(message)
+		needed = false
+		logger.Debug("File exists in database")
 	} else {
-		message = fmt.Sprintf("File doesn't exist in database: %s", fileInfo.Path)
-		if err := s.writer.AddFile(fileInfo, ""); err != nil {
-			return nil, err
-		}
-		logger.Info(message)
+		needed = true
+		logger.Debug("File doesn't exist in database")
 	}
 
 	// Send back a simple acknowledgment
 	response := &pb.FileResponse{
-		StreamId: s.clientStreamID,
-		ResponseType: &pb.FileResponse_Result{
-			Result: &pb.ProcessingResult{
-				Filename: fileInfo.Path,
-				Success:  true,
-				Message:  message,
+		StreamId: clientStreamID,
+		ResponseType: &pb.FileResponse_FileNeeded{
+			FileNeeded: &pb.FileNeeded{
+				FileId: fi.FileId,
+				Needed: needed,
+				Host:   fileInfo.Host,
 			},
 		},
 	}

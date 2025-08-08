@@ -8,7 +8,6 @@ import (
 	"github.com/gofrs/flock"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
-	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/files"
 	"github.com/alex-sviridov/miniprotector/common/logging"
@@ -35,9 +34,6 @@ func sendFilesMetadata(ctx context.Context, stream pb.BackupService_ProcessBacku
 	conf := config.GetConfigFromContext(ctx)
 	logger := logging.GetLoggerFromContext(ctx)
 	streamId := ctx.Value("streamId").(int32)
-
-	hostname := common.GetHostname()
-
 	for _, file := range fileList {
 		attr, err := files.Encode(&file)
 		if err != nil {
@@ -53,9 +49,7 @@ func sendFilesMetadata(ctx context.Context, stream pb.BackupService_ProcessBacku
 			StreamId: streamId, // Simple stream ID
 			RequestType: &pb.FileRequest_FileInfo{
 				FileInfo: &pb.FileInfo{
-					Hostname:   hostname,
-					Size:       file.Size,
-					Filename:   file.Path,
+					FileId:     file.GetId(),
 					Attributes: attr,
 				},
 			},

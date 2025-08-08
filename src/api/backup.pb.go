@@ -129,9 +129,7 @@ func (*FileRequest_ChunkData) isFileRequest_RequestType() {}
 
 type FileInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
-	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	Size          int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
 	Attributes    []byte                 `protobuf:"bytes,4,opt,name=attributes,proto3" json:"attributes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -167,25 +165,11 @@ func (*FileInfo) Descriptor() ([]byte, []int) {
 	return file_api_backup_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *FileInfo) GetFilename() string {
+func (x *FileInfo) GetFileId() string {
 	if x != nil {
-		return x.Filename
+		return x.FileId
 	}
 	return ""
-}
-
-func (x *FileInfo) GetHostname() string {
-	if x != nil {
-		return x.Hostname
-	}
-	return ""
-}
-
-func (x *FileInfo) GetSize() int64 {
-	if x != nil {
-		return x.Size
-	}
-	return 0
 }
 
 func (x *FileInfo) GetAttributes() []byte {
@@ -197,7 +181,7 @@ func (x *FileInfo) GetAttributes() []byte {
 
 type ChunkHash struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
+	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
 	Blake3Hash    string                 `protobuf:"bytes,2,opt,name=blake3_hash,json=blake3Hash,proto3" json:"blake3_hash,omitempty"`
 	ChunkIndex    int64                  `protobuf:"varint,3,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
 	ChunkSize     int64                  `protobuf:"varint,4,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
@@ -235,9 +219,9 @@ func (*ChunkHash) Descriptor() ([]byte, []int) {
 	return file_api_backup_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *ChunkHash) GetFilename() string {
+func (x *ChunkHash) GetFileId() string {
 	if x != nil {
-		return x.Filename
+		return x.FileId
 	}
 	return ""
 }
@@ -265,7 +249,7 @@ func (x *ChunkHash) GetChunkSize() int64 {
 
 type ChunkData struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
+	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
 	Blake3Hash    string                 `protobuf:"bytes,2,opt,name=blake3_hash,json=blake3Hash,proto3" json:"blake3_hash,omitempty"`
 	ChunkIndex    int64                  `protobuf:"varint,3,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
 	Data          []byte                 `protobuf:"bytes,4,opt,name=data,proto3" json:"data,omitempty"`
@@ -303,9 +287,9 @@ func (*ChunkData) Descriptor() ([]byte, []int) {
 	return file_api_backup_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *ChunkData) GetFilename() string {
+func (x *ChunkData) GetFileId() string {
 	if x != nil {
-		return x.Filename
+		return x.FileId
 	}
 	return ""
 }
@@ -439,8 +423,9 @@ func (*FileResponse_Result) isFileResponse_ResponseType() {}
 
 type FileNeeded struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
+	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
 	Needed        bool                   `protobuf:"varint,2,opt,name=needed,proto3" json:"needed,omitempty"`
+	Host          string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -475,9 +460,9 @@ func (*FileNeeded) Descriptor() ([]byte, []int) {
 	return file_api_backup_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *FileNeeded) GetFilename() string {
+func (x *FileNeeded) GetFileId() string {
 	if x != nil {
-		return x.Filename
+		return x.FileId
 	}
 	return ""
 }
@@ -489,11 +474,18 @@ func (x *FileNeeded) GetNeeded() bool {
 	return false
 }
 
+func (x *FileNeeded) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
 type ChunkNeeded struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
 	Blake3Hash    string                 `protobuf:"bytes,2,opt,name=blake3_hash,json=blake3Hash,proto3" json:"blake3_hash,omitempty"`
-	Send          bool                   `protobuf:"varint,3,opt,name=send,proto3" json:"send,omitempty"` // true means "SEND", false means "skip"
+	Needed        bool                   `protobuf:"varint,3,opt,name=needed,proto3" json:"needed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -542,16 +534,16 @@ func (x *ChunkNeeded) GetBlake3Hash() string {
 	return ""
 }
 
-func (x *ChunkNeeded) GetSend() bool {
+func (x *ChunkNeeded) GetNeeded() bool {
 	if x != nil {
-		return x.Send
+		return x.Needed
 	}
 	return false
 }
 
 type ProcessingResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Filename      string                 `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
+	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	Success       bool                   `protobuf:"varint,3,opt,name=success,proto3" json:"success,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -588,9 +580,9 @@ func (*ProcessingResult) Descriptor() ([]byte, []int) {
 	return file_api_backup_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *ProcessingResult) GetFilename() string {
+func (x *ProcessingResult) GetFileId() string {
 	if x != nil {
-		return x.Filename
+		return x.FileId
 	}
 	return ""
 }
@@ -621,24 +613,22 @@ const file_api_backup_proto_rawDesc = "" +
 	"chunk_hash\x18\x03 \x01(\v2\x18.backupservice.ChunkHashH\x00R\tchunkHash\x129\n" +
 	"\n" +
 	"chunk_data\x18\x04 \x01(\v2\x18.backupservice.ChunkDataH\x00R\tchunkDataB\x0e\n" +
-	"\frequest_type\"v\n" +
-	"\bFileInfo\x12\x1a\n" +
-	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1a\n" +
-	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x12\n" +
-	"\x04size\x18\x03 \x01(\x03R\x04size\x12\x1e\n" +
+	"\frequest_type\"C\n" +
+	"\bFileInfo\x12\x17\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x1e\n" +
 	"\n" +
 	"attributes\x18\x04 \x01(\fR\n" +
-	"attributes\"\x88\x01\n" +
-	"\tChunkHash\x12\x1a\n" +
-	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1f\n" +
+	"attributes\"\x85\x01\n" +
+	"\tChunkHash\x12\x17\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x1f\n" +
 	"\vblake3_hash\x18\x02 \x01(\tR\n" +
 	"blake3Hash\x12\x1f\n" +
 	"\vchunk_index\x18\x03 \x01(\x03R\n" +
 	"chunkIndex\x12\x1d\n" +
 	"\n" +
-	"chunk_size\x18\x04 \x01(\x03R\tchunkSize\"}\n" +
-	"\tChunkData\x12\x1a\n" +
-	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1f\n" +
+	"chunk_size\x18\x04 \x01(\x03R\tchunkSize\"z\n" +
+	"\tChunkData\x12\x17\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x1f\n" +
 	"\vblake3_hash\x18\x02 \x01(\tR\n" +
 	"blake3Hash\x12\x1f\n" +
 	"\vchunk_index\x18\x03 \x01(\x03R\n" +
@@ -650,18 +640,19 @@ const file_api_backup_proto_rawDesc = "" +
 	"fileNeeded\x12?\n" +
 	"\fchunk_needed\x18\x03 \x01(\v2\x1a.backupservice.ChunkNeededH\x00R\vchunkNeeded\x129\n" +
 	"\x06result\x18\x04 \x01(\v2\x1f.backupservice.ProcessingResultH\x00R\x06resultB\x0f\n" +
-	"\rresponse_type\"@\n" +
+	"\rresponse_type\"Q\n" +
 	"\n" +
-	"FileNeeded\x12\x1a\n" +
-	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x16\n" +
-	"\x06needed\x18\x02 \x01(\bR\x06needed\"^\n" +
+	"FileNeeded\x12\x17\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x16\n" +
+	"\x06needed\x18\x02 \x01(\bR\x06needed\x12\x12\n" +
+	"\x04host\x18\x03 \x01(\tR\x04host\"b\n" +
 	"\vChunkNeeded\x12\x1a\n" +
 	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1f\n" +
 	"\vblake3_hash\x18\x02 \x01(\tR\n" +
-	"blake3Hash\x12\x12\n" +
-	"\x04send\x18\x03 \x01(\bR\x04send\"b\n" +
-	"\x10ProcessingResult\x12\x1a\n" +
-	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x18\n" +
+	"blake3Hash\x12\x16\n" +
+	"\x06needed\x18\x03 \x01(\bR\x06needed\"_\n" +
+	"\x10ProcessingResult\x12\x17\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x18\n" +
 	"\asuccess\x18\x03 \x01(\bR\asuccess2c\n" +
 	"\rBackupService\x12R\n" +

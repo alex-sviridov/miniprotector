@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/files"
 	"github.com/alex-sviridov/miniprotector/common/logging"
@@ -47,6 +48,7 @@ func main() {
 	}
 	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
 	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
+	ctx = context.WithValue(ctx, common.HostnameContextKey, common.GetHostname())
 
 	// Initialize logger
 	logger, logfile, _ := logging.NewLogger(ctx) // Never fails
