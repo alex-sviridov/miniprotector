@@ -18,6 +18,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+type BackupResult struct {
+	Filename string
+	Success  bool
+}
+
 // main goes
 func main() {
 
@@ -67,55 +72,77 @@ func main() {
 	)
 
 	// Get files list
-	items, err := files.ListRecursive(arguments.SourceFolder)
-	logger.Info("Directory scanned", "filesCount", len(items))
+	filesList, err := files.ListRecursive(arguments.SourceFolder)
 	if err != nil {
-		logger.Error("Error", "error", err)
+		logger.Error("Error traversing the directory", "error", err)
 		return
+	}
+	logger.Info("Directory scanned", "filesCount", len(filesList))
+	filesBackupState := make(map[string]bool)
+	for _, file := range filesList {
+		filesBackupState[file.Path] = false
 	}
 
 	// Split into streams
-	streams := files.SplitByStreams(items, arguments.Streams)
+	streams, err := files.SplitByStreams(filesList, arguments.Streams)
+	if err != nil {
+		logger.Error("Error splitting by streams", "error", err)
+		return
+	}
 	logger.Info("Splitted by streams", "streamsCount", arguments.Streams, "filesCount", len(streams[0]))
 
 	// Connect to server
 	conn, err := grpc.NewClient(fmt.Sprintf("%s:%d", arguments.WriterHost, arguments.WriterPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		logger.Error("Failed to connect: %v", err)
+		logger.Error("Failed to connect", "error", err)
+		return
 	}
 	defer conn.Close()
 
 	// Create protobuf client
 	client := pb.NewBackupServiceClient(conn)
 
-	logger.Info("Connected to server.")
+	logger.Info("Connected to server")
 
 	// Process files concurrently using multiple streams
-	var wg sync.WaitGroup
-	streamErrorChan := make(chan error, len(streams))
+	resultsCh := make(chan BackupResult)
 
+	var wg sync.WaitGroup
 	for i, stream := range streams {
-		if len(stream) > 0 {
-			wg.Add(1)
-			go func(ctx context.Context, client pb.BackupServiceClient, stream []files.FileInfo, streamID int32) {
-				defer wg.Done()
-				if err := processStream(ctx, client, stream, streamID); err != nil {
-					logger.Error("Stream failed", "streamID", streamID, "error", err)
-					streamErrorChan <- err
-				}
-			}(ctx, client, stream, int32(i+1))
+		wg.Add(1)
+		go func(streamIndex int, streamData []files.FileInfo) {
+			defer wg.Done()
+			processStream(ctx, client, streamData, int32(streamIndex+1), resultsCh)
+		}(i, stream)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	for result := range resultsCh {
+		// Process each result as it arrives
+		filesBackupState[result.Filename] = true
+	}
+
+	// Final analysis
+	successCount := 0
+	failedCount := 0
+
+	for _, success := range filesBackupState {
+		if success {
+			successCount++
+		} else {
+			failedCount++
 		}
 	}
 
-	// Wait for all streams to complete
-	wg.Wait()
-	close(streamErrorChan)
-
-	if len(streamErrorChan) == len(streams) {
-		logger.Error("All streams failed")
-	} else if len(streamErrorChan) > 0 {
-		logger.Error("Some streams failed")
-	} else {
-		logger.Info("All streams completed successfully")
-	}
+	state := "failed"
+	if failedCount == 0 { state = "success" }
+	logger.Info("Backup finished", 
+		"state", state,
+		"count.success", successCount, 
+		"count.failed", failedCount,
+	)
 }

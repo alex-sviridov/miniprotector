@@ -14,7 +14,7 @@ import (
 )
 
 // ProcessStream is the main entry point for processing files
-func processStream(ctx context.Context, client pb.BackupServiceClient, fileList []files.FileInfo, streamID int32) error {
+func processStream(ctx context.Context, client pb.BackupServiceClient, fileList []files.FileInfo, streamID int32, ch chan<- BackupResult) error {
 
 	logger := logging.GetLoggerFromContext(ctx).
 		With(slog.Int("streamId", int(streamID)))
@@ -54,7 +54,7 @@ func processStream(ctx context.Context, client pb.BackupServiceClient, fileList 
 		if err := validateStreamID(streamCtx, response); err != nil {
 			return err
 		}
-		if err := handleResponse(streamCtx, response); err != nil {
+		if err := handleResponse(streamCtx, response, ch); err != nil {
 			return fmt.Errorf("failed to handle response: %w", err)
 		}
 	}

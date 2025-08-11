@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-
+	
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/common"
@@ -37,10 +37,10 @@ func ListRecursive(sourcePath string) ([]FileInfo, error) {
 }
 
 // SplitByStreams divides files into the specified number of streams for parallel processing
-func SplitByStreams(files []FileInfo, streams int) [][]FileInfo {
-	if streams <= 0 {
-		return nil
-	}
+func SplitByStreams(files []FileInfo, streams int) ([][]FileInfo, error) {
+    if streams <= 0 {
+        return nil, fmt.Errorf("streams must be positive, got %d", streams)
+    }
 
 	result := make([][]FileInfo, streams)
 	filesPerStream := len(files) / streams
@@ -58,5 +58,5 @@ func SplitByStreams(files []FileInfo, streams int) [][]FileInfo {
 		start = end
 	}
 
-	return result
+	return result, nil
 }
