@@ -21,7 +21,6 @@ func (s *BackupStream) handleResponse(stream pb.BackupService_ProcessBackupStrea
 			logger.Error("Error sending response", "error", err)
 			return err
 		}
-
 	default:
 		logger.Error("Received unknown message type", "message_type", r)
 	}

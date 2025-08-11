@@ -55,7 +55,7 @@ func processStream(ctx context.Context, client pb.BackupServiceClient, fileList 
 			return fmt.Errorf("stream ID mismatch: expected %d, received %d", streamID, response.StreamId)
 		}
 		// Handle response
-		if err := handleResponse(streamCtx, stream, response); err != nil {
+		if err := handleResponse(streamCtx, response); err != nil {
 			return fmt.Errorf("failed to handle response: %w", err)
 		}
 	}
