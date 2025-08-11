@@ -17,9 +17,6 @@ var handlerMap = map[string]ResponseHandlerFunc{
 }
 
 func handleResponse(ctx context.Context, response *pb.FileResponse) error {
-	if response.StreamId != ctx.Value("streamId").(int32) {
-		return fmt.Errorf("stream ID mismatch: expected %d, received %d", ctx.Value("streamId").(int32), response.StreamId)
-	}
 	responseType := fmt.Sprintf("%T", response.ResponseType)
 	handler, ok := handlerMap[responseType]
 	if !ok {

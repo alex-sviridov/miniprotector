@@ -43,7 +43,7 @@ func processStream(ctx context.Context, client pb.BackupServiceClient, fileList 
 
 	for {
 		response, err := stream.Recv()
-		// with responce details
+		// with response details
 		if err == io.EOF {
 			logger.Debug("Server stopped responding")
 			break
@@ -51,14 +51,24 @@ func processStream(ctx context.Context, client pb.BackupServiceClient, fileList 
 		if err != nil {
 			return fmt.Errorf("failed to receive response: %w", err)
 		}
-		if response.StreamId != streamID {
-			return fmt.Errorf("stream ID mismatch: expected %d, received %d", streamID, response.StreamId)
+		if err := validateStreamID(streamCtx, response); err != nil {
+			return err
 		}
-		// Handle response
 		if err := handleResponse(streamCtx, response); err != nil {
 			return fmt.Errorf("failed to handle response: %w", err)
 		}
 	}
 
 	return nil
+}
+
+func validateStreamID(ctx context.Context, response *pb.FileResponse) error {
+    expectedID, ok := ctx.Value("streamId").(int32)
+    if !ok {
+        return fmt.Errorf("streamId not found in context")
+    }
+    if response.StreamId != expectedID {
+        return fmt.Errorf("stream ID mismatch: expected %d, received %d", expectedID, response.StreamId)
+    }
+    return nil
 }

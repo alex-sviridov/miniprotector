@@ -16,16 +16,14 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
-type BackupStream struct {
+type BackupServer struct {
 	pb.UnimplementedBackupServiceServer
-	storagePath    string
-	config         *config.Config
-	writer         *wfs.Writer
-	logger         *slog.Logger
-	filesProcessed int
+	config *config.Config
+	writer *wfs.Writer
+	logger *slog.Logger
 }
 
-func NewBackupStream(ctx context.Context, storagePath string) (*BackupStream, error) {
+func NewBackupServer(ctx context.Context, storagePath string) (*BackupServer, error) {
 	logger := logging.GetLoggerFromContext(ctx)
 	conf := config.GetConfigFromContext(ctx)
 
@@ -33,17 +31,15 @@ func NewBackupStream(ctx context.Context, storagePath string) (*BackupStream, er
 	if err != nil {
 		return nil, err
 	}
-	return &BackupStream{
-		logger:         logger,
-		config:         conf,
-		storagePath:    storagePath,
-		writer:         writer,
-		filesProcessed: 0,
+	return &BackupServer{
+		logger: logger,
+		config: conf,
+		writer: writer,
 	}, nil
 }
 
 // ProcessBackupStream handles the streaming connection
-func (s *BackupStream) ProcessBackupStream(stream pb.BackupService_ProcessBackupStreamServer) error {
+func (server *BackupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackupStreamServer) error {
 	streamCtx := stream.Context()
 
 	// Get client connection info ONCE at start
@@ -57,27 +53,28 @@ func (s *BackupStream) ProcessBackupStream(stream pb.BackupService_ProcessBackup
 			clientAuthType = peer.AuthInfo.AuthType()
 		}
 	}
-	s.logger = s.logger.With(
+	streamLogger := server.logger.With(
 		slog.String("client_addr", clientAddr),
 		slog.Any("grpc_auth_type", clientAuthType),
 	)
+	streamCtx = context.WithValue(streamCtx, logging.ContextKey, streamLogger)
+	streamCtx = context.WithValue(streamCtx, config.ContextKey, server.config)
 
-	s.logger.Info("New backup stream connected")
+	streamLogger.Info("New backup stream connected")
 
 	for {
 		// Receive a message from client
-		req, err := stream.Recv()
+		request, err := stream.Recv()
 		if err == io.EOF {
-			s.logger.Info("Client stopped sending",
-				"total_files", s.filesProcessed)
+			streamLogger.Info("Client stopped sending")
 			return nil
 		}
 		if err != nil {
-			s.logger.Error("Error receiving", "error", err)
+			streamLogger.Error("Error receiving", "error", err)
 			return err
 		}
 
-		if err := s.handleResponse(stream, req); err != nil {
+		if err := handleRequest(streamCtx, stream, server.writer, request); err != nil {
 			return err
 		}
 	}
@@ -98,14 +95,20 @@ func startServer(ctx context.Context, port int, storagePath string) error {
 
 	// Create and configure gRPC server and Backup server
 	grpcServer := grpc.NewServer()
-	backupStream, err := NewBackupStream(ctx, storagePath)
+	backupServer, err := NewBackupServer(ctx, storagePath)
 	if err != nil {
 		return err
 	}
-	defer backupStream.writer.Close()
-	pb.RegisterBackupServiceServer(grpcServer, backupStream)
+	defer backupServer.writer.Close()
+	pb.RegisterBackupServiceServer(grpcServer, backupServer)
 
 	logger.Info("Server ready, accepting connections")
+
+	go func() {
+		<-ctx.Done()
+		logger.Info("Shutting down server...")
+		grpcServer.GracefulStop()
+	}()
 
 	return grpcServer.Serve(listener)
 }

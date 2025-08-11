@@ -1,47 +1,50 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
 	"github.com/alex-sviridov/miniprotector/common/files"
+	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/common/wfs"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 )
 
-type ResponseHandlerFunc func(*BackupStream, pb.BackupService_ProcessBackupStreamServer, *pb.FileRequest) error
+type RequestHandlerFunc func(context.Context, pb.BackupService_ProcessBackupStreamServer, *wfs.Writer, *pb.FileRequest) error
 
-var handlerMap = map[string]ResponseHandlerFunc{
-	fmt.Sprintf("%T", &pb.FileRequest_FileInfo{}): (*BackupStream).handleFileInfoRequest,
+var handlerMap = map[string]RequestHandlerFunc{
+	fmt.Sprintf("%T", &pb.FileRequest_FileInfo{}): handleFileInfoRequest,
 }
 
-func (stream *BackupStream) handleResponse(server pb.BackupService_ProcessBackupStreamServer, request *pb.FileRequest) error {
+func handleRequest(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer, writer *wfs.Writer, request *pb.FileRequest) error {
 	requestType := fmt.Sprintf("%T", request.RequestType)
 	handler, ok := handlerMap[requestType]
 	if !ok {
 		return fmt.Errorf("unknown request type: %s", requestType)
 	}
-	return handler(stream, server, request)
+	return handler(ctx, server, writer, request)
 }
 
-func (stream *BackupStream) handleFileInfoRequest(server pb.BackupService_ProcessBackupStreamServer, req *pb.FileRequest) error {
-
+func handleFileInfoRequest(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer, writer *wfs.Writer, req *pb.FileRequest) error {
 	fi := req.GetFileInfo()
 	if fi == nil {
 		return fmt.Errorf("FileRequest_FileInfo has empty FileInfo")
 	}
 	clientStreamID := req.StreamId
-	logger := stream.logger.With(slog.String("file_id", fi.FileId)).With(slog.Int("stream_id", int(clientStreamID)))
+	logger := logging.GetLoggerFromContext(ctx).
+		With(slog.String("file_id", fi.FileId)).
+		With(slog.Int("stream_id", int(clientStreamID)))
 
 	fileInfo, err := files.DecodeFileInfo(fi.Attributes)
 	if err != nil {
 		return err
 	}
 
-	stream.filesProcessed++
-	logger.Debug("Received filename", "file_number", stream.filesProcessed, "attributes", fileInfo.Print())
+	logger.Debug("Received filename", "attributes", fileInfo.Print())
 
-	fileExists, err := stream.writer.FileExists(fileInfo)
+	fileExists, err := writer.FileExists(fileInfo)
 	if err != nil {
 		return err
 	}
