@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/common/files"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/reader/filesystem"
 )
 
 type Writer struct {
@@ -45,10 +45,10 @@ func (w *Writer) Close() error {
 	return w.db.close()
 }
 
-func (w *Writer) FileExists(fileInfo *files.FileInfo) (bool, error) {
+func (w *Writer) FileExists(fileInfo *filesystem.FileInfo) (bool, error) {
 	return w.db.fileExists(fileInfo)
 }
 
-func (w *Writer) AddFile(fileInfo *files.FileInfo, checksum string) error {
+func (w *Writer) AddFile(fileInfo *filesystem.FileInfo, checksum string) error {
 	return w.db.addFile(fileInfo, checksum)
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/alex-sviridov/miniprotector/common/files"
+	"github.com/alex-sviridov/miniprotector/reader/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/common/wfs"
 
@@ -37,7 +37,7 @@ func handleFileInfoRequest(ctx context.Context, server pb.BackupService_ProcessB
 		With(slog.String("file_id", fi.FileId)).
 		With(slog.Int("stream_id", int(clientStreamID)))
 
-	fileInfo, err := files.DecodeFileInfo(fi.Attributes)
+	fileInfo, err := filesystem.DecodeFileInfo(fi.Attributes)
 	if err != nil {
 		return err
 	}

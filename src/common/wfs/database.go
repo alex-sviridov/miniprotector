@@ -10,19 +10,19 @@ import (
 	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/common/files"
+	"github.com/alex-sviridov/miniprotector/reader/filesystem"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // FileMetadata represents file information stored in the database
 // This extends your FileInfo with database-specific fields
 type FileMetadata struct {
-	ID                int64          `json:"id"`
-	FileInfo          files.FileInfo `json:"file_info"`
-	SourceHost        string         `json:"source_host"`
-	BackupTime        time.Time      `json:"backup_time"`
-	Checksum          string         `json:"checksum"`
-	MetadataUpdatedAt time.Time      `json:"metadata_updated_at"`
+	ID                int64               `json:"id"`
+	FileInfo          filesystem.FileInfo `json:"file_info"`
+	SourceHost        string              `json:"source_host"`
+	BackupTime        time.Time           `json:"backup_time"`
+	Checksum          string              `json:"checksum"`
+	MetadataUpdatedAt time.Time           `json:"metadata_updated_at"`
 }
 
 // fileDB provides SQLite operations for file metadata
@@ -105,7 +105,7 @@ func (fdb *fileDB) initSchema() error {
 }
 
 // AddFile inserts a new file record into the database
-func (fdb *fileDB) addFile(fileInfo *files.FileInfo, checksum string) error {
+func (fdb *fileDB) addFile(fileInfo *filesystem.FileInfo, checksum string) error {
 	// Serialize ACL to JSON
 	aclJSON, err := json.Marshal(fileInfo.ACL)
 	if err != nil {
@@ -138,7 +138,7 @@ func (fdb *fileDB) addFile(fileInfo *files.FileInfo, checksum string) error {
 }
 
 // FileExists checks if a file with the given path exists in the database for a specific host
-func (fdb *fileDB) fileExists(fileinfo *files.FileInfo) (bool, error) {
+func (fdb *fileDB) fileExists(fileinfo *filesystem.FileInfo) (bool, error) {
 	query := `SELECT COUNT(*) FROM files WHERE source_host = ? AND path = ? AND modtime = ?`
 
 	var count int

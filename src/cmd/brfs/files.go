@@ -6,16 +6,16 @@ import (
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/common/files"
+	"github.com/alex-sviridov/miniprotector/reader/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
 
-func sendFilesMetadata(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, fileList []files.FileInfo) error {
+func sendFilesMetadata(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, fileList []filesystem.FileInfo) error {
 	conf := config.GetConfigFromContext(ctx)
 	logger := logging.GetLoggerFromContext(ctx)
 	streamId := ctx.Value("streamId").(int32)
 	for _, file := range fileList {
-		attr, err := files.Encode(&file)
+		attr, err := filesystem.Encode(&file)
 		if err != nil {
 			logger.Error("Failed to encode file info", "filename", file.Path, "error", err)
 			if conf.StopStreamOnFileError {

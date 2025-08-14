@@ -8,7 +8,7 @@ import (
 
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/common/files"
+	"github.com/alex-sviridov/miniprotector/reader/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 
 	"sync"
@@ -72,7 +72,7 @@ func main() {
 	)
 
 	// Get files list
-	filesList, err := files.ListRecursive(arguments.SourceFolder)
+	filesList, err := filesystem.ListRecursive(arguments.SourceFolder)
 	if err != nil {
 		logger.Error("Error traversing the directory", "error", err)
 		return
@@ -84,7 +84,7 @@ func main() {
 	}
 
 	// Split into streams
-	streams, err := files.SplitByStreams(filesList, arguments.Streams)
+	streams, err := filesystem.SplitByStreams(filesList, arguments.Streams)
 	if err != nil {
 		logger.Error("Error splitting by streams", "error", err)
 		return
@@ -110,7 +110,7 @@ func main() {
 	var wg sync.WaitGroup
 	for i, stream := range streams {
 		wg.Add(1)
-		go func(streamIndex int, streamData []files.FileInfo) {
+		go func(streamIndex int, streamData []filesystem.FileInfo) {
 			defer wg.Done()
 			processStream(ctx, client, streamData, int32(streamIndex+1), resultsCh)
 		}(i, stream)

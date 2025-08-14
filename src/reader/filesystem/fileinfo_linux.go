@@ -1,6 +1,6 @@
 //go:build linux
 
-package files
+package filesystem
 
 import (
 	"fmt"

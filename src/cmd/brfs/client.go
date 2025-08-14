@@ -9,12 +9,12 @@ import (
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/common/files"
+	"github.com/alex-sviridov/miniprotector/reader/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
 
 // ProcessStream is the main entry point for processing files
-func processStream(ctx context.Context, client pb.BackupServiceClient, fileList []files.FileInfo, streamID int32, ch chan<- BackupResult) error {
+func processStream(ctx context.Context, client pb.BackupServiceClient, fileList []filesystem.FileInfo, streamID int32, ch chan<- BackupResult) error {
 
 	logger := logging.GetLoggerFromContext(ctx).
 		With(slog.Int("streamId", int(streamID)))
