@@ -62,6 +62,8 @@ func (fi FileInfo) Print() string {
 	)
 }
 
+// GetId returns unique id of file backup object host:path:mtime
+// and this ID will be used to perform file-level dedup
 func (fi FileInfo) GetId() string {
 	return fmt.Sprintf("%s:%s:%d", fi.Host, fi.Path, fi.ModTime.Unix())
 }

@@ -2,17 +2,17 @@ package filesystem
 
 
 import (
-	"github.com/alex-sviridov/miniprotector/reader/filesystem"
+	"github.com/alex-sviridov/miniprotector/workload"
 )
 
-func (s *Store) FileDataExists(fi filesystem.FileInfo) (bool, error) {
+func (s *Store) FileDataExists(object workload.BackupObject) (bool, error) {
 	return false, nil
 }
 
-func (s *Store) GetFile(fi filesystem.FileInfo) ([]byte, error) {
+func (s *Store) GetFile(object workload.BackupObject) ([]byte, error) {
 	return nil, nil
 }
 
-func (s *Store) CheckFileConsistency(fi filesystem.FileInfo) error {
+func (s *Store) CheckFileConsistency(object workload.BackupObject) error {
 	return nil
 }

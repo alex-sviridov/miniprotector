@@ -6,7 +6,7 @@ import (
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/reader/filesystem"
+	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
 

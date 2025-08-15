@@ -2,19 +2,18 @@ package filesystem
 
 
 import (
-	"github.com/alex-sviridov/miniprotector/reader/filesystem"
-	"github.com/alex-sviridov/miniprotector/storage"
+	"github.com/alex-sviridov/miniprotector/workload"
 )
 
-func (s *Store) ChunkExists(ci storage.ChunkInfo) (bool, error) {
+func (s *Store) ChunkExists(hash []byte) (bool, error) {
 	return false, nil
 }
 
-func (s *Store) StoreChunk(ci storage.ChunkInfo, data []byte) error {
+func (s *Store) StoreChunk(chunk workload.Chunk) error {
 	return nil
 }
 
-func (s *Store) LinkChunk(fi filesystem.FileInfo, ci storage.ChunkInfo) error {
+func (s *Store) LinkChunk(object workload.BackupObject, hash []byte) error {
 	return nil
 }
     

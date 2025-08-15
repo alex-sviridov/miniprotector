@@ -8,7 +8,7 @@ import (
 
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/reader/filesystem"
+	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 
 	"sync"

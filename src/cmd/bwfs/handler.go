@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/alex-sviridov/miniprotector/reader/filesystem"
+	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/common/wfs"
 

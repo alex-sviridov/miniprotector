@@ -9,7 +9,7 @@ import (
 
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/logging"
-	"github.com/alex-sviridov/miniprotector/reader/filesystem"
+	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
 
 type Writer struct {

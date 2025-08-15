@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/reader/filesystem"
+	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 	_ "github.com/mattn/go-sqlite3"
 )
 
