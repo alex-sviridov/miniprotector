@@ -4,16 +4,17 @@ import (
 	"iter"
 )
 
+// BackupObject represents an atom of backup workload (like a single file)
 type BackupObject interface {
 	GetId() string
+	GetSize() int64
 	Print() string
 	ChunkIterator() iter.Seq2[*Chunk, error]
+	match(string) bool
 }
 
-type Chunk struct {
-	Hash     []byte // blake3 hash for dedup
-	Checksum []byte // crc32 checksum for consistency check
-	Position int64  // file offset
-	Data     []byte // chunk data
-	EOF      bool   // end of file flag when chunk is the last one
+// BackupObjectsList represents a filterable array of Backup Objects
+type BackupObjectsList interface {
+	WithIncludes(patterns ...string) BackupObjectsList
+	WithExcludes(patterns ...string) BackupObjectsList
 }

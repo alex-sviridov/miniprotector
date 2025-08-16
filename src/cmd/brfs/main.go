@@ -8,8 +8,8 @@ import (
 
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 
 	"sync"
 
@@ -72,7 +72,7 @@ func main() {
 	)
 
 	// Get files list
-	filesList, err := filesystem.ListRecursive(arguments.SourceFolder)
+	filesList, err := filesystem.Discover(arguments.SourceFolder)
 	if err != nil {
 		logger.Error("Error traversing the directory", "error", err)
 		return
@@ -139,10 +139,12 @@ func main() {
 	}
 
 	state := "failed"
-	if failedCount == 0 { state = "success" }
-	logger.Info("Backup finished", 
+	if failedCount == 0 {
+		state = "success"
+	}
+	logger.Info("Backup finished",
 		"state", state,
-		"count.success", successCount, 
+		"count.success", successCount,
 		"count.failed", failedCount,
 	)
 }

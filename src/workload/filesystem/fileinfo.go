@@ -1,10 +1,12 @@
 package filesystem
 
 import (
-	"fmt"
 	"io/fs"
 	"time"
+	"fmt"
+	"path/filepath"
 )
+
 
 // FileInfo holds essential file attributes for backup operations across platforms
 // To check file type, use: fileInfo.Mode.Type() == fs.ModeDir (directory), fs.ModeSymlink (symlink), etc.
@@ -48,6 +50,17 @@ func (fi FileInfo) GetType() rune {
 	return '?' // Unknown file type
 }
 
+// GetId returns unique id of file backup object host:path:mtime
+// and this ID will be used to perform file-level dedup
+func (fi FileInfo) GetId() string {
+	return fmt.Sprintf("%s:%s:%d", fi.Host, fi.Path, fi.ModTime.Unix())
+}
+
+// GetSize returns object size in bytes
+func (fi FileInfo) GetSize() int64 {
+	return fi.Size
+}
+
 // Print returns a string containing basic file attributes in unix-like style
 // Format: drwxr-xr-x uid gid size mtime name
 func (fi FileInfo) Print() string {
@@ -62,8 +75,7 @@ func (fi FileInfo) Print() string {
 	)
 }
 
-// GetId returns unique id of file backup object host:path:mtime
-// and this ID will be used to perform file-level dedup
-func (fi FileInfo) GetId() string {
-	return fmt.Sprintf("%s:%s:%d", fi.Host, fi.Path, fi.ModTime.Unix())
+func (fi FileInfo) match(pattern string) bool {
+	matched, _ := filepath.Match(pattern, fi.Path)
+	return matched
 }
