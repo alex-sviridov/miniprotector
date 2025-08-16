@@ -6,7 +6,7 @@ import (
 )
 
 // Encode serializes FileInfo to an efficient gob-encoded string
-func Encode(fileInfo *FileInfo) ([]byte, error) {
+func (fileInfo *FileInfo) Encode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(fileInfo); err != nil {
