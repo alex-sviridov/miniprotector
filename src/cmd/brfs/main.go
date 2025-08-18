@@ -11,17 +11,13 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 
-	"sync"
+	"os/signal"
+	"syscall"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
-type BackupResult struct {
-	Filename string
-	Success  bool
-}
 
 // main goes
 func main() {
@@ -34,7 +30,9 @@ func main() {
 	)
 
 	// Put context variables
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx = context.WithValue(ctx, "appName", appName)
 	ctx = context.WithValue(ctx, "jobId", jobId)
 
 	// Get configuration
@@ -83,14 +81,6 @@ func main() {
 		filesBackupState[file.Path] = false
 	}
 
-	// Split into streams
-	streams, err := filesystem.SplitByStreams(filesList, arguments.Streams)
-	if err != nil {
-		logger.Error("Error splitting by streams", "error", err)
-		return
-	}
-	logger.Info("Splitted by streams", "streamsCount", arguments.Streams, "filesCount", len(streams[0]))
-
 	// Connect to server
 	conn, err := grpc.NewClient(fmt.Sprintf("%s:%d", arguments.WriterHost, arguments.WriterPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -104,22 +94,7 @@ func main() {
 
 	logger.Info("Connected to server")
 
-	// Process files concurrently using multiple streams
-	resultsCh := make(chan BackupResult)
-
-	var wg sync.WaitGroup
-	for i, stream := range streams {
-		wg.Add(1)
-		go func(streamIndex int, streamData []filesystem.FileInfo) {
-			defer wg.Done()
-			processStream(ctx, client, streamData, int32(streamIndex+1), resultsCh)
-		}(i, stream)
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
+	resultsCh := processFilesList(ctx, client, filesList, arguments.Streams)
 
 	for result := range resultsCh {
 		// Process each result as it arrives

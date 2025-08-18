@@ -4,52 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
-	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
 
-// ProcessStream is the main entry point for processing files
-func processStream(ctx context.Context, client pb.BackupServiceClient, fileList []filesystem.FileInfo, streamID int32, ch chan<- BackupResult) error {
-
-	logger := logging.GetLoggerFromContext(ctx).
-		With(slog.Int("streamId", int(streamID)))
-
-	conf := config.GetConfigFromContext(ctx)
-
-	// Create stream with configured timeout
-	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
-	streamCtx, cancel := context.WithTimeout(ctx, timeout)
-	streamCtx = context.WithValue(streamCtx, logging.ContextKey, logger)
-	streamCtx = context.WithValue(streamCtx, "streamId", streamID)
-	defer cancel()
-
-	stream, err := client.ProcessBackupStream(streamCtx)
-	if err != nil {
-		return fmt.Errorf("failed to create stream: %w", err)
-	}
-
-	// Process each file one by one
-	for _, file := range fileList {
-		if err := processOneFile(streamCtx, stream, file, ch); err != nil {
-			logger.Error("Failed to process file", "file", file.Path, "error", err)
-			// Continue with next file instead of failing entire stream
-		}
-	}
-
-	// Close send after all files processed
-	if err := stream.CloseSend(); err != nil {
-		return fmt.Errorf("failed to close send: %w", err)
-	}
-
-	return nil
-}
-
 // processOneFile handles the complete lifecycle of one file
-func processOneFile(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo, ch chan<- BackupResult) error {
+func processOneFile(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
 	logger := logging.GetLoggerFromContext(ctx).With(slog.String("file", file.Path))
 
 	// Send file info
@@ -66,23 +28,18 @@ func processOneFile(ctx context.Context, stream pb.BackupService_ProcessBackupSt
 	// Process the response
 	logger.Debug("File needed response", "needed", response.Needed)
 
-	ch <- BackupResult{
-		Filename: file.Path,
-		Success:  response.Needed,
-	}
-
 	return nil
 }
 
 // sendSingleFileInfo sends metadata for one file
 func sendSingleFileInfo(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
-	streamID := ctx.Value("streamId").(int32)
+	streamId := ctx.Value("streamId").(int32)
 	encoded, err := file.Encode()
 	if err != nil {
 		return fmt.Errorf("failed to encode file info: %w", err)
 	}
 	request := &pb.FileRequest{
-		StreamId: streamID,
+		StreamId: streamId,
 		RequestType: &pb.FileRequest_FileInfo{
 			FileInfo: &pb.FileInfo{
 				FileId:     file.GetId(),
