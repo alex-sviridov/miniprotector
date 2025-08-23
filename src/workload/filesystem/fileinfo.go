@@ -1,12 +1,13 @@
 package filesystem
 
 import (
-	"io/fs"
-	"time"
 	"fmt"
+	"io/fs"
 	"path/filepath"
-)
+	"time"
 
+	"github.com/gofrs/flock"
+)
 
 // FileInfo holds essential file attributes for backup operations across platforms
 // To check file type, use: fileInfo.Mode.Type() == fs.ModeDir (directory), fs.ModeSymlink (symlink), etc.
@@ -78,4 +79,26 @@ func (fi FileInfo) Print() string {
 func (fi FileInfo) match(pattern string) bool {
 	matched, _ := filepath.Match(pattern, fi.Path)
 	return matched
+}
+
+func (fi FileInfo) Lock(timeout int) (*flock.Flock, error) {
+	fileLock := flock.New(fi.Path)
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := fileLock.Lock()
+		errCh <- err
+	}()
+
+	fmt.Printf("Locking file: %s, %d seconds\n", fi.Path, timeout)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return nil, err
+		}
+		return fileLock, nil
+	case <-time.After(time.Duration(timeout) * time.Second):
+		return nil, fmt.Errorf("timeout acquiring lock after %d seconds", timeout)
+	}
 }

@@ -1,38 +1,25 @@
 package filesystem
 
 import (
-	"fmt"
 	"hash/crc32"
 	"io"
 	"iter"
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/workload"
-	"github.com/gofrs/flock"
 	"lukechampine.com/blake3"
 )
 
 const ChunkSize = 64 * 1024 // 64KB
 
-// ChunkIterator returns an iterator that reads the file in 64KB chunks, yielding each chunk
-// with its binary BLAKE3 hash and CRC32 checksum. The file is locked during reading to prevent
-// modifications. The iterator yields (chunk, nil) for successful reads and (nil, error) for
-// failures including file locking, opening, or reading errors. The EOF field is set to true
-// when the current chunk is the last one in the file.
+// ChunkIterator returns an iterator that reads the file in 64KB chunks,
+// yielding each chunk with its binary BLAKE3 hash and CRC32 checksum.
+// The iterator yields (chunk, nil) for successful reads and (nil, error) for
+// failures including file opening or reading errors.
+// The EOF field is set to true when the current chunk is the last one in the file.
+// File is not locked! Lock the file before chunking.
 func (fi FileInfo) ChunkIterator() iter.Seq2[*workload.Chunk, error] {
 	return func(yield func(*workload.Chunk, error) bool) {
-		// Lock the file
-		fileLock := flock.New(fi.Path)
-		locked, err := fileLock.TryLock()
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		if !locked {
-			yield(nil, fmt.Errorf("could not lock file %s", fi.Path))
-			return
-		}
-		defer fileLock.Unlock()
 
 		file, err := os.Open(fi.Path)
 		if err != nil {

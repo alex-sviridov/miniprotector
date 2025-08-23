@@ -14,7 +14,7 @@ import (
 )
 
 type BackupResult struct {
-	StreamID int
+	StreamID int32
 	Filename string
 	Success  bool
 	Error    error
@@ -38,7 +38,7 @@ func processFilesList(ctx context.Context, client pb.BackupServiceClient, fileLi
 
 	for i := 0; i < streams; i++ {
 		wg.Add(1)
-		go stream(ctx, client, i, workChan, resultChan, &wg)
+		go stream(ctx, client, int32(i), workChan, resultChan, &wg)
 	}
 	go func() {
 		// 1. Send all work
@@ -89,7 +89,6 @@ func stream(ctx context.Context, client pb.BackupServiceClient, streamID int32, 
 	}
 
 	for f := range workChan {
-		fmt.Printf("Worker %d processing: %s\n", streamID, f)
 		err := processOneFile(streamCtx, stream, f)
 		if err != nil {
 			logger.Error("Failed to process file", "file", f.Path, "error", err)

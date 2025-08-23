@@ -6,21 +6,25 @@ import (
 	"log/slog"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
 
-// processOneFile handles the complete lifecycle of one file
+// processOneFile handles the complete backup lifecycle for one file
 func processOneFile(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
 	logger := logging.GetLoggerFromContext(ctx).With(slog.String("file", file.Path))
+	conf := config.GetConfigFromContext(ctx)
 
-	// Send file info
-	if err := sendSingleFileInfo(ctx, stream, file); err != nil {
-		return fmt.Errorf("failed to send file info: %w", err)
+	// Lock file
+	fileLock, err := file.Lock(conf.FileLockTimeoutSec)
+	if err != nil {
+		return fmt.Errorf("failed to lock file: %w", err)
 	}
+	defer fileLock.Unlock()
 
-	// Wait for server response
-	response, err := waitForFileNeededResponse(ctx, stream, file.GetId())
+	// Send file info and get server response
+	response, err := sendFileMetadata(ctx, stream, file)
 	if err != nil {
 		return fmt.Errorf("failed to get file needed response: %w", err)
 	}
@@ -28,15 +32,25 @@ func processOneFile(ctx context.Context, stream pb.BackupService_ProcessBackupSt
 	// Process the response
 	logger.Debug("File needed response", "needed", response.Needed)
 
+	if response.Needed {
+		for chunk, err := range file.ChunkIterator() {
+			if err != nil {
+				return fmt.Errorf("failed to read chunk: %w", err)
+			}
+			//SEND THE CHUNK
+			logger.Debug("Chunk", "hash", chunk.Hash, "position", chunk.Position)
+		}
+	}
+
 	return nil
 }
 
 // sendSingleFileInfo sends metadata for one file
-func sendSingleFileInfo(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
+func sendFileMetadata(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) (*pb.FileNeeded, error) {
 	streamId := ctx.Value("streamId").(int32)
 	encoded, err := file.Encode()
 	if err != nil {
-		return fmt.Errorf("failed to encode file info: %w", err)
+		return nil, fmt.Errorf("failed to encode file info: %w", err)
 	}
 	request := &pb.FileRequest{
 		StreamId: streamId,
@@ -49,14 +63,9 @@ func sendSingleFileInfo(ctx context.Context, stream pb.BackupService_ProcessBack
 	}
 
 	if err := stream.Send(request); err != nil {
-		return fmt.Errorf("failed to send file info: %w", err)
+		return nil, fmt.Errorf("failed to send file info: %w", err)
 	}
 
-	return nil
-}
-
-// waitForFileNeededResponse waits for server's FileNeeded response for specific file
-func waitForFileNeededResponse(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, expectedFileID string) (*pb.FileNeeded, error) {
 	for {
 		response, err := stream.Recv()
 		if err != nil {
@@ -70,13 +79,13 @@ func waitForFileNeededResponse(ctx context.Context, stream pb.BackupService_Proc
 
 		// Check if it's the FileNeeded response we're waiting for
 		if fileNeeded := response.GetFileNeeded(); fileNeeded != nil {
-			if fileNeeded.FileId == expectedFileID {
+			if fileNeeded.FileId == file.GetId() {
 				return fileNeeded, nil
 			}
 			// Log unexpected file ID but continue waiting
 			logger := logging.GetLoggerFromContext(ctx)
 			logger.Warn("Received FileNeeded for unexpected file",
-				"expected", expectedFileID, "received", fileNeeded.FileId)
+				"expected", file.GetId(), "received", fileNeeded.FileId)
 		}
 
 		// Continue receiving if it's not what we're waiting for

@@ -16,6 +16,7 @@ type Config struct {
 	LogFolder                string
 	ClientHashQueryBatchSize int
 	ConnectionTimeOutSec     int
+	FileLockTimeoutSec       int
 	StopStreamOnFileError    bool
 }
 
@@ -95,6 +96,14 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.ConnectionTimeOutSec = number
 			foundFields["ConnectionTimeOutSec"] = true
+		case "FileLockTimeoutSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid FileLockTimeoutSec value at line %d: %s", lineNum, value)
+			}
+			config.FileLockTimeoutSec = number
+			foundFields["FileLockTimeoutSec"] = true
+
 		case "StopStreamOnFileError":
 			config.StopStreamOnFileError = value == "true"
 			foundFields["StopStreamOnFileError"] = true
