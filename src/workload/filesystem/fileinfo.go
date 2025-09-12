@@ -6,27 +6,27 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gofrs/flock"
+	"github.com/alex-sviridov/miniprotector/workload"
 )
 
 // FileInfo holds essential file attributes for backup operations across platforms
 // To check file type, use: fileInfo.Mode.Type() == fs.ModeDir (directory), fs.ModeSymlink (symlink), etc.
 // Or use fileInfo.GetType() for a single character representation
 type FileInfo struct {
-	Host          string
-	Path          string
-	Name          string
-	Size          int64
-	Mode          fs.FileMode // Full mode (type + permissions)
-	Owner         uint32      // Unix UID, Windows SID hash
-	Group         uint32      // Unix GID, Windows primary group SID hash
-	ModTime       time.Time
-	AccessTime    time.Time
-	CTime         time.Time // Unix: change time, Windows: creation time
-	SymlinkTarget string
+	host          string
+	path          string
+	name          string
+	size          int64
+	mode          fs.FileMode // Full mode (type + permissions)
+	owner         uint32      // Unix UID, Windows SID hash
+	group         uint32      // Unix GID, Windows primary group SID hash
+	modTime       time.Time
+	accessTime    time.Time
+	cTime         time.Time // Unix: change time, Windows: creation time
+	symlinkTarget string
 	// Platform-specific fields
-	Attributes []byte // Platform-specific attributes (Windows file attributes, Unix extended attributes, etc.)
-	ACL        []byte // Platform-specific ACL data (Unix extended ACLs or Windows Security Descriptor)
+	attributes []byte // Platform-specific attributes (Windows file attributes, Unix extended attributes, etc.)
+	acl        []byte // Platform-specific ACL data (Unix extended ACLs or Windows Security Descriptor)
 }
 
 // File type mapping from fs.FileMode to single character representation
@@ -45,60 +45,65 @@ var fileTypeMap = map[fs.FileMode]rune{
 // 'd' = directory, 'f' = regular file, 'l' = symlink, 'p' = named pipe,
 // 'c' = character device, 'b' = block device, 's' = socket, '?' = unknown
 func (fi FileInfo) GetType() rune {
-	if typeRune, exists := fileTypeMap[fi.Mode.Type()]; exists {
+	if typeRune, exists := fileTypeMap[fi.mode.Type()]; exists {
 		return typeRune
 	}
 	return '?' // Unknown file type
 }
 
-// GetId returns unique id of file backup object host:path:mtime
+// GetId returns unique id of file backup object fs://host:type:path:mtime
 // and this ID will be used to perform file-level dedup
-func (fi FileInfo) GetId() string {
-	return fmt.Sprintf("%s:%s:%d", fi.Host, fi.Path, fi.ModTime.Unix())
+func (fi FileInfo) ID() string {
+	return fmt.Sprintf("fs://%s:%c:%s:%d", fi.host, fi.GetType(), fi.path, fi.modTime.Unix())
+}
+
+func (fi FileInfo) MetadataBlob() []byte {
+	blob, err := fi.Encode()
+	if err != nil {
+		return nil
+	}
+	return blob
 }
 
 // GetSize returns object size in bytes
-func (fi FileInfo) GetSize() int64 {
-	return fi.Size
+func (fi FileInfo) Size() int64 {
+	return fi.size
 }
 
-// Print returns a string containing basic file attributes in unix-like style
+// GetSource returns source hostname
+func (fi FileInfo) Source() string {
+	return fi.host
+}
+
+// GetMtime returns data modification time
+func (fi FileInfo) Mtime() int64 {
+	return fi.modTime.Unix()
+}
+
+// GetCtime returns metadata change time
+func (fi FileInfo) Ctime() int64 {
+	return fi.cTime.Unix()
+}
+
+// String returns a string containing basic file attributes in unix-like style
 // Format: drwxr-xr-x uid gid size mtime name
-func (fi FileInfo) Print() string {
+func (fi FileInfo) String() string {
 	return fmt.Sprintf("%c%s %d %d %d %s %s",
 		fi.GetType(),
-		fi.Mode.String(),
-		fi.Owner,
-		fi.Group,
-		fi.Size,
-		fi.ModTime.Format("Jan 02 15:04"),
-		fi.Name,
+		fi.mode.String(),
+		fi.owner,
+		fi.group,
+		fi.size,
+		fi.modTime.Format("Jan 02 15:04"),
+		fi.name,
 	)
 }
 
 func (fi FileInfo) match(pattern string) bool {
-	matched, _ := filepath.Match(pattern, fi.Path)
+	matched, _ := filepath.Match(pattern, fi.path)
 	return matched
 }
 
-func (fi FileInfo) Lock(timeout int) (*flock.Flock, error) {
-	fileLock := flock.New(fi.Path)
 
-	errCh := make(chan error, 1)
-	go func() {
-		err := fileLock.Lock()
-		errCh <- err
-	}()
-
-	fmt.Printf("Locking file: %s, %d seconds\n", fi.Path, timeout)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return nil, err
-		}
-		return fileLock, nil
-	case <-time.After(time.Duration(timeout) * time.Second):
-		return nil, fmt.Errorf("timeout acquiring lock after %d seconds", timeout)
-	}
-}
+// Ensure FileInfo implements BackupObject interface
+var _ workload.BackupObject = (*FileInfo)(nil)

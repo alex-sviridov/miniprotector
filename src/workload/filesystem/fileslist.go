@@ -26,7 +26,7 @@ func Discover(path string) (FilesList, error) {
 		}
 
 		fileInfo, err := getFileInfo(path)
-		fileInfo.Host = hostname
+		fileInfo.host = hostname
 		if err != nil {
 			return fmt.Errorf("failed to get file info %s: %w", path, err)
 		}

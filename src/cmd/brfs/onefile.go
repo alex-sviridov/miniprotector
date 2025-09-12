@@ -1,104 +1,199 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
+	"time"
+
+	"github.com/zeebo/blake3"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/workload"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
 
 // processOneFile handles the complete backup lifecycle for one file
-func processOneFile(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
-	logger := logging.GetLoggerFromContext(ctx).With(slog.String("file", file.Path))
+func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
+
 	conf := config.GetConfigFromContext(ctx)
+	logger.Debug("Started file processing")
 
 	// Lock file
-	fileLock, err := file.Lock(conf.FileLockTimeoutSec)
+	lockTimeout := time.Duration(conf.FileLockTimeoutSec) * time.Second
+	fileLock, err := file.Lock(lockTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to lock file: %w", err)
 	}
 	defer fileLock.Unlock()
 
 	// Send file info and get server response
-	response, err := sendFileMetadata(ctx, stream, file)
+	fileResponse, err := sendFileMetadata(ctx, logger, stream, file)
 	if err != nil {
 		return fmt.Errorf("failed to get file needed response: %w", err)
 	}
+	logger.Debug("Got fileResponse", "is_needed", fileResponse.Needed)
 
-	// Process the response
-	logger.Debug("File needed response", "needed", response.Needed)
+	if file.Size() == 0 || file.GetType() != 'f' {
+		logger.Debug("Will not send file", "file_size", file.Size(), "file_type", file.GetType())
+		fileResponse.Needed = false
+	}
 
-	if response.Needed {
+	var fileHash []byte
+	if fileResponse.Needed {
+		incrementalHasher := blake3.New()
 		for chunk, err := range file.ChunkIterator() {
 			if err != nil {
 				return fmt.Errorf("failed to read chunk: %w", err)
 			}
-			//SEND THE CHUNK
-			logger.Debug("Chunk", "hash", chunk.Hash, "position", chunk.Position)
+			incrementalHasher.Write(chunk.Hash())
+			chunkResponse, err := sendChunkMetadata(ctx, logger, stream, chunk)
+			if err != nil {
+				return fmt.Errorf("failed to get chunk needed response: %w", err)
+			}
+			logger.Debug("Chunk", "chunk_hash", hex.EncodeToString(chunk.Hash()), "needed", chunkResponse.Needed)
+			if chunkResponse.Needed {
+				// TODO: Transmission retry
+				if err := sendChunkData(ctx, logger, stream, chunk); err != nil {
+					return fmt.Errorf("failed to send chunk data: %w", err)
+				}
+			}
 		}
+		fileHash = incrementalHasher.Sum(nil)
 	}
+
+	result, err := getFileStatus(ctx, logger, stream, file.ID())
+	if err != nil {
+		return fmt.Errorf("failed to get file status: %w", err)
+	}
+	if !bytes.Equal(result.Hash, fileHash) && len(fileHash) > 0 {
+		logger.Error("File transmitted",
+			"expected_hash", hex.EncodeToString(fileHash),
+			"received_hash", hex.EncodeToString(result.Hash))
+		return fmt.Errorf("Hash mismatch")
+	}
+	logger.Info("File transmitted", "file_hash", hex.EncodeToString(fileHash))
 
 	return nil
 }
 
-// sendSingleFileInfo sends metadata for one file
-func sendFileMetadata(ctx context.Context, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) (*pb.FileNeeded, error) {
-	streamId := ctx.Value("streamId").(int32)
-	encoded, err := file.Encode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode file info: %w", err)
-	}
+func sendChunkData(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, chunk workload.Chunk) error {
+	conf := config.GetConfigFromContext(ctx)
+	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
+
+	logger = logger.With(slog.String("chunk_hash", hex.EncodeToString(chunk.Hash())))
+
+	logger.Debug("Sending chunk data")
+
 	request := &pb.FileRequest{
-		StreamId: streamId,
-		RequestType: &pb.FileRequest_FileInfo{
-			FileInfo: &pb.FileInfo{
-				FileId:     file.GetId(),
-				Attributes: encoded,
+		RequestType: &pb.FileRequest_ChunkData{
+			ChunkData: &pb.ChunkData{
+				Hash:  chunk.Hash(),
+				Index: int64(chunk.Index()),
+				Data:  chunk.Data(),
+				Eof:   chunk.IsEOF(),
 			},
 		},
 	}
 
 	if err := stream.Send(request); err != nil {
+		return fmt.Errorf("failed to send chunk data: %w", err)
+	}
+
+	result, err := connection.WaitForResponse(ctx, logger, stream, connection.ChunkResult(chunk.Hash()), timeout)
+	if err != nil {
+		return err
+	}
+
+	chunkResult := result.(*pb.ChunkResult)
+	if !chunkResult.Success {
+		return fmt.Errorf("chunk transmission failed")
+	}
+
+	return nil
+}
+
+func getFileStatus(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, expectedFileId string) (*pb.FileProcessingResult, error) {
+	conf := config.GetConfigFromContext(ctx)
+	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
+
+	result, err := connection.WaitForResponse(ctx, logger, stream, connection.FileResult(expectedFileId), timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	fileResult := result.(*pb.FileProcessingResult)
+	if !fileResult.Success {
+		return nil, fmt.Errorf("file transmission failed")
+	}
+
+	return fileResult, nil
+}
+
+// sendFileMetadata sends metadata for one file
+func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) (*pb.FileNeeded, error) {
+	conf := config.GetConfigFromContext(ctx)
+	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
+
+	encoded, err := file.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode file info: %w", err)
+	}
+	logger.Debug("Sending file metadata", "file_info", fmt.Sprintf("%s", file))
+	request := &pb.FileRequest{
+		RequestType: &pb.FileRequest_FileInfo{
+			FileInfo: &pb.FileInfo{
+				FileId:     file.ID(),
+				Attributes: encoded,
+			},
+		},
+	}
+
+	if err := stream.Send(request); err != nil && err != io.EOF {
 		return nil, fmt.Errorf("failed to send file info: %w", err)
 	}
 
-	for {
-		response, err := stream.Recv()
-		if err != nil {
-			return nil, fmt.Errorf("failed to receive response: %w", err)
-		}
-
-		// Validate stream ID
-		if err := validateStreamID(ctx, response); err != nil {
-			return nil, err
-		}
-
-		// Check if it's the FileNeeded response we're waiting for
-		if fileNeeded := response.GetFileNeeded(); fileNeeded != nil {
-			if fileNeeded.FileId == file.GetId() {
-				return fileNeeded, nil
-			}
-			// Log unexpected file ID but continue waiting
-			logger := logging.GetLoggerFromContext(ctx)
-			logger.Warn("Received FileNeeded for unexpected file",
-				"expected", file.GetId(), "received", fileNeeded.FileId)
-		}
-
-		// Continue receiving if it's not what we're waiting for
+	result, err := connection.WaitForResponse(ctx, logger, stream, connection.FileNeeded(file.ID()), timeout)
+	if err != nil {
+		return nil, err
 	}
+
+	return result.(*pb.FileNeeded), nil
 }
 
-func validateStreamID(ctx context.Context, response *pb.FileResponse) error {
-	expectedID, ok := ctx.Value("streamId").(int32)
-	if !ok {
-		return fmt.Errorf("streamId not found in context")
+// sendChunkMetadata sends metadata for one chunk
+func sendChunkMetadata(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, chunk workload.Chunk) (*pb.ChunkNeeded, error) {
+	conf := config.GetConfigFromContext(ctx)
+	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
+
+	logger = logger.With(slog.String("chunk_hash", hex.EncodeToString(chunk.Hash())))
+
+	logger.Debug("Sending chunk metadata")
+
+	request := &pb.FileRequest{
+		RequestType: &pb.FileRequest_ChunkHash{
+			ChunkHash: &pb.ChunkHash{
+				Hash:  chunk.Hash(),
+				Index: int64(chunk.Index()),
+				Size:  int64(len(chunk.Data())),
+				Eof:   chunk.IsEOF(),
+			},
+		},
 	}
-	if response.StreamId != expectedID {
-		return fmt.Errorf("stream ID mismatch: expected %d, received %d", expectedID, response.StreamId)
+
+	if err := stream.Send(request); err != nil {
+		return nil, fmt.Errorf("failed to send chunk info: %w", err)
 	}
-	return nil
+
+	result, err := connection.WaitForResponse(ctx, logger, stream, connection.ChunkNeeded(chunk.Hash()), timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*pb.ChunkNeeded), nil
 }

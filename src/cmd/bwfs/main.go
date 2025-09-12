@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
 
@@ -37,21 +38,24 @@ func main() {
 	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
 
 	// Initialize logger
-	logger, logfile, _ := logging.NewLogger(ctx) // Never fails
-	defer func() {
-		if logfile != nil {
-			logfile.Close()
-		}
-	}()
-	ctx = context.WithValue(ctx, logging.ContextKey, logger)
+	logger, logfile := logging.NewLogger(ctx) // Never fails
+	defer logfile.Close()
 
 	logger.Info("Backup writer started",
 		"StoragePath", arguments.StoragePath,
 		"serverPort", arguments.Port,
 	)
 
-	// Start server
-	if err := startServer(ctx, arguments.Port, arguments.StoragePath); err != nil {
+	// Stat backup service server
+	backupServer, err := NewBackupServer(ctx, logger, arguments.StoragePath)
+	if err != nil {
+		logger.Error("Server initialization failed", "error", err)
+		os.Exit(1)
+	}
+	defer backupServer.store.Close()
+
+	// Start grpc server
+	if err := connection.StartServer(ctx, logger, arguments.Port, backupServer); err != nil {
 		logger.Error("Server failed", "error", err)
 		os.Exit(1)
 	}

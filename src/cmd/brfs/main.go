@@ -8,15 +8,12 @@ import (
 
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 
 	"os/signal"
 	"syscall"
-
-	pb "github.com/alex-sviridov/miniprotector/api"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // main goes
@@ -54,13 +51,8 @@ func main() {
 	ctx = context.WithValue(ctx, common.HostnameContextKey, common.GetHostname())
 
 	// Initialize logger
-	logger, logfile, _ := logging.NewLogger(ctx) // Never fails
-	defer func() {
-		if logfile != nil {
-			logfile.Close()
-		}
-	}()
-	ctx = context.WithValue(ctx, logging.ContextKey, logger)
+	logger, logfile := logging.NewLogger(ctx) 
+	defer logfile.Close()
 
 	logger.Info("Backup reader started",
 		"sourceFolder", arguments.SourceFolder,
@@ -78,27 +70,22 @@ func main() {
 	logger.Info("Directory scanned", "filesCount", len(filesList))
 	filesBackupState := make(map[string]bool)
 	for _, file := range filesList {
-		filesBackupState[file.Path] = false
+		filesBackupState[file.ID()] = false
 	}
 
-	// Connect to server
-	conn, err := grpc.NewClient(fmt.Sprintf("%s:%d", arguments.WriterHost, arguments.WriterPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Create gRPC connection
+	client, err := connection.Connect(arguments.WriterHost, arguments.WriterPort, 5)
 	if err != nil {
-		logger.Error("Failed to connect", "error", err)
+		logger.Error("Error connecting to server", "error", err)
 		return
 	}
-	defer conn.Close()
-
-	// Create protobuf client
-	client := pb.NewBackupServiceClient(conn)
-
 	logger.Info("Connected to server")
 
-	resultsCh := processFilesList(ctx, client, filesList, arguments.Streams)
-
+	// Process files using shared gRPC connection
+	resultsCh := processFilesList(ctx, logger, client, filesList, arguments.Streams)
 	for result := range resultsCh {
 		// Process each result as it arrives
-		filesBackupState[result.Filename] = true
+		filesBackupState[result.FileID] = result.Success
 	}
 
 	// Final analysis

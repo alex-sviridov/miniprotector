@@ -18,12 +18,12 @@ func getFileInfo(path string) (FileInfo, error) {
 	}
 
 	fileInfo := FileInfo{
-		Path:    path,
-		Name:    info.Name(),
-		Size:    info.Size(),
-		Mode:    info.Mode(), // Full mode (type + permissions)
-		ModTime: info.ModTime(),
-		ACL:     getACL(path), // Extract platform-specific ACLs
+		path:    path,
+		name:    info.Name(),
+		size:    info.Size(),
+		mode:    info.Mode(), // Full mode (type + permissions)
+		modTime: info.ModTime(),
+		acl:     getACL(path), // Extract platform-specific ACLs
 	}
 
 	// Extract Windows-specific information
@@ -34,25 +34,25 @@ func getFileInfo(path string) (FileInfo, error) {
 		attrs[1] = byte(winStat.FileAttributes >> 8)
 		attrs[2] = byte(winStat.FileAttributes >> 16)
 		attrs[3] = byte(winStat.FileAttributes >> 24)
-		fileInfo.Attributes = attrs
+		fileInfo.attributes = attrs
 
 		// Convert Windows FILETIME to time.Time
-		fileInfo.AccessTime = time.Unix(0, winStat.LastAccessTime.Nanoseconds())
-		fileInfo.CTime = time.Unix(0, winStat.CreationTime.Nanoseconds()) // Creation time as CTime
+		fileInfo.accessTime = time.Unix(0, winStat.LastAccessTime.Nanoseconds())
+		fileInfo.cTime = time.Unix(0, winStat.CreationTime.Nanoseconds()) // Creation time as CTime
 	} else {
 		// Fallback for cases where Win32FileAttributeData is not available
-		fileInfo.AccessTime = info.ModTime() // Best we can do
-		fileInfo.CTime = info.ModTime()
+		fileInfo.accessTime = info.ModTime() // Best we can do
+		fileInfo.cTime = info.ModTime()
 	}
 
 	// Windows doesn't have traditional Unix owner/group, set to 0
-	fileInfo.Owner = 0
-	fileInfo.Group = 0
+	fileInfo.owner = 0
+	fileInfo.group = 0
 
 	// Handle Windows symbolic links and junctions
 	if info.Mode()&fs.ModeSymlink != 0 {
 		if target, err := os.Readlink(path); err == nil {
-			fileInfo.SymlinkTarget = target
+			fileInfo.symlinkTarget = target
 		}
 	}
 

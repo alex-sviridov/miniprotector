@@ -2,19 +2,35 @@ package workload
 
 import (
 	"iter"
+	"time"
 )
 
 // BackupObject represents an atom of backup workload (like a single file)
 type BackupObject interface {
-	GetId() string
-	GetSize() int64
-	Print() string
-	ChunkIterator() iter.Seq2[*Chunk, error]
-	match(string) bool
+	ID() string
+	Source() string
+	Mtime() int64
+	Ctime() int64
+	MetadataBlob() []byte
+	Size() int64
+	Lock(timeout time.Duration) (Unlocker, error)
+	ChunkIterator() iter.Seq2[Chunk, error]
+}
+
+type Unlocker interface {
+	Unlock() error
 }
 
 // BackupObjectsList represents a filterable array of Backup Objects
 type BackupObjectsList interface {
 	WithIncludes(patterns ...string) BackupObjectsList
 	WithExcludes(patterns ...string) BackupObjectsList
+}
+
+type Chunk interface {
+	Hash() []byte
+	Index() int64
+	Data() []byte
+	Size() int
+	IsEOF() bool
 }

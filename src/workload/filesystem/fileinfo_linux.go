@@ -26,22 +26,22 @@ func getFileInfo(path string) (FileInfo, error) {
 	}
 
 	fileInfo := FileInfo{
-		Path:       path,
-		Name:       info.Name(),
-		Size:       info.Size(),
-		Mode:       info.Mode(), // Full mode (type + permissions)
-		Owner:      stat.Uid,
-		Group:      stat.Gid,
-		ModTime:    info.ModTime(),
-		AccessTime: time.Unix(stat.Atim.Sec, stat.Atim.Nsec),
-		CTime:      time.Unix(stat.Ctim.Sec, stat.Ctim.Nsec),
-		ACL:        getACL(path), // Extract platform-specific ACLs
+		path:       path,
+		name:       info.Name(),
+		size:       info.Size(),
+		mode:       info.Mode(), // Full mode (type + permissions)
+		owner:      stat.Uid,
+		group:      stat.Gid,
+		modTime:    info.ModTime(),
+		accessTime: time.Unix(stat.Atim.Sec, stat.Atim.Nsec),
+		cTime:      time.Unix(stat.Ctim.Sec, stat.Ctim.Nsec),
+		acl:        getACL(path), // Extract platform-specific ACLs
 	}
 
 	// Read symlink target if it's a symbolic link
 	if info.Mode()&fs.ModeSymlink != 0 {
 		if target, err := os.Readlink(path); err == nil {
-			fileInfo.SymlinkTarget = target
+			fileInfo.symlinkTarget = target
 		}
 	}
 

@@ -6,8 +6,8 @@ import (
 	"hash/crc32"
 	"os"
 	"testing"
-
 	"github.com/alex-sviridov/miniprotector/workload"
+
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +62,7 @@ func TestChunkIterator_EmptyFile(t *testing.T) {
 	tempFile := createTempFile(t, data)
 	defer os.Remove(tempFile)
 
-	fi := FileInfo{Path: tempFile}
+	fi := FileInfo{path: tempFile}
 	chunks := collectChunks(t, fi)
 
 	assert.Empty(t, chunks, "Empty file should produce no chunks")
@@ -81,15 +81,15 @@ func TestChunkIterator_SmallFile(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
 			require.Len(t, chunks, 1, "Small file should produce exactly one chunk")
 
 			chunk := chunks[0]
-			assert.Equal(t, int64(0), chunk.Position)
-			assert.Equal(t, data, chunk.Data)
-			assert.True(t, chunk.EOF, "Single chunk should have EOF=true")
+			assert.Equal(t, int64(0), chunk.Index())
+			assert.Equal(t, data, chunk.Data())
+			assert.True(t, chunk.IsEOF(), "Single chunk should have EOF=true")
 		})
 	}
 }
@@ -107,15 +107,15 @@ func TestChunkIterator_ExactlyOneChunk(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
 			require.Len(t, chunks, 1, "64KB file should produce exactly one chunk")
 
 			chunk := chunks[0]
-			assert.Equal(t, int64(0), chunk.Position)
-			assert.Equal(t, data, chunk.Data)
-			assert.True(t, chunk.EOF, "Single chunk should have EOF=true")
+			assert.Equal(t, int64(0), chunk.Index())
+			assert.Equal(t, data, chunk.Data())
+			assert.True(t, chunk.IsEOF(), "Single chunk should have EOF=true")
 		})
 	}
 }
@@ -139,7 +139,7 @@ func TestChunkIterator_BoundaryConditions(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
 			require.Len(t, chunks, tc.expectedChunks, "Should have correct number of chunks")
@@ -147,9 +147,9 @@ func TestChunkIterator_BoundaryConditions(t *testing.T) {
 			// Verify only last chunk has EOF=true
 			for i, chunk := range chunks {
 				if i == len(chunks)-1 {
-					assert.True(t, chunk.EOF, "Last chunk should have EOF=true")
+					assert.True(t, chunk.IsEOF(), "Last chunk should have EOF=true")
 				} else {
-					assert.False(t, chunk.EOF, "Non-last chunk should have EOF=false")
+					assert.False(t, chunk.IsEOF(), "Non-last chunk should have EOF=false")
 				}
 			}
 		})
@@ -173,7 +173,7 @@ func TestChunkIterator_MultipleChunks(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
 			expectedChunks := (tc.size + ChunkSize - 1) / ChunkSize
@@ -182,13 +182,13 @@ func TestChunkIterator_MultipleChunks(t *testing.T) {
 			// Verify chunk sizes
 			for i, chunk := range chunks {
 				if i < len(chunks)-1 {
-					assert.Len(t, chunk.Data, ChunkSize, "Non-final chunk should be full size")
+					assert.Len(t, chunk.Data(), ChunkSize, "Non-final chunk should be full size")
 				} else {
 					expectedLastSize := tc.size % ChunkSize
 					if expectedLastSize == 0 {
 						expectedLastSize = ChunkSize
 					}
-					assert.Len(t, chunk.Data, expectedLastSize, "Final chunk should have correct size")
+					assert.Len(t, chunk.Data(), expectedLastSize, "Final chunk should have correct size")
 				}
 			}
 		})
@@ -212,14 +212,13 @@ func TestChunkIterator_HashSizes(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
 			require.NotEmpty(t, chunks, "Should have at least one chunk")
 
 			for i, chunk := range chunks {
-				assert.Len(t, chunk.Hash, 32, "BLAKE3 hash should be 32 bytes for chunk %d", i)
-				assert.Len(t, chunk.Checksum, 4, "CRC32 checksum should be 4 bytes for chunk %d", i)
+				assert.Len(t, chunk.Hash(), 32, "BLAKE3 hash should be 32 bytes for chunk %d", i)
 			}
 		})
 	}
@@ -230,7 +229,7 @@ func TestChunkIterator_HashCorrectness(t *testing.T) {
 	tempFile := createTempFile(t, data)
 	defer os.Remove(tempFile)
 
-	fi := FileInfo{Path: tempFile}
+	fi := FileInfo{path: tempFile}
 	chunks := collectChunks(t, fi)
 
 	require.Len(t, chunks, 1, "Should have exactly one chunk")
@@ -239,11 +238,11 @@ func TestChunkIterator_HashCorrectness(t *testing.T) {
 
 	// Verify BLAKE3 hash
 	expectedHash := blake3.Sum256(data)
-	assert.Equal(t, expectedHash[:], chunk.Hash, "BLAKE3 hash should be correct")
+	assert.Equal(t, expectedHash[:], chunk.Hash(), "BLAKE3 hash should be correct")
 
 	// Verify CRC32 checksum
 	expectedCRC := crc32.ChecksumIEEE(data)
-	assert.Equal(t, uint32FromBytes(chunk.Checksum), expectedCRC, "CRC32 should be correct")
+	assert.Equal(t, chunk.Checksum(), expectedCRC, "CRC32 should be correct")
 }
 
 func TestChunkIterator_HashUniqueness(t *testing.T) {
@@ -254,7 +253,7 @@ func TestChunkIterator_HashUniqueness(t *testing.T) {
 	tempFile := createTempFile(t, data)
 	defer os.Remove(tempFile)
 
-	fi := FileInfo{Path: tempFile}
+	fi := FileInfo{path: tempFile}
 	chunks := collectChunks(t, fi)
 
 	require.Greater(t, len(chunks), 1, "Need multiple chunks for uniqueness test")
@@ -262,9 +261,9 @@ func TestChunkIterator_HashUniqueness(t *testing.T) {
 	// Verify all chunks have different hashes
 	for i := 0; i < len(chunks); i++ {
 		for j := i + 1; j < len(chunks); j++ {
-			assert.NotEqual(t, chunks[i].Hash, chunks[j].Hash,
+			assert.NotEqual(t, chunks[i].Hash(), chunks[j].Hash(),
 				"Chunks %d and %d should have different BLAKE3 hashes", i, j)
-			assert.NotEqual(t, chunks[i].Checksum, chunks[j].Checksum,
+			assert.NotEqual(t, chunks[i].Checksum(), chunks[j].Checksum(),
 				"Chunks %d and %d should have different CRC32 checksums", i, j)
 		}
 	}
@@ -288,13 +287,13 @@ func TestChunkIterator_DataIntegrity(t *testing.T) {
 			tempFile := createTempFile(t, originalData)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
 			// Reconstruct data from chunks
 			reconstructed := make([]byte, 0, len(originalData))
 			for _, chunk := range chunks {
-				reconstructed = append(reconstructed, chunk.Data...)
+				reconstructed = append(reconstructed, chunk.Data()...)
 			}
 
 			assert.Equal(t, originalData, reconstructed, "Reconstructed data should match original")
@@ -302,7 +301,7 @@ func TestChunkIterator_DataIntegrity(t *testing.T) {
 	}
 }
 
-func TestChunkIterator_PositionProgression(t *testing.T) {
+func TestChunkIterator_IndexProgression(t *testing.T) {
 	testCases := []struct {
 		name string
 		size int
@@ -318,17 +317,17 @@ func TestChunkIterator_PositionProgression(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
-			expectedPosition := int64(0)
+			expectedIndex := int64(0)
 			for i, chunk := range chunks {
-				assert.Equal(t, expectedPosition, chunk.Position,
-					"Chunk %d should have position %d", i, expectedPosition)
-				expectedPosition += int64(len(chunk.Data))
+				assert.Equal(t, expectedIndex, chunk.Index(),
+					"Chunk %d should have position %d", i, expectedIndex)
+				expectedIndex += int64(len(chunk.Data()))
 			}
 
-			assert.Equal(t, int64(tc.size), expectedPosition,
+			assert.Equal(t, int64(tc.size), expectedIndex,
 				"Final position should equal file size")
 		})
 	}
@@ -355,7 +354,7 @@ func TestChunkIterator_IncrementalCRC32(t *testing.T) {
 			expectedCRC := crc32.ChecksumIEEE(data)
 
 			// Calculate incremental CRC32
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 			incrementalCRC := crc32.NewIEEE()
 			chunkCount := 0
 
@@ -363,7 +362,7 @@ func TestChunkIterator_IncrementalCRC32(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, chunk)
 
-				incrementalCRC.Write(chunk.Data)
+				incrementalCRC.Write(chunk.Data())
 				chunkCount++
 			}
 
@@ -377,7 +376,7 @@ func TestChunkIterator_IncrementalCRC32(t *testing.T) {
 }
 
 func TestChunkIterator_FileNotFound(t *testing.T) {
-	fi := FileInfo{Path: "/nonexistent/file.txt"}
+	fi := FileInfo{path: "/nonexistent/file.txt"}
 
 	for chunk, err := range fi.ChunkIterator() {
 		assert.Nil(t, chunk)
@@ -399,14 +398,14 @@ func TestChunkIterator_FileLocking(t *testing.T) {
 	require.True(t, locked)
 	defer externalLock.Unlock()
 
-	// ChunkIterator should fail to lock
-	fi := FileInfo{Path: tempFile}
-	for chunk, err := range fi.ChunkIterator() {
-		assert.Nil(t, chunk)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "could not lock file")
-		break
-	}
+	// ChunkIterator should still work as it doesn't implement file locking
+	// (The comment in chunker.go says "File is not locked! Lock the file before chunking.")
+	fi := FileInfo{path: tempFile}
+	chunks := collectChunks(t, fi)
+
+	require.Len(t, chunks, 1, "Should have exactly one chunk")
+	assert.Equal(t, data, chunks[0].Data(), "Data should match")
+	assert.True(t, chunks[0].IsEOF(), "Single chunk should have EOF=true")
 }
 
 func TestChunkIterator_EarlyTermination(t *testing.T) {
@@ -415,7 +414,7 @@ func TestChunkIterator_EarlyTermination(t *testing.T) {
 	tempFile := createTempFile(t, data)
 	defer os.Remove(tempFile)
 
-	fi := FileInfo{Path: tempFile}
+	fi := FileInfo{path: tempFile}
 	chunkCount := 0
 
 	for chunk, err := range fi.ChunkIterator() {
@@ -447,7 +446,7 @@ func BenchmarkChunkIterator(b *testing.B) {
 			tempFile := createTempFile(b, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{Path: tempFile}
+			fi := FileInfo{path: tempFile}
 
 			b.ResetTimer()
 			b.SetBytes(int64(size))
@@ -481,8 +480,8 @@ func createTempFile(tb testing.TB, data []byte) string {
 	return tempFile.Name()
 }
 
-func collectChunks(t *testing.T, fi FileInfo) []*workload.Chunk {
-	var chunks []*workload.Chunk
+func collectChunks(t *testing.T, fi FileInfo) []workload.Chunk {
+	var chunks []workload.Chunk
 
 	for chunk, err := range fi.ChunkIterator() {
 		require.NoError(t, err, "Should not get error during iteration")

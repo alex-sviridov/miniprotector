@@ -12,18 +12,6 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 )
 
-type contextKey string
-
-const ContextKey contextKey = "logger"
-
-func GetLoggerFromContext(ctx context.Context) *slog.Logger {
-	logger, ok := ctx.Value(ContextKey).(*slog.Logger)
-	if !ok {
-		return nil
-	}
-	return logger
-}
-
 type multiHandler struct {
 	consoleHandler slog.Handler
 	fileHandler    slog.Handler
@@ -77,7 +65,7 @@ func getLevel(debugMode bool) slog.Level {
 	return slog.LevelInfo
 }
 
-func NewLogger(ctx context.Context) (*slog.Logger, io.Closer, error) {
+func NewLogger(ctx context.Context) (*slog.Logger, io.Closer) {
 	conf := config.GetConfigFromContext(ctx)
 
 	level := getLevel(ctx.Value("debugMode").(bool))
@@ -129,5 +117,5 @@ func NewLogger(ctx context.Context) (*slog.Logger, io.Closer, error) {
 		logger = logger.With(slog.String("job_id", jobId.(string)))
 	}
 
-	return logger, logFile, nil
+	return logger, logFile
 }
