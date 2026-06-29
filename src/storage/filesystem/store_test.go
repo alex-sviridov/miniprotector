@@ -296,3 +296,22 @@ func TestVacuum_RemovesOrphanedChunkFiles(t *testing.T) {
 	// File must be gone
 	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
 }
+
+func TestConcurrentStores_NoSQLiteBusy(t *testing.T) {
+	store := newTestStore(t)
+
+	data := []byte("concurrent chunk data for busy test!!")
+	hash := makeChunk(t, data)
+
+	// Ten goroutines all writing chunks simultaneously — must not get SQLITE_BUSY
+	const workers = 10
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			errs <- store.StoreChunk(hash, data)
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		assert.NoError(t, <-errs)
+	}
+}

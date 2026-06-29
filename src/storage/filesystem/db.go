@@ -12,13 +12,17 @@ import (
 )
 
 func openDB(basePath string) (*gorm.DB, error) {
-	dbPath := filepath.Join(basePath, "metadata.db")
+	dbPath := filepath.Join(basePath, "metadata.db") + "?_busy_timeout=5000"
 
 	// Open via database/sql with modernc driver (registered as "sqlite")
 	sqlDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+
+	// One connection: all goroutines queue through the pool instead of
+	// racing on the SQLite write lock and returning SQLITE_BUSY.
+	sqlDB.SetMaxOpenConns(1)
 
 	// Set WAL mode before handing to GORM
 	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
