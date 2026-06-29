@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -21,12 +22,20 @@ type Arguments struct {
 }
 
 func parseArguments(conf *config.Config) (*Arguments, error) {
-	args := &Arguments{}
+	// storage_path is the first positional arg, before the subcommand name.
+	// Cobra cannot route subcommands when a bare positional precedes them,
+	// so we extract it from os.Args before Execute() sees the slice.
+	if len(os.Args) < 3 {
+		return nil, fmt.Errorf("usage: bwfs <storage_path> <server|list> [flags]")
+	}
+	storagePath := os.Args[1]
+	os.Args = append(os.Args[:1], os.Args[2:]...) // cobra sees: bwfs <server|list> [flags]
+
+	args := &Arguments{StoragePath: storagePath}
 
 	rootCmd := &cobra.Command{
 		Use:   "bwfs <storage_path> <command>",
 		Short: "Backup writer filesystem tool",
-		Args:  cobra.ExactArgs(1),
 	}
 
 	// server subcommand
@@ -34,10 +43,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		Use:   "server",
 		Short: "Start the backup writer server",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, _ []string) {
-			args.Action = "server"
-			args.StoragePath = rootCmd.Flags().Args()[0]
-		},
+		Run:   func(cmd *cobra.Command, _ []string) { args.Action = "server" },
 	}
 	serverCmd.Flags().IntVar(&args.Port, "port", conf.DefaultPort, "Port to listen on")
 	serverCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
@@ -48,10 +54,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		Use:   "list",
 		Short: "List stored file data",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, _ []string) {
-			args.Action = "list"
-			args.StoragePath = rootCmd.Flags().Args()[0]
-		},
+		Run:   func(cmd *cobra.Command, _ []string) { args.Action = "list" },
 	}
 	listCmd.Flags().StringVar(&args.Output, "output", "table", "Output format: table or json")
 	listCmd.Flags().StringVar(&args.Filter, "filter", "", "Filter by text in file path")
