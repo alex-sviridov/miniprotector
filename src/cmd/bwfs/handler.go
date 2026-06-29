@@ -11,7 +11,6 @@ import (
 
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/storage"
-	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -21,7 +20,7 @@ type RequestHandlerFunc func(context.Context, pb.BackupService_ProcessBackupStre
 
 type streamHandler struct {
 	config            *config.Config
-	store             *wfs.Store
+	store             storage.BackupStore
 	logger            *slog.Logger
 	currentFile       *filesystem.FileInfo
 	incrementalHasher *blake3.Hasher
@@ -29,7 +28,7 @@ type streamHandler struct {
 	handlerMap        map[string]RequestHandlerFunc
 }
 
-func newStreamHandler(ctx context.Context, logger *slog.Logger, store *wfs.Store) *streamHandler {
+func newStreamHandler(ctx context.Context, logger *slog.Logger, store storage.BackupStore) *streamHandler {
 	handler := &streamHandler{
 		config: config.GetConfigFromContext(ctx),
 		store:  store,
@@ -55,7 +54,6 @@ func (h *streamHandler) handleRequest(ctx context.Context, server pb.BackupServi
 
 func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer, req *pb.FileRequest) error {
 	fi := req.GetFileInfo()
-
 	if fi == nil {
 		return fmt.Errorf("FileRequest_FileInfo has empty FileInfo")
 	}
@@ -66,9 +64,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 	}
 	h.currentFile = fileInfo
 	h.incrementalHasher = blake3.New()
-	fileLogger := h.logger.
-		With(slog.String("file_id", h.currentFile.ID()))
-
+	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 	fileLogger.Debug("Received file metadata", "file_info", fmt.Sprintf("%s", h.currentFile))
 
 	fileExists, err := h.store.FileDataExists(h.currentFile.ID())
@@ -77,11 +73,9 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 	}
 
 	needed := !fileExists
-	// Do not request transmission of non-file objects
 	if h.currentFile.GetType() != 'f' {
 		needed = false
 	}
-	// Do not request transmission for empty files
 	if h.currentFile.Size() == 0 {
 		needed = false
 	}
@@ -91,12 +85,10 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		"file_size", h.currentFile.Size(),
 		"file_type", fmt.Sprintf("%c", h.currentFile.GetType()))
 
-	// if file not needed mark file processing end
 	if !needed {
 		h.EOF = true
 	}
 
-	// Send back a simple acknowledgment
 	response := &pb.FileResponse{
 		ResponseType: &pb.FileResponse_FileNeeded{
 			FileNeeded: &pb.FileNeeded{
@@ -129,13 +121,11 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 		}
 	} else {
 		needed = false
-		// add chunk checksum to the calculated overall checksum
 		h.incrementalHasher.Write(chunk.Hash)
 	}
 
 	chunkLogger.Debug("Chunk existence check", "needed", needed)
 
-	// Send back a simple acknowledgment
 	response := &pb.FileResponse{
 		ResponseType: &pb.FileResponse_ChunkNeeded{
 			ChunkNeeded: &pb.ChunkNeeded{
@@ -171,7 +161,6 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 	}
 	chunkLogger.Debug("Chunk linked")
 
-	// Send back a simple acknowledgment
 	response := &pb.FileResponse{
 		ResponseType: &pb.FileResponse_ChunkResult{
 			ChunkResult: &pb.ChunkResult{
@@ -188,8 +177,7 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 }
 
 func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer) error {
-	fileLogger := h.logger.
-		With(slog.String("file_id", h.currentFile.ID()))
+	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 	file_hash := h.incrementalHasher.Sum(nil)
 	h.store.FinalizeFileData(h.currentFile.ID(), file_hash)
 	fileLogger.Debug("File transfer completed", "file_hash", hex.EncodeToString(file_hash))

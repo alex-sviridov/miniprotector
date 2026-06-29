@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/storage"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -17,7 +18,7 @@ import (
 type backupServer struct {
 	pb.UnimplementedBackupServiceServer
 	config *config.Config
-	store  *wfs.Store
+	store  storage.BackupStore
 	logger *slog.Logger
 }
 
@@ -35,23 +36,17 @@ func NewBackupServer(ctx context.Context, logger *slog.Logger, storagePath strin
 	}, nil
 }
 
-// ProcessBackupStream handles the streaming connection
 func (server *backupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackupStreamServer) error {
 	ctx := stream.Context()
 
-	// Get client connection info at start
 	var clientAddr, clientAuthType string = "unknown", "none"
-
 	if peer, ok := peer.FromContext(ctx); ok {
 		clientAddr = peer.Addr.String()
-
-		// Add auth info if available
 		if peer.AuthInfo != nil {
 			clientAuthType = peer.AuthInfo.AuthType()
 		}
 	}
 
-	// Add gRPC stream context info to logs
 	streamInfo := fmt.Sprintf("%p", stream)
 	logger := server.logger.With(
 		slog.String("client_addr", clientAddr),
@@ -64,7 +59,6 @@ func (server *backupServer) ProcessBackupStream(stream pb.BackupService_ProcessB
 
 	for {
 		request, err := stream.Recv()
-
 		if err == io.EOF {
 			h.logger.Info("Client stopped sending")
 			return nil
@@ -76,7 +70,6 @@ func (server *backupServer) ProcessBackupStream(stream pb.BackupService_ProcessB
 		if request == nil {
 			continue
 		}
-
 		if err := h.handleRequest(ctx, stream, request); err != nil {
 			h.logger.Error("Error handling request", "error", err)
 		}

@@ -1,26 +1,40 @@
 package filesystem
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"gorm.io/gorm"
+
 	"github.com/alex-sviridov/miniprotector/storage"
 )
 
-// Store implements storage.BackupStore using filesystem backend
 type Store struct {
 	basePath string
+	db       *gorm.DB
 }
 
-// New creates a new filesystem-based backup store
-func New(basePath string) (store *Store, err error) {
-	store = &Store{
-		basePath: basePath,
+func New(basePath string) (*Store, error) {
+	chunksDir := filepath.Join(basePath, "chunks")
+	if err := os.MkdirAll(chunksDir, 0755); err != nil {
+		return nil, fmt.Errorf("create chunks dir: %w", err)
 	}
-	err = nil
-	return store, err
+
+	db, err := openDB(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+
+	return &Store{basePath: basePath, db: db}, nil
 }
 
 func (s *Store) Close() error {
-	return nil
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
 }
 
-// Ensure Store implements BackupStore interface
 var _ storage.BackupStore = (*Store)(nil)
