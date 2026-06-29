@@ -57,9 +57,11 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		return nil, fmt.Errorf("port error: %w", err)
 	}
 
-	if _, err := common.ValidatePath(args.StoragePath); err != nil {
+	absPath, err := common.ValidatePath(args.StoragePath)
+	if err != nil {
 		return nil, fmt.Errorf("storage path error: %w", err)
 	}
+	args.StoragePath = absPath
 
 	return args, nil
 }
