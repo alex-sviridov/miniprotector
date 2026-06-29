@@ -11,7 +11,6 @@ import (
 )
 
 func main() {
-	// Configuration constants
 	const (
 		configPath = "../.config/local.conf"
 		appName    = "bwfs"
@@ -19,7 +18,6 @@ func main() {
 
 	ctx := context.WithValue(context.Background(), "appName", appName)
 
-	// Get configuration
 	conf, err := config.ParseConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
@@ -28,7 +26,6 @@ func main() {
 
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
 
-	// Get arguments
 	arguments, err := parseArguments(conf)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Arguments error: %v\n", err)
@@ -37,26 +34,31 @@ func main() {
 	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
 	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
 
-	// Initialize logger
-	logger, logfile := logging.NewLogger(ctx) // Never fails
+	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
 
-	logger.Info("Backup writer started",
-		"StoragePath", arguments.StoragePath,
-		"serverPort", arguments.Port,
-	)
+	switch arguments.Action {
+	case "server":
+		logger.Info("Backup writer started",
+			"StoragePath", arguments.StoragePath,
+			"serverPort", arguments.Port,
+		)
+		backupServer, err := NewBackupServer(ctx, logger, arguments.StoragePath)
+		if err != nil {
+			logger.Error("Server initialization failed", "error", err)
+			os.Exit(1)
+		}
+		defer backupServer.store.Close()
 
-	// Stat backup service server
-	backupServer, err := NewBackupServer(ctx, logger, arguments.StoragePath)
-	if err != nil {
-		logger.Error("Server initialization failed", "error", err)
-		os.Exit(1)
-	}
-	defer backupServer.store.Close()
+		if err := connection.StartServer(ctx, logger, arguments.Port, backupServer); err != nil {
+			logger.Error("Server failed", "error", err)
+			os.Exit(1)
+		}
 
-	// Start grpc server
-	if err := connection.StartServer(ctx, logger, arguments.Port, backupServer); err != nil {
-		logger.Error("Server failed", "error", err)
-		os.Exit(1)
+	case "list":
+		if err := runList(logger, arguments.StoragePath, arguments.Output, arguments.Filter); err != nil {
+			logger.Error("List failed", "error", err)
+			os.Exit(1)
+		}
 	}
 }
