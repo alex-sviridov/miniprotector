@@ -73,9 +73,11 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 	}
 
 	needed := !fileExists
+	// Do not request transmission of non-file objects (dirs, symlinks, etc.)
 	if h.currentFile.GetType() != 'f' {
 		needed = false
 	}
+	// Empty files have no chunks to transfer
 	if h.currentFile.Size() == 0 {
 		needed = false
 	}
@@ -121,6 +123,7 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 		}
 	} else {
 		needed = false
+		// Chunk already stored — add its hash to the running file checksum
 		h.incrementalHasher.Write(chunk.Hash)
 	}
 
@@ -179,7 +182,9 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer) error {
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 	file_hash := h.incrementalHasher.Sum(nil)
-	h.store.FinalizeFileData(h.currentFile.ID(), file_hash)
+	if err := h.store.FinalizeFileData(h.currentFile.ID(), file_hash); err != nil {
+		return fmt.Errorf("finalize file data: %w", err)
+	}
 	fileLogger.Debug("File transfer completed", "file_hash", hex.EncodeToString(file_hash))
 	message := server.Send(&pb.FileResponse{
 		ResponseType: &pb.FileResponse_Result{
