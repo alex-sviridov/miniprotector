@@ -1,49 +1,60 @@
 # bwfs (Backup Writer from File System)
 
-Backup storage server, recieving files from a backup reader and writing them into filesystem.
-
-## Purpose
-
-Recieves files from `brfs*` (backup reader) via:
-- Network connection (for remote backup readers)  
-- Unix socket (for local backup readers)
-Makes decision if file is needed based on it's metadata and stored files database. 
-Makes decision if file chunk is needed based on it's hash and stored hashes. 
-Checks file consistency in the end of file backup.
+Backup storage server — receives files from a backup reader and stores them on disk with deduplication.
 
 ## Usage
 
-```bash
-bwfs <storage_path> --destination <host:port>
+```
+bwfs <storage_path> <command> [flags]
 ```
 
-## Arguments and Flags
+`storage_path` is required by all commands. Only one `bwfs server` process may open a given storage path at a time; `bwfs list` can run alongside a live server.
 
-- `<storage_path>` - Directory to backup **(required)**
-- `--port <port>` - Server listening port *(default: config->default_port)*
-- `--debug` - Enable debug logging
-- `--quiet` - Suppress stdout logging
+## Commands
 
-## Examples
+### server
+
+Start the gRPC backup server. Receives files from `brfs` and stores chunks and metadata.
 
 ```bash
-# Listen on port 8080 and write into /home/user/backup
-bwfs /home/user/backup --port 8080
+bwfs /home/user/backup server
+bwfs /home/user/backup server --port 8080 --debug
 ```
 
-## Protocol
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port` | config `default_port` | Port to listen on |
+| `--debug` | false | Enable debug logging |
+| `--quiet` | false | Suppress console logging |
 
-Communicates with [brfs](./brfs.md) (backup reader) using the protocol specified in [doc/protocols/backup.md](../protocols/backup.md).
+### list
+
+List stored file data. Can run concurrently with a live server.
+
+```bash
+bwfs /home/user/backup list
+bwfs /home/user/backup list --output json
+bwfs /home/user/backup list --filter /var/log
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output` | `table` | Output format: `table` or `json` |
+| `--filter` | | Substring filter on file ID |
+| `--debug` | false | Enable debug logging |
+
+**Table columns:** SOURCE, TYPE, PATH, TIMESTAMP, SIZE, CHUNKS, VERSIONS
+
+**JSON fields:** `file_data_id`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`
 
 ## Building
 
 ```bash
-cd srv
-make build
+cd src && make build
 ```
 
 ## See Also
 
-- [brfs](./brfs.md) - Backup Reader for File System
-- [doc/protocols/backup.md](../protocols/backup.md) - Communication protocol
-- [Architecture](../ARCHITECTURE.md) - System overview
+- [brfs](./brfs.md) — Backup Reader for File System
+- [backup protocol](../protocols/backup.md) — Wire protocol
+- [Architecture](../ARCHITECTURE.md) — System overview
