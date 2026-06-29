@@ -8,50 +8,74 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Command line flags
-var (
-	port  int
-	debug bool
-)
-
-// Arguments holds parsed command line arguments
 type Arguments struct {
 	StoragePath string
-	Port        int
-	Debug       bool
-	Quiet       bool
+	Action      string // "server" | "list"
+	// server flags
+	Port  int
+	Debug bool
+	Quiet bool
+	// list flags
+	Output string // "table" | "json"
+	Filter string
 }
 
-// parseArguments uses Cobra to parse command line arguments
 func parseArguments(conf *config.Config) (*Arguments, error) {
-	cmd := &cobra.Command{
-		Use:   "bwfs <storage_path>",
-		Short: "Backup writer tool for receiving files",
+	args := &Arguments{}
+
+	rootCmd := &cobra.Command{
+		Use:   "bwfs <storage_path> <command>",
+		Short: "Backup writer filesystem tool",
 		Args:  cobra.ExactArgs(1),
-		Run:   func(cmd *cobra.Command, args []string) {}, // Empty - just for parsing
 	}
 
-	// Add flags
-	cmd.Flags().IntVar(&port, "port", conf.DefaultPort, "Port to listen on")
-	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
-	cmd.Flags().BoolVar(&debug, "quiet", false, "Enable quiet mode")
+	// server subcommand
+	serverCmd := &cobra.Command{
+		Use:   "server",
+		Short: "Start the backup writer server",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, _ []string) {
+			args.Action = "server"
+			args.StoragePath = rootCmd.Flags().Args()[0]
+		},
+	}
+	serverCmd.Flags().IntVar(&args.Port, "port", conf.DefaultPort, "Port to listen on")
+	serverCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
+	serverCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Enable quiet mode")
 
-	// Parse arguments and flags
-	if err := cmd.Execute(); err != nil {
+	// list subcommand
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List stored file data",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, _ []string) {
+			args.Action = "list"
+			args.StoragePath = rootCmd.Flags().Args()[0]
+		},
+	}
+	listCmd.Flags().StringVar(&args.Output, "output", "table", "Output format: table or json")
+	listCmd.Flags().StringVar(&args.Filter, "filter", "", "Filter by text in file path")
+	listCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
+
+	rootCmd.AddCommand(serverCmd, listCmd)
+
+	if err := rootCmd.Execute(); err != nil {
 		return nil, err
 	}
 
-	// Get the storage path from parsed args
-	storagePath := cmd.Flags().Args()[0]
-
-	// Validate port
-	if err := common.ValidatePort(port); err != nil {
-		return nil, fmt.Errorf("port error: %w", err)
+	if args.Action == "" {
+		return nil, fmt.Errorf("a subcommand is required: server or list")
 	}
 
-	return &Arguments{
-		StoragePath: storagePath,
-		Port:        port,
-		Debug:       debug,
-	}, nil
+	if args.Action == "server" {
+		if err := common.ValidatePort(args.Port); err != nil {
+			return nil, fmt.Errorf("port error: %w", err)
+		}
+	}
+
+	if args.Action == "list" && args.Output != "table" && args.Output != "json" {
+		return nil, fmt.Errorf("--output must be 'table' or 'json', got: %q", args.Output)
+	}
+
+	return args, nil
 }
