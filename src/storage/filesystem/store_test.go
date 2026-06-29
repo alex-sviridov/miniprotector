@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"lukechampine.com/blake3"
 
 	"github.com/alex-sviridov/miniprotector/storage"
@@ -172,4 +174,64 @@ func TestFileDataChunks_ReturnsOrderedHashes(t *testing.T) {
 	require.Len(t, hashes, 2)
 	assert.Equal(t, hash0, hashes[0])
 	assert.Equal(t, hash1, hashes[1])
+}
+
+func TestCreateFileVersion_ReturnsID(t *testing.T) {
+	store := newTestStore(t)
+	id, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta"), 12345)
+	require.NoError(t, err)
+	assert.NotEmpty(t, id)
+}
+
+func TestLatestFileVersion_ReturnsNewest(t *testing.T) {
+	store := newTestStore(t)
+	_, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta-old"), 100)
+	require.NoError(t, err)
+	_, err = store.CreateFileVersion("obj-1", "file-2", []byte("meta-new"), 200)
+	require.NoError(t, err)
+
+	v, err := store.LatestFileVersion("obj-1")
+	require.NoError(t, err)
+	assert.Equal(t, "file-2", v.FileID)
+	assert.Equal(t, []byte("meta-new"), v.Metadata)
+}
+
+func TestRemoveFileVersion_Removes(t *testing.T) {
+	store := newTestStore(t)
+	id, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta"), 100)
+	require.NoError(t, err)
+
+	require.NoError(t, store.RemoveFileVersion(id))
+
+	_, err = store.LatestFileVersion("obj-1")
+	assert.Error(t, err)
+}
+
+func TestFileVersionAtTime_ReturnsMostRecentBefore(t *testing.T) {
+	store := newTestStore(t)
+
+	// Create two versions with explicit created_at by inserting directly
+	now := time.Now()
+	old := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-1", FileID: "file-old", Metadata: []byte("old"), Ctime: 1, CreatedAt: now.Add(-2 * time.Hour)}
+	recent := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-1", FileID: "file-recent", Metadata: []byte("recent"), Ctime: 2, CreatedAt: now.Add(-1 * time.Hour)}
+	store.db.Create(&old)
+	store.db.Create(&recent)
+
+	v, err := store.FileVersionAtTime("obj-1", now.Add(-90*time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, "file-old", v.FileID)
+}
+
+func TestFileVersionsInPeriod_ReturnsAll(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now()
+
+	r1 := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-1", FileID: "f1", CreatedAt: now.Add(-3 * time.Hour)}
+	r2 := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-2", FileID: "f2", CreatedAt: now.Add(-1 * time.Hour)}
+	store.db.Create(&r1)
+	store.db.Create(&r2)
+
+	versions, err := store.FileVersionsInPeriod(now.Add(-4*time.Hour), now)
+	require.NoError(t, err)
+	assert.Len(t, versions, 2)
 }
