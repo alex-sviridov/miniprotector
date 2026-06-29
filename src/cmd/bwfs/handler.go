@@ -93,8 +93,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 			return fmt.Errorf("create file data: %w", err)
 		}
 	} else {
-		// File already known or non-transferable — record it in the backup catalog now,
-		// since fileWritten will not be called for this file.
+		// File already known or non-transferable — record it in the backup catalog now.
 		if _, err := h.store.CreateFileVersion(
 			h.currentFile.ID(),
 			h.currentFile.ID(),
@@ -103,7 +102,11 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		); err != nil {
 			return fmt.Errorf("create file version: %w", err)
 		}
-		h.EOF = true
+		// Reset state directly — fileWritten must not be called for skip-path files
+		// because no FileDataRecord was created and fileWritten would create a duplicate FileVersion.
+		h.incrementalHasher = nil
+		h.currentFile = nil
+		h.EOF = false
 	}
 
 	response := &pb.FileResponse{
