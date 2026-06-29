@@ -10,6 +10,7 @@ import (
 	"github.com/zeebo/blake3"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/storage"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 
@@ -121,7 +122,7 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 
 	err := h.store.ChunkExists(chunk.Hash)
 	if err != nil {
-		if errors.Is(err, wfs.ErrChunkNotFound) {
+		if errors.Is(err, storage.ErrChunkNotFound) {
 			needed = true
 		} else {
 			return err

@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"errors"
 	"iter"
 	"time"
 )
+
+var ErrChunkNotFound = errors.New("chunk not found")
 
 // BackupStore represents contract for any backup storage
 // Used by backup server to store file data and metadata incrementally

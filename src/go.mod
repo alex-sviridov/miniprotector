@@ -1,13 +1,13 @@
 module github.com/alex-sviridov/miniprotector
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/gofrs/flock v0.12.1
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.9.0
 	github.com/zeebo/blake3 v0.2.4
-	golang.org/x/sys v0.34.0
+	golang.org/x/sys v0.44.0
 	google.golang.org/grpc v1.74.2
 	google.golang.org/protobuf v1.36.6
 	lukechampine.com/blake3 v1.4.1
