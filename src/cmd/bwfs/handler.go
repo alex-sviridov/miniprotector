@@ -102,22 +102,36 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		); err != nil {
 			return fmt.Errorf("create file version: %w", err)
 		}
-		// Reset state directly — fileWritten must not be called for skip-path files
-		// because no FileDataRecord was created and fileWritten would create a duplicate FileVersion.
+		// Reset state before sending responses — fileWritten must not be called for skip-path
+		// files because no FileDataRecord was created and fileWritten would create a duplicate FileVersion.
+		fileID := fi.FileId
 		h.incrementalHasher = nil
 		h.currentFile = nil
 		h.EOF = false
+		// brfs always calls getFileStatus after sendFileMetadata, so we must send both
+		// FileNeeded and FileProcessingResult before brfs can proceed to the next file.
+		if err := server.Send(&pb.FileResponse{
+			ResponseType: &pb.FileResponse_FileNeeded{
+				FileNeeded: &pb.FileNeeded{FileId: fileID, Needed: false},
+			},
+		}); err != nil {
+			return err
+		}
+		return server.Send(&pb.FileResponse{
+			ResponseType: &pb.FileResponse_Result{
+				Result: &pb.FileProcessingResult{FileId: fileID, Success: true},
+			},
+		})
 	}
 
-	response := &pb.FileResponse{
+	return server.Send(&pb.FileResponse{
 		ResponseType: &pb.FileResponse_FileNeeded{
 			FileNeeded: &pb.FileNeeded{
 				FileId: fi.FileId,
 				Needed: needed,
 			},
 		},
-	}
-	return server.Send(response)
+	})
 }
 
 func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer, req *pb.FileRequest) error {
