@@ -315,3 +315,16 @@ func TestConcurrentStores_NoSQLiteBusy(t *testing.T) {
 		assert.NoError(t, <-errs)
 	}
 }
+
+func TestNew_ExclusiveLock(t *testing.T) {
+	dir := t.TempDir()
+
+	store1, err := New(dir)
+	require.NoError(t, err)
+	defer store1.Close()
+
+	// Second New on same dir must fail while first is open
+	_, err = New(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already in use")
+}
