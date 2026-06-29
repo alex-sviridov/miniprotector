@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"iter"
 	"time"
@@ -17,7 +18,7 @@ func (s *Store) FileDataExists(fileID string) (bool, error) {
 	err := s.db.
 		Where("file_id = ? AND checksum IS NOT NULL", fileID).
 		First(&record).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
 	if err != nil {
@@ -53,7 +54,7 @@ func (s *Store) FileData(fileID string) (*storage.FileData, error) {
 		Where("file_id = ? AND checksum IS NOT NULL", fileID).
 		Order("created_at DESC").
 		First(&record).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("filedata not found: %s", fileID)
 	}
 	if err != nil {
