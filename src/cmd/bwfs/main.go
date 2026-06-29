@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 
+	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -50,7 +52,9 @@ func main() {
 		}
 		defer backupServer.store.Close()
 
-		if err := connection.StartServer(ctx, logger, arguments.Port, backupServer); err != nil {
+		if err := connection.StartServer(ctx, logger, arguments.Port, func(s *grpc.Server) {
+			pb.RegisterBackupServiceServer(s, backupServer)
+		}); err != nil {
 			logger.Error("Server failed", "error", err)
 			os.Exit(1)
 		}
