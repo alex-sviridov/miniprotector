@@ -275,6 +275,44 @@ SQLite driver: use `gorm.io/driver/sqlite` with `modernc.org/sqlite` (pure Go, n
 
 ---
 
+## Interface Wiring Fixes
+
+Two changes to `bwfs` to make the interface actually load-bearing:
+
+### 1. `ErrChunkNotFound` moves to `storage` package
+
+Currently defined in `storage/filesystem/chunks.go` and imported directly by `cmd/bwfs/handler.go`. Move it to `storage/interface.go`:
+
+```go
+var ErrChunkNotFound = errors.New("chunk not found")
+```
+
+Every backend returns `storage.ErrChunkNotFound`. `handler.go` checks `errors.Is(err, storage.ErrChunkNotFound)`. No backend-specific import in the command layer.
+
+### 2. `bwfs` holds `storage.BackupStore`, not `*wfs.Store`
+
+`cmd/bwfs/server.go` — change `store` field type:
+```go
+// before
+store  *wfs.Store
+// after
+store  storage.BackupStore
+```
+
+`cmd/bwfs/handler.go` — same change:
+```go
+// before
+store  *wfs.Store
+// after
+store  storage.BackupStore
+```
+
+`wfs.New()` still returns `*Store` (concrete type). It gets assigned to the interface field at construction in `NewBackupServer`. The concrete type satisfies the interface via the existing `var _ storage.BackupStore = (*Store)(nil)` compile-time check in `store.go`.
+
+Result: swapping in a different backend requires only a config/flag change in `main.go` — no handler logic changes.
+
+---
+
 ## Out of Scope
 
 - Restore path (`rwfs`, `rrfs`)
