@@ -24,3 +24,4 @@ vendor/
 # IDE-specific files
 .idea/
 .vscode/
+.claude/settings.json
