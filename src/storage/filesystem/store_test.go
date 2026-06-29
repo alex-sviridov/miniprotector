@@ -235,3 +235,64 @@ func TestFileVersionsInPeriod_ReturnsAll(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, versions, 2)
 }
+
+func TestStoreInfo_CountsCorrectly(t *testing.T) {
+	store := newTestStore(t)
+
+	data := []byte("a chunk of test data for info test")
+	hash := makeChunk(t, data)
+	require.NoError(t, store.StoreChunk(hash, data))
+	require.NoError(t, store.CreateFileData("file-1", int64(len(data))))
+	require.NoError(t, store.LinkChunkToFileData(hash, "file-1", 0))
+	require.NoError(t, store.FinalizeFileData("file-1", []byte("checksum")))
+	_, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta"), 0)
+	require.NoError(t, err)
+
+	info, err := store.StoreInfo()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), info.TotalChunks)
+	assert.Equal(t, int64(1), info.TotalFileData)
+	assert.Equal(t, int64(1), info.TotalFileVersions)
+	assert.Equal(t, int64(len(data)), info.TotalSize)
+}
+
+func TestVacuum_RemovesIncompleteFileData(t *testing.T) {
+	store := newTestStore(t)
+
+	// Create an incomplete FileDataRecord by inserting directly with old timestamp
+	old := FileDataRecord{
+		ID:        uuid.New().String(),
+		FileID:    "incomplete-file",
+		Size:      100,
+		CreatedAt: time.Now().Add(-2 * time.Hour),
+	}
+	store.db.Create(&old)
+
+	result, err := store.Vacuum()
+	require.NoError(t, err)
+	assert.Greater(t, result.IncompleteFileData, int64(0))
+
+	// Must be gone
+	exists, err := store.FileDataExists("incomplete-file")
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestVacuum_RemovesOrphanedChunkFiles(t *testing.T) {
+	store := newTestStore(t)
+
+	// Write a chunk file without a DB record
+	data := []byte("orphan chunk data for vacuum test!")
+	hash := makeChunk(t, data)
+	hexHash := hex.EncodeToString(hash)
+	dir := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4])
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, hexHash[4:]), data, 0644))
+
+	result, err := store.Vacuum()
+	require.NoError(t, err)
+	assert.Greater(t, result.BytesReclaimed, int64(0))
+
+	// File must be gone
+	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
+}
