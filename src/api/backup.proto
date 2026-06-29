@@ -26,6 +26,7 @@ message ChunkHash {
   int64 index = 2;
   int64 size = 3;
   bool  eof  = 4;
+  uint32 checksum = 5; // CRC32-IEEE of chunk data, for file-level integrity
 }
 
 message ChunkData {

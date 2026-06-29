@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
+	"hash/crc32"
 	"log/slog"
-
-	"github.com/zeebo/blake3"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/storage"
@@ -23,7 +24,7 @@ type streamHandler struct {
 	store             storage.BackupStore
 	logger            *slog.Logger
 	currentFile       *filesystem.FileInfo
-	incrementalHasher *blake3.Hasher
+	fileChecksumHasher hash.Hash32 // incremental CRC32 over chunk checksums
 	EOF               bool
 	handlerMap        map[string]RequestHandlerFunc
 }
@@ -63,7 +64,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		return err
 	}
 	h.currentFile = fileInfo
-	h.incrementalHasher = blake3.New()
+	h.fileChecksumHasher = crc32.NewIEEE()
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 	fileLogger.Debug("Received file metadata", "file_info", fmt.Sprintf("%s", h.currentFile))
 
@@ -105,7 +106,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		// Reset state before sending responses — fileWritten must not be called for skip-path
 		// files because no FileDataRecord was created and fileWritten would create a duplicate FileVersion.
 		fileID := fi.FileId
-		h.incrementalHasher = nil
+		h.fileChecksumHasher = nil
 		h.currentFile = nil
 		h.EOF = false
 		// brfs always calls getFileStatus after sendFileMetadata, so we must send both
@@ -155,8 +156,9 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 		}
 	} else {
 		needed = false
-		// Chunk already stored — add its hash to the running file checksum
-		h.incrementalHasher.Write(chunk.Hash)
+		// Chunk already stored — feed its checksum into the running file hash.
+		// brfs sent the checksum alongside the hash so we don't need the data.
+		feedChecksum(h.fileChecksumHasher, chunk.Checksum)
 	}
 
 	chunkLogger.Debug("Chunk existence check", "needed", needed)
@@ -188,7 +190,8 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 	if err := h.store.StoreChunk(chunk.Hash, chunk.Data); err != nil {
 		return err
 	}
-	h.incrementalHasher.Write(chunk.Hash)
+	// Compute CRC32 from the received data — the authoritative source for new chunks.
+	feedChecksum(h.fileChecksumHasher, crc32.ChecksumIEEE(chunk.Data))
 	chunkLogger.Debug("Chunk written")
 
 	if err := h.store.LinkChunkToFileData(chunk.Hash, h.currentFile.ID(), chunk.Index); err != nil {
@@ -213,7 +216,11 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 
 func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer) error {
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
-	fileHash := h.incrementalHasher.Sum(nil)
+
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], h.fileChecksumHasher.Sum32())
+	fileHash := buf[:]
+
 	if err := h.store.FinalizeFileData(h.currentFile.ID(), fileHash); err != nil {
 		return fmt.Errorf("finalize file data: %w", err)
 	}
@@ -236,8 +243,16 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 			},
 		},
 	})
-	h.incrementalHasher = nil
+	h.fileChecksumHasher = nil
 	h.currentFile = nil
 	h.EOF = false
 	return message
+}
+
+// feedChecksum writes a chunk's CRC32 into the incremental file hasher.
+// Both brfs and bwfs call this in the same order, so the final 4-byte file hash matches.
+func feedChecksum(h hash.Hash32, checksum uint32) {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], checksum)
+	h.Write(buf[:])
 }

@@ -7,7 +7,6 @@ A backup system with intelligent deduplication and dual-layer integrity verifica
 Miniprotector is a self-learning pet-project based on my Backup & Recovery experience. It won't be working for a long time but the idea to create a simple but powerfull enterprise-grade backup tool. By starting simple and adding enterprise features progressively, I aim to incorporate ten years of backup and recovery expertise. Take the best from existing solutions to make it simple and functional.
 
 ## Core Goals
-**Nothing is done yet.**
 - 🎛️ Central control server managing all backup operations
 - 📅 Job scheduling, queuing, and resource management
 - 📊 Complete backup history tracking and reporting

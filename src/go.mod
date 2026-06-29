@@ -7,7 +7,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.9.0
-	github.com/zeebo/blake3 v0.2.4
 	golang.org/x/sys v0.44.0
 	google.golang.org/grpc v1.74.2
 	google.golang.org/protobuf v1.36.6

@@ -1,10 +1,10 @@
 package filesystem
 
 import (
+	"encoding/hex"
+	"hash/crc32"
 	"io"
 	"iter"
-
-	"encoding/hex"
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/workload"
@@ -14,10 +14,11 @@ import (
 const ChunkSize = 64 * 1024 // 64KB
 
 type Chunk struct {
-	hash  []byte // blake3 hash for dedup
-	index int64  // file offset
-	data  []byte // chunk data
-	eof   bool   // end of file flag when chunk is the last one
+	hash     []byte // blake3 hash for dedup
+	checksum uint32 // CRC32-IEEE for integrity — feed into file-level checksum
+	index    int64  // file offset
+	data     []byte // chunk data
+	eof      bool   // end of file flag when chunk is the last one
 }
 
 func NewChunk(hash []byte, index int64, eof bool, data []byte) *Chunk {
@@ -25,16 +26,25 @@ func NewChunk(hash []byte, index int64, eof bool, data []byte) *Chunk {
 		hash32 := blake3.Sum256(data)
 		hash = hash32[:]
 	}
+	var checksum uint32
+	if data != nil {
+		checksum = crc32.ChecksumIEEE(data)
+	}
 	return &Chunk{
-		hash:  hash,
-		index: index,
-		data:  data,
-		eof:   eof,
+		hash:     hash,
+		checksum: checksum,
+		index:    index,
+		data:     data,
+		eof:      eof,
 	}
 }
 
 func (c Chunk) Hash() []byte {
 	return c.hash[:]
+}
+
+func (c Chunk) Checksum() uint32 {
+	return c.checksum
 }
 
 func (c Chunk) String() string {
@@ -59,11 +69,8 @@ func (c Chunk) Size() int {
 }
 
 // ChunkIterator returns an iterator that reads the file in 64KB chunks,
-// yielding each chunk with its binary BLAKE3 hash and CRC32 checksum.
-// The iterator yields (chunk, nil) for successful reads and (nil, error) for
-// failures including file opening or reading errors.
-// The EOF field is set to true when the current chunk is the last one in the file.
-// File is not locked! Lock the file before chunking.
+// yielding each chunk with its BLAKE3 hash and CRC32 checksum.
+// EOF is true on the last chunk. File must be locked before calling.
 func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 	return func(yield func(workload.Chunk, error) bool) {
 
@@ -74,7 +81,6 @@ func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 		}
 		defer file.Close()
 
-		// Get file size to determine when we reach EOF in chunks
 		fileInfo, err := file.Stat()
 		if err != nil {
 			yield(nil, err)
@@ -96,7 +102,6 @@ func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 				return
 			}
 
-			// Stop if we hit EOF
 			if chunk.eof {
 				return
 			}
@@ -107,14 +112,9 @@ func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 }
 
 func loadChunk(file *os.File, position int64, fileSize int64) (*Chunk, error) {
-	_, err := file.Seek(position, io.SeekStart)
-	if err != nil {
-		return nil, err
-	}
-
 	buffer := make([]byte, ChunkSize)
-	bytesRead, err := file.Read(buffer)
-	if err != nil && err != io.EOF {
+	bytesRead, err := io.ReadFull(file, buffer)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
 		return nil, err
 	}
 
@@ -122,23 +122,18 @@ func loadChunk(file *os.File, position int64, fileSize int64) (*Chunk, error) {
 		return nil, io.EOF
 	}
 
-	// Trim buffer to actual data
 	data := buffer[:bytesRead]
-
-	// Calculate binary hashes
 	hash32 := blake3.Sum256(data)
-	hash := hash32[:]
-
-	// EOF is true when this chunk contains the last bytes of the file
 	isEOF := position+int64(bytesRead) >= fileSize
 
 	return &Chunk{
-		hash:  hash, // Binary BLAKE3 hash (32 bytes)
-		index: position,
-		data:  data,
-		eof:   isEOF,
+		hash:     hash32[:],
+		checksum: crc32.ChecksumIEEE(data),
+		index:    position,
+		data:     data,
+		eof:      isEOF,
 	}, nil
 }
 
-// Ensure Chunk implements Chunk interface
+// Ensure Chunk implements workload.Chunk interface
 var _ workload.Chunk = (*Chunk)(nil)

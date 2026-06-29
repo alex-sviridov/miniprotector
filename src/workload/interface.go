@@ -29,6 +29,7 @@ type BackupObjectsList interface {
 
 type Chunk interface {
 	Hash() []byte
+	Checksum() uint32
 	Index() int64
 	Data() []byte
 	Size() int

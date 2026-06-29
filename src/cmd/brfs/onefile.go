@@ -3,13 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log/slog"
 	"time"
-
-	"github.com/zeebo/blake3"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -46,12 +46,14 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 
 	var fileHash []byte
 	if fileResponse.Needed {
-		incrementalHasher := blake3.New()
+		fileChecksumHasher := crc32.NewIEEE()
+		var buf [4]byte
 		for chunk, err := range file.ChunkIterator() {
 			if err != nil {
 				return fmt.Errorf("failed to read chunk: %w", err)
 			}
-			incrementalHasher.Write(chunk.Hash())
+			binary.BigEndian.PutUint32(buf[:], chunk.Checksum())
+			fileChecksumHasher.Write(buf[:])
 			chunkResponse, err := sendChunkMetadata(ctx, logger, stream, chunk)
 			if err != nil {
 				return fmt.Errorf("failed to get chunk needed response: %w", err)
@@ -64,7 +66,9 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 				}
 			}
 		}
-		fileHash = incrementalHasher.Sum(nil)
+		binary.BigEndian.PutUint32(buf[:], fileChecksumHasher.Sum32())
+		fileHash = make([]byte, 4)
+		copy(fileHash, buf[:])
 	}
 
 	result, err := getFileStatus(ctx, logger, stream, file.ID())
@@ -178,10 +182,11 @@ func sendChunkMetadata(ctx context.Context, logger *slog.Logger, stream pb.Backu
 	request := &pb.FileRequest{
 		RequestType: &pb.FileRequest_ChunkHash{
 			ChunkHash: &pb.ChunkHash{
-				Hash:  chunk.Hash(),
-				Index: int64(chunk.Index()),
-				Size:  int64(len(chunk.Data())),
-				Eof:   chunk.IsEOF(),
+				Hash:     chunk.Hash(),
+				Index:    int64(chunk.Index()),
+				Size:     int64(len(chunk.Data())),
+				Eof:      chunk.IsEOF(),
+				Checksum: chunk.Checksum(),
 			},
 		},
 	}
