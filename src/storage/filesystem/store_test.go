@@ -122,3 +122,54 @@ func TestLinkChunkToFileData_Idempotent(t *testing.T) {
 	require.NoError(t, store.LinkChunkToFileData(hash, "file-1", 0))
 	require.NoError(t, store.LinkChunkToFileData(hash, "file-1", 0))
 }
+
+func TestFileDataExists_FalseWhenMissing(t *testing.T) {
+	store := newTestStore(t)
+	exists, err := store.FileDataExists("nonexistent")
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestFileDataExists_FalseWhenNotFinalized(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.CreateFileData("file-1", 1024))
+
+	exists, err := store.FileDataExists("file-1")
+	require.NoError(t, err)
+	assert.False(t, exists) // not finalized yet
+}
+
+func TestFileDataExists_TrueAfterFinalize(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.CreateFileData("file-1", 1024))
+	require.NoError(t, store.FinalizeFileData("file-1", []byte("checksum")))
+
+	exists, err := store.FileDataExists("file-1")
+	require.NoError(t, err)
+	assert.True(t, exists)
+}
+
+func TestFileDataChunks_ReturnsOrderedHashes(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.CreateFileData("file-1", 100))
+
+	data0 := []byte("chunk zero data padded to something")
+	data1 := []byte("chunk one data padded to something!")
+	hash0 := makeChunk(t, data0)
+	hash1 := makeChunk(t, data1)
+
+	require.NoError(t, store.StoreChunk(hash0, data0))
+	require.NoError(t, store.StoreChunk(hash1, data1))
+	require.NoError(t, store.LinkChunkToFileData(hash0, "file-1", 0))
+	require.NoError(t, store.LinkChunkToFileData(hash1, "file-1", 1))
+	require.NoError(t, store.FinalizeFileData("file-1", []byte("checksum")))
+
+	var hashes [][]byte
+	for h, err := range store.FileDataChunks("file-1") {
+		require.NoError(t, err)
+		hashes = append(hashes, h)
+	}
+	require.Len(t, hashes, 2)
+	assert.Equal(t, hash0, hashes[0])
+	assert.Equal(t, hash1, hashes[1])
+}
