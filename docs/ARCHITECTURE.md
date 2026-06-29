@@ -1,61 +1,69 @@
 # System Architecture
 A backup system with intelligent deduplication and integrity verification.
 
+## Components
 
-## System Overview
+| Component | Full name | Status |
+|-----------|-----------|--------|
+| brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
+| bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
+| rrfs | Restore Reader for File System — reads from storage, sends via gRPC | Not yet implemented |
+| rwfs | Restore Writer for File System — receives via gRPC, writes to destination | Not yet implemented |
 
-See the System Architecture Diagram showing the complete data flow between components and filesystems.
+## Backup Process
 
-## Component Connectivity
-### Backup Process:
+- **brfs** reads files from the source filesystem
+- Connects to **bwfs** via network or Unix socket
+- Sends chunked file data using the backup protocol
+- **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
 
-- **brfs** reads files from standard filesystem
-- Connects to bwfs via network or Unix socket
-- Generates data streams with chunked file content
-- bwfs writes needed data to filesystem and metadata to SQLite database
+## Restore Process _(planned)_
 
-### Restore Process:
-**rwfs** reads data from filesystem and queries SQLite database
-- Connects to rrfs via network or Unix socket
-- Generates data streams to reconstruct files
-- rrfs writes files to standard filesystem
+- **rrfs** queries SQLite metadata and reads chunks from the backup filesystem
+- Connects to **rwfs** via network or Unix socket
+- Sends chunked file data using the restore protocol
+- **rwfs** reconstructs files on the destination filesystem
+
+## Data Flow
+
 ```mermaid
 graph TB
     subgraph "Source Machine"
         SrcFS[Source Filesystem]
         brfs[brfs<br/>Backup Reader]
     end
-    
+
     subgraph "Backup Machine"
         bwfs[bwfs<br/>Backup Writer]
-        rwfs[rwfs<br/>Restore Reader]
+        rrfs[rrfs<br/>Restore Reader]
         BackupFS[Backup Filesystem]
         DB[(SQLite Database)]
     end
-    
+
     subgraph "Destination Machine"
-        rrfs[rrfs<br/>Restore Writer]
+        rwfs[rwfs<br/>Restore Writer]
         DstFS[Destination Filesystem]
     end
-    
-    %% Backup Flow 
+
+    %% Backup Flow
     SrcFS -->|reads files| brfs
     brfs -->|backup protocol<br/>network/unix socket| bwfs
     bwfs -->|stores chunks| BackupFS
     bwfs -->|stores metadata| DB
-    
-    %% Restore Flow
-    DB -->|queries metadata| rwfs
-    BackupFS -->|reads chunks| rwfs
-    rwfs -->|restore protocol<br/>network/unix socket| rrfs
-    rrfs -->|writes files| DstFS
-    
-    %% Styling
+
+    %% Restore Flow (planned)
+    DB -->|queries metadata| rrfs
+    BackupFS -->|reads chunks| rrfs
+    rrfs -->|restore protocol<br/>network/unix socket| rwfs
+    rwfs -->|writes files| DstFS
+
     classDef filesystem fill:#e1f5fe
     classDef component fill:#f3e5f5
+    classDef planned fill:#f5f5f5,stroke-dasharray:5
     classDef database fill:#fff3e0
-    
+
     class SrcFS,BackupFS,DstFS filesystem
-    class brfs,bwfs,rrfs,rwfs component
+    class brfs,bwfs component
+    class rrfs,rwfs planned
     class DB database
 ```
