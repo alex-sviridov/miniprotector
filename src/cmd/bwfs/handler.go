@@ -181,17 +181,17 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 
 func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer) error {
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
-	file_hash := h.incrementalHasher.Sum(nil)
-	if err := h.store.FinalizeFileData(h.currentFile.ID(), file_hash); err != nil {
+	fileHash := h.incrementalHasher.Sum(nil)
+	if err := h.store.FinalizeFileData(h.currentFile.ID(), fileHash); err != nil {
 		return fmt.Errorf("finalize file data: %w", err)
 	}
-	fileLogger.Debug("File transfer completed", "file_hash", hex.EncodeToString(file_hash))
+	fileLogger.Debug("File transfer completed", "fileHash", hex.EncodeToString(fileHash))
 	message := server.Send(&pb.FileResponse{
 		ResponseType: &pb.FileResponse_Result{
 			Result: &pb.FileProcessingResult{
 				FileId:  h.currentFile.ID(),
 				Success: true,
-				Hash:    file_hash,
+				Hash:    fileHash,
 			},
 		},
 	})
