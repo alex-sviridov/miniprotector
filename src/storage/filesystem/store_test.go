@@ -328,3 +328,28 @@ func TestNew_ExclusiveLock(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already in use")
 }
+
+func TestNewReadOnly_CanOpenWhileExclusiveLockHeld(t *testing.T) {
+	dir := t.TempDir()
+
+	// Simulate a live server holding the exclusive lock
+	server, err := New(dir)
+	require.NoError(t, err)
+	defer server.Close()
+
+	// NewReadOnly must succeed despite the exclusive flock
+	ro, err := NewReadOnly(dir)
+	require.NoError(t, err)
+	defer ro.Close()
+
+	// RawDB must be non-nil and usable
+	assert.NotNil(t, ro.RawDB())
+	assert.NoError(t, ro.RawDB().Exec("SELECT 1").Error)
+}
+
+func TestNewReadOnly_CloseDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	ro, err := NewReadOnly(dir)
+	require.NoError(t, err)
+	assert.NoError(t, ro.Close()) // must not panic on nil lockFile
+}

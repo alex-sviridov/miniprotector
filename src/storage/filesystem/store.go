@@ -37,6 +37,17 @@ func New(basePath string) (*Store, error) {
 	return &Store{basePath: basePath, db: db, lockFile: lockFile}, nil
 }
 
+// NewReadOnly opens the store for read-only administrative use (e.g. CLI listing).
+// It does not acquire the exclusive flock, so it can run alongside a live bwfs server.
+// SQLite WAL mode allows concurrent readers with no blocking.
+func NewReadOnly(basePath string) (*Store, error) {
+	db, err := openDB(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	return &Store{basePath: basePath, db: db}, nil
+}
+
 func acquireLock(basePath string) (*os.File, error) {
 	lockPath := filepath.Join(basePath, "metadata.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
@@ -54,6 +65,10 @@ func acquireLock(basePath string) (*os.File, error) {
 	return f, nil
 }
 
+// RawDB returns the underlying *gorm.DB for read-only administrative queries.
+// Not part of BackupStore interface — only for CLI tooling.
+func (s *Store) RawDB() *gorm.DB { return s.db }
+
 func (s *Store) Close() error {
 	sqlDB, err := s.db.DB()
 	if err != nil {
@@ -62,7 +77,10 @@ func (s *Store) Close() error {
 	if err := sqlDB.Close(); err != nil {
 		return err
 	}
-	return s.lockFile.Close()
+	if s.lockFile != nil {
+		return s.lockFile.Close()
+	}
+	return nil
 }
 
 var _ storage.BackupStore = (*Store)(nil)
