@@ -87,7 +87,22 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		"file_size", h.currentFile.Size(),
 		"file_type", fmt.Sprintf("%c", h.currentFile.GetType()))
 
-	if !needed {
+	if needed {
+		// Create the incomplete FileData row; FinalizeFileData will complete it after all chunks arrive.
+		if err := h.store.CreateFileData(h.currentFile.ID(), h.currentFile.Size()); err != nil {
+			return fmt.Errorf("create file data: %w", err)
+		}
+	} else {
+		// File already known or non-transferable — record it in the backup catalog now,
+		// since fileWritten will not be called for this file.
+		if _, err := h.store.CreateFileVersion(
+			h.currentFile.ID(),
+			h.currentFile.ID(),
+			h.currentFile.MetadataBlob(),
+			h.currentFile.Ctime(),
+		); err != nil {
+			return fmt.Errorf("create file version: %w", err)
+		}
 		h.EOF = true
 	}
 
@@ -184,6 +199,15 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 	fileHash := h.incrementalHasher.Sum(nil)
 	if err := h.store.FinalizeFileData(h.currentFile.ID(), fileHash); err != nil {
 		return fmt.Errorf("finalize file data: %w", err)
+	}
+	// Record this file in the backup catalog now that its content is safely stored.
+	if _, err := h.store.CreateFileVersion(
+		h.currentFile.ID(),
+		h.currentFile.ID(),
+		h.currentFile.MetadataBlob(),
+		h.currentFile.Ctime(),
+	); err != nil {
+		return fmt.Errorf("create file version: %w", err)
 	}
 	fileLogger.Debug("File transfer completed", "fileHash", hex.EncodeToString(fileHash))
 	message := server.Send(&pb.FileResponse{
