@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	_ "modernc.org/sqlite"
 )
 
 func openDB(basePath string) (*gorm.DB, error) {
