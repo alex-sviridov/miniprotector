@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/hex"
+	"errors"
 	"log/slog"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 )
 
 type restoreServer struct {
@@ -42,7 +44,10 @@ func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreSer
 		Where("id = ? AND checksum IS NOT NULL", req.GetFileDataId()).
 		First(&fd).Error
 	if err != nil {
-		return status.Errorf(codes.NotFound, "file_data_id not found: %s", req.GetFileDataId())
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return status.Errorf(codes.NotFound, "file_data_id not found or unfinalized: %s", req.GetFileDataId())
+		}
+		return status.Errorf(codes.Internal, "db error looking up file_data_id: %v", err)
 	}
 
 	if err := stream.Send(&pb.RestoreEvent{
