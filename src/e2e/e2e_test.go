@@ -94,7 +94,7 @@ func TestE2E_SingleSubfolderBackup(t *testing.T) {
 
 	// Run brfs for subA only, 1 stream
 	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
-		filepath.Join(dataDir, "subA"), "bwfs", 1)
+		filepath.Join(dataDir, "subA"), "bwfs", 1, "")
 	require.Equal(t, 0, exitCode, "brfs exited with non-zero code")
 
 	// Validate with bwfs list
@@ -125,7 +125,7 @@ func TestE2E_AllFoldersBackup(t *testing.T) {
 	require.NoError(t, waitForBwfs(ctx, hostPort))
 
 	// Run brfs for all folders, 4 streams
-	exitCode := runBrfsContainer(ctx, t, testImageID, networkID, dataDir, "bwfs", 4)
+	exitCode := runBrfsContainer(ctx, t, testImageID, networkID, dataDir, "bwfs", 4, "")
 	require.Equal(t, 0, exitCode, "brfs exited with non-zero code")
 
 	// Validate with bwfs list
@@ -135,4 +135,55 @@ func TestE2E_AllFoldersBackup(t *testing.T) {
 
 	// All files present with correct size and checksum
 	assertFilesPresent(t, list, allRecords, storageDir)
+}
+
+func TestE2E_Verify_HappyPath(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dataDir := t.TempDir()
+	generateTestData(t, dataDir)
+
+	networkID := createNetwork(ctx, t)
+	storageDir := t.TempDir()
+
+	hostPort := startBwfsContainer(ctx, t, testImageID, networkID, storageDir)
+	require.NoError(t, waitForBwfs(ctx, hostPort))
+
+	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
+		filepath.Join(dataDir, "subA"), "bwfs", 4, "brfs-source")
+	require.Equal(t, 0, exitCode, "brfs should exit 0")
+
+	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, false)
+	require.Equal(t, 0, exitCode, "rwfs verify should pass on clean backup")
+}
+
+func TestE2E_Verify_CorruptionDetection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dataDir := t.TempDir()
+	generateTestData(t, dataDir)
+
+	networkID := createNetwork(ctx, t)
+	storageDir := t.TempDir()
+
+	hostPort := startBwfsContainer(ctx, t, testImageID, networkID, storageDir)
+	require.NoError(t, waitForBwfs(ctx, hostPort))
+
+	// Back up subA only (8 files, known chunk layout)
+	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
+		filepath.Join(dataDir, "subA"), "bwfs", 1, "brfs-source")
+	require.Equal(t, 0, exitCode, "brfs should exit 0")
+
+	// Confirm baseline passes
+	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, true)
+	require.Equal(t, 0, exitCode, "baseline verify should pass")
+
+	// Corrupt one chunk on the host filesystem (shared with the container via bind mount)
+	corruptOneChunk(t, storageDir)
+
+	// Verify must now detect the corruption and exit non-zero
+	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, false)
+	require.NotEqual(t, 0, exitCode, "verify must fail when a chunk is corrupted")
 }

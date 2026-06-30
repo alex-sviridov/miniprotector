@@ -272,21 +272,28 @@ func waitForBwfs(ctx context.Context, hostPort string) error {
 // runBrfsContainer runs brfs as a one-shot container and returns the exit code.
 // dataDir on the host is bind-mounted to /testdata inside the container.
 // bwfsContainerName is the DNS name of the bwfs container on the shared network.
-func runBrfsContainer(ctx context.Context, t testingT, imageID, networkID, dataDir, bwfsContainerName string, streams int) int {
+// hostname, when non-empty, is set as the container's hostname so brfs labels
+// files with a predictable source name instead of a random Docker container ID.
+func runBrfsContainer(ctx context.Context, t testingT, imageID, networkID, dataDir, bwfsContainerName string, streams int, hostname string) int {
 	t.Helper()
 	cli := newDockerClient(t)
 	defer cli.Close()
 
-	resp, err := cli.ContainerCreate(ctx,
-		&container.Config{
-			Image: imageID,
-			Cmd: []string{
-				"/app/brfs", "/testdata",
-				"--destination", fmt.Sprintf("%s:15722", bwfsContainerName),
-				"--streams", fmt.Sprintf("%d", streams),
-				"--quiet",
-			},
+	cfg := &container.Config{
+		Image: imageID,
+		Cmd: []string{
+			"/app/brfs", "/testdata",
+			"--destination", fmt.Sprintf("%s:15722", bwfsContainerName),
+			"--streams", fmt.Sprintf("%d", streams),
+			"--quiet",
 		},
+	}
+	if hostname != "" {
+		cfg.Hostname = hostname
+	}
+
+	resp, err := cli.ContainerCreate(ctx,
+		cfg,
 		&container.HostConfig{
 			Binds: []string{dataDir + ":/testdata:ro"},
 		},
@@ -390,4 +397,70 @@ func stripDockerMux(data []byte) []byte {
 		data = data[size:]
 	}
 	return out
+}
+
+// runRwfsVerifyContainer runs `rwfs verify` against the bwfs container and returns the exit code.
+// It always filters for files backed up by a brfs container with hostname "brfs-source".
+// quiet=true passes --quiet (suppress per-file success lines; warnings still shown).
+func runRwfsVerifyContainer(ctx context.Context, t testingT, imageID, networkID string, quiet bool) int {
+	t.Helper()
+	cli := newDockerClient(t)
+	defer cli.Close()
+
+	cmd := []string{"/app/rwfs", "verify", "brfs-source:/", "bwfs:15722", "--streams", "4"}
+	if quiet {
+		cmd = append(cmd, "--quiet")
+	}
+
+	resp, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image: imageID,
+			Cmd:   cmd,
+		},
+		&container.HostConfig{},
+		&network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				networkID: {NetworkID: networkID},
+			},
+		},
+		nil,
+		"",
+	)
+	require.NoError(t, err)
+	defer func() {
+		_ = cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
+	}()
+
+	require.NoError(t, cli.ContainerStart(ctx, resp.ID, container.StartOptions{}))
+
+	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case status := <-statusCh:
+		if status.Error != nil {
+			t.Logf("rwfs verify error: %s", status.Error.Message)
+		}
+		logContainerOutput(ctx, t, cli, resp.ID)
+		return int(status.StatusCode)
+	}
+	return -1
+}
+
+// corruptOneChunk flips the first byte of the first chunk file found under storageDir/chunks/.
+// The storageDir must be host-accessible (bind-mounted from a container or a local t.TempDir()).
+func corruptOneChunk(t testingT, storageDir string) {
+	t.Helper()
+	chunks, err := filepath.Glob(filepath.Join(storageDir, "chunks", "*", "*", "*"))
+	require.NoError(t, err)
+	require.NotEmpty(t, chunks, "no chunks found in storage dir %s", storageDir)
+
+	chunkPath := chunks[0]
+	data, err := os.ReadFile(chunkPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, data)
+
+	data[0] ^= 0xFF
+	require.NoError(t, os.WriteFile(chunkPath, data, 0644))
+	t.Logf("corrupted chunk: %s", chunkPath)
 }
