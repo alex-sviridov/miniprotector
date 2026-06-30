@@ -60,4 +60,5 @@ make build
 
 - [bwfs](./bwfs.md) — Backup Writer; the server `rwfs` connects to
 - [brfs](./brfs.md) — Backup Reader for File System
+- [list protocol](../protocols/list.md) — gRPC protocol `rwfs` uses to query `bwfs`
 - [Architecture](../ARCHITECTURE.md) — System overview

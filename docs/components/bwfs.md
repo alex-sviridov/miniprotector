@@ -66,5 +66,6 @@ make build
 
 - [brfs](./brfs.md) — Backup Reader for File System
 - [rwfs](./rwfs.md) — Remote list/restore client for this server
-- [backup protocol](../protocols/backup.md) — Wire protocol
+- [backup protocol](../protocols/backup.md) — brfs → bwfs wire protocol
+- [list protocol](../protocols/list.md) — rwfs → bwfs list subprotocol
 - [Architecture](../ARCHITECTURE.md) — System overview

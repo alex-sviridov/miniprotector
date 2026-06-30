@@ -50,7 +50,8 @@ rwfs list myhost:/var/log localhost:8080
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
-- **[Backup Protocol](docs/protocols/backup.md)** - Communication specification
+- **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
+- **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
 - **[Components](docs/components/)** - Individual component documentation
 
 ## Building
