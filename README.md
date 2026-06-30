@@ -41,17 +41,27 @@ rwfs list localhost:8080
 rwfs list myhost:/var/log localhost:8080
 ```
 
+**Verify backup integrity:**
+```bash
+# Verify all files backed up from the current host
+rwfs verify localhost:8080
+
+# Verify with 8 concurrent workers, suppress success lines
+rwfs verify localhost:8080 --streams 8 --quiet
+```
+
 ## Components
 
 - **[brfs](docs/components/brfs.md)** - Backup Reader for File System — reads files and streams them to `bwfs`
 - **[bwfs](docs/components/bwfs.md)** - Backup Writer for File System — receives, deduplicates, and stores files; also serves the list subprotocol
-- **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings
+- **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity
 
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
 - **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
+- **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol
 - **[Components](docs/components/)** - Individual component documentation
 
 ## Building

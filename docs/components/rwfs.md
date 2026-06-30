@@ -50,6 +50,35 @@ When `server_name` is omitted from the filter (i.e. no positional, or positional
 
 The JSON schema is identical to `bwfs list --output json`, so the same parsers work for both local and remote queries.
 
+## verify
+
+Verifies the integrity of files stored on a remote `bwfs` server. Fetches each file's
+chunks via the [Restore Protocol](../protocols/restore.md) and re-verifies both per-chunk
+BLAKE3 hashes and the whole-file CRC32 checksum — without writing to disk.
+
+```bash
+# Verify all files backed up from the current host
+rwfs verify localhost:8080
+
+# Verify files from a specific host and path prefix
+rwfs verify myhost:/var/log localhost:8080
+
+# Verify with 8 concurrent streams, suppress per-file success lines
+rwfs verify localhost:8080 --streams 8 --quiet
+```
+
+Exits 0 if all files pass. Exits 1 if any file fails (BLAKE3 mismatch, CRC32 mismatch,
+or stream error after retries). Per-file results and a summary are written via `slog`.
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--filter` | | Substring filter on file path |
+| `--streams` | 4 | Concurrent verification workers |
+| `--retries` | 3 | Max retry attempts per file on stream error |
+| `--quiet` | false | Suppress per-file success lines (warnings and summary always shown) |
+
 ## Building
 
 ```bash
@@ -61,4 +90,5 @@ make build
 - [bwfs](./bwfs.md) — Backup Writer; the server `rwfs` connects to
 - [brfs](./brfs.md) — Backup Reader for File System
 - [list protocol](../protocols/list.md) — gRPC protocol `rwfs` uses to query `bwfs`
+- [restore protocol](../protocols/restore.md) — gRPC protocol `rwfs verify` uses to verify stored files
 - [Architecture](../ARCHITECTURE.md) — System overview

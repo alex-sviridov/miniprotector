@@ -7,7 +7,7 @@ A backup system with intelligent deduplication and integrity verification.
 |-----------|-----------|--------|
 | brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
-| rwfs | Restore Writer for File System — queries bwfs (list, future restore) and writes to destination | list implemented; restore not yet implemented |
+| rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
 
 ## Backup Process
 
@@ -16,10 +16,11 @@ A backup system with intelligent deduplication and integrity verification.
 - Sends chunked file data using the backup protocol
 - **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
 
-## Restore Process _(planned)_
+## Restore/Verify Process
 
 - **rwfs** connects to **bwfs** via network or Unix socket using the list/restore protocol
 - **rwfs list** queries metadata from the remote **bwfs** server
+- **rwfs verify** fetches all chunks and re-verifies BLAKE3 and CRC32 integrity without writing to disk
 - **rwfs** (future restore) reconstructs files on the destination filesystem
 
 ## Data Flow
@@ -48,7 +49,7 @@ graph TB
     bwfs -->|stores chunks| BackupFS
     bwfs -->|stores metadata| DB
 
-    %% Restore Flow (planned)
+    %% Restore Flow (list/verify implemented)
     bwfs -->|list/restore protocol<br/>network/unix socket| rwfs
     rwfs -->|writes files| DstFS
 
@@ -59,6 +60,6 @@ graph TB
 
     class SrcFS,BackupFS,DstFS filesystem
     class brfs,bwfs component
-    class rwfs planned
+    class rwfs component
     class DB database
 ```

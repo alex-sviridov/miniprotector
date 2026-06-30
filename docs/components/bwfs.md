@@ -16,6 +16,9 @@ bwfs <storage_path> <command> [flags]
 
 Start the gRPC server. Receives files from `brfs` and stores chunks and metadata. Also serves the `ListService` subprotocol so `rwfs list` can query this server remotely.
 
+The server registers `BackupService`, `ListService`, and `RestoreService` on the same
+port. See [Restore Protocol](../protocols/restore.md) for the restore subprotocol.
+
 ```bash
 bwfs /home/user/backup server
 bwfs /home/user/backup server --port 8080 --debug
@@ -68,4 +71,5 @@ make build
 - [rwfs](./rwfs.md) — Remote list/restore client for this server
 - [backup protocol](../protocols/backup.md) — brfs → bwfs wire protocol
 - [list protocol](../protocols/list.md) — rwfs → bwfs list subprotocol
+- [restore protocol](../protocols/restore.md) — rwfs → bwfs restore/verify subprotocol
 - [Architecture](../ARCHITECTURE.md) — System overview
