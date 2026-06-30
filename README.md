@@ -44,4 +44,13 @@ brfs /home/user/documents --destination localhost:8080
 ```bash
 # Build all components
 make build
+
+# Run unit and integration tests
+make test
+
+# Run go vet
+make lint
+
+# Run Docker-based e2e tests (requires Docker daemon, ~3 min)
+make test-e2e
 ```

@@ -39,7 +39,6 @@ Communicates with [bwfs](./bwfs.md) (backup writer) using the protocol specified
 ## Building
 
 ```bash
-cd srv
 make build
 ```
 

@@ -50,7 +50,7 @@ bwfs /home/user/backup list --filter /var/log
 ## Building
 
 ```bash
-cd src && make build
+make build
 ```
 
 ## See Also

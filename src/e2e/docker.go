@@ -44,20 +44,23 @@ func newDockerClient(t testingT) *client.Client {
 }
 
 // buildImage builds the e2e Docker image from the repo root.
-// repoRoot is the directory containing src/ and src/e2e/Dockerfile.
+// repoRoot is the directory containing src/, Makefile, and src/e2e/Dockerfile.
 // Returns the image ID. Caller is responsible for cleanup.
 func buildImage(ctx context.Context, t testingT, repoRoot string) string {
 	t.Helper()
 	cli := newDockerClient(t)
 	defer cli.Close()
 
-	// Create build context tar. The Dockerfile only ever references src/
-	// (COPY src/ .), so only walk that subtree rather than the whole
-	// repoRoot — this keeps .git/, bin/, docs/, etc. out of the in-memory
-	// tar buffer and out of what's sent to the Docker daemon.
+	// Create build context tar. The Dockerfile does `COPY . .` against this
+	// context, but only needs src/ and the root Makefile — so only walk
+	// those rather than the whole repoRoot, keeping .git/, bin/, docs/,
+	// etc. out of the in-memory tar buffer and out of what's sent to the
+	// Docker daemon.
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)
 	err := addDirToTar(tw, filepath.Join(repoRoot, "src"), "src")
+	require.NoError(t, err)
+	err = addFileToTar(tw, filepath.Join(repoRoot, "Makefile"), "Makefile")
 	require.NoError(t, err)
 	require.NoError(t, tw.Close())
 
@@ -134,6 +137,29 @@ func addDirToTar(tw *tar.Writer, srcDir, prefix string) error {
 		_, err = io.Copy(tw, f)
 		return err
 	})
+}
+
+// addFileToTar adds a single file to the tar writer at the given path.
+func addFileToTar(tw *tar.Writer, srcPath, tarPath string) error {
+	info, err := os.Stat(srcPath)
+	if err != nil {
+		return err
+	}
+	hdr, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return err
+	}
+	hdr.Name = tarPath
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(tw, f)
+	return err
 }
 
 // createNetwork creates an isolated bridge network and registers cleanup.

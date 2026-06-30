@@ -1,7 +1,7 @@
 # Project configuration
 PROJECT_NAME := backup-system
-BINARY_DIR := ../bin
-GO_MODULE := $(shell go list -m)
+BINARY_DIR := bin
+GO_MODULE := $(shell cd src && go list -m)
 
 # Go build configuration
 GO := go
@@ -14,7 +14,7 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(shell git describe --tags --always 
 BUILDFLAGS := -trimpath -v
 
 # Binary definitions
-BINARIES := $(notdir $(wildcard cmd/*))
+BINARIES := $(notdir $(wildcard src/cmd/*))
 BRFS_CMD := cmd/brfs
 BWFS_CMD := cmd/bwfs
 RRFS_CMD := cmd/rrfs
@@ -26,7 +26,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rrfs test lint
+.PHONY: all build clean proto check-deps help brfs bwfs rrfs test test-e2e lint
 
 # Default target
 all: check-deps proto build
@@ -46,10 +46,10 @@ check-deps: ## Check required dependencies
 
 proto: ## Generate protobuf code
 	@printf "$(BLUE)Generating protobuf code...$(NC) "
-	@protoc --go_out=. --go_opt=paths=source_relative \
+	@cd src && protoc --go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		api/*.proto
-	@echo -e "$(GREEN)Protobuf code generated in api/$(NC)"
+	@echo -e "$(GREEN)Protobuf code generated in src/api/$(NC)"
 
 # Build all binaries
 build: $(BINARIES) ## Build all binaries
@@ -62,18 +62,30 @@ $(BINARY_DIR):
 # Individual binary targets
 brfs: $(BINARY_DIR) ## Build brfs binary
 	@printf "$(BLUE)Building brfs...$(NC) "
-	@CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/brfs ./$(BRFS_CMD)
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/brfs ./$(BRFS_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/brfs"
 
 bwfs: $(BINARY_DIR) ## Build bwfs binary
 	@printf "$(BLUE)Building bwfs...$(NC) "
-	@CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/bwfs ./$(BWFS_CMD)
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/bwfs ./$(BWFS_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/bwfs"
 
 rrfs: $(BINARY_DIR) ## Build rrfs binary
 	@printf "$(BLUE)Building rrfs...$(NC) "
-	@CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/rrfs ./$(RRFS_CMD)
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/rrfs ./$(RRFS_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/rrfs"
+
+test: ## Run unit and integration tests
+	cd src && go test ./...
+
+test-e2e: ## Run Docker-based e2e tests (requires Docker daemon, ~3 min)
+	cd src && go test -tags=e2e -timeout=300s ./e2e/...
+
+lint: ## Run go vet
+	cd src && go vet ./...
+
+clean: ## Remove built binaries
+	rm -rf $(BINARY_DIR)
