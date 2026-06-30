@@ -64,9 +64,18 @@ func main() {
 		defer listStore.Close()
 		listSrv := NewListServer(listStore, logger)
 
+		restoreStore, err := wfs.NewReadOnly(arguments.StoragePath)
+		if err != nil {
+			logger.Error("Restore store initialization failed", "error", err)
+			os.Exit(1)
+		}
+		defer restoreStore.Close()
+		restoreSrv := NewRestoreServer(restoreStore, logger)
+
 		if err := connection.StartServer(ctx, logger, arguments.Port, func(s *grpc.Server) {
 			pb.RegisterBackupServiceServer(s, backupServer)
 			pb.RegisterListServiceServer(s, listSrv)
+			pb.RegisterRestoreServiceServer(s, restoreSrv)
 		}); err != nil {
 			logger.Error("Server failed", "error", err)
 			os.Exit(1)
