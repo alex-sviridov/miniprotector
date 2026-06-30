@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package restoreservice;
+
+option go_package = "./proto";
+
+service RestoreService {
+  rpc RestoreFile(RestoreRequest) returns (stream RestoreEvent);
+}
+
+message RestoreRequest {
+  string file_data_id = 1;
+}
+
+message RestoreEvent {
+  oneof payload {
+    RestoreFileMeta meta  = 1;
+    RestoreChunk    chunk = 2;
+  }
+}
+
+message RestoreFileMeta {
+  int64  size              = 1;
+  int32  chunk_count       = 2;
+  bytes  expected_checksum = 3;
+}
+
+message RestoreChunk {
+  int64 index = 1;
+  bytes hash  = 2;
+  bytes data  = 3;
+  bool  eof   = 4;
+}
