@@ -21,9 +21,8 @@ func main() {
 
 	// Configuration constants
 	const (
-		configPath = "../.config/local.conf"
-		appName    = "brfs"
-		jobId      = "BackupJob"
+		appName = "brfs"
+		jobId   = "BackupJob"
 	)
 
 	// Put context variables
@@ -33,6 +32,12 @@ func main() {
 	ctx = context.WithValue(ctx, "jobId", jobId)
 
 	// Get configuration
+	configPath, err := config.ResolveConfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		os.Exit(1)
+	}
+
 	conf, err := config.ParseConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)

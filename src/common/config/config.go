@@ -5,9 +5,31 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// ConfigFileEnvVar is the environment variable used to override the config
+// file path. If unset, ResolveConfigPath defaults to "local.conf" in the
+// same directory as the running binary.
+const ConfigFileEnvVar = "MP_CONFIGFILE"
+
+// ResolveConfigPath determines the configuration file path to use.
+// Precedence:
+//  1. MP_CONFIGFILE environment variable, if set.
+//  2. "local.conf" in the same directory as the running executable.
+func ResolveConfigPath() (string, error) {
+	if envPath := os.Getenv(ConfigFileEnvVar); envPath != "" {
+		return envPath, nil
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine executable path: %w", err)
+	}
+	return filepath.Join(filepath.Dir(exePath), "local.conf"), nil
+}
 
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {

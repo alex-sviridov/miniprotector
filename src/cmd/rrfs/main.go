@@ -14,14 +14,17 @@ import (
 )
 
 func main() {
-	const (
-		configPath = "../.config/local.conf"
-		appName    = "rrfs"
-	)
+	const appName = "rrfs"
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx = context.WithValue(ctx, "appName", appName)
+
+	configPath, err := config.ResolveConfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		os.Exit(1)
+	}
 
 	conf, err := config.ParseConfig(configPath)
 	if err != nil {

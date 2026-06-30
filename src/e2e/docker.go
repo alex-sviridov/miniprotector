@@ -159,8 +159,13 @@ func startBwfsContainer(ctx context.Context, t testingT, imageID, networkID, sto
 	containerPort := nat.Port("15722/tcp")
 	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
-			Image:        imageID,
-			Cmd:          []string{"/app/bwfs", "/storage", "server", "--port", "15722", "--quiet"},
+			Image: imageID,
+			Cmd:   []string{"/app/bwfs", "/storage", "server", "--port", "15722", "--quiet"},
+			// Run as the host UID/GID so files bwfs writes into the
+			// bind-mounted storageDir are owned by the host test process
+			// (not root), which is required for t.TempDir()'s automatic
+			// cleanup (os.RemoveAll) to succeed afterward.
+			User:         fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 			ExposedPorts: nat.PortSet{containerPort: struct{}{}},
 		},
 		&container.HostConfig{

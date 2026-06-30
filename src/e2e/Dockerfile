@@ -18,4 +18,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /build/bin/brfs /build/bin/bwfs ./
-COPY src/e2e/config.conf .config/local.conf
+COPY src/e2e/config.conf local.conf

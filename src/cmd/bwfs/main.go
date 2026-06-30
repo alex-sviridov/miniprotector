@@ -13,12 +13,15 @@ import (
 )
 
 func main() {
-	const (
-		configPath = "../.config/local.conf"
-		appName    = "bwfs"
-	)
+	const appName = "bwfs"
 
 	ctx := context.WithValue(context.Background(), "appName", appName)
+
+	configPath, err := config.ResolveConfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		os.Exit(1)
+	}
 
 	conf, err := config.ParseConfig(configPath)
 	if err != nil {
