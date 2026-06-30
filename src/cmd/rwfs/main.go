@@ -33,7 +33,11 @@ func main() {
 		os.Exit(1)
 	}
 	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
+
+	// verify --quiet only suppresses per-file success lines, not all console output.
+	// list --quiet suppresses all console output (original behaviour).
+	quietForLogger := arguments.Quiet && arguments.Action != "verify"
+	ctx = context.WithValue(ctx, "quietMode", quietForLogger)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -42,6 +46,11 @@ func main() {
 	case "list":
 		if err := runList(arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Output); err != nil {
 			logger.Error("List failed", "error", err)
+			os.Exit(1)
+		}
+	case "verify":
+		if err := runVerify(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Streams, arguments.Retries, arguments.Quiet); err != nil {
+			logger.Error("Verify failed", "error", err)
 			os.Exit(1)
 		}
 	}
