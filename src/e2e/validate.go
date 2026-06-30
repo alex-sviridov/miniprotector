@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	_ "modernc.org/sqlite"
 )
 
 type listRecord struct {
@@ -84,7 +86,19 @@ type fileDataRecord struct {
 func openMetadataDB(t *testing.T, storagePath string) *gorm.DB {
 	t.Helper()
 	dbPath := filepath.Join(storagePath, "metadata.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?mode=ro"), &gorm.Config{
+	dsn := "file:" + dbPath + "?mode=ro"
+
+	// Open via database/sql with the pure-Go modernc driver so the
+	// `file:` URI and `mode=ro` query parameter are honored natively,
+	// guaranteeing this connection cannot write to metadata.db even
+	// while a live bwfs server holds it open for writes.
+	sqlDB, err := sql.Open("sqlite", dsn)
+	require.NoError(t, err, "failed to open metadata.db at %s", dbPath)
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	require.NoError(t, err, "failed to open metadata.db at %s", dbPath)
