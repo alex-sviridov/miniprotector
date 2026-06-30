@@ -17,7 +17,7 @@ BUILDFLAGS := -trimpath -v
 BINARIES := $(notdir $(wildcard src/cmd/*))
 BRFS_CMD := cmd/brfs
 BWFS_CMD := cmd/bwfs
-RRFS_CMD := cmd/rrfs
+RWFS_CMD := cmd/rwfs
 
 # Colors for output
 RED := \033[0;31m
@@ -26,7 +26,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rrfs test test-e2e lint
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs test test-e2e lint
 
 # Default target
 all: check-deps proto build
@@ -72,11 +72,12 @@ bwfs: $(BINARY_DIR) ## Build bwfs binary
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/bwfs ./$(BWFS_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/bwfs"
 
-rrfs: $(BINARY_DIR) ## Build rrfs binary
-	@printf "$(BLUE)Building rrfs...$(NC) "
+rwfs: $(BINARY_DIR) ## Build rwfs binary
+	@printf "$(BLUE)Building rwfs...$(NC) "
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/rrfs ./$(RRFS_CMD)
-	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/rrfs"
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/rwfs ./$(RWFS_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/rwfs"
+
 
 test: ## Run unit and integration tests
 	cd src && go test ./...

@@ -4,21 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
-	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
-	"google.golang.org/grpc"
 )
 
 func main() {
-	const appName = "rrfs"
+	const appName = "rwfs"
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	ctx = context.WithValue(ctx, "appName", appName)
+	ctx := context.WithValue(context.Background(), "appName", appName)
 
 	configPath, err := config.ResolveConfigPath()
 	if err != nil {
@@ -45,23 +39,9 @@ func main() {
 	defer logfile.Close()
 
 	switch arguments.Action {
-	case "server":
-		logger.Info("Restore reader started",
-			"storagePath", arguments.StoragePath,
-			"serverPort", arguments.Port,
-		)
-		srv, err := NewRestoreServer(ctx, logger, arguments.StoragePath)
-		if err != nil {
-			logger.Error("Server initialization failed", "error", err)
-			os.Exit(1)
-		}
-		defer srv.store.Close()
-
-		if err := connection.StartServer(ctx, logger, arguments.Port, func(s *grpc.Server) {
-			// Restore service registration goes here once the proto is defined.
-			_ = s
-		}); err != nil {
-			logger.Error("Server failed", "error", err)
+	case "list":
+		if err := runList(arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Output); err != nil {
+			logger.Error("List failed", "error", err)
 			os.Exit(1)
 		}
 	}
