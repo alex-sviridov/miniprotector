@@ -17,8 +17,11 @@ type Arguments struct {
 	Debug bool
 	Quiet bool
 	// list flags
-	Output string // "table" | "json"
-	Filter string
+	ServerName     string // source hostname filter, from positional, may be empty
+	PathFilter     string // path prefix filter, from positional, may be empty
+	listPositional string // raw "[server_name:]path" before ParseServerPath
+	Output         string // "table" | "json"
+	Filter         string
 }
 
 func parseArguments(conf *config.Config) (*Arguments, error) {
@@ -51,10 +54,15 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 
 	// list subcommand
 	listCmd := &cobra.Command{
-		Use:   "list",
+		Use:   "list [[server_name:]path]",
 		Short: "List stored file data",
-		Args:  cobra.NoArgs,
-		Run:   func(cmd *cobra.Command, _ []string) { args.Action = "list" },
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, cliArgs []string) {
+			args.Action = "list"
+			if len(cliArgs) == 1 {
+				args.listPositional = cliArgs[0]
+			}
+		},
 	}
 	listCmd.Flags().StringVar(&args.Output, "output", "table", "Output format: table or json")
 	listCmd.Flags().StringVar(&args.Filter, "filter", "", "Filter by text in file path")
@@ -76,8 +84,16 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		}
 	}
 
-	if args.Action == "list" && args.Output != "table" && args.Output != "json" {
-		return nil, fmt.Errorf("--output must be 'table' or 'json', got: %q", args.Output)
+	if args.Action == "list" {
+		if args.Output != "table" && args.Output != "json" {
+			return nil, fmt.Errorf("--output must be 'table' or 'json', got: %q", args.Output)
+		}
+		serverName, path, err := common.ParseServerPath(args.listPositional)
+		if err != nil {
+			return nil, fmt.Errorf("list positional error: %w", err)
+		}
+		args.ServerName = serverName
+		args.PathFilter = path
 	}
 
 	return args, nil

@@ -63,7 +63,7 @@ func main() {
 		}
 
 	case "list":
-		if err := runList(logger, arguments.StoragePath, "", "", arguments.Output, arguments.Filter); err != nil {
+		if err := runList(logger, arguments.StoragePath, arguments.ServerName, arguments.PathFilter, arguments.Output, arguments.Filter); err != nil {
 			logger.Error("List failed", "error", err)
 			os.Exit(1)
 		}
