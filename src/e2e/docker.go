@@ -283,7 +283,7 @@ func runBwfsListContainer(ctx context.Context, t testingT, imageID, networkID, s
 	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: imageID,
-			Cmd:   []string{"/app/bwfs", "/storage", "list", "--output", "json", "--quiet"},
+			Cmd:   []string{"/app/bwfs", "/storage", "list", "--output", "json"},
 		},
 		&container.HostConfig{
 			Binds: []string{storageDir + ":/storage"},
