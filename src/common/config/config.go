@@ -11,14 +11,20 @@ import (
 )
 
 // ConfigFileEnvVar is the environment variable used to override the config
-// file path. If unset, ResolveConfigPath defaults to "local.conf" in the
-// same directory as the running binary.
+// file path. If unset, ResolveConfigPath searches for "local.conf" relative
+// to the running binary's directory (see ResolveConfigPath for the search
+// order).
 const ConfigFileEnvVar = "MP_CONFIGFILE"
 
 // ResolveConfigPath determines the configuration file path to use.
 // Precedence:
 //  1. MP_CONFIGFILE environment variable, if set.
-//  2. "local.conf" in the same directory as the running executable.
+//  2. "<exeDir>/.config/local.conf" - handles the container/e2e layout
+//     where the binary and a .config subdirectory live side by side
+//     (e.g. /app/bwfs, /app/.config/local.conf).
+//  3. "<exeDir>/../.config/local.conf" - handles the conventional
+//     repo layout where binaries are built to <repo-root>/bin and the
+//     config lives at <repo-root>/.config/local.conf.
 func ResolveConfigPath() (string, error) {
 	if envPath := os.Getenv(ConfigFileEnvVar); envPath != "" {
 		return envPath, nil
@@ -28,7 +34,20 @@ func ResolveConfigPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to determine executable path: %w", err)
 	}
-	return filepath.Join(filepath.Dir(exePath), "local.conf"), nil
+	exeDir := filepath.Dir(exePath)
+
+	candidates := []string{
+		filepath.Join(exeDir, ".config", "local.conf"),
+		filepath.Join(exeDir, "..", ".config", "local.conf"),
+	}
+
+	for _, candidate := range candidates {
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("no config file found at any of: %v; set %s to override", candidates, ConfigFileEnvVar)
 }
 
 // Config holds configuration from /etc/btool/local.conf
