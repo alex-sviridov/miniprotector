@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-func Connect(host string, port, timeout int) (pb.BackupServiceClient, error) {
+func Connect(host string, port, timeout int) (*grpc.ClientConn, error) {
 	// Configure keepalive for connection health monitoring
 	keepaliveParams := keepalive.ClientParameters{
 		Time:                10 * time.Second, // Send ping every 10 seconds
@@ -37,8 +37,8 @@ func Connect(host string, port, timeout int) (pb.BackupServiceClient, error) {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
 
-	// Create protobuf client - connection will remain open
-	return pb.NewBackupServiceClient(conn), nil
+	// Connection remains open; caller wraps it with the generated client it needs.
+	return conn, nil
 }
 
 func checkConnection(conn *grpc.ClientConn, timeoutSec int) error {

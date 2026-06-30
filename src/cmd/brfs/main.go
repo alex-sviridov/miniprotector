@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
@@ -79,11 +80,12 @@ func main() {
 	}
 
 	// Create gRPC connection
-	client, err := connection.Connect(arguments.WriterHost, arguments.WriterPort, 5)
+	conn, err := connection.Connect(arguments.WriterHost, arguments.WriterPort, 5)
 	if err != nil {
 		logger.Error("Error connecting to server", "error", err)
 		return
 	}
+	client := pb.NewBackupServiceClient(conn)
 	logger.Info("Connected to server")
 
 	// Process files using shared gRPC connection
