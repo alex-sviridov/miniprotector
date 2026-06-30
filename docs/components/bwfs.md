@@ -59,6 +59,14 @@ bwfs /home/user/backup list --filter nginx
 
 **JSON fields:** `file_data_id`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`
 
+### RestoreService
+
+Provides file reconstruction via server-streaming gRPC RPC. Given a `file_data_id` (UUID from `ListService.ListFiles`), returns file metadata followed by all chunks in index order.
+
+**Lookup semantics:** The handler first queries `file_data_records` by the `file_data_id` UUID to obtain the `file_id` (fs:// path reference), then uses that `file_id` to query `file_data_chunk_records` in index order. The file must be finalized (with a non-NULL checksum) before restore is allowed.
+
+**Error codes:** Returns gRPC `codes.NotFound` when the `file_data_id` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.Internal` when a database error occurs or a chunk file cannot be read from disk. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
+
 ## Building
 
 ```bash
