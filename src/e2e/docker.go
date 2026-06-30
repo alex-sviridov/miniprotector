@@ -51,10 +51,13 @@ func buildImage(ctx context.Context, t testingT, repoRoot string) string {
 	cli := newDockerClient(t)
 	defer cli.Close()
 
-	// Create build context tar from repoRoot
+	// Create build context tar. The Dockerfile only ever references src/
+	// (COPY src/ .), so only walk that subtree rather than the whole
+	// repoRoot — this keeps .git/, bin/, docs/, etc. out of the in-memory
+	// tar buffer and out of what's sent to the Docker daemon.
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)
-	err := addDirToTar(tw, repoRoot, "")
+	err := addDirToTar(tw, filepath.Join(repoRoot, "src"), "src")
 	require.NoError(t, err)
 	require.NoError(t, tw.Close())
 
@@ -91,6 +94,14 @@ func buildImage(ctx context.Context, t testingT, repoRoot string) string {
 	return imageID
 }
 
+// staleBuildArtifacts are host-built binaries that sometimes end up directly
+// under src/ (instead of src/bin/, which is already gitignored) and should
+// never be shipped into the Docker build context.
+var staleBuildArtifacts = map[string]bool{
+	"bwfs": true,
+	"rrfs": true,
+}
+
 func addDirToTar(tw *tar.Writer, srcDir, prefix string) error {
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -99,6 +110,9 @@ func addDirToTar(tw *tar.Writer, srcDir, prefix string) error {
 		rel, err := filepath.Rel(srcDir, path)
 		if err != nil {
 			return err
+		}
+		if !info.IsDir() && rel == filepath.Base(path) && staleBuildArtifacts[rel] {
+			return nil
 		}
 		tarPath := filepath.Join(prefix, rel)
 		hdr, err := tar.FileInfoHeader(info, "")
@@ -183,7 +197,7 @@ func startBwfsContainer(ctx context.Context, t testingT, imageID, networkID, sto
 			},
 		},
 		nil,
-		"bwfs-server",
+		fmt.Sprintf("bwfs-server-%d", time.Now().UnixNano()),
 	)
 	require.NoError(t, err)
 
