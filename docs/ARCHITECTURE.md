@@ -7,8 +7,7 @@ A backup system with intelligent deduplication and integrity verification.
 |-----------|-----------|--------|
 | brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
-| rrfs | Restore Reader for File System — reads from storage, sends via gRPC | Not yet implemented |
-| rwfs | Restore Writer for File System — receives via gRPC, writes to destination | Not yet implemented |
+| rwfs | Restore Writer for File System — queries bwfs (list, future restore) and writes to destination | list implemented; restore not yet implemented |
 
 ## Backup Process
 
@@ -19,10 +18,9 @@ A backup system with intelligent deduplication and integrity verification.
 
 ## Restore Process _(planned)_
 
-- **rrfs** queries SQLite metadata and reads chunks from the backup filesystem
-- Connects to **rwfs** via network or Unix socket
-- Sends chunked file data using the restore protocol
-- **rwfs** reconstructs files on the destination filesystem
+- **rwfs** connects to **bwfs** via network or Unix socket using the list/restore protocol
+- **rwfs list** queries metadata from the remote **bwfs** server
+- **rwfs** (future restore) reconstructs files on the destination filesystem
 
 ## Data Flow
 
@@ -35,7 +33,6 @@ graph TB
 
     subgraph "Backup Machine"
         bwfs[bwfs<br/>Backup Writer]
-        rrfs[rrfs<br/>Restore Reader]
         BackupFS[Backup Filesystem]
         DB[(SQLite Database)]
     end
@@ -52,9 +49,7 @@ graph TB
     bwfs -->|stores metadata| DB
 
     %% Restore Flow (planned)
-    DB -->|queries metadata| rrfs
-    BackupFS -->|reads chunks| rrfs
-    rrfs -->|restore protocol<br/>network/unix socket| rwfs
+    bwfs -->|list/restore protocol<br/>network/unix socket| rwfs
     rwfs -->|writes files| DstFS
 
     classDef filesystem fill:#e1f5fe
@@ -64,6 +59,6 @@ graph TB
 
     class SrcFS,BackupFS,DstFS filesystem
     class brfs,bwfs component
-    class rrfs,rwfs planned
+    class rwfs planned
     class DB database
 ```
