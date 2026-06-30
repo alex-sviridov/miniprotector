@@ -9,6 +9,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"google.golang.org/grpc"
 )
 
@@ -55,8 +56,17 @@ func main() {
 		}
 		defer backupServer.store.Close()
 
+		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
+		if err != nil {
+			logger.Error("List store initialization failed", "error", err)
+			os.Exit(1)
+		}
+		defer listStore.Close()
+		listSrv := NewListServer(listStore, logger)
+
 		if err := connection.StartServer(ctx, logger, arguments.Port, func(s *grpc.Server) {
 			pb.RegisterBackupServiceServer(s, backupServer)
+			pb.RegisterListServiceServer(s, listSrv)
 		}); err != nil {
 			logger.Error("Server failed", "error", err)
 			os.Exit(1)
