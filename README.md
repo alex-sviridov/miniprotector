@@ -22,20 +22,34 @@ Miniprotector is a self-learning pet-project based on my Backup & Recovery exper
 **Backup files:**
 ```bash
 # Start backup writer
-bwfs /backup/storage --port 8080
+bwfs /backup/storage server --port 8080
 
-# Backup directory
+# Backup a directory
 brfs /home/user/documents --destination localhost:8080
+```
+
+**Query what's backed up:**
+```bash
+# List all files in the backup store (local)
+bwfs /backup/storage list
+
+# List files for a specific host and path prefix (local)
+bwfs /backup/storage list myhost:/var/log
+
+# Query a remote bwfs server
+rwfs list localhost:8080
+rwfs list myhost:/var/log localhost:8080
 ```
 
 ## Components
 
-- **[brfs](docs/components/brfs.md)** - Backup Reader from File System
-- **[bwfs](docs/components/bwfs.md)** - Backup Writer to File System  
+- **[brfs](docs/components/brfs.md)** - Backup Reader for File System — reads files and streams them to `bwfs`
+- **[bwfs](docs/components/bwfs.md)** - Backup Writer for File System — receives, deduplicates, and stores files; also serves the list subprotocol
+- **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings
 
 ## Documentation
 
-- **[Architecture](docs/architecture.md)** - System design and data flow
+- **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
 - **[Backup Protocol](docs/protocols/backup.md)** - Communication specification
 - **[Components](docs/components/)** - Individual component documentation
 
