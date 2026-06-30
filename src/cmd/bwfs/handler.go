@@ -160,6 +160,11 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 		// Chunk already stored — feed its checksum into the running file hash.
 		// brfs sent the checksum alongside the hash so we don't need the data.
 		checksum.FeedChunk(h.fileChecksumHasher, chunk.Checksum)
+		// Must still link this chunk to the current file even though the data is
+		// already stored; without this the restore server can't find it later.
+		if err := h.store.LinkChunkToFileData(chunk.Hash, h.currentFile.ID(), chunk.Index); err != nil {
+			return err
+		}
 	}
 
 	chunkLogger.Debug("Chunk existence check", "needed", needed)

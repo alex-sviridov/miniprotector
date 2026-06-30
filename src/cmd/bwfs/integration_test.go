@@ -114,7 +114,7 @@ func backupOneFile(ctx context.Context, t *testing.T, stream pb.BackupService_Pr
 		require.NoError(t, err)
 		err = stream.Send(&pb.FileRequest{
 			RequestType: &pb.FileRequest_ChunkHash{
-				ChunkHash: &pb.ChunkHash{Hash: chunk.Hash(), Index: chunk.Index(), Size: int64(chunk.Size()), Eof: chunk.IsEOF()},
+				ChunkHash: &pb.ChunkHash{Hash: chunk.Hash(), Index: chunk.Index(), Size: int64(chunk.Size()), Eof: chunk.IsEOF(), Checksum: chunk.Checksum()},
 			},
 		})
 		require.NoError(t, err)
