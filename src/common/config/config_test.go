@@ -49,3 +49,24 @@ func TestResolveCertsDir_JoinsBaseDirWithCerts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(dir, "certs"), got)
 }
+
+func TestParseConfig_CAHostOptional(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "", conf.CAHost)
+}
+
+func TestParseConfig_CAHostParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nca_host=ca.backup.internal:9000\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "ca.backup.internal:9000", conf.CAHost)
+}

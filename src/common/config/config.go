@@ -60,6 +60,7 @@ type Config struct {
 	ConnectionTimeOutSec     int
 	FileLockTimeoutSec       int
 	StopStreamOnFileError    bool
+	CAHost                   string
 }
 
 type contextKey string
@@ -124,6 +125,9 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "logfolder":
 			config.LogFolder = value
 			foundFields["logfolder"] = true
+		case "ca_host":
+			config.CAHost = value
+			foundFields["ca_host"] = true
 		case "ClientHashQueryBatchSize":
 			number, err := strconv.Atoi(value)
 			if err != nil {
