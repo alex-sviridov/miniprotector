@@ -48,22 +48,22 @@ func TestRenderJSON_CreatedAtIsRFC3339UTC(t *testing.T) {
 	require.NoError(t, err)
 
 	rows := []Row{{
-		FileDataID: "abc-123",
-		Source:     "workstation",
-		Type:       "f",
-		Path:       "/var/log/test",
-		Timestamp:  1782605538,
-		Size:       4096,
-		Chunks:     3,
-		Versions:   2,
-		CreatedAt:  ts,
+		FileUUID:  "abc-123",
+		Source:    "workstation",
+		Type:      "f",
+		Path:      "/var/log/test",
+		Timestamp: 1782605538,
+		Size:      4096,
+		Chunks:    3,
+		Versions:  2,
+		CreatedAt: ts,
 	}}
 
 	out := toJSONRows(rows)
 	data, err := json.MarshalIndent(out, "", "  ")
 	require.NoError(t, err)
 	s := string(data)
-	assert.Contains(t, s, `"file_data_id": "abc-123"`)
+	assert.Contains(t, s, `"file_uuid": "abc-123"`)
 	assert.Contains(t, s, `"source": "workstation"`)
 	assert.Contains(t, s, `"created_at": "2026-06-29T08:10:42Z"`)
 	assert.Contains(t, s, `"timestamp": 1782605538`)

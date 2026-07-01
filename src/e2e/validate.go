@@ -18,15 +18,15 @@ import (
 )
 
 type listRecord struct {
-	FileDataID string `json:"file_data_id"`
-	Source     string `json:"source"`
-	Type       string `json:"type"`
-	Path       string `json:"path"`
-	Timestamp  int64  `json:"timestamp"`
-	Size       int64  `json:"size"`
-	Chunks     int    `json:"chunks"`
-	Versions   int64  `json:"versions"`
-	CreatedAt  string `json:"created_at"`
+	FileUUID  string `json:"file_uuid"`
+	Source    string `json:"source"`
+	Type      string `json:"type"`
+	Path      string `json:"path"`
+	Timestamp int64  `json:"timestamp"`
+	Size      int64  `json:"size"`
+	Chunks    int    `json:"chunks"`
+	Versions  int64  `json:"versions"`
+	CreatedAt string `json:"created_at"`
 }
 
 func parseListOutput(t *testing.T, data []byte) []listRecord {
@@ -59,8 +59,8 @@ func assertFilesPresent(t *testing.T, list []listRecord, expected map[string]fil
 		}
 		assert.Equal(t, want.size, rec.Size, "size mismatch for %s", rel)
 
-		// Query the checksum stored by bwfs for this file_data_id
-		stored := queryChecksum(t, db, rec.FileDataID)
+		// Query the checksum stored by bwfs for this file_uuid
+		stored := queryChecksum(t, db, rec.FileUUID)
 		assert.Equal(t, want.checksum, stored, "checksum mismatch for %s", rel)
 	}
 }
@@ -79,7 +79,7 @@ func assertFilesAbsent(t *testing.T, list []listRecord, absent map[string]fileRe
 }
 
 type fileDataRecord struct {
-	ID       string `gorm:"column:id"`
+	UUID     string `gorm:"column:uuid"`
 	Checksum []byte `gorm:"column:checksum"`
 }
 
@@ -105,14 +105,14 @@ func openMetadataDB(t *testing.T, storagePath string) *gorm.DB {
 	return db
 }
 
-func queryChecksum(t *testing.T, db *gorm.DB, fileDataID string) uint32 {
+func queryChecksum(t *testing.T, db *gorm.DB, fileUUID string) uint32 {
 	t.Helper()
 	var rec fileDataRecord
 	err := db.Table("file_data_records").
-		Select("id, checksum").
-		Where("id = ?", fileDataID).
+		Select("uuid, checksum").
+		Where("uuid = ?", fileUUID).
 		First(&rec).Error
-	require.NoError(t, err, "failed to query checksum for file_data_id %s", fileDataID)
+	require.NoError(t, err, "failed to query checksum for file_uuid %s", fileUUID)
 	require.Len(t, rec.Checksum, 4, "checksum should be 4 bytes")
 	return binary.BigEndian.Uint32(rec.Checksum)
 }

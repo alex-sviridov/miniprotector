@@ -14,42 +14,42 @@ import (
 // Row is a rendering-ready file listing entry, independent of where the
 // underlying data came from (local SQLite query or a gRPC ListResponse).
 type Row struct {
-	FileDataID string
-	Source     string
-	Type       string
-	Path       string
-	Timestamp  int64
-	Size       int64
-	Chunks     int
-	Versions   int64
-	CreatedAt  time.Time
+	FileUUID  string
+	Source    string
+	Type      string
+	Path      string
+	Timestamp int64
+	Size      int64
+	Chunks    int
+	Versions  int64
+	CreatedAt time.Time
 }
 
 type jsonRow struct {
-	FileDataID string `json:"file_data_id"`
-	Source     string `json:"source"`
-	Type       string `json:"type"`
-	Path       string `json:"path"`
-	Timestamp  int64  `json:"timestamp"`
-	Size       int64  `json:"size"`
-	Chunks     int    `json:"chunks"`
-	Versions   int64  `json:"versions"`
-	CreatedAt  string `json:"created_at"`
+	FileUUID  string `json:"file_uuid"`
+	Source    string `json:"source"`
+	Type      string `json:"type"`
+	Path      string `json:"path"`
+	Timestamp int64  `json:"timestamp"`
+	Size      int64  `json:"size"`
+	Chunks    int    `json:"chunks"`
+	Versions  int64  `json:"versions"`
+	CreatedAt string `json:"created_at"`
 }
 
 func toJSONRows(rows []Row) []jsonRow {
 	out := make([]jsonRow, len(rows))
 	for i, r := range rows {
 		out[i] = jsonRow{
-			FileDataID: r.FileDataID,
-			Source:     r.Source,
-			Type:       r.Type,
-			Path:       r.Path,
-			Timestamp:  r.Timestamp,
-			Size:       r.Size,
-			Chunks:     r.Chunks,
-			Versions:   r.Versions,
-			CreatedAt:  r.CreatedAt.UTC().Format(time.RFC3339),
+			FileUUID:  r.FileUUID,
+			Source:    r.Source,
+			Type:      r.Type,
+			Path:      r.Path,
+			Timestamp: r.Timestamp,
+			Size:      r.Size,
+			Chunks:    r.Chunks,
+			Versions:  r.Versions,
+			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
 	return out
