@@ -60,9 +60,9 @@ func (s *Store) StoreChunk(chunkHash []byte, data []byte) error {
 
 func (s *Store) LinkChunkToFileData(chunkHash []byte, fileID string, index int64) error {
 	record := FileDataChunkRecord{
-		FileDataID: fileID,
-		ChunkHash:  hex.EncodeToString(chunkHash),
-		Index:      index,
+		FileID:    fileID,
+		ChunkHash: hex.EncodeToString(chunkHash),
+		Index:     index,
 	}
 	return s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error
 }

@@ -29,7 +29,7 @@ func (s *Store) FileDataExists(fileID string) (bool, error) {
 
 func (s *Store) CreateFileData(fileID string, size int64) error {
 	record := FileDataRecord{
-		ID:        uuid.New().String(),
+		UUID:      uuid.New().String(),
 		FileID:    fileID,
 		Size:      size,
 		CreatedAt: time.Now(),
@@ -43,7 +43,7 @@ func (s *Store) FinalizeFileData(fileID string, checksum []byte) error {
 		Updates(map[string]any{
 			"checksum": checksum,
 			"chunk_count": s.db.Model(&FileDataChunkRecord{}).
-				Where("file_data_id = ?", fileID).
+				Where("file_id = ?", fileID).
 				Select("count(*)"),
 		}).Error
 }
@@ -61,7 +61,7 @@ func (s *Store) FileData(fileID string) (*storage.FileData, error) {
 		return nil, err
 	}
 	return &storage.FileData{
-		ID:         record.ID,
+		UUID:       record.UUID,
 		FileID:     record.FileID,
 		Size:       record.Size,
 		ChunkCount: record.ChunkCount,
@@ -73,7 +73,7 @@ func (s *Store) FileDataChunks(fileID string) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
 		var links []FileDataChunkRecord
 		err := s.db.
-			Where("file_data_id = ?", fileID).
+			Where("file_id = ?", fileID).
 			Order("`index` ASC").
 			Find(&links).Error
 		if err != nil {

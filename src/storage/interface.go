@@ -23,7 +23,7 @@ type BackupStore interface {
 	ReadChunk(chunkHash []byte) (data []byte, err error)
 
 	// FileVersion operations - create metadata version for each backup
-	CreateFileVersion(objectID string, fileID string, metadata []byte, ctime int64) (versionID string, err error)
+	CreateFileVersion(objectID string, metadata []byte, ctime int64) (versionID string, err error)
 	RemoveFileVersion(versionID string) error
 
 	// Query operations for restore
@@ -43,7 +43,7 @@ type BackupStore interface {
 
 // FileData represents file content information (immutable once created)
 type FileData struct {
-	ID         string
+	UUID       string
 	FileID     string // Unique file identifier (e.g., host:path:mtime)
 	Size       int64
 	CRC32      uint32 // CRC32 checksum of entire file content
@@ -53,9 +53,8 @@ type FileData struct {
 
 // FileVersion represents file metadata for a specific backup
 type FileVersion struct {
-	ID        string
-	ObjectID  string    // File identifier from backup client
-	FileID    string    // References FileData
+	UUID      string
+	ObjectID  string    // Natural key of the backed-up entity (file today; other entity types later)
 	Metadata  []byte    // File attributes, permissions, etc.
 	Ctime     int64     // File change time
 	CreatedAt time.Time // When backup occurred

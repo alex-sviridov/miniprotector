@@ -9,7 +9,7 @@ type ChunkRecord struct {
 }
 
 type FileDataRecord struct {
-	ID         string `gorm:"primaryKey"`
+	UUID       string `gorm:"primaryKey"`
 	FileID     string `gorm:"index"`
 	Size       int64
 	Checksum   []byte
@@ -18,15 +18,14 @@ type FileDataRecord struct {
 }
 
 type FileDataChunkRecord struct {
-	FileDataID string `gorm:"primaryKey"`
-	ChunkHash  string `gorm:"primaryKey"`
-	Index      int64  `gorm:"primaryKey"`
+	FileID    string `gorm:"primaryKey"`
+	ChunkHash string `gorm:"primaryKey"`
+	Index     int64  `gorm:"primaryKey"`
 }
 
 type FileVersionRecord struct {
-	ID        string `gorm:"primaryKey"`
+	UUID      string `gorm:"primaryKey"`
 	ObjectID  string `gorm:"index"`
-	FileID    string
 	Metadata  []byte
 	Ctime     int64
 	CreatedAt time.Time

@@ -11,12 +11,11 @@ import (
 	"github.com/alex-sviridov/miniprotector/storage"
 )
 
-func (s *Store) CreateFileVersion(objectID, fileID string, metadata []byte, ctime int64) (string, error) {
+func (s *Store) CreateFileVersion(objectID string, metadata []byte, ctime int64) (string, error) {
 	id := uuid.New().String()
 	record := FileVersionRecord{
-		ID:        id,
+		UUID:      id,
 		ObjectID:  objectID,
-		FileID:    fileID,
 		Metadata:  metadata,
 		Ctime:     ctime,
 		CreatedAt: time.Now(),
@@ -28,7 +27,7 @@ func (s *Store) CreateFileVersion(objectID, fileID string, metadata []byte, ctim
 }
 
 func (s *Store) RemoveFileVersion(versionID string) error {
-	return s.db.Delete(&FileVersionRecord{}, "id = ?", versionID).Error
+	return s.db.Delete(&FileVersionRecord{}, "uuid = ?", versionID).Error
 }
 
 func (s *Store) LatestFileVersion(objectID string) (*storage.FileVersion, error) {
@@ -79,9 +78,8 @@ func (s *Store) FileVersionsInPeriod(from, to time.Time) ([]*storage.FileVersion
 
 func toStorageFileVersion(r *FileVersionRecord) *storage.FileVersion {
 	return &storage.FileVersion{
-		ID:        r.ID,
+		UUID:      r.UUID,
 		ObjectID:  r.ObjectID,
-		FileID:    r.FileID,
 		Metadata:  r.Metadata,
 		Ctime:     r.Ctime,
 		CreatedAt: r.CreatedAt,
