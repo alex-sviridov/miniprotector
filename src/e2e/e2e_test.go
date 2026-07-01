@@ -187,3 +187,45 @@ func TestE2E_Verify_CorruptionDetection(t *testing.T) {
 	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, false)
 	require.NotEqual(t, 0, exitCode, "verify must fail when a chunk is corrupted")
 }
+
+func TestE2E_Backup_HealsCorruptedChunk(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dataDir := t.TempDir()
+	generateTestData(t, dataDir)
+
+	networkID := createNetwork(ctx, t)
+	storageDir := t.TempDir()
+
+	hostPort := startBwfsContainer(ctx, t, testImageID, networkID, storageDir)
+	require.NoError(t, waitForBwfs(ctx, hostPort))
+
+	// Back up subA only (8 files, known chunk layout)
+	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
+		filepath.Join(dataDir, "subA"), "bwfs", 1, "brfs-source")
+	require.Equal(t, 0, exitCode, "brfs should exit 0")
+
+	// Confirm baseline passes
+	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, true)
+	require.Equal(t, 0, exitCode, "baseline verify should pass")
+
+	// Delete one chunk from the host filesystem (shared with the container via
+	// bind mount) — this is what actually happened in the field: a chunk file
+	// went missing from the chunk store while the DB still thinks it's there.
+	deleteOneChunk(t, storageDir)
+	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, false)
+	require.NotEqual(t, 0, exitCode, "verify must fail when a chunk is missing")
+
+	// Re-run backup on the exact same source: the file whose chunk was
+	// deleted has an unchanged mtime, so the server must not skip it just
+	// because a finalized DB record exists — it must detect the missing
+	// chunk and re-upload it.
+	exitCode = runBrfsContainer(ctx, t, testImageID, networkID,
+		filepath.Join(dataDir, "subA"), "bwfs", 1, "brfs-source")
+	require.Equal(t, 0, exitCode, "repeat brfs should exit 0")
+
+	// Corruption must now be healed.
+	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, false)
+	require.Equal(t, 0, exitCode, "verify must pass after repeat backup heals the corrupted chunk")
+}

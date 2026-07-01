@@ -22,6 +22,13 @@ type BackupStore interface {
 	LinkChunkToFileData(chunkHash []byte, fileID string, index int64) error
 	ReadChunk(chunkHash []byte) (data []byte, err error)
 
+	// MarkChunkCorrupted reacts to a chunk read failure (missing file, I/O
+	// error) discovered during restore or verify. It removes the chunk file
+	// if it's still present, deletes the chunk's DB records, and invalidates
+	// the FileData of every file that depended on it, so the next backup
+	// sees those files as needing re-upload instead of skipping them forever.
+	MarkChunkCorrupted(chunkHash []byte) error
+
 	// FileVersion operations - create metadata version for each backup
 	CreateFileVersion(objectID string, metadata []byte, ctime int64) (versionID string, err error)
 	RemoveFileVersion(versionID string) error

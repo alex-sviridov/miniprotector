@@ -464,3 +464,19 @@ func corruptOneChunk(t testingT, storageDir string) {
 	require.NoError(t, os.WriteFile(chunkPath, data, 0644))
 	t.Logf("corrupted chunk: %s", chunkPath)
 }
+
+// deleteOneChunk removes the first chunk file found under storageDir/chunks/,
+// simulating a chunk that vanished from the chunk store (e.g. accidental
+// deletion) while its DB record remains.
+// The storageDir must be host-accessible (bind-mounted from a container or a local t.TempDir()).
+func deleteOneChunk(t testingT, storageDir string) string {
+	t.Helper()
+	chunks, err := filepath.Glob(filepath.Join(storageDir, "chunks", "*", "*", "*"))
+	require.NoError(t, err)
+	require.NotEmpty(t, chunks, "no chunks found in storage dir %s", storageDir)
+
+	chunkPath := chunks[0]
+	require.NoError(t, os.Remove(chunkPath))
+	t.Logf("deleted chunk: %s", chunkPath)
+	return chunkPath
+}

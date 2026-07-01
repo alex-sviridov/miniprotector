@@ -80,6 +80,9 @@ func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreSer
 		data, err := s.store.ReadChunk(hash)
 		if err != nil {
 			logger.Error("read chunk failed", "chunk_hash", link.ChunkHash, "error", err)
+			if markErr := s.store.MarkChunkCorrupted(hash); markErr != nil {
+				logger.Error("mark chunk corrupted failed", "chunk_hash", link.ChunkHash, "error", markErr)
+			}
 			return status.Errorf(codes.Internal, "read chunk %s: %v", link.ChunkHash, err)
 		}
 
