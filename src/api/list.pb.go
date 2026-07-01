@@ -127,7 +127,7 @@ func (x *ListResponse) GetRows() []*FileRow {
 
 type FileRow struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileDataId    string                 `protobuf:"bytes,1,opt,name=file_data_id,json=fileDataId,proto3" json:"file_data_id,omitempty"`
+	FileUuid      string                 `protobuf:"bytes,1,opt,name=file_uuid,json=fileUuid,proto3" json:"file_uuid,omitempty"`
 	Source        string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
 	Type          string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
@@ -170,9 +170,9 @@ func (*FileRow) Descriptor() ([]byte, []int) {
 	return file_api_list_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *FileRow) GetFileDataId() string {
+func (x *FileRow) GetFileUuid() string {
 	if x != nil {
-		return x.FileDataId
+		return x.FileUuid
 	}
 	return ""
 }
@@ -244,10 +244,9 @@ const file_api_list_proto_rawDesc = "" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x16\n" +
 	"\x06filter\x18\x03 \x01(\tR\x06filter\"8\n" +
 	"\fListResponse\x12(\n" +
-	"\x04rows\x18\x01 \x03(\v2\x14.listservice.FileRowR\x04rows\"\xf0\x01\n" +
-	"\aFileRow\x12 \n" +
-	"\ffile_data_id\x18\x01 \x01(\tR\n" +
-	"fileDataId\x12\x16\n" +
+	"\x04rows\x18\x01 \x03(\v2\x14.listservice.FileRowR\x04rows\"\xeb\x01\n" +
+	"\aFileRow\x12\x1b\n" +
+	"\tfile_uuid\x18\x01 \x01(\tR\bfileUuid\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x1c\n" +

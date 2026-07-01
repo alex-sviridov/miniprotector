@@ -9,7 +9,7 @@ service RestoreService {
 }
 
 message RestoreRequest {
-  string file_data_id = 1;
+  string file_uuid = 1;
 }
 
 message RestoreEvent {

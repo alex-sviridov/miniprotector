@@ -19,7 +19,7 @@ message ListResponse {
 }
 
 message FileRow {
-  string file_data_id = 1;
+  string file_uuid     = 1;
   string source        = 2;
   string type          = 3;
   string path          = 4;

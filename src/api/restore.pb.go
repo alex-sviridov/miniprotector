@@ -23,7 +23,7 @@ const (
 
 type RestoreRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileDataId    string                 `protobuf:"bytes,1,opt,name=file_data_id,json=fileDataId,proto3" json:"file_data_id,omitempty"`
+	FileUuid      string                 `protobuf:"bytes,1,opt,name=file_uuid,json=fileUuid,proto3" json:"file_uuid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -58,9 +58,9 @@ func (*RestoreRequest) Descriptor() ([]byte, []int) {
 	return file_api_restore_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *RestoreRequest) GetFileDataId() string {
+func (x *RestoreRequest) GetFileUuid() string {
 	if x != nil {
-		return x.FileDataId
+		return x.FileUuid
 	}
 	return ""
 }
@@ -279,10 +279,9 @@ var File_api_restore_proto protoreflect.FileDescriptor
 
 const file_api_restore_proto_rawDesc = "" +
 	"\n" +
-	"\x11api/restore.proto\x12\x0erestoreservice\"2\n" +
-	"\x0eRestoreRequest\x12 \n" +
-	"\ffile_data_id\x18\x01 \x01(\tR\n" +
-	"fileDataId\"\x86\x01\n" +
+	"\x11api/restore.proto\x12\x0erestoreservice\"-\n" +
+	"\x0eRestoreRequest\x12\x1b\n" +
+	"\tfile_uuid\x18\x01 \x01(\tR\bfileUuid\"\x86\x01\n" +
 	"\fRestoreEvent\x125\n" +
 	"\x04meta\x18\x01 \x01(\v2\x1f.restoreservice.RestoreFileMetaH\x00R\x04meta\x124\n" +
 	"\x05chunk\x18\x02 \x01(\v2\x1c.restoreservice.RestoreChunkH\x00R\x05chunkB\t\n" +
