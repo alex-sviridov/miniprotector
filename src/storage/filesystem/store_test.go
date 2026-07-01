@@ -178,27 +178,27 @@ func TestFileDataChunks_ReturnsOrderedHashes(t *testing.T) {
 
 func TestCreateFileVersion_ReturnsID(t *testing.T) {
 	store := newTestStore(t)
-	id, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta"), 12345)
+	id, err := store.CreateFileVersion("obj-1", []byte("meta"), 12345)
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 }
 
 func TestLatestFileVersion_ReturnsNewest(t *testing.T) {
 	store := newTestStore(t)
-	_, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta-old"), 100)
+	_, err := store.CreateFileVersion("obj-1", []byte("meta-old"), 100)
 	require.NoError(t, err)
-	_, err = store.CreateFileVersion("obj-1", "file-2", []byte("meta-new"), 200)
+	_, err = store.CreateFileVersion("obj-1", []byte("meta-new"), 200)
 	require.NoError(t, err)
 
 	v, err := store.LatestFileVersion("obj-1")
 	require.NoError(t, err)
-	assert.Equal(t, "file-2", v.FileID)
 	assert.Equal(t, []byte("meta-new"), v.Metadata)
+	assert.Equal(t, int64(200), v.Ctime)
 }
 
 func TestRemoveFileVersion_Removes(t *testing.T) {
 	store := newTestStore(t)
-	id, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta"), 100)
+	id, err := store.CreateFileVersion("obj-1", []byte("meta"), 100)
 	require.NoError(t, err)
 
 	require.NoError(t, store.RemoveFileVersion(id))
@@ -212,22 +212,22 @@ func TestFileVersionAtTime_ReturnsMostRecentBefore(t *testing.T) {
 
 	// Create two versions with explicit created_at by inserting directly
 	now := time.Now()
-	old := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-1", FileID: "file-old", Metadata: []byte("old"), Ctime: 1, CreatedAt: now.Add(-2 * time.Hour)}
-	recent := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-1", FileID: "file-recent", Metadata: []byte("recent"), Ctime: 2, CreatedAt: now.Add(-1 * time.Hour)}
+	old := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-1", Metadata: []byte("old"), Ctime: 1, CreatedAt: now.Add(-2 * time.Hour)}
+	recent := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-1", Metadata: []byte("recent"), Ctime: 2, CreatedAt: now.Add(-1 * time.Hour)}
 	store.db.Create(&old)
 	store.db.Create(&recent)
 
 	v, err := store.FileVersionAtTime("obj-1", now.Add(-90*time.Minute))
 	require.NoError(t, err)
-	assert.Equal(t, "file-old", v.FileID)
+	assert.Equal(t, []byte("old"), v.Metadata)
 }
 
 func TestFileVersionsInPeriod_ReturnsAll(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now()
 
-	r1 := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-1", FileID: "f1", CreatedAt: now.Add(-3 * time.Hour)}
-	r2 := FileVersionRecord{ID: uuid.New().String(), ObjectID: "obj-2", FileID: "f2", CreatedAt: now.Add(-1 * time.Hour)}
+	r1 := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-1", CreatedAt: now.Add(-3 * time.Hour)}
+	r2 := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-2", CreatedAt: now.Add(-1 * time.Hour)}
 	store.db.Create(&r1)
 	store.db.Create(&r2)
 
@@ -245,7 +245,7 @@ func TestStoreInfo_CountsCorrectly(t *testing.T) {
 	require.NoError(t, store.CreateFileData("file-1", int64(len(data))))
 	require.NoError(t, store.LinkChunkToFileData(hash, "file-1", 0))
 	require.NoError(t, store.FinalizeFileData("file-1", []byte("checksum")))
-	_, err := store.CreateFileVersion("obj-1", "file-1", []byte("meta"), 0)
+	_, err := store.CreateFileVersion("obj-1", []byte("meta"), 0)
 	require.NoError(t, err)
 
 	info, err := store.StoreInfo()
@@ -261,7 +261,7 @@ func TestVacuum_RemovesIncompleteFileData(t *testing.T) {
 
 	// Create an incomplete FileDataRecord by inserting directly with old timestamp
 	old := FileDataRecord{
-		ID:        uuid.New().String(),
+		UUID:      uuid.New().String(),
 		FileID:    "incomplete-file",
 		Size:      100,
 		CreatedAt: time.Now().Add(-2 * time.Hour),
@@ -276,6 +276,34 @@ func TestVacuum_RemovesIncompleteFileData(t *testing.T) {
 	exists, err := store.FileDataExists("incomplete-file")
 	require.NoError(t, err)
 	assert.False(t, exists)
+}
+
+func TestVacuum_RemovesOrphanedChunkLinksForIncompleteFileData(t *testing.T) {
+	store := newTestStore(t)
+
+	data := []byte("chunk data linked to an incomplete file data record")
+	hash := makeChunk(t, data)
+	require.NoError(t, store.StoreChunk(hash, data))
+
+	old := FileDataRecord{
+		UUID:      uuid.New().String(),
+		FileID:    "incomplete-file",
+		Size:      100,
+		CreatedAt: time.Now().Add(-2 * time.Hour),
+	}
+	store.db.Create(&old)
+	require.NoError(t, store.LinkChunkToFileData(hash, "incomplete-file", 0))
+
+	var before int64
+	store.db.Model(&FileDataChunkRecord{}).Where("file_id = ?", "incomplete-file").Count(&before)
+	require.Equal(t, int64(1), before)
+
+	_, err := store.Vacuum()
+	require.NoError(t, err)
+
+	var after int64
+	store.db.Model(&FileDataChunkRecord{}).Where("file_id = ?", "incomplete-file").Count(&after)
+	assert.Equal(t, int64(0), after)
 }
 
 func TestVacuum_RemovesOrphanedChunkFiles(t *testing.T) {

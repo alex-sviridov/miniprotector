@@ -71,8 +71,9 @@ type StoreInfo struct {
 
 // VacuumResult provides feedback about cleanup operations
 type VacuumResult struct {
-	OrphanedFileDataRemoved int64 // FileData with no FileVersions
-	OrphanedChunksRemoved   int64 // Chunks with no FileData references
-	BytesReclaimed          int64 // Storage space freed
-	IncompleteFileData      int64 // FileData with CRC32=0 (optional cleanup)
+	OrphanedFileDataRemoved   int64 // FileData with no FileVersions
+	OrphanedChunkLinksRemoved int64 // FileDataChunkRecord rows with no FileDataRecord reference
+	OrphanedChunksRemoved     int64 // Chunks with no FileData references
+	BytesReclaimed            int64 // Storage space freed
+	IncompleteFileData        int64 // FileData with CRC32=0 (optional cleanup)
 }

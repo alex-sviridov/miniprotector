@@ -41,35 +41,27 @@ func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 
 	// Step 1: remove incomplete FileData older than threshold
 	cutoff := time.Now().Add(-vacuumIncompleteThreshold)
-	var incompleteIDs []string
-	s.db.Model(&FileDataRecord{}).
-		Where("checksum IS NULL AND created_at < ?", cutoff).
-		Pluck("id", &incompleteIDs)
-
-	if len(incompleteIDs) > 0 {
-		s.db.Where("file_data_id IN ?", incompleteIDs).Delete(&FileDataChunkRecord{})
-		res := s.db.Where("id IN ?", incompleteIDs).Delete(&FileDataRecord{})
-		result.IncompleteFileData = res.RowsAffected
-	}
+	res := s.db.Where("checksum IS NULL AND created_at < ?", cutoff).Delete(&FileDataRecord{})
+	result.IncompleteFileData = res.RowsAffected
 
 	// Step 2: remove FileData with no FileVersion referencing them
-	var orphanedFileDataIDs []string
-	s.db.Model(&FileDataRecord{}).
-		Where("file_id NOT IN (SELECT file_id FROM file_version_records)").
+	res = s.db.Where("file_id NOT IN (SELECT object_id FROM file_version_records)").
 		Where("checksum IS NOT NULL").
-		Pluck("id", &orphanedFileDataIDs)
+		Delete(&FileDataRecord{})
+	result.OrphanedFileDataRemoved = res.RowsAffected
 
-	if len(orphanedFileDataIDs) > 0 {
-		s.db.Where("file_data_id IN ?", orphanedFileDataIDs).Delete(&FileDataChunkRecord{})
-		res := s.db.Where("id IN ?", orphanedFileDataIDs).Delete(&FileDataRecord{})
-		result.OrphanedFileDataRemoved = res.RowsAffected
-	}
+	// Step 3: remove FileDataChunkRecord rows whose file_id no longer has
+	// any FileDataRecord at all (a file_id can be shared by multiple
+	// FileDataRecord attempts, so a chunk link is only safe to remove once
+	// none of them remain).
+	res = s.db.Where("file_id NOT IN (SELECT file_id FROM file_data_records)").Delete(&FileDataChunkRecord{})
+	result.OrphanedChunkLinksRemoved = res.RowsAffected
 
-	// Step 3: remove ChunkRecord rows with no FileDataChunkRecord referencing them
-	res := s.db.Where("hash NOT IN (SELECT chunk_hash FROM file_data_chunk_records)").Delete(&ChunkRecord{})
+	// Step 4: remove ChunkRecord rows with no FileDataChunkRecord referencing them
+	res = s.db.Where("hash NOT IN (SELECT chunk_hash FROM file_data_chunk_records)").Delete(&ChunkRecord{})
 	result.OrphanedChunksRemoved = res.RowsAffected
 
-	// Step 4: walk chunk files; delete any not in chunk_records (includes temp files)
+	// Step 5: walk chunk files; delete any not in chunk_records (includes temp files)
 	chunksRoot := filepath.Join(s.basePath, "chunks")
 	filepath.WalkDir(chunksRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
