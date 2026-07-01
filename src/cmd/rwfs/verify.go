@@ -27,8 +27,8 @@ type verifyResult struct {
 	chunkCount int32
 }
 
-func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilter, filter string, streams, retries int, quiet bool) error {
-	conn, err := connection.Connect(host, port, 5)
+func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilter, filter string, streams, retries int, quiet bool, certsDir string) error {
+	conn, err := connection.Connect(host, port, 5, certsDir)
 	if err != nil {
 		return fmt.Errorf("connect to bwfs: %w", err)
 	}

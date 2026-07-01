@@ -42,14 +42,20 @@ func main() {
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
 
+	certsDir, err := config.ResolveCertsDir()
+	if err != nil {
+		logger.Error("Certs directory resolution failed", "error", err)
+		os.Exit(1)
+	}
+
 	switch arguments.Action {
 	case "list":
-		if err := runList(arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Output); err != nil {
+		if err := runList(arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Output, certsDir); err != nil {
 			logger.Error("List failed", "error", err)
 			os.Exit(1)
 		}
 	case "verify":
-		if err := runVerify(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Streams, arguments.Retries, arguments.Quiet); err != nil {
+		if err := runVerify(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Streams, arguments.Retries, arguments.Quiet, certsDir); err != nil {
 			logger.Error("Verify failed", "error", err)
 			os.Exit(1)
 		}

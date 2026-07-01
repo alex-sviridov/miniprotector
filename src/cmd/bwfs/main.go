@@ -85,7 +85,13 @@ func main() {
 		defer restoreStore.Close()
 		restoreSrv := NewRestoreServer(restoreStore, logger)
 
-		if err := connection.StartServer(ctx, logger, arguments.Port, func(s *grpc.Server) {
+		certsDir, err := config.ResolveCertsDir()
+		if err != nil {
+			logger.Error("Certs directory resolution failed", "error", err)
+			os.Exit(1)
+		}
+
+		if err := connection.StartServer(ctx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
 			pb.RegisterBackupServiceServer(s, backupServer)
 			pb.RegisterListServiceServer(s, listSrv)
 			pb.RegisterRestoreServiceServer(s, restoreSrv)

@@ -10,8 +10,8 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/listformat"
 )
 
-func runList(host string, port int, serverName, pathFilter, filter, output string) error {
-	conn, err := connection.Connect(host, port, 5)
+func runList(host string, port int, serverName, pathFilter, filter, output, certsDir string) error {
+	conn, err := connection.Connect(host, port, 5, certsDir)
 	if err != nil {
 		return fmt.Errorf("connect to bwfs: %w", err)
 	}

@@ -84,7 +84,12 @@ func main() {
 	}
 
 	// Create gRPC connection
-	conn, err := connection.Connect(arguments.WriterHost, arguments.WriterPort, 5)
+	certsDir, err := config.ResolveCertsDir()
+	if err != nil {
+		logger.Error("Certs directory resolution failed", "error", err)
+		return
+	}
+	conn, err := connection.Connect(arguments.WriterHost, arguments.WriterPort, 5, certsDir)
 	if err != nil {
 		logger.Error("Error connecting to server", "error", err)
 		return
