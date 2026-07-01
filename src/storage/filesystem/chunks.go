@@ -11,6 +11,7 @@ import (
 	"lukechampine.com/blake3"
 
 	"github.com/alex-sviridov/miniprotector/storage"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -65,6 +66,43 @@ func (s *Store) LinkChunkToFileData(chunkHash []byte, fileID string, index int64
 		Index:     index,
 	}
 	return s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error
+}
+
+// MarkChunkCorrupted removes a chunk that failed to read correctly (missing
+// or otherwise unusable) along with every DB record that depends on it, so
+// affected files are treated as needing a fresh upload on the next backup.
+func (s *Store) MarkChunkCorrupted(chunkHash []byte) error {
+	hexHash := hex.EncodeToString(chunkHash)
+
+	path := s.chunkPath(hexHash)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove corrupted chunk file: %w", err)
+	}
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var links []FileDataChunkRecord
+		if err := tx.Where("chunk_hash = ?", hexHash).Find(&links).Error; err != nil {
+			return fmt.Errorf("find files depending on chunk: %w", err)
+		}
+
+		if err := tx.Where("chunk_hash = ?", hexHash).Delete(&FileDataChunkRecord{}).Error; err != nil {
+			return fmt.Errorf("remove chunk links: %w", err)
+		}
+		if err := tx.Where("hash = ?", hexHash).Delete(&ChunkRecord{}).Error; err != nil {
+			return fmt.Errorf("remove chunk record: %w", err)
+		}
+
+		fileIDs := make([]string, len(links))
+		for i, link := range links {
+			fileIDs[i] = link.FileID
+		}
+		if len(fileIDs) > 0 {
+			if err := tx.Where("file_id IN ?", fileIDs).Delete(&FileDataRecord{}).Error; err != nil {
+				return fmt.Errorf("invalidate dependent file data: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) ReadChunk(chunkHash []byte) ([]byte, error) {

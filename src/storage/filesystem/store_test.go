@@ -2,8 +2,10 @@ package filesystem
 
 import (
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,6 +151,56 @@ func TestFileDataExists_TrueAfterFinalize(t *testing.T) {
 	exists, err := store.FileDataExists("file-1")
 	require.NoError(t, err)
 	assert.True(t, exists)
+}
+
+func TestMarkChunkCorrupted_RemovesFileFromDiskIfPresent(t *testing.T) {
+	store := newTestStore(t)
+	data := []byte("chunk data for corrupted-chunk test")
+	hash := makeChunk(t, data)
+	require.NoError(t, store.StoreChunk(hash, data))
+
+	require.NoError(t, store.MarkChunkCorrupted(hash))
+
+	hexHash := hex.EncodeToString(hash)
+	chunkPath := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
+	_, err := os.Stat(chunkPath)
+	assert.True(t, os.IsNotExist(err), "corrupted chunk file must be removed from disk")
+}
+
+func TestMarkChunkCorrupted_TolerantOfAlreadyMissingFile(t *testing.T) {
+	store := newTestStore(t)
+	data := []byte("chunk that is already gone from disk")
+	hash := makeChunk(t, data)
+	require.NoError(t, store.StoreChunk(hash, data))
+
+	hexHash := hex.EncodeToString(hash)
+	chunkPath := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
+	require.NoError(t, os.Remove(chunkPath))
+
+	assert.NoError(t, store.MarkChunkCorrupted(hash), "must not error when the chunk file is already gone")
+}
+
+func TestMarkChunkCorrupted_InvalidatesDependentFileData(t *testing.T) {
+	store := newTestStore(t)
+	data := []byte("chunk shared by a finalized file")
+	hash := makeChunk(t, data)
+
+	require.NoError(t, store.CreateFileData("file-1", int64(len(data))))
+	require.NoError(t, store.StoreChunk(hash, data))
+	require.NoError(t, store.LinkChunkToFileData(hash, "file-1", 0))
+	require.NoError(t, store.FinalizeFileData("file-1", []byte("checksum")))
+
+	exists, err := store.FileDataExists("file-1")
+	require.NoError(t, err)
+	require.True(t, exists, "sanity check: file-1 should be finalized before corruption")
+
+	require.NoError(t, store.MarkChunkCorrupted(hash))
+
+	exists, err = store.FileDataExists("file-1")
+	require.NoError(t, err)
+	assert.False(t, exists, "file-1 must be re-uploaded on next backup after its chunk was marked corrupted")
+
+	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
 }
 
 func TestFileDataChunks_ReturnsOrderedHashes(t *testing.T) {
@@ -380,4 +432,55 @@ func TestNewReadOnly_CloseDoesNotPanic(t *testing.T) {
 	ro, err := NewReadOnly(dir)
 	require.NoError(t, err)
 	assert.NoError(t, ro.Close()) // must not panic on nil lockFile
+}
+
+func TestMarkChunkCorrupted_ConcurrentWithNewLink_NoOrphanedFileData(t *testing.T) {
+	store := newTestStore(t)
+
+	const iterations = 20
+	for i := 0; i < iterations; i++ {
+		data := []byte(fmt.Sprintf("shared chunk payload iteration %d", i))
+		hash := makeChunk(t, data)
+		require.NoError(t, store.StoreChunk(hash, data))
+
+		newFileID := fmt.Sprintf("file-new-%d", i)
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var linkErr error
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = store.MarkChunkCorrupted(hash)
+		}()
+
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := store.CreateFileData(newFileID, int64(len(data))); err != nil {
+				linkErr = err
+				return
+			}
+			if err := store.LinkChunkToFileData(hash, newFileID, 0); err != nil {
+				linkErr = err
+				return
+			}
+			linkErr = store.FinalizeFileData(newFileID, []byte("checksum"))
+		}()
+
+		close(start)
+		wg.Wait()
+		require.NoError(t, linkErr, "iteration %d", i)
+
+		exists, err := store.FileDataExists(newFileID)
+		require.NoError(t, err)
+		if exists {
+			var count int64
+			store.db.Model(&FileDataChunkRecord{}).Where("file_id = ?", newFileID).Count(&count)
+			assert.Greater(t, count, int64(0),
+				"iteration %d: %s has finalized FileData but no chunk link — silent data loss", i, newFileID)
+		}
+	}
 }

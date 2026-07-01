@@ -29,6 +29,13 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 - Eliminates hash calculation and chunk processing for existing files
 - Massive efficiency gain for incremental backups
 
+**How does the system recover from a corrupted chunk?**
+- A finalized DB record only proves a file was fully backed up *at some point* — it doesn't prove the chunk files are still on disk. The chunk store is a separate filesystem tree that can lose data independently of the metadata DB (deletion, disk corruption)
+- Rather than re-verifying every chunk on every backup (which would erase the efficiency gain from file-level pre-filtering above — it'd mean reading all previously-backed-up data on every run), the server assumes the chunk store is healthy and only reacts when a read actually fails
+- Any chunk read failure during restore or verify (`bwfs`'s `RestoreFile`, used by both `rwfs restore` and `rwfs verify`) marks that chunk corrupted: the chunk file is removed if still present, its DB records are deleted, and the `FileData` of every file that referenced it is invalidated. The DB portion runs inside a single transaction, so a concurrent backup that links a new file to the same chunk hash can never lose that link without its `FileData` being invalidated too
+- The next backup run then sees those files as not-yet-backed-up (their `FileData` is gone) and re-uploads them via the normal `SEND_FILE` path — chunk-level dedup still skips any of the file's chunks that are intact, so only the actually-missing data is re-transferred
+- This is a reactive, not a proactive, self-heal: corruption is only detected and fixed when something tries to read the affected chunk (a `verify` run, or a real restore). A proactive integrity-scan routine is a possible future addition, not implemented now
+
 ```mermaid
 sequenceDiagram
 
