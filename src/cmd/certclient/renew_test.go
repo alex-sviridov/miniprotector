@@ -35,17 +35,25 @@ func TestRenew_OverwritesClientCrt(t *testing.T) {
 	certsDir := setupExistingIdentity(t)
 	leaf := loadFixtureCert(t, "client.crt")
 
+	keyBefore, err := os.ReadFile(filepath.Join(certsDir, "client.key"))
+	require.NoError(t, err)
+
 	renewer := &fakeRenewer{resp: &api.SignResponse{
 		ServerPEM: api.Certificate{Certificate: leaf},
 		CaPEM:     api.Certificate{Certificate: leaf},
 	}}
 
-	err := renew(renewer, certsDir)
+	err = renew(renewer, certsDir)
 	require.NoError(t, err)
 
 	got, err := os.ReadFile(filepath.Join(certsDir, "client.crt"))
 	require.NoError(t, err)
-	assert.NotEmpty(t, got)
+	want := append(pemCert(leaf), pemCert(leaf)...)
+	assert.Equal(t, want, got)
+
+	keyAfter, err := os.ReadFile(filepath.Join(certsDir, "client.key"))
+	require.NoError(t, err)
+	assert.Equal(t, keyBefore, keyAfter, "client.key must be byte-for-byte unchanged after renew")
 }
 
 func TestRenew_ErrorPropagates(t *testing.T) {
