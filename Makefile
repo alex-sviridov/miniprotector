@@ -26,7 +26,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs test test-e2e lint
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient test test-e2e lint
 
 # Default target
 all: check-deps proto build
@@ -78,6 +78,17 @@ rwfs: $(BINARY_DIR) ## Build rwfs binary
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/rwfs ./$(RWFS_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/rwfs"
 
+certrequest: $(BINARY_DIR) ## Build certrequest binary
+	@printf "$(BLUE)Building certrequest...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certrequest ./cmd/certrequest
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/certrequest"
+
+certclient: $(BINARY_DIR) ## Build certclient binary
+	@printf "$(BLUE)Building certclient...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certclient ./cmd/certclient
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/certclient"
 
 test: ## Run unit and integration tests
 	cd src && go test ./...
