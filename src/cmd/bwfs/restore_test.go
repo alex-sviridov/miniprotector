@@ -81,29 +81,29 @@ func newRestoreTestEnv(t *testing.T) *restoreTestEnv {
 	}
 }
 
-// restoreAndVerifyCRC calls RestoreFile for fileDataID and checks that:
+// restoreAndVerifyCRC calls RestoreFile for fileUUID and checks that:
 //   - all chunks' BLAKE3 hashes match the returned data
 //   - the accumulated CRC32 matches meta.ExpectedChecksum
-func restoreAndVerifyCRC(t *testing.T, client pb.RestoreServiceClient, fileDataID string) {
+func restoreAndVerifyCRC(t *testing.T, client pb.RestoreServiceClient, fileUUID string) {
 	t.Helper()
 
-	stream, err := client.RestoreFile(context.Background(), &pb.RestoreRequest{FileDataId: fileDataID})
-	require.NoError(t, err, "RestoreFile RPC failed for %s", fileDataID)
+	stream, err := client.RestoreFile(context.Background(), &pb.RestoreRequest{FileUuid: fileUUID})
+	require.NoError(t, err, "RestoreFile RPC failed for %s", fileUUID)
 
 	firstEvent, err := stream.Recv()
-	require.NoError(t, err, "failed to recv first event for %s", fileDataID)
+	require.NoError(t, err, "failed to recv first event for %s", fileUUID)
 	meta := firstEvent.GetMeta()
-	require.NotNil(t, meta, "first event must be RestoreFileMeta for %s", fileDataID)
+	require.NotNil(t, meta, "first event must be RestoreFileMeta for %s", fileUUID)
 
 	hasher := crc32.NewIEEE()
 	chunksReceived := 0
 
 	for {
 		event, err := stream.Recv()
-		require.NoError(t, err, "stream error while reading chunks for %s", fileDataID)
+		require.NoError(t, err, "stream error while reading chunks for %s", fileUUID)
 
 		chunk := event.GetChunk()
-		require.NotNil(t, chunk, "non-chunk event after meta for %s", fileDataID)
+		require.NotNil(t, chunk, "non-chunk event after meta for %s", fileUUID)
 
 		checksum.FeedChunk(hasher, crc32.ChecksumIEEE(chunk.Data))
 		chunksReceived++
@@ -114,22 +114,22 @@ func restoreAndVerifyCRC(t *testing.T, client pb.RestoreServiceClient, fileDataI
 	}
 
 	assert.Equal(t, int(meta.ChunkCount), chunksReceived,
-		"chunk count mismatch for %s: meta says %d, got %d", fileDataID, meta.ChunkCount, chunksReceived)
+		"chunk count mismatch for %s: meta says %d, got %d", fileUUID, meta.ChunkCount, chunksReceived)
 
 	var buf [4]byte
 	binary.BigEndian.PutUint32(buf[:], hasher.Sum32())
 	assert.True(t, bytes.Equal(buf[:], meta.ExpectedChecksum),
-		"CRC32 mismatch for %s", fileDataID)
+		"CRC32 mismatch for %s", fileUUID)
 }
 
-// listLatestFileDataID returns the file_data_id for the latest version of a file by path.
-func listLatestFileDataID(t *testing.T, client pb.ListServiceClient, path string) string {
+// listLatestFileUUID returns the file_uuid for the latest version of a file by path.
+func listLatestFileUUID(t *testing.T, client pb.ListServiceClient, path string) string {
 	t.Helper()
 	resp, err := client.ListFiles(context.Background(), &pb.ListRequest{})
 	require.NoError(t, err)
 	for _, row := range resp.Rows {
 		if row.Path == path {
-			return row.FileDataId
+			return row.FileUuid
 		}
 	}
 	t.Fatalf("no file found for path %q in list response", path)
@@ -159,7 +159,7 @@ func TestIntegration_Restore_HappyPath(t *testing.T) {
 	}
 	require.NoError(t, stream.CloseSend())
 
-	id := listLatestFileDataID(t, env.listClient, srcDir+"/data.txt")
+	id := listLatestFileUUID(t, env.listClient, srcDir+"/data.txt")
 	restoreAndVerifyCRC(t, env.restoreClient, id)
 }
 
@@ -218,10 +218,10 @@ func TestIntegration_Restore_DedupChunks_ChunkLinksPresent(t *testing.T) {
 	require.NoError(t, stream2.CloseSend())
 
 	// Both files must pass CRC verification via the restore stream.
-	idA := listLatestFileDataID(t, env.listClient, pathA)
+	idA := listLatestFileUUID(t, env.listClient, pathA)
 	restoreAndVerifyCRC(t, env.restoreClient, idA)
 
-	idB := listLatestFileDataID(t, env.listClient, pathB)
+	idB := listLatestFileUUID(t, env.listClient, pathB)
 	restoreAndVerifyCRC(t, env.restoreClient, idB)
 }
 
@@ -269,6 +269,6 @@ func TestIntegration_Restore_AllChunksDeduped(t *testing.T) {
 	require.NoError(t, stream2.CloseSend())
 
 	// File B must pass CRC verification — this is the all-chunks-deduped edge case.
-	idB := listLatestFileDataID(t, env.listClient, srcDirB+"/file.txt")
+	idB := listLatestFileUUID(t, env.listClient, srcDirB+"/file.txt")
 	restoreAndVerifyCRC(t, env.restoreClient, idB)
 }
