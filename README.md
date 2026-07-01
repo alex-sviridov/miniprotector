@@ -55,6 +55,8 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[brfs](docs/components/brfs.md)** - Backup Reader for File System — reads files and streams them to `bwfs`
 - **[bwfs](docs/components/bwfs.md)** - Backup Writer for File System — receives, deduplicates, and stores files; also serves the list subprotocol
 - **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity
+- **[certrequest](docs/components/certrequest.md)** - Mints one-time enrollment tokens for nodes (control-plane, run on/near the CA)
+- **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS identity from the CA
 
 ## Documentation
 

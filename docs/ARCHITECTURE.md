@@ -9,6 +9,19 @@ A backup system with intelligent deduplication and integrity verification.
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
 
+## Control Plane vs. Agents
+
+|  | Control plane | Agents |
+|---|---|---|
+| Components | `ca/` (step-ca container), `certrequest` | `bwfs`, `brfs`, `rwfs`, `certclient` |
+| Runs where | On/near the CA host | On every backup node |
+| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; has no role in backup traffic | Dial `ca_host:9000` outbound only, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Docker/e2e images | `certrequest` never ships onto an agent host or into an agent image | Agent images bundle `certclient` only |
+
+A node's mTLS identity (`ca.crt`, `client.crt`, `client.key`, consumed by `common/mtls`) is
+obtained via `certclient`, using a token minted by `certrequest`. See
+[certrequest](components/certrequest.md) and [certclient](components/certclient.md).
+
 ## Backup Process
 
 - **brfs** reads files from the source filesystem
