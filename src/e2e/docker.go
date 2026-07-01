@@ -21,8 +21,6 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // testingT is the subset of testing.T used by docker helpers.
@@ -250,12 +248,15 @@ func freePort() (string, error) {
 	return port, err
 }
 
-// waitForBwfs polls gRPC dial until bwfs is ready or timeout expires.
+// waitForBwfs polls a plain TCP connection until bwfs's port accepts
+// connections or the timeout expires. It doesn't need a TLS handshake —
+// it's just confirming the listener is up before the harness issues real
+// commands against it.
 func waitForBwfs(ctx context.Context, hostPort string) error {
 	deadline := time.Now().Add(15 * time.Second)
 	addr := "127.0.0.1:" + hostPort
 	for time.Now().Before(deadline) {
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 		if err == nil {
 			conn.Close()
 			return nil
