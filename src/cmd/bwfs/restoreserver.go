@@ -23,7 +23,7 @@ func NewRestoreServer(store *wfs.Store, logger *slog.Logger) *restoreServer {
 }
 
 type fileDataRow struct {
-	ID         string `gorm:"column:id"`
+	UUID       string `gorm:"column:uuid"`
 	FileID     string `gorm:"column:file_id"`
 	Size       int64  `gorm:"column:size"`
 	ChunkCount int    `gorm:"column:chunk_count"`
@@ -36,18 +36,18 @@ type chunkLinkRow struct {
 }
 
 func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
-	logger := s.logger.With("file_data_id", req.GetFileDataId())
+	logger := s.logger.With("file_uuid", req.GetFileUuid())
 
 	var fd fileDataRow
 	err := s.store.RawDB().Table("file_data_records").
-		Select("id, file_id, size, chunk_count, checksum").
-		Where("id = ? AND checksum IS NOT NULL", req.GetFileDataId()).
+		Select("uuid, file_id, size, chunk_count, checksum").
+		Where("uuid = ? AND checksum IS NOT NULL", req.GetFileUuid()).
 		First(&fd).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return status.Errorf(codes.NotFound, "file_data_id not found or unfinalized: %s", req.GetFileDataId())
+			return status.Errorf(codes.NotFound, "file_uuid not found or unfinalized: %s", req.GetFileUuid())
 		}
-		return status.Errorf(codes.Internal, "db error looking up file_data_id: %v", err)
+		return status.Errorf(codes.Internal, "db error looking up file_uuid: %v", err)
 	}
 
 	if err := stream.Send(&pb.RestoreEvent{
@@ -65,7 +65,7 @@ func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreSer
 	var links []chunkLinkRow
 	if err := s.store.RawDB().Table("file_data_chunk_records").
 		Select("chunk_hash, `index`").
-		Where("file_data_id = ?", fd.FileID).
+		Where("file_id = ?", fd.FileID).
 		Order("`index` ASC").
 		Find(&links).Error; err != nil {
 		return status.Errorf(codes.Internal, "query chunks: %v", err)
