@@ -102,7 +102,10 @@ local.conf"` if empty), matching the existing pattern where each binary validate
 actually needs at its own point of use (e.g. certs-dir resolution failures in `bwfs`/`brfs`
 `main.go`).
 
-`certrequest` does not need `ca_host` — see section 3, it mints tokens fully offline.
+`certrequest` does not read `ca_host` from `local.conf` (it isn't a node governed by per-deployment
+config) — it takes its own `--ca-url` flag instead, defaulting from `ca/data/config/defaults.json`'s
+`ca-url` field. See section 3: minting a token still requires a network round-trip to the CA's own
+REST API, just not through the `local.conf`/`config` package machinery the agent binaries use.
 
 ---
 
@@ -115,38 +118,43 @@ Docker image (see section 5, "Control Plane vs. Agents").
 **Usage:**
 
 ```
-certrequest <hostname> [--san alias]... [--ca-config path] [--password-file path]
+certrequest <hostname> [--san alias]... [--ca-url url] [--root path] [--provisioner name] [--password-file path]
 ```
 
-`--ca-config`/`--password-file` default to `ca/data/config/ca.json` / `ca/data/secrets/password`,
-overridable for flexibility (e.g. running from a copy of those files rather than in place).
+Flag defaults: `--ca-url` from `ca/data/config/defaults.json`'s `ca-url` field; `--root` defaults to
+`ca/data/certs/root_ca.crt`; `--provisioner` defaults to `admin@backup.internal` (matching
+`ca/entrypoint.sh`'s init flags); `--password-file` defaults to `ca/data/secrets/password`.
 
-**Mechanism** (confirmed against the real `ca.json` already present in `ca/data/config/`, which
-stores a JWK provisioner's public key plus a JWE-encrypted private key):
+**Mechanism**, using `github.com/smallstep/certificates/ca`'s own admin client
+(`ca.NewProvisioner`/`Provisioner.Token`) — verified directly against that package's source rather
+than assumed:
 
-1. Read `ca.json`; locate the JWK provisioner entry (its public `key` and `encryptedKey`).
-2. Decrypt `encryptedKey` with the password file, via `go.step.sm/crypto/jose` (JWE, PBES2), to
-   recover the provisioner's private JWK. **Held only in memory — never written to disk.**
-3. Read the root CA fingerprint from `ca/data/config/defaults.json`'s `fingerprint` field (already
-   precomputed by `step ca init`; no need to recompute it).
-4. Mint a JWS-signed one-time token (OTT) with standard step-ca provisioner claims: `iss`
-   (provisioner name), `aud` (`https://<ca-url>/1.0/sign`), `sub` (hostname), `sans` (hostname plus
-   `--san` aliases), `sha` (root fingerprint from step 3), plus `exp`/`nbf`/`iat`/`jti`. Signed with
-   the recovered private JWK.
-5. Print the token to stdout. The operator relays it to the target node out-of-band (SSH, etc.) as
+1. `provisioner, err := ca.NewProvisioner(name, "", caURL, password, ca.WithRootFile(rootPath))`.
+   This does two things over HTTPS to the live CA (trusting it via the local `--root` file, since
+   `certrequest` runs on/near the CA host with direct access to it): fetches the provisioner list
+   (`GET /provisioners`) to find the named provisioner's key ID, then fetches that provisioner's
+   encrypted key (`GET /provisioners/{kid}/encrypted-key`). It decrypts that key locally using the
+   password (JWE, via `go.step.sm/crypto/jose` internally) — **the decrypted private key never
+   leaves this process and is never written to disk.** Both endpoints are stock step-ca API, not
+   new server-side surface.
+2. `token, err := provisioner.Token(hostname, append([]string{hostname}, aliases...)...)` — mints
+   and signs the OTT locally with the now-decrypted provisioner key. Claims (`iss`, `aud`, `sub`,
+   `sans`, `sha` root fingerprint, `exp`/`nbf`/`iat`/`jti`) are constructed and signed entirely by
+   this library call; `certrequest` doesn't hand-construct the JWT.
+3. Print the token to stdout. The operator relays it to the target node out-of-band (SSH, etc.) as
    `MP_CERT_TOKEN`.
 
-This is fully offline — no network call to the CA is needed to mint a token, mirroring how `step ca
-token --ca-config=...` behaves when run on the CA host itself.
+**Correction from an earlier draft of this spec:** minting a token is *not* a fully offline,
+file-only operation — `ca.NewProvisioner` requires the CA to be reachable and does two HTTPS calls
+to it. It's still password-gated and the decrypted key still never touches disk or the network in
+cleartext; only the *shape* of "offline" was wrong, not the security properties.
 
-**New dependency:** `go.step.sm/crypto` (smallstep's crypto/JOSE primitives library — same org as
-the `step-ca`/`step` binaries we already run operationally). Exact claim names and JWE parameters
-get pinned down against the installed module version and step-ca's provisioner source during
-implementation; this section describes the mechanism, not final code.
+**Dependency:** `github.com/smallstep/certificates/ca` — the same package `certclient` uses (see
+section 4), so this doesn't add a second dependency beyond what that section already introduces.
 
 Token TTL/SAN authorization is bounded by the provisioner's own `claims` in `ca.json`
-(`minTL`/`maxTTL`/`defaultTTL`) — `certrequest` doesn't need to reimplement or duplicate those
-limits.
+(`minTL`/`maxTTL`/`defaultTTL`) on the CA side — `certrequest` doesn't need to reimplement or
+duplicate those limits.
 
 ---
 
@@ -159,11 +167,14 @@ same way the other binaries do (`config.ResolveConfigPath`/`ParseConfig`,
 `config.ResolveCertsDir`).
 
 **A. Cert already exists in the certs dir → renew.**
-Build a `ca.Client` (from `github.com/smallstep/certificates/ca`) using the existing
-`client.crt`/`client.key`/`ca.crt`, and call its renew method — mTLS-authenticated against
-`/1.0/renew`, no token involved. Overwrite `client.crt`/`client.key` with the result. Always
-renews when invoked (no expiry check); scheduling this periodically (cron/systemd timer) is an
-operational concern outside this binary.
+`ca.NewClient(caURL)` gives a `*ca.Client`; its `Renew(tr http.RoundTripper)` method takes an
+already-built HTTP transport rather than loading cert files itself, so `certclient` builds that
+transport with stdlib (`tls.LoadX509KeyPair` on the existing `client.crt`/`client.key`,
+`RootCAs` from the existing `ca.crt` — the same primitives `common/mtls` already uses) and passes
+it in. This is mTLS-authenticated against `/1.0/renew`; no token involved. step-ca's renewal
+semantics re-sign the **same key pair**, so only `client.crt` (and `ca.crt`, if the root rotated)
+is overwritten — `client.key` is untouched. Always renews when invoked (no expiry check);
+scheduling this periodically (cron/systemd timer) is an operational concern outside this binary.
 
 **B. No cert exists → bootstrap using a token.**
 
@@ -196,7 +207,7 @@ left implicit:
 |---|---|---|
 | Components | `ca/` (step-ca container), `certrequest` | `bwfs`, `brfs`, `rwfs`, `certclient` |
 | Runs where | On/near the CA host | On every backup node |
-| Network role | Serves enrollment/renewal on `:9000`; has no role in backup traffic | Dial `ca_host:9000` *outbound only*, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS, per the existing spec) |
+| Network role | Serves enrollment/renewal/admin (`/1.0/sign`, `/1.0/renew`, `/roots`, `/provisioners`) on `:9000`; has no role in backup traffic. `certrequest` itself calls these as a client, typically to `localhost:9000` when co-located with the CA | Dial `ca_host:9000` *outbound only*, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS, per the existing spec) |
 | Docker/e2e images | `certrequest` never ships onto an agent host or into an agent image | Agent images bundle `certclient` only |
 
 Build layout stays flat (`src/cmd/certrequest`, `src/cmd/certclient`) for Makefile/module
@@ -216,11 +227,11 @@ the existing topology/data-flow description.
   short-lived and single-use (`jti`-tracked) by the CA itself. Inherited for free from step-ca.
 - **Private key handling:** `certrequest` holds the decrypted provisioner private key only in
   memory, never persisting it to disk. `certclient` writes `client.key` with `0600` permissions.
-- **Trust boundary (stated, not a gap):** anyone able to run `certrequest` with read access to
-  `ca/data/config/ca.json` and `ca/data/secrets/password` has full token-minting authority for any
-  hostname — equivalent to CA-admin privilege. This is inherent to the offline-minting model (the
-  same is true of the raw `step` CLI used manually today) and is why `certrequest` is a
-  control-plane-only tool per section 5, not something distributed to agent hosts.
+- **Trust boundary (stated, not a gap):** anyone able to run `certrequest` with network access to
+  the CA and the provisioner password has full token-minting authority for any hostname —
+  equivalent to CA-admin privilege. This is inherent to the model (the same is true of the raw
+  `step` CLI used manually today) and is why `certrequest` is a control-plane-only tool per
+  section 5, not something distributed to agent hosts.
 - **Bootstrap trust (fingerprint pinning):** delegated entirely to `ca.Bootstrap` from smallstep's
   client library rather than hand-implemented — see below.
 
@@ -262,8 +273,12 @@ unaffected and stays as-is.
 
 ## 8. Testing
 
-- **`certrequest`:** unit tests around JWE decryption and JWT claim construction, using a fixture
-  `ca.json`/password generated for the test — not the real `ca/data/`.
+- **`certrequest`:** since token minting now goes through `ca.NewProvisioner`/`Provisioner.Token`
+  (section 3's correction) rather than hand-rolled JWE/JWT code, there's no bespoke crypto logic of
+  ours to unit test here. Coverage is flag parsing/validation (`--san` repetition, missing
+  required flags) plus an integration-style test against a real `step-ca` test instance (spun up
+  with a throwaway provisioner/password, not the real `ca/data/`) confirming a minted token is
+  actually redeemable.
 - **`certclient`:** unit tests mocking the `ca.Client` interface for both branches (bootstrap
   success, fingerprint-mismatch failure, renew success, renew failure) rather than hitting a live
   CA.
@@ -284,11 +299,13 @@ setting (which CA to enroll against), the same category as `default_port` or `lo
 belongs alongside them in `local.conf` rather than introducing a second, inconsistent
 configuration channel.
 
-**Why does `certrequest` run offline, on/near the CA host, rather than exposing a remote admin
-API?** Fewer moving parts and no new network-facing attack surface on the CA server itself. The
-CA's only exposed surface stays the standard step-ca REST API (`/1.0/sign`, `/1.0/renew`,
-`/roots`) that `certclient` already needs to talk to; token minting is a local file-and-crypto
-operation, matching how the `step` CLI itself works today.
+**Why does `certrequest` run on/near the CA host rather than exposing a new remote admin API?**
+Even though minting a token does call the CA over the network (section 3's correction), those calls
+(`/provisioners`, `/provisioners/{kid}/encrypted-key`) are stock step-ca endpoints — no new
+server-side code or attack surface is added. Running `certrequest` on/near the CA host keeps that
+traffic local (`localhost:9000`) and keeps the root-of-trust file (`ca/data/certs/root_ca.crt`)
+and password file conveniently co-located, rather than needing to distribute them to a separate
+admin workstation.
 
 **Why does `certclient` need no `--hostname` flag?** The identity (`sub`/`sans`) is decided once,
 by `certrequest`, at token-minting time. Baking it into the token means the token itself is the
