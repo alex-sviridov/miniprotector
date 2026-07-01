@@ -17,7 +17,7 @@ import (
 )
 
 type verifyResult struct {
-	fileDataID string
+	fileUUID   string
 	source     string
 	path       string
 	ok         bool
@@ -92,7 +92,7 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 				logger.Info("verified",
 					"source", result.source,
 					"path", result.path,
-					"file_data_id", result.fileDataID,
+					"file_uuid", result.fileUUID,
 					"chunks", result.chunkCount,
 					"size", result.size,
 				)
@@ -102,7 +102,7 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 			attrs := []any{
 				"source", result.source,
 				"path", result.path,
-				"file_data_id", result.fileDataID,
+				"file_uuid", result.fileUUID,
 				"reason", result.reason,
 			}
 			if result.reason == "blake3_mismatch" {
@@ -129,7 +129,7 @@ func verifyFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.Res
 		if attempt < maxRetries {
 			logger.Warn("stream error, retrying",
 				"path", row.Path,
-				"file_data_id", row.FileDataId,
+				"file_uuid", row.FileUuid,
 				"attempt", attempt,
 				"reason", result.reason,
 			)
@@ -140,15 +140,15 @@ func verifyFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.Res
 
 func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.FileRow) verifyResult {
 	base := verifyResult{
-		fileDataID: row.FileDataId,
-		source:     row.Source,
-		path:       row.Path,
+		fileUUID: row.FileUuid,
+		source:   row.Source,
+		path:     row.Path,
 	}
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileDataId: row.FileDataId})
+	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileUuid: row.FileUuid})
 	if err != nil {
 		base.reason = fmt.Sprintf("stream error: %v", err)
 		return base

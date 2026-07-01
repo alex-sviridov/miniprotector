@@ -35,15 +35,15 @@ func runList(host string, port int, serverName, pathFilter, filter, output strin
 	for i, r := range resp.Rows {
 		createdAt, _ := time.Parse(time.RFC3339, r.CreatedAt)
 		rows[i] = listformat.Row{
-			FileDataID: r.FileDataId,
-			Source:     r.Source,
-			Type:       r.Type,
-			Path:       r.Path,
-			Timestamp:  r.Timestamp,
-			Size:       r.Size,
-			Chunks:     int(r.Chunks),
-			Versions:   r.Versions,
-			CreatedAt:  createdAt,
+			FileUUID:  r.FileUuid,
+			Source:    r.Source,
+			Type:      r.Type,
+			Path:      r.Path,
+			Timestamp: r.Timestamp,
+			Size:      r.Size,
+			Chunks:    int(r.Chunks),
+			Versions:  r.Versions,
+			CreatedAt: createdAt,
 		}
 	}
 
