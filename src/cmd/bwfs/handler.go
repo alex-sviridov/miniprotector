@@ -98,7 +98,6 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		// File already known or non-transferable — record it in the backup catalog now.
 		if _, err := h.store.CreateFileVersion(
 			h.currentFile.ID(),
-			h.currentFile.ID(),
 			h.currentFile.MetadataBlob(),
 			h.currentFile.Ctime(),
 		); err != nil {
@@ -232,7 +231,6 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 	}
 	// Record this file in the backup catalog now that its content is safely stored.
 	if _, err := h.store.CreateFileVersion(
-		h.currentFile.ID(),
 		h.currentFile.ID(),
 		h.currentFile.MetadataBlob(),
 		h.currentFile.Ctime(),
