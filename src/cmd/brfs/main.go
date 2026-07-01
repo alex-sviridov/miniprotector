@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -49,6 +50,9 @@ func main() {
 	// Get arguments
 	arguments, err := parseArguments(conf)
 	if err != nil {
+		if errors.Is(err, errHelpRequested) {
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "Arguments error: %v\n", err)
 		os.Exit(1)
 	}

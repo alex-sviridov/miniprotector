@@ -1,12 +1,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/spf13/cobra"
 )
+
+// errHelpRequested signals that cobra already printed help output for
+// -h/--help; the caller should exit cleanly instead of reporting an error.
+var errHelpRequested = errors.New("help requested")
 
 // Command line flags
 var (
@@ -44,6 +49,13 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	// Parse arguments and flags
 	if err := cmd.Execute(); err != nil {
 		return nil, err
+	}
+
+	// Cobra intercepts -h/--help before running Args validation or Run,
+	// returning a nil error after printing help. Detect that case so we
+	// don't index into an empty positional args slice below.
+	if helpRequested, _ := cmd.Flags().GetBool("help"); helpRequested {
+		return nil, errHelpRequested
 	}
 
 	// Get the source folder from parsed args
