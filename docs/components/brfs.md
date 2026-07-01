@@ -36,6 +36,15 @@ brfs /var/log --destination localhost:8080 --debug --streams 5
 
 Communicates with [bwfs](./bwfs.md) (backup writer) using the protocol specified in [doc/protocols/backup.md](../protocols/backup.md).
 
+## Transport Security
+
+The connection to `bwfs` is mutually authenticated TLS. `brfs` loads its identity cert and the
+trusted CA from `MP_CONFIG_PATH/certs/{ca.crt,client.crt,client.key}` (`MP_CONFIG_PATH` defaults
+to the binary's own directory). Missing or invalid certs are a fatal error before any backup
+traffic is sent. When `--destination` is a loopback address (`localhost`, `127.0.0.1`, `::1`),
+hostname verification against the server cert's SAN is skipped — the cert must still chain to
+the trusted CA.
+
 ## Building
 
 ```bash

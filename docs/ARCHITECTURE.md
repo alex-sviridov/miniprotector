@@ -12,13 +12,13 @@ A backup system with intelligent deduplication and integrity verification.
 ## Backup Process
 
 - **brfs** reads files from the source filesystem
-- Connects to **bwfs** via network or Unix socket
+- Connects to **bwfs** via network or Unix socket, authenticated with mutual TLS
 - Sends chunked file data using the backup protocol
 - **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
 
 ## Restore/Verify Process
 
-- **rwfs** connects to **bwfs** via network or Unix socket using the list/restore protocol
+- **rwfs** connects to **bwfs** via network or Unix socket using the list/restore protocol, authenticated with mutual TLS
 - **rwfs list** queries metadata from the remote **bwfs** server
 - **rwfs verify** fetches all chunks and re-verifies BLAKE3 and CRC32 integrity without writing to disk
 - **rwfs** (future restore) reconstructs files on the destination filesystem
@@ -45,12 +45,12 @@ graph TB
 
     %% Backup Flow
     SrcFS -->|reads files| brfs
-    brfs -->|backup protocol<br/>network/unix socket| bwfs
+    brfs -->|backup protocol<br/>network/unix socket, mTLS| bwfs
     bwfs -->|stores chunks| BackupFS
     bwfs -->|stores metadata| DB
 
     %% Restore Flow (list/verify implemented)
-    bwfs -->|list/restore protocol<br/>network/unix socket| rwfs
+    bwfs -->|list/restore protocol<br/>network/unix socket, mTLS| rwfs
     rwfs -->|writes files| DstFS
 
     classDef filesystem fill:#e1f5fe

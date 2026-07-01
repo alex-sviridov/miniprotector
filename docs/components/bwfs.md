@@ -72,6 +72,15 @@ Provides file reconstruction via server-streaming gRPC RPC. Given a `file_uuid` 
 
 **Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.Internal` when a database error occurs or a chunk file cannot be read from disk — a chunk-read failure also marks that chunk corrupted server-side (see [backup protocol](../protocols/backup.md)) so it heals on the next backup. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
 
+## Transport Security
+
+All gRPC connections (`BackupService`, `ListService`, `RestoreService`) require mutual TLS.
+`bwfs` loads its identity cert and the trusted CA from `MP_CONFIG_PATH/certs/{ca.crt,client.crt,client.key}`
+(`MP_CONFIG_PATH` defaults to the binary's own directory). Any client presenting a cert signed
+by that CA is trusted — there's no additional per-client allowlist. Missing or invalid certs
+are a fatal startup error; there is no plaintext fallback. Cert issuance itself is out of scope
+for `bwfs` — see the `ca/` step-ca setup for how certs are provisioned today.
+
 ## Building
 
 ```bash

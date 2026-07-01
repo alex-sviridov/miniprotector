@@ -79,6 +79,15 @@ or stream error after retries). Per-file results and a summary are written via `
 | `--retries` | 3 | Max retry attempts per file on stream error |
 | `--quiet` | false | Suppress per-file success lines (warnings and summary always shown) |
 
+## Transport Security
+
+Connections to `bwfs` (both `list` and `verify`) are mutually authenticated TLS. `rwfs` loads
+its identity cert and the trusted CA from `MP_CONFIG_PATH/certs/{ca.crt,client.crt,client.key}`
+(`MP_CONFIG_PATH` defaults to the binary's own directory). Missing or invalid certs are a fatal
+error before any query is sent. When the `bwfs_host:port` target's host is loopback (`localhost`,
+`127.0.0.1`, `::1`), hostname verification against the server cert's SAN is skipped — the cert
+must still chain to the trusted CA.
+
 ## Building
 
 ```bash
