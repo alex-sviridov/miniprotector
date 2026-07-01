@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/alex-sviridov/miniprotector/storage"
 )
 
@@ -39,27 +41,46 @@ func (s *Store) StoreInfo() (*storage.StoreInfo, error) {
 func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 	result := &storage.VacuumResult{}
 
-	// Step 1: remove incomplete FileData older than threshold
-	cutoff := time.Now().Add(-vacuumIncompleteThreshold)
-	res := s.db.Where("checksum IS NULL AND created_at < ?", cutoff).Delete(&FileDataRecord{})
-	result.IncompleteFileData = res.RowsAffected
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		// Step 1: remove incomplete FileData older than threshold
+		cutoff := time.Now().Add(-vacuumIncompleteThreshold)
+		res := tx.Where("checksum IS NULL AND created_at < ?", cutoff).Delete(&FileDataRecord{})
+		if res.Error != nil {
+			return res.Error
+		}
+		result.IncompleteFileData = res.RowsAffected
 
-	// Step 2: remove FileData with no FileVersion referencing them
-	res = s.db.Where("file_id NOT IN (SELECT object_id FROM file_version_records)").
-		Where("checksum IS NOT NULL").
-		Delete(&FileDataRecord{})
-	result.OrphanedFileDataRemoved = res.RowsAffected
+		// Step 2: remove FileData with no FileVersion referencing them
+		res = tx.Where("file_id NOT IN (SELECT object_id FROM file_version_records)").
+			Where("checksum IS NOT NULL").
+			Delete(&FileDataRecord{})
+		if res.Error != nil {
+			return res.Error
+		}
+		result.OrphanedFileDataRemoved = res.RowsAffected
 
-	// Step 3: remove FileDataChunkRecord rows whose file_id no longer has
-	// any FileDataRecord at all (a file_id can be shared by multiple
-	// FileDataRecord attempts, so a chunk link is only safe to remove once
-	// none of them remain).
-	res = s.db.Where("file_id NOT IN (SELECT file_id FROM file_data_records)").Delete(&FileDataChunkRecord{})
-	result.OrphanedChunkLinksRemoved = res.RowsAffected
+		// Step 3: remove FileDataChunkRecord rows whose file_id no longer has
+		// any FileDataRecord at all (a file_id can be shared by multiple
+		// FileDataRecord attempts, so a chunk link is only safe to remove once
+		// none of them remain).
+		res = tx.Where("file_id NOT IN (SELECT file_id FROM file_data_records)").Delete(&FileDataChunkRecord{})
+		if res.Error != nil {
+			return res.Error
+		}
+		result.OrphanedChunkLinksRemoved = res.RowsAffected
 
-	// Step 4: remove ChunkRecord rows with no FileDataChunkRecord referencing them
-	res = s.db.Where("hash NOT IN (SELECT chunk_hash FROM file_data_chunk_records)").Delete(&ChunkRecord{})
-	result.OrphanedChunksRemoved = res.RowsAffected
+		// Step 4: remove ChunkRecord rows with no FileDataChunkRecord referencing them
+		res = tx.Where("hash NOT IN (SELECT chunk_hash FROM file_data_chunk_records)").Delete(&ChunkRecord{})
+		if res.Error != nil {
+			return res.Error
+		}
+		result.OrphanedChunksRemoved = res.RowsAffected
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	// Step 5: walk chunk files; delete any not in chunk_records (includes temp files)
 	chunksRoot := filepath.Join(s.basePath, "chunks")
