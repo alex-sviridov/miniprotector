@@ -66,15 +66,12 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 		return fmt.Errorf("create certs dir: %w", err)
 	}
 
-	chain := append(
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}),
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: intermediate.Raw})...,
-	)
+	chain := append(pemCert(leaf), pemCert(intermediate)...)
 	if err := os.WriteFile(filepath.Join(certsDir, "client.crt"), chain, 0o644); err != nil {
 		return fmt.Errorf("write client.crt: %w", err)
 	}
 
-	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root.Raw})
+	rootPEM := pemCert(root)
 	if err := os.WriteFile(filepath.Join(certsDir, "ca.crt"), rootPEM, 0o644); err != nil {
 		return fmt.Errorf("write ca.crt: %w", err)
 	}
@@ -85,4 +82,10 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 	}
 
 	return nil
+}
+
+// pemCert PEM-encodes an x509 certificate. Shared by bootstrap.go and
+// renew.go to avoid duplicating the pem.Block boilerplate.
+func pemCert(cert *x509.Certificate) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 }
