@@ -18,7 +18,7 @@ service RestoreService {
 }
 
 message RestoreRequest {
-  string file_data_id = 1;  // FileDataRecord.ID from ListResponse
+  string file_uuid = 1;  // FileDataRecord.UUID from ListResponse
 }
 
 message RestoreEvent {
@@ -49,7 +49,7 @@ sequenceDiagram
     participant Client as rwfs
     participant Server as bwfs
 
-    Client->>Server: RestoreFile(RestoreRequest{file_data_id})
+    Client->>Server: RestoreFile(RestoreRequest{file_uuid})
     Server-->>Client: RestoreEvent{meta: RestoreFileMeta{size, chunk_count, expected_checksum}}
     loop For Each Chunk (index ASC)
         Server-->>Client: RestoreEvent{chunk: RestoreChunk{index, hash, data, eof}}
@@ -61,19 +61,19 @@ sequenceDiagram
 
 | Condition | bwfs behaviour |
 |-----------|----------------|
-| `file_data_id` not found or not finalized | gRPC `NotFound` |
+| `file_uuid` not found or not finalized | gRPC `NotFound` |
 | Chunk file missing or unreadable | gRPC `Internal` (stream terminates) |
 | Send error (network) | stream terminates; client retries entire `RestoreFile` call |
 
 ## CLI → RPC Mapping
 
 `rwfs verify` calls `ListService.ListFiles` first (same filters as `rwfs list`), then
-calls `RestoreFile` for each returned `file_data_id`:
+calls `RestoreFile` for each returned `file_uuid`:
 
 ```
 rwfs verify myhost:/var/log localhost:8080 --filter nginx
   1. ListFiles{server_name="myhost", path="/var/log", filter="nginx"}
-  2. For each FileRow: RestoreFile{file_data_id=row.file_data_id}
+  2. For each FileRow: RestoreFile{file_uuid=row.file_uuid}
 ```
 
 ## Key Design Decisions

@@ -22,7 +22,7 @@ message ListResponse {
 }
 
 message FileRow {
-  string file_data_id = 1;
+  string file_uuid     = 1;
   string source        = 2;
   string type          = 3;
   string path          = 4;
@@ -94,7 +94,7 @@ workstation  f     /var/log/syslog      1782605538  1 MB    2       3
 ```json
 [
   {
-    "file_data_id": "a1b2c3d4",
+    "file_uuid": "a1b2c3d4",
     "source": "workstation",
     "type": "f",
     "path": "/var/log/syslog",

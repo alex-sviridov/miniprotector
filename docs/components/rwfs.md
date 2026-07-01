@@ -46,7 +46,7 @@ When `server_name` is omitted from the filter (i.e. no positional, or positional
 
 **Table columns:** SOURCE, TYPE, PATH, TIMESTAMP, SIZE, CHUNKS, VERSIONS
 
-**JSON fields:** `file_data_id`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`
+**JSON fields:** `file_uuid`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`
 
 The JSON schema is identical to `bwfs list --output json`, so the same parsers work for both local and remote queries.
 
