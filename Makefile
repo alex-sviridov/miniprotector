@@ -18,6 +18,8 @@ BINARIES := $(notdir $(wildcard src/cmd/*))
 BRFS_CMD := cmd/brfs
 BWFS_CMD := cmd/bwfs
 RWFS_CMD := cmd/rwfs
+CERTREQUEST_CMD := cmd/certrequest
+CERTCLIENT_CMD := cmd/certclient
 
 # Colors for output
 RED := \033[0;31m
@@ -81,13 +83,13 @@ rwfs: $(BINARY_DIR) ## Build rwfs binary
 certrequest: $(BINARY_DIR) ## Build certrequest binary
 	@printf "$(BLUE)Building certrequest...$(NC) "
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certrequest ./cmd/certrequest
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certrequest ./$(CERTREQUEST_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/certrequest"
 
 certclient: $(BINARY_DIR) ## Build certclient binary
 	@printf "$(BLUE)Building certclient...$(NC) "
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certclient ./cmd/certclient
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certclient ./$(CERTCLIENT_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/certclient"
 
 test: ## Run unit and integration tests
