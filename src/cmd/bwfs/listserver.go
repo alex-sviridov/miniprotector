@@ -29,15 +29,15 @@ func (s *listServer) ListFiles(ctx context.Context, req *pb.ListRequest) (*pb.Li
 	pbRows := make([]*pb.FileRow, len(rows))
 	for i, r := range rows {
 		pbRows[i] = &pb.FileRow{
-			FileDataId: r.FileDataID,
-			Source:     r.Source,
-			Type:       r.Type,
-			Path:       r.Path,
-			Timestamp:  r.Timestamp,
-			Size:       r.Size,
-			Chunks:     int32(r.Chunks),
-			Versions:   r.Versions,
-			CreatedAt:  r.CreatedAt.UTC().Format(time.RFC3339),
+			FileUuid:  r.FileUUID,
+			Source:    r.Source,
+			Type:      r.Type,
+			Path:      r.Path,
+			Timestamp: r.Timestamp,
+			Size:      r.Size,
+			Chunks:    int32(r.Chunks),
+			Versions:  r.Versions,
+			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
 	return &pb.ListResponse{Rows: pbRows}, nil

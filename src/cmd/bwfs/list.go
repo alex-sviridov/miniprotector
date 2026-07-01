@@ -32,7 +32,7 @@ func runList(logger *slog.Logger, storagePath, serverName, pathPrefix, output, f
 }
 
 type queryResult struct {
-	FileDataID string    `gorm:"column:file_data_id"`
+	FileUUID   string    `gorm:"column:uuid"`
 	FileID     string    `gorm:"column:file_id"`
 	Size       int64     `gorm:"column:size"`
 	Chunks     int       `gorm:"column:chunks"`
@@ -51,8 +51,8 @@ func queryFileRows(store *wfs.Store, serverName, pathPrefix, filter string) ([]l
 	// FileDataRecords exist.
 	query := store.RawDB().
 		Table("file_data_records fd").
-		Select("fd.id AS file_data_id, fd.file_id, fd.size, fd.chunk_count AS chunks, fd.created_at, COUNT(DISTINCT fv.id) AS versions").
-		Joins("LEFT JOIN file_version_records fv ON fv.file_id = fd.file_id").
+		Select("fd.uuid AS uuid, fd.file_id, fd.size, fd.chunk_count AS chunks, fd.created_at, COUNT(DISTINCT fv.uuid) AS versions").
+		Joins("LEFT JOIN file_version_records fv ON fv.object_id = fd.file_id").
 		Where("fd.checksum IS NOT NULL").
 		Where("fd.created_at = (SELECT MAX(fd2.created_at) FROM file_data_records fd2 WHERE fd2.file_id = fd.file_id AND fd2.checksum IS NOT NULL)").
 		Group("fd.file_id").
@@ -77,15 +77,15 @@ func queryFileRows(store *wfs.Store, serverName, pathPrefix, filter string) ([]l
 			continue
 		}
 		rows = append(rows, listformat.Row{
-			FileDataID: r.FileDataID,
-			Source:     src,
-			Type:       typ,
-			Path:       path,
-			Timestamp:  ts,
-			Size:       r.Size,
-			Chunks:     r.Chunks,
-			Versions:   r.Versions,
-			CreatedAt:  r.CreatedAt,
+			FileUUID:  r.FileUUID,
+			Source:    src,
+			Type:      typ,
+			Path:      path,
+			Timestamp: ts,
+			Size:      r.Size,
+			Chunks:    r.Chunks,
+			Versions:  r.Versions,
+			CreatedAt: r.CreatedAt,
 		})
 	}
 	return rows, nil
