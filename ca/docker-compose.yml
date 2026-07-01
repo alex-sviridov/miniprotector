@@ -1,0 +1,10 @@
+services:
+  step-ca:
+    image: smallstep/step-ca
+    volumes:
+      - ./data:/home/step
+      - ./entrypoint.sh:/home/step/entrypoint.sh:ro
+    ports:
+      - "9000:9000"
+    entrypoint: ["/home/step/entrypoint.sh"]
+    restart: unless-stopped
