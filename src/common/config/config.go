@@ -10,23 +10,16 @@ import (
 	"strings"
 )
 
-// ConfigFileEnvVar is the environment variable used to override the config
-// file path. If unset, ResolveConfigPath searches for "local.conf" relative
-// to the running binary's directory (see ResolveConfigPath for the search
-// order).
-const ConfigFileEnvVar = "MP_CONFIGFILE"
+// ConfigPathEnvVar is the environment variable used to override the base
+// configuration directory. If unset, ResolveBaseDir defaults to the running
+// binary's own directory. Both the config file (<base>/local.conf) and the
+// mTLS certs directory (<base>/certs) are resolved relative to this base.
+const ConfigPathEnvVar = "MP_CONFIG_PATH"
 
-// ResolveConfigPath determines the configuration file path to use.
-// Precedence:
-//  1. MP_CONFIGFILE environment variable, if set.
-//  2. "<exeDir>/.config/local.conf" - handles the container/e2e layout
-//     where the binary and a .config subdirectory live side by side
-//     (e.g. /app/bwfs, /app/.config/local.conf).
-//  3. "<exeDir>/../.config/local.conf" - handles the conventional
-//     repo layout where binaries are built to <repo-root>/bin and the
-//     config lives at <repo-root>/.config/local.conf.
-func ResolveConfigPath() (string, error) {
-	if envPath := os.Getenv(ConfigFileEnvVar); envPath != "" {
+// ResolveBaseDir returns MP_CONFIG_PATH if set, otherwise the directory
+// containing the running binary.
+func ResolveBaseDir() (string, error) {
+	if envPath := os.Getenv(ConfigPathEnvVar); envPath != "" {
 		return envPath, nil
 	}
 
@@ -34,20 +27,28 @@ func ResolveConfigPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to determine executable path: %w", err)
 	}
-	exeDir := filepath.Dir(exePath)
+	return filepath.Dir(exePath), nil
+}
 
-	candidates := []string{
-		filepath.Join(exeDir, ".config", "local.conf"),
-		filepath.Join(exeDir, "..", ".config", "local.conf"),
+// ResolveConfigPath determines the configuration file path: <base>/local.conf,
+// where base comes from ResolveBaseDir.
+func ResolveConfigPath() (string, error) {
+	baseDir, err := ResolveBaseDir()
+	if err != nil {
+		return "", err
 	}
+	return filepath.Join(baseDir, "local.conf"), nil
+}
 
-	for _, candidate := range candidates {
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			return candidate, nil
-		}
+// ResolveCertsDir determines the mTLS certs directory: <base>/certs, where
+// base comes from ResolveBaseDir. The directory is expected to contain
+// ca.crt, client.crt, and client.key (see common/mtls).
+func ResolveCertsDir() (string, error) {
+	baseDir, err := ResolveBaseDir()
+	if err != nil {
+		return "", err
 	}
-
-	return "", fmt.Errorf("no config file found at any of: %v; set %s to override", candidates, ConfigFileEnvVar)
+	return filepath.Join(baseDir, "certs"), nil
 }
 
 // Config holds configuration from /etc/btool/local.conf
