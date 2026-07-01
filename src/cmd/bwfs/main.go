@@ -56,6 +56,19 @@ func main() {
 		}
 		defer backupServer.store.Close()
 
+		vacuumResult, err := backupServer.store.Vacuum()
+		if err != nil {
+			logger.Error("Startup vacuum failed", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("Startup vacuum completed",
+			"orphaned_file_data_removed", vacuumResult.OrphanedFileDataRemoved,
+			"orphaned_chunk_links_removed", vacuumResult.OrphanedChunkLinksRemoved,
+			"orphaned_chunks_removed", vacuumResult.OrphanedChunksRemoved,
+			"incomplete_file_data_removed", vacuumResult.IncompleteFileData,
+			"bytes_reclaimed", vacuumResult.BytesReclaimed,
+		)
+
 		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
 		if err != nil {
 			logger.Error("List store initialization failed", "error", err)

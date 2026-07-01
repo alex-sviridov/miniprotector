@@ -30,6 +30,11 @@ bwfs /home/user/backup server --port 8080 --debug
 | `--debug` | false | Enable debug logging |
 | `--quiet` | false | Suppress console logging |
 
+On startup, before accepting connections, the server runs a vacuum pass over the store
+(removes incomplete/orphaned `FileData`, orphaned chunk links, orphaned chunk records, and
+orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
+rather than serving against a store it couldn't clean up.
+
 ### list
 
 List stored file data from the local SQLite store. Can run concurrently with a live server.
