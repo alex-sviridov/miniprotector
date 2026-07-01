@@ -94,7 +94,7 @@ func TestE2E_SingleSubfolderBackup(t *testing.T) {
 
 	// Run brfs for subA only, 1 stream
 	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
-		filepath.Join(dataDir, "subA"), "bwfs", 1, "")
+		filepath.Join(dataDir, "subA"), "bwfs.internal", 1, "")
 	require.Equal(t, 0, exitCode, "brfs exited with non-zero code")
 
 	// Validate with bwfs list
@@ -125,7 +125,7 @@ func TestE2E_AllFoldersBackup(t *testing.T) {
 	require.NoError(t, waitForBwfs(ctx, hostPort))
 
 	// Run brfs for all folders, 4 streams
-	exitCode := runBrfsContainer(ctx, t, testImageID, networkID, dataDir, "bwfs", 4, "")
+	exitCode := runBrfsContainer(ctx, t, testImageID, networkID, dataDir, "bwfs.internal", 4, "")
 	require.Equal(t, 0, exitCode, "brfs exited with non-zero code")
 
 	// Validate with bwfs list
@@ -151,7 +151,7 @@ func TestE2E_Verify_HappyPath(t *testing.T) {
 	require.NoError(t, waitForBwfs(ctx, hostPort))
 
 	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
-		filepath.Join(dataDir, "subA"), "bwfs", 4, "brfs-source")
+		filepath.Join(dataDir, "subA"), "bwfs.internal", 4, "brfs-source")
 	require.Equal(t, 0, exitCode, "brfs should exit 0")
 
 	exitCode = runRwfsVerifyContainer(ctx, t, testImageID, networkID, false)
@@ -173,7 +173,7 @@ func TestE2E_Verify_CorruptionDetection(t *testing.T) {
 
 	// Back up subA only (8 files, known chunk layout)
 	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
-		filepath.Join(dataDir, "subA"), "bwfs", 1, "brfs-source")
+		filepath.Join(dataDir, "subA"), "bwfs.internal", 1, "brfs-source")
 	require.Equal(t, 0, exitCode, "brfs should exit 0")
 
 	// Confirm baseline passes
@@ -203,7 +203,7 @@ func TestE2E_Backup_HealsCorruptedChunk(t *testing.T) {
 
 	// Back up subA only (8 files, known chunk layout)
 	exitCode := runBrfsContainer(ctx, t, testImageID, networkID,
-		filepath.Join(dataDir, "subA"), "bwfs", 1, "brfs-source")
+		filepath.Join(dataDir, "subA"), "bwfs.internal", 1, "brfs-source")
 	require.Equal(t, 0, exitCode, "brfs should exit 0")
 
 	// Confirm baseline passes
@@ -222,7 +222,7 @@ func TestE2E_Backup_HealsCorruptedChunk(t *testing.T) {
 	// because a finalized DB record exists — it must detect the missing
 	// chunk and re-upload it.
 	exitCode = runBrfsContainer(ctx, t, testImageID, networkID,
-		filepath.Join(dataDir, "subA"), "bwfs", 1, "brfs-source")
+		filepath.Join(dataDir, "subA"), "bwfs.internal", 1, "brfs-source")
 	require.Equal(t, 0, exitCode, "repeat brfs should exit 0")
 
 	// Corruption must now be healed.

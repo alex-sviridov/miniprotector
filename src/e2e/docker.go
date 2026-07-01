@@ -217,7 +217,7 @@ func startBwfsContainer(ctx context.Context, t testingT, imageID, networkID, sto
 		},
 		&network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				networkID: {NetworkID: networkID, Aliases: []string{"bwfs"}},
+				networkID: {NetworkID: networkID, Aliases: []string{"bwfs.internal"}},
 			},
 		},
 		nil,
@@ -408,7 +408,7 @@ func runRwfsVerifyContainer(ctx context.Context, t testingT, imageID, networkID 
 	cli := newDockerClient(t)
 	defer cli.Close()
 
-	cmd := []string{"/app/rwfs", "verify", "brfs-source:/", "bwfs:15722", "--streams", "4"}
+	cmd := []string{"/app/rwfs", "verify", "brfs-source:/", "bwfs.internal:15722", "--streams", "4"}
 	if quiet {
 		cmd = append(cmd, "--quiet")
 	}
