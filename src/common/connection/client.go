@@ -8,13 +8,18 @@ import (
 	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
 
-func Connect(host string, port, timeout int) (*grpc.ClientConn, error) {
+func Connect(host string, port, timeout int, certsDir string) (*grpc.ClientConn, error) {
+	creds, err := mtls.LoadClientCredentials(certsDir, host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client credentials: %w", err)
+	}
+
 	// Configure keepalive for connection health monitoring
 	keepaliveParams := keepalive.ClientParameters{
 		Time:                10 * time.Second, // Send ping every 10 seconds
@@ -25,7 +30,7 @@ func Connect(host string, port, timeout int) (*grpc.ClientConn, error) {
 	// Connect to server with keepalive
 	conn, err := grpc.NewClient(
 		fmt.Sprintf("%s:%d", host, port),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(keepaliveParams),
 	)
 	if err != nil {
