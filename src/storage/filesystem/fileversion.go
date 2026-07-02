@@ -81,6 +81,16 @@ func (s *Store) FileVersionsInPeriod(from, to time.Time) ([]*storage.FileVersion
 	return result, nil
 }
 
+// FileVersionsForJob returns the object IDs of every file_versions row
+// recorded for jobID, for BackupCommit's hash verification.
+func (s *Store) FileVersionsForJob(jobID string) ([]string, error) {
+	var objectIDs []string
+	err := s.db.Model(&FileVersionRecord{}).
+		Where("job_id = ?", jobID).
+		Pluck("object_id", &objectIDs).Error
+	return objectIDs, err
+}
+
 func toStorageFileVersion(r *FileVersionRecord) *storage.FileVersion {
 	return &storage.FileVersion{
 		UUID:      r.UUID,

@@ -78,3 +78,34 @@ func (s *Store) FinalizeBackupJob(jobID string, success bool) (bool, error) {
 	})
 	return changed, err
 }
+
+// FailStaleInProgressJobs bulk-transitions every in_progress job to failure
+// (purging their file_versions in the same transaction). Called once at
+// bwfs startup to clean up jobs orphaned by an unclean previous shutdown.
+func (s *Store) FailStaleInProgressJobs() (int64, error) {
+	var count int64
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var jobIDs []string
+		if err := tx.Model(&BackupJobRecord{}).
+			Where("status = ?", storage.JobStatusInProgress).
+			Pluck("job_id", &jobIDs).Error; err != nil {
+			return err
+		}
+		if len(jobIDs) == 0 {
+			return nil
+		}
+		if err := tx.Delete(&FileVersionRecord{}, "job_id IN ?", jobIDs).Error; err != nil {
+			return err
+		}
+		now := time.Now()
+		result := tx.Model(&BackupJobRecord{}).
+			Where("job_id IN ?", jobIDs).
+			Updates(map[string]any{"status": storage.JobStatusFailure, "finished_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		count = result.RowsAffected
+		return nil
+	})
+	return count, err
+}

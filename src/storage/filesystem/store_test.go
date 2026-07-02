@@ -620,3 +620,59 @@ func TestMarkChunkCorrupted_ConcurrentWithNewLink_NoOrphanedFileData(t *testing.
 		}
 	}
 }
+
+func TestFileVersionsForJob_ReturnsObjectIDsForThatJobOnly(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-a", []byte("meta"), 1))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-b", []byte("meta"), 2))
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-c", []byte("meta"), 3))
+
+	ids, err := store.FileVersionsForJob("job-1")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"obj-a", "obj-b"}, ids)
+}
+
+func TestFileVersionsForJob_EmptyForUnknownJob(t *testing.T) {
+	store := newTestStore(t)
+	ids, err := store.FileVersionsForJob("no-such-job")
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
+func TestFailStaleInProgressJobs_FlipsOnlyInProgressJobs(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-stale-1", "host-a"))
+	require.NoError(t, store.EnsureBackupJob("job-stale-2", "host-a"))
+	require.NoError(t, store.EnsureBackupJob("job-done", "host-a"))
+	require.NoError(t, store.EnsureFileVersion("job-stale-1", "obj-1", []byte("meta"), 1))
+	require.NoError(t, store.EnsureFileVersion("job-done", "obj-2", []byte("meta"), 1))
+
+	changed, err := store.FinalizeBackupJob("job-done", true)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	count, err := store.FailStaleInProgressJobs()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+
+	var stale1, stale2, done BackupJobRecord
+	require.NoError(t, store.db.First(&stale1, "job_id = ?", "job-stale-1").Error)
+	require.NoError(t, store.db.First(&stale2, "job_id = ?", "job-stale-2").Error)
+	require.NoError(t, store.db.First(&done, "job_id = ?", "job-done").Error)
+	assert.Equal(t, storage.JobStatusFailure, stale1.Status)
+	assert.Equal(t, storage.JobStatusFailure, stale2.Status)
+	assert.Equal(t, storage.JobStatusSuccess, done.Status, "already-finalized job must be untouched")
+
+	var staleVersions, doneVersions int64
+	require.NoError(t, store.db.Model(&FileVersionRecord{}).Where("job_id = ?", "job-stale-1").Count(&staleVersions).Error)
+	require.NoError(t, store.db.Model(&FileVersionRecord{}).Where("job_id = ?", "job-done").Count(&doneVersions).Error)
+	assert.Equal(t, int64(0), staleVersions, "stale job's file_versions must be purged")
+	assert.Equal(t, int64(1), doneVersions, "already-succeeded job's file_versions must survive")
+}
+
+func TestFailStaleInProgressJobs_NoInProgressJobsReturnsZero(t *testing.T) {
+	store := newTestStore(t)
+	count, err := store.FailStaleInProgressJobs()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count)
+}
