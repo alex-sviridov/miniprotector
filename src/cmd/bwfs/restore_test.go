@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/checksum"
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/mtls"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	workfs "github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
@@ -46,23 +46,29 @@ func newRestoreTestEnv(t *testing.T) *restoreTestEnv {
 	rawStore, err := wfs.New(storageDir)
 	require.NoError(t, err)
 
-	bkpSrv := &backupServer{store: rawStore, logger: logger, config: conf}
+	bkpSrv := &backupServer{store: rawStore, logger: logger, config: conf, jobs: newJobTracker()}
 	restoreSrv := NewRestoreServer(rawStore, logger)
 	listSrv := NewListServer(rawStore, logger)
 
+	serverCreds, err := mtls.LoadServerCredentials(testCertsDir)
+	require.NoError(t, err)
+
 	lis := bufconn.Listen(bufSize)
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(grpc.Creds(serverCreds))
 	pb.RegisterBackupServiceServer(grpcSrv, bkpSrv)
 	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
 	pb.RegisterListServiceServer(grpcSrv, listSrv)
 	go grpcSrv.Serve(lis)
+
+	clientCreds, err := mtls.LoadClientCredentials(testCertsDir, "bwfs.internal")
+	require.NoError(t, err)
 
 	conn, err := grpc.NewClient(
 		"passthrough://bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return lis.DialContext(ctx)
 		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(clientCreds),
 	)
 	require.NoError(t, err)
 
@@ -148,7 +154,7 @@ func TestIntegration_Restore_HappyPath(t *testing.T) {
 	files, err := workfs.Discover(srcDir)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := jobContext("job-restore-happy-path")
 	stream, err := env.backupClient.ProcessBackupStream(ctx)
 	require.NoError(t, err)
 	for _, f := range files {
@@ -192,7 +198,7 @@ func TestIntegration_Restore_DedupChunks_ChunkLinksPresent(t *testing.T) {
 	filesB, err := workfs.Discover(srcDirB)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := jobContext("job-restore-dedup-chunks")
 
 	// Back up file A first — all chunks are new, stored via handleChunkDataRequest.
 	stream1, err := env.backupClient.ProcessBackupStream(ctx)
@@ -244,7 +250,7 @@ func TestIntegration_Restore_AllChunksDeduped(t *testing.T) {
 	filesB, err := workfs.Discover(srcDirB)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := jobContext("job-restore-all-deduped")
 
 	// Back up A first — chunk is stored.
 	stream1, err := env.backupClient.ProcessBackupStream(ctx)
