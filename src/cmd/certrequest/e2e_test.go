@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,25 +36,25 @@ import (
 //
 // It reuses the exact ca/docker-compose.yml + ca/entrypoint.sh from the repo,
 // copied into a t.TempDir() so it never touches a developer's real ca/data/
-// state, and runs on a non-default host port so it can't collide with a real
-// CA a developer might have running locally on 9000.
+// state. The copied compose file's host port is rewritten from the fixed
+// "9000:9000" to "0:9000" (bind to an OS-assigned ephemeral port) before it's
+// written to the temp dir, and the actual assigned port is discovered after
+// `docker compose up` via `docker compose port`. This guarantees the test
+// can never collide with a real CA a developer might have running locally on
+// 9000 — a docker-compose.override.yml alone can't do this, because Compose
+// merges list-valued fields like `ports:` by concatenation, not replacement,
+// so an override port entry would be added alongside the base file's
+// "9000:9000" rather than replacing it, and `docker compose up` would still
+// try (and fail) to bind host port 9000.
 func TestE2E_TokenMintAndRedeem(t *testing.T) {
 	requireDocker(t)
 
 	repoRoot := repoRootDir(t)
 	tempDir := t.TempDir()
 
-	copyFile(t, filepath.Join(repoRoot, "ca", "docker-compose.yml"), filepath.Join(tempDir, "docker-compose.yml"))
+	copyComposeFileWithEphemeralPort(t, filepath.Join(repoRoot, "ca", "docker-compose.yml"), filepath.Join(tempDir, "docker-compose.yml"))
 	copyFile(t, filepath.Join(repoRoot, "ca", "entrypoint.sh"), filepath.Join(tempDir, "entrypoint.sh"))
 	require.NoError(t, os.Chmod(filepath.Join(tempDir, "entrypoint.sh"), 0o755))
-
-	// Publish on a non-default host port so this never collides with a real
-	// CA a developer might have running on the repo's own ca/ directory
-	// (which defaults to 9000). docker-compose.override.yml is picked up
-	// automatically by `docker compose` alongside docker-compose.yml.
-	const hostPort = "9443"
-	writeFile(t, filepath.Join(tempDir, "docker-compose.override.yml"), fmt.Sprintf(
-		"services:\n  step-ca:\n    ports:\n      - \"%s:9000\"\n", hostPort))
 
 	// Throwaway provisioner password, unique per run.
 	secretsDir := filepath.Join(tempDir, "data", "secrets")
@@ -81,6 +83,7 @@ func TestE2E_TokenMintAndRedeem(t *testing.T) {
 	out, err := upCmd.CombinedOutput()
 	require.NoError(t, err, "docker compose up failed: %s", out)
 
+	hostPort := discoverHostPort(t, compose)
 	caURL := fmt.Sprintf("https://localhost:%s", hostPort)
 	rootPath := filepath.Join(tempDir, "data", "certs", "root_ca.crt")
 
@@ -149,9 +152,43 @@ func copyFile(t *testing.T, src, dst string) {
 	require.NoError(t, err)
 }
 
-func writeFile(t *testing.T, path, content string) {
+// copyComposeFileWithEphemeralPort copies src to dst, rewriting the literal
+// "9000:9000" host:container port mapping to "0:9000" along the way. Binding
+// host port 0 tells Docker to publish the container port on any free
+// ephemeral host port, so this test's compose stack can never collide with a
+// real CA a developer might have running locally on the repo's own default
+// port 9000. The actual assigned port is discovered later via
+// `docker compose port` (see discoverHostPort).
+func copyComposeFileWithEphemeralPort(t *testing.T, src, dst string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	contents, err := os.ReadFile(src)
+	require.NoError(t, err)
+
+	rewritten := strings.Replace(string(contents), `"9000:9000"`, `"0:9000"`, 1)
+	require.NotEqual(t, string(contents), rewritten, "expected to find literal \"9000:9000\" port mapping in %s", src)
+
+	require.NoError(t, os.WriteFile(dst, []byte(rewritten), 0o644))
+}
+
+// discoverHostPort asks Docker which ephemeral host port it actually
+// assigned to the step-ca container's published port 9000 (bound to host
+// port 0 by copyComposeFileWithEphemeralPort). `docker compose port` prints
+// output like "0.0.0.0:34567"; this parses out just the port number.
+func discoverHostPort(t *testing.T, compose func(args ...string) *exec.Cmd) string {
+	t.Helper()
+	portCmd := compose("port", "step-ca", "9000")
+	out, err := portCmd.CombinedOutput()
+	require.NoError(t, err, "docker compose port failed: %s", out)
+
+	addr := strings.TrimSpace(string(out))
+	idx := strings.LastIndex(addr, ":")
+	require.GreaterOrEqual(t, idx, 0, "unexpected `docker compose port` output: %q", addr)
+
+	portStr := addr[idx+1:]
+	_, err = strconv.Atoi(portStr)
+	require.NoError(t, err, "failed to parse port from `docker compose port` output: %q", addr)
+
+	return portStr
 }
 
 func randomPassword(t *testing.T) string {
