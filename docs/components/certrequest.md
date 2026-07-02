@@ -35,7 +35,7 @@ Minting a token requires the CA to be reachable: `certrequest` fetches the named
 encrypted key from the CA over HTTPS (`GET /provisioners`, `GET /provisioners/{kid}/encrypted-key`
 — stock step-ca endpoints, no new server-side surface), decrypts it locally with the password, and
 signs the token locally. The decrypted key never touches disk. Token validity/SAN authorization is
-bounded by the provisioner's own claims (`minTL`/`maxTTL`/`defaultTTL`) configured on the CA.
+bounded by the provisioner's own claims configured on the CA.
 
 Anyone able to run `certrequest` with network access to the CA and the provisioner password has
 full token-minting authority for any hostname — equivalent to CA-admin privilege. This is why
