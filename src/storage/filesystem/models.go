@@ -37,4 +37,5 @@ type BackupJobRecord struct {
 	SourceHost string
 	StartedAt  time.Time
 	FinishedAt *time.Time
+	Status     string `gorm:"default:in_progress"`
 }

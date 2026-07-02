@@ -8,6 +8,12 @@ import (
 
 var ErrChunkNotFound = errors.New("chunk not found")
 
+const (
+	JobStatusInProgress = "in_progress"
+	JobStatusSuccess    = "success"
+	JobStatusFailure    = "failure"
+)
+
 // BackupStore represents contract for any backup storage
 // Used by backup server to store file data and metadata incrementally
 type BackupStore interface {
@@ -35,7 +41,10 @@ type BackupStore interface {
 
 	// Backup job operations - track discrete backup runs (one brfs invocation each).
 	EnsureBackupJob(jobID, sourceHost string) error
-	FinishBackupJob(jobID string) error
+	GetBackupJob(jobID string) (*BackupJob, error)
+	FileVersionsForJob(jobID string) ([]string, error)
+	FinalizeBackupJob(jobID string, success bool) (bool, error)
+	FailStaleInProgressJobs() (int64, error)
 
 	// Query operations for restore
 	LatestFileVersion(objectID string) (*FileVersion, error)
@@ -69,6 +78,15 @@ type FileVersion struct {
 	Metadata  []byte    // File attributes, permissions, etc.
 	Ctime     int64     // File change time
 	CreatedAt time.Time // When backup occurred
+}
+
+// BackupJob represents a discrete backup run (one brfs invocation).
+type BackupJob struct {
+	JobID      string
+	SourceHost string
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	Status     string // JobStatusInProgress | JobStatusSuccess | JobStatusFailure
 }
 
 // StoreInfo provides statistics about storage usage

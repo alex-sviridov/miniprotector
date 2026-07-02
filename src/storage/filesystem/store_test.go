@@ -95,6 +95,33 @@ func TestFinishBackupJob_SetsFinishedAt(t *testing.T) {
 	assert.WithinDuration(t, time.Now(), *record.FinishedAt, 5*time.Second)
 }
 
+func TestEnsureBackupJob_SetsInProgressStatus(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+
+	var record BackupJobRecord
+	require.NoError(t, store.db.First(&record, "job_id = ?", "job-1").Error)
+	assert.Equal(t, storage.JobStatusInProgress, record.Status)
+}
+
+func TestGetBackupJob_ReturnsRecord(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+
+	job, err := store.GetBackupJob("job-1")
+	require.NoError(t, err)
+	assert.Equal(t, "job-1", job.JobID)
+	assert.Equal(t, "host-a", job.SourceHost)
+	assert.Equal(t, storage.JobStatusInProgress, job.Status)
+	assert.Nil(t, job.FinishedAt)
+}
+
+func TestGetBackupJob_NotFound(t *testing.T) {
+	store := newTestStore(t)
+	_, err := store.GetBackupJob("does-not-exist")
+	assert.Error(t, err)
+}
+
 func TestChunkExists_NotFound(t *testing.T) {
 	store := newTestStore(t)
 	hash := makeChunk(t, []byte("hello"))

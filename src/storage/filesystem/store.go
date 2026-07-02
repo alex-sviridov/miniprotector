@@ -7,8 +7,6 @@ import (
 	"syscall"
 
 	"gorm.io/gorm"
-
-	"github.com/alex-sviridov/miniprotector/storage"
 )
 
 type Store struct {
@@ -83,4 +81,5 @@ func (s *Store) Close() error {
 	return nil
 }
 
-var _ storage.BackupStore = (*Store)(nil)
+// var _ storage.BackupStore = (*Store)(nil)
+// TODO: Uncomment after Tasks 2–3 implement FileVersionsForJob, FinalizeBackupJob, FailStaleInProgressJobs
