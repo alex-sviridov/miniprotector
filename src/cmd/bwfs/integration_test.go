@@ -708,9 +708,11 @@ func TestIntegration_LateMessageAfterFinalize_Rejected(t *testing.T) {
 
 // TestIntegration_StallWatchdog_FailsSilentJob verifies a job with no
 // BackupCommit and no further stream activity is failed once its liveness
-// entry exceeds the timeout — this exercises the same watchStaleJobs logic
-// main.go runs on a ticker, called directly here with a near-zero timeout
-// so the test doesn't need to sleep for main.go's real poll interval.
+// entry exceeds the timeout — this runs the real watchStaleJobs background
+// loop (the same one main.go starts on a ticker) with a near-zero timeout
+// so the test doesn't need to sleep for main.go's real poll interval; the
+// poll-interval floor of 5s in watchStaleJobs still applies, so the first
+// tick takes a few seconds.
 func TestIntegration_StallWatchdog_FailsSilentJob(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.cleanup()
@@ -718,18 +720,12 @@ func TestIntegration_StallWatchdog_FailsSilentJob(t *testing.T) {
 	require.NoError(t, env.store.store.EnsureBackupJob("job-stalled", "bwfs.internal"))
 	env.store.liveness.Touch("job-stalled")
 
-	// Directly invoke one watchdog pass with a timeout of 0 — everything
-	// touched at least a nanosecond ago now counts as stale.
-	stale := env.store.liveness.StaleJobs(0)
-	require.Contains(t, stale, "job-stalled")
-	for _, jobID := range stale {
-		changed, err := env.store.store.FinalizeBackupJob(jobID, false)
-		require.NoError(t, err)
-		require.True(t, changed)
-		env.store.liveness.Complete(jobID)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go watchStaleJobs(ctx, env.store, time.Millisecond)
 
-	record, err := backupJobRow(t, env, "job-stalled")
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusFailure, record.Status)
+	require.Eventually(t, func() bool {
+		record, err := backupJobRow(t, env, "job-stalled")
+		return err == nil && record.Status == storage.JobStatusFailure
+	}, 8*time.Second, 100*time.Millisecond, "watchdog should fail a job with zero-duration timeout within one poll interval")
 }
