@@ -4,11 +4,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -513,4 +516,192 @@ func TestIntegration_DuplicateFileWithinJob_OneFileVersionRow(t *testing.T) {
 		Where("job_id = ? AND object_id = ?", "job-duplicate", target.ID()).
 		Count(&count).Error)
 	assert.Equal(t, int64(1), count)
+}
+
+// commitHash computes the same SHA256-over-sorted-newline-joined-IDs that
+// brfs computes client-side (see cmd/brfs/commit.go, Task 8) — inlined here
+// so this test file doesn't depend on the brfs package.
+func commitHash(ids ...string) []byte {
+	sorted := append([]string(nil), ids...)
+	sort.Strings(sorted)
+	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	return sum[:]
+}
+
+func TestIntegration_BackupCommit_MatchingHashSucceeds(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-commit-success")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	resp, err := env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash(target.ID())})
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+
+	record, err := backupJobRow(t, env, "job-commit-success")
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusSuccess, record.Status)
+	require.NotNil(t, record.FinishedAt)
+}
+
+func TestIntegration_BackupCommit_MismatchedHashFailsAndPurges(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-commit-mismatch")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	resp, err := env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash("some-file-that-was-never-sent")})
+	require.NoError(t, err)
+	assert.False(t, resp.Success)
+
+	record, err := backupJobRow(t, env, "job-commit-mismatch")
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusFailure, record.Status)
+
+	var count int64
+	concrete, ok := env.store.store.(*storagefs.Store)
+	require.True(t, ok)
+	require.NoError(t, concrete.RawDB().Model(&storagefs.FileVersionRecord{}).Where("job_id = ?", "job-commit-mismatch").Count(&count).Error)
+	assert.Equal(t, int64(0), count, "mismatched job's file_versions must be purged")
+}
+
+func TestIntegration_BackupCommit_UnknownJobReturnsNotFound(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	ctx := jobContext("job-never-existed")
+	_, err := env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash("x")})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestIntegration_BackupCommit_WrongSourceHostRejected(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	// Seed a job as if it belonged to a different host, bypassing mTLS —
+	// the test client cert always presents "bwfs.internal", so this
+	// simulates a second host trying to commit a job it doesn't own.
+	require.NoError(t, env.store.store.EnsureBackupJob("job-other-host", "some-other-host"))
+
+	ctx := jobContext("job-other-host")
+	_, err := env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash("x")})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestIntegration_BackupCommit_RetriedCallAfterSuccessIsIdempotent(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-commit-retry")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	hash := commitHash(target.ID())
+	resp1, err := env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: hash})
+	require.NoError(t, err)
+	assert.True(t, resp1.Success)
+
+	// Simulate brfs retrying because the first response was lost in transit.
+	resp2, err := env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: hash})
+	require.NoError(t, err)
+	assert.True(t, resp2.Success, "a retried commit call for an already-succeeded job must return the same outcome, not re-hash or error")
+}
+
+// TestIntegration_LateMessageAfterFinalize_Rejected verifies a message
+// arriving for a job that BackupCommit already finalized is rejected rather
+// than silently written.
+func TestIntegration_LateMessageAfterFinalize_Rejected(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+	var first, second wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			if first.ID() == "" {
+				first = f
+			} else if second.ID() == "" {
+				second = f
+			}
+		}
+	}
+	require.NotEmpty(t, first.ID())
+
+	ctx := jobContext("job-late-message")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx, t, stream, first)
+	require.NoError(t, err)
+
+	// Commit the job while stream is still open (simulating brfs committing
+	// after its WaitGroup joins, even though this test keeps one stream alive).
+	_, err = env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash(first.ID())})
+	require.NoError(t, err)
+
+	// Now send another message on the still-open stream — must be rejected.
+	require.NoError(t, stream.Send(&pb.FileRequest{
+		RequestType: &pb.FileRequest_FileInfo{FileInfo: &pb.FileInfo{FileId: "late-file", Attributes: []byte("x")}},
+	}))
+	_, err = stream.Recv()
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
