@@ -83,16 +83,69 @@ func TestEnsureBackupJob_SecondCallIsNoOp(t *testing.T) {
 	assert.Equal(t, "host-a", record.SourceHost, "first write should win")
 }
 
-func TestFinishBackupJob_SetsFinishedAt(t *testing.T) {
+func TestFinalizeBackupJob_SuccessSetsStatusAndFinishedAt(t *testing.T) {
 	store := newTestStore(t)
 	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("meta"), 100))
 
-	require.NoError(t, store.FinishBackupJob("job-1"))
+	changed, err := store.FinalizeBackupJob("job-1", true)
+	require.NoError(t, err)
+	assert.True(t, changed)
 
 	var record BackupJobRecord
 	require.NoError(t, store.db.First(&record, "job_id = ?", "job-1").Error)
+	assert.Equal(t, storage.JobStatusSuccess, record.Status)
 	require.NotNil(t, record.FinishedAt)
 	assert.WithinDuration(t, time.Now(), *record.FinishedAt, 5*time.Second)
+
+	// file_versions must survive a success finalize
+	var count int64
+	require.NoError(t, store.db.Model(&FileVersionRecord{}).Where("job_id = ?", "job-1").Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestFinalizeBackupJob_FailurePurgesOnlyThatJobsFileVersions(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+	require.NoError(t, store.EnsureBackupJob("job-2", "host-a"))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("meta"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-2", []byte("meta"), 100))
+
+	changed, err := store.FinalizeBackupJob("job-1", false)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	var record BackupJobRecord
+	require.NoError(t, store.db.First(&record, "job_id = ?", "job-1").Error)
+	assert.Equal(t, storage.JobStatusFailure, record.Status)
+	require.NotNil(t, record.FinishedAt)
+
+	var job1Count, job2Count int64
+	require.NoError(t, store.db.Model(&FileVersionRecord{}).Where("job_id = ?", "job-1").Count(&job1Count).Error)
+	require.NoError(t, store.db.Model(&FileVersionRecord{}).Where("job_id = ?", "job-2").Count(&job2Count).Error)
+	assert.Equal(t, int64(0), job1Count, "failed job's file_versions must be purged")
+	assert.Equal(t, int64(1), job2Count, "other job's file_versions must be untouched")
+}
+
+func TestFinalizeBackupJob_SecondCallIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+
+	changed1, err := store.FinalizeBackupJob("job-1", true)
+	require.NoError(t, err)
+	assert.True(t, changed1)
+
+	var firstFinish BackupJobRecord
+	require.NoError(t, store.db.First(&firstFinish, "job_id = ?", "job-1").Error)
+
+	changed2, err := store.FinalizeBackupJob("job-1", false)
+	require.NoError(t, err)
+	assert.False(t, changed2, "job already finalized as success; a later failure call must be a no-op")
+
+	var afterSecond BackupJobRecord
+	require.NoError(t, store.db.First(&afterSecond, "job_id = ?", "job-1").Error)
+	assert.Equal(t, storage.JobStatusSuccess, afterSecond.Status, "status must not flip on the no-op call")
+	assert.Equal(t, firstFinish.FinishedAt.Unix(), afterSecond.FinishedAt.Unix())
 }
 
 func TestEnsureBackupJob_SetsInProgressStatus(t *testing.T) {

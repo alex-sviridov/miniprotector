@@ -47,9 +47,34 @@ func (s *Store) GetBackupJob(jobID string) (*storage.BackupJob, error) {
 	}, nil
 }
 
-// FinishBackupJob marks a backup job complete by setting finished_at.
-func (s *Store) FinishBackupJob(jobID string) error {
-	return s.db.Model(&BackupJobRecord{}).
-		Where("job_id = ?", jobID).
-		Update("finished_at", time.Now()).Error
+// FinalizeBackupJob atomically transitions a job from in_progress to
+// success/failure. On failure it also purges the job's file_versions rows
+// in the same transaction — raw chunk/file data is reclaimed later by
+// Vacuum, out of scope here. Returns false (no-op) if the job was already
+// finalized, guarding the race between BackupCommit and the stall watchdog,
+// and making duplicate/retried BackupCommit calls idempotent.
+func (s *Store) FinalizeBackupJob(jobID string, success bool) (bool, error) {
+	newStatus := storage.JobStatusFailure
+	if success {
+		newStatus = storage.JobStatusSuccess
+	}
+
+	var changed bool
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		result := tx.Model(&BackupJobRecord{}).
+			Where("job_id = ? AND status = ?", jobID, storage.JobStatusInProgress).
+			Updates(map[string]any{"status": newStatus, "finished_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected > 0
+		if changed && !success {
+			if err := tx.Delete(&FileVersionRecord{}, "job_id = ?", jobID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return changed, err
 }
