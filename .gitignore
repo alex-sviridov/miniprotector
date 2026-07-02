@@ -26,3 +26,4 @@ vendor/
 .idea/
 .vscode/
 .claude/settings.json
+.worktrees/
