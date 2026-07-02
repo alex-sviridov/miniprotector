@@ -1504,3 +1504,67 @@ MP_CONFIG_PATH=/tmp ./bin/certclient
 
 Expected: reports "Identity renewed" (not "bootstrapped") — confirms the existing-identity branch
 takes over on a second run without needing `MP_CERT_TOKEN` again.
+
+---
+
+### Task 12: `certrequest` — real step-ca integration test (added post-review)
+
+Added after the final whole-branch review found that the design spec's testing requirement for
+`certrequest` ("an integration-style test against a real step-ca test instance ... confirming a
+minted token is actually redeemable") was dropped from Task 8's scope, leaving the only coverage
+of the real `ca.NewProvisioner`/`ca.Bootstrap`/`ca.NewClient` construction calls as manual testing
+— exactly the class of gap that let a real bug through undetected until Task 11's manual Docker
+smoke test caught it.
+
+**Files:**
+- Create: `src/cmd/certrequest/e2e_test.go`
+
+**Interfaces:**
+- Consumes: `ca/docker-compose.yml`/`ca/entrypoint.sh` (Task 1), `ca.NewProvisioner`/`Provisioner.Token`
+  (used by `certrequest`, Task 8), `ca.Bootstrap`/`ca.CreateSignRequest`/`(*ca.Client).Sign` (used by
+  `certclient`, Tasks 4/7).
+- Produces: nothing consumed by other tasks — this is additional test coverage only.
+
+**Design:** A `//go:build e2e` Go test (same tag convention as `src/e2e/*_test.go`, run via
+`go test -tags=e2e`) that reuses the exact command sequence already proven to work in Task 11's
+manual Docker smoke test, automated:
+
+1. Generate a throwaway provisioner password (`openssl rand` equivalent, or `crypto/rand` +
+   base64 in Go) into a `t.TempDir()`-based `ca/data/secrets/password`-equivalent path — **do
+   not** touch the real `ca/data/` used by a developer's own running CA; run this against an
+   isolated copy of `ca/` (e.g. `os.CopyFS`-style copy of `ca/docker-compose.yml` +
+   `ca/entrypoint.sh` into a temp dir, with a fresh `data/` subdirectory) so this test is
+   independently repeatable and doesn't collide with a real CA instance.
+2. `exec.Command("docker", "compose", "up", "-d")` in that temp copy, poll `https://localhost:<port>/health`
+   (or reuse the existing `mtls`-adjacent TLS-skip-verify pattern) until ready, with a timeout.
+3. Call `ca.NewProvisioner("admin@backup.internal", "", caURL, password, ca.WithRootFile(rootPath))`
+   then `.Token("e2e-test-host")` directly (Go-level call, not shelling out to the built binary —
+   this exercises the exact library code path `certrequest`'s `main.go` uses, which is the point).
+4. Redeem the token: `ca.Bootstrap(token)`, `ca.CreateSignRequest(token)`, `client.Sign(req)` —
+   mirroring `certclient`'s bootstrap function — and assert the returned `*api.SignResponse`
+   contains a valid, parseable certificate whose subject/SAN matches `"e2e-test-host"`.
+5. `t.Cleanup` runs `docker compose down` in the temp copy unconditionally (even on test failure),
+   and removes the temp directory.
+
+- [ ] **Step 1: Write the test** per the design above, in `src/cmd/certrequest/e2e_test.go`,
+  `//go:build e2e` tag at the top of the file (matching `src/e2e/e2e_test.go`'s convention).
+
+- [ ] **Step 2: Run it**
+
+Run: `cd src && go test -tags=e2e ./cmd/certrequest/... -v -timeout=120s`
+Expected: PASS. Requires a Docker daemon — if unavailable, note that explicitly rather than
+skipping silently in a way that looks like a pass.
+
+- [ ] **Step 3: Wire into `make test-e2e`**
+
+Check `Makefile`'s `test-e2e` target (`cd src && go test -tags=e2e -timeout=300s ./e2e/...`) —
+widen its package pattern (or add a second invocation) so `./cmd/certrequest/...` is included,
+e.g. `./e2e/... ./cmd/certrequest/...`. Run `make test-e2e` to confirm both suites still pass
+together.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/cmd/certrequest/e2e_test.go Makefile
+git commit -m "test(certrequest): add real step-ca integration test for token mint+redeem"
+```
