@@ -25,6 +25,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
+	"github.com/alex-sviridov/miniprotector/storage"
 	storagefs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	wfs "github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
@@ -389,9 +390,10 @@ func TestIntegration_MissingJobID_StreamRejected(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
-// TestIntegration_BackupJob_RecordedWithSourceHost verifies a completed
-// stream creates a backup_jobs row with the mTLS-verified source host and a
-// non-nil finished_at once the stream closes.
+// TestIntegration_BackupJob_RecordedWithSourceHost verifies a stream creates
+// a backup_jobs row with the mTLS-verified source host, staying in_progress
+// with finished_at nil after the stream closes — completion now requires an
+// explicit BackupCommit (Task 6), not just the stream going away.
 func TestIntegration_BackupJob_RecordedWithSourceHost(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.cleanup()
@@ -416,14 +418,20 @@ func TestIntegration_BackupJob_RecordedWithSourceHost(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		record, err := backupJobRow(t, env, "job-source-host")
-		return err == nil && record.SourceHost == "bwfs.internal" && record.FinishedAt != nil
-	}, time.Second, 10*time.Millisecond, "backup job should be recorded with source host and finished_at")
+		return err == nil && record.SourceHost == "bwfs.internal"
+	}, time.Second, 10*time.Millisecond, "backup job should be recorded with source host")
+
+	record, err := backupJobRow(t, env, "job-source-host")
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusInProgress, record.Status)
+	assert.Nil(t, record.FinishedAt, "finished_at must stay nil until BackupCommit — streams closing alone is not completion")
 }
 
-// TestIntegration_BackupJob_FinishedAtWaitsForAllStreams verifies finished_at
-// is not set while any stream of the job is still open, and is set once the
-// last one closes.
-func TestIntegration_BackupJob_FinishedAtWaitsForAllStreams(t *testing.T) {
+// TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose verifies
+// that closing every stream of a job does NOT, by itself, finalize it —
+// completion now requires an explicit BackupCommit call (Task 6) or the
+// stall watchdog (Task 7), not just stream closure.
+func TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.cleanup()
 
@@ -457,20 +465,14 @@ func TestIntegration_BackupJob_FinishedAtWaitsForAllStreams(t *testing.T) {
 	require.NoError(t, stream1.CloseSend())
 	_, err = stream1.Recv()
 	require.ErrorIs(t, err, io.EOF)
-
-	// stream2 still open — finished_at must not be set yet.
-	record, err := backupJobRow(t, env, "job-multi-stream")
-	require.NoError(t, err)
-	assert.Nil(t, record.FinishedAt, "finished_at must stay nil while stream2 is still open")
-
 	require.NoError(t, stream2.CloseSend())
 	_, err = stream2.Recv()
 	require.ErrorIs(t, err, io.EOF)
 
-	require.Eventually(t, func() bool {
-		record, err := backupJobRow(t, env, "job-multi-stream")
-		return err == nil && record.FinishedAt != nil
-	}, time.Second, 10*time.Millisecond, "finished_at should be set once both streams close")
+	record, err := backupJobRow(t, env, "job-multi-stream")
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusInProgress, record.Status, "job must stay in_progress after streams close with no BackupCommit sent")
+	assert.Nil(t, record.FinishedAt)
 }
 
 // TestIntegration_DuplicateFileWithinJob_OneFileVersionRow verifies that

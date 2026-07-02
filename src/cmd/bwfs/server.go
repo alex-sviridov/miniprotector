@@ -21,10 +21,10 @@ import (
 
 type backupServer struct {
 	pb.UnimplementedBackupServiceServer
-	config *config.Config
-	store  storage.BackupStore
-	logger *slog.Logger
-	jobs   *jobTracker
+	config   *config.Config
+	store    storage.BackupStore
+	logger   *slog.Logger
+	liveness *jobLiveness
 }
 
 func NewBackupServer(ctx context.Context, logger *slog.Logger, storagePath string) (*backupServer, error) {
@@ -35,10 +35,10 @@ func NewBackupServer(ctx context.Context, logger *slog.Logger, storagePath strin
 		return nil, err
 	}
 	return &backupServer{
-		logger: logger,
-		config: conf,
-		store:  store,
-		jobs:   newJobTracker(),
+		logger:   logger,
+		config:   conf,
+		store:    store,
+		liveness: newJobLiveness(),
 	}, nil
 }
 
@@ -73,14 +73,7 @@ func (server *backupServer) ProcessBackupStream(stream pb.BackupService_ProcessB
 	if err := server.store.EnsureBackupJob(jobID, sourceHost); err != nil {
 		return status.Errorf(codes.Internal, "ensure backup job: %v", err)
 	}
-	server.jobs.Start(jobID)
-	defer func() {
-		if server.jobs.Finish(jobID) {
-			if err := server.store.FinishBackupJob(jobID); err != nil {
-				server.logger.Error("Failed to finish backup job", "job_id", jobID, "error", err)
-			}
-		}
-	}()
+	server.liveness.Touch(jobID)
 
 	var clientAddr, clientAuthType string = "unknown", "none"
 	if peer, ok := peer.FromContext(ctx); ok {
@@ -114,6 +107,10 @@ func (server *backupServer) ProcessBackupStream(stream pb.BackupService_ProcessB
 		if request == nil {
 			continue
 		}
+		if server.liveness.IsFinalized(jobID) {
+			return status.Errorf(codes.FailedPrecondition, "job %s already finalized", jobID)
+		}
+		server.liveness.Touch(jobID)
 		if err := h.handleRequest(ctx, stream, request); err != nil {
 			h.logger.Error("Error handling request", "error", err)
 		}

@@ -46,7 +46,7 @@ func newRestoreTestEnv(t *testing.T) *restoreTestEnv {
 	rawStore, err := wfs.New(storageDir)
 	require.NoError(t, err)
 
-	bkpSrv := &backupServer{store: rawStore, logger: logger, config: conf, jobs: newJobTracker()}
+	bkpSrv := &backupServer{store: rawStore, logger: logger, config: conf, liveness: newJobLiveness()}
 	restoreSrv := NewRestoreServer(rawStore, logger)
 	listSrv := NewListServer(rawStore, logger)
 
