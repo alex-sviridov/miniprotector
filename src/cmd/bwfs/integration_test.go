@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -15,16 +16,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/common/mtls"
+	storagefs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	wfs "github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
 
 const bufSize = 1 << 20 // 1MB in-memory buffer
+const testCertsDir = "../../common/testdata/certs"
 
 // testEnv holds a live bwfs server + connected gRPC client for one test.
 type testEnv struct {
@@ -51,17 +57,23 @@ func newTestEnv(t *testing.T) *testEnv {
 	srv, err := NewBackupServer(srvCtx, logger, storageDir)
 	require.NoError(t, err)
 
+	serverCreds, err := mtls.LoadServerCredentials(testCertsDir)
+	require.NoError(t, err)
+
 	lis := bufconn.Listen(bufSize)
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(grpc.Creds(serverCreds))
 	pb.RegisterBackupServiceServer(grpcSrv, srv)
 	go grpcSrv.Serve(lis)
+
+	clientCreds, err := mtls.LoadClientCredentials(testCertsDir, "bwfs.internal")
+	require.NoError(t, err)
 
 	conn, err := grpc.NewClient(
 		"passthrough://bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return lis.DialContext(ctx)
 		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(clientCreds),
 	)
 	require.NoError(t, err)
 
@@ -76,6 +88,13 @@ func newTestEnv(t *testing.T) *testEnv {
 			cancel()
 		},
 	}
+}
+
+// jobContext attaches job-id gRPC metadata, as brfs does when opening a
+// stream. Tests that don't call this and use context.Background() directly
+// are exercising the "no job-id" rejection path.
+func jobContext(jobID string) context.Context {
+	return metadata.AppendToOutgoingContext(context.Background(), "job-id", jobID)
 }
 
 // backupOneFile runs the full brfs-side protocol for a single file over the given stream.
@@ -151,6 +170,19 @@ func makeTestDir(t *testing.T) string {
 	return dir
 }
 
+// backupJobRow reads a backup_jobs row directly, bypassing the BackupStore
+// interface (which intentionally has no query surface for jobs — see the
+// design doc's Non-Goals). Only valid because newTestEnv always constructs
+// the filesystem-backed store.
+func backupJobRow(t *testing.T, env *testEnv, jobID string) (storagefs.BackupJobRecord, error) {
+	t.Helper()
+	concrete, ok := env.store.store.(*storagefs.Store)
+	require.True(t, ok, "test env must use the filesystem store implementation")
+	var record storagefs.BackupJobRecord
+	err := concrete.RawDB().First(&record, "job_id = ?", jobID).Error
+	return record, err
+}
+
 // TestIntegration_SkipPath_DirectoryAndSymlink verifies that non-file objects
 // (directories, symlinks) complete without hanging — the server must send
 // FileProcessingResult even when Needed=false.
@@ -162,7 +194,7 @@ func TestIntegration_SkipPath_DirectoryAndSymlink(t *testing.T) {
 	files, err := wfs.Discover(srcDir)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := jobContext("job-skip-path")
 	stream, err := env.client.ProcessBackupStream(ctx)
 	require.NoError(t, err)
 
@@ -185,7 +217,7 @@ func TestIntegration_NewFile_TransferPath(t *testing.T) {
 	files, err := wfs.Discover(srcDir)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := jobContext("job-new-file")
 	stream, err := env.client.ProcessBackupStream(ctx)
 	require.NoError(t, err)
 
@@ -225,7 +257,7 @@ func TestIntegration_DedupPath_SecondBackupSkipsChunks(t *testing.T) {
 	}
 	require.NotEmpty(t, target.ID(), "need at least one regular file")
 
-	ctx := context.Background()
+	ctx := jobContext("job-dedup")
 
 	// First backup — transfers chunks
 	stream1, err := env.client.ProcessBackupStream(ctx)
@@ -265,7 +297,7 @@ func TestIntegration_MultipleFiles_OneStream(t *testing.T) {
 	files, err := wfs.Discover(srcDir)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := jobContext("job-multi-file")
 	stream, err := env.client.ProcessBackupStream(ctx)
 	require.NoError(t, err)
 
@@ -300,7 +332,7 @@ func TestIntegration_ConcurrentStreams_SameFileContent(t *testing.T) {
 		srcDirs[i] = dir
 	}
 
-	ctx := context.Background()
+	ctx := jobContext("job-concurrent")
 	var wg sync.WaitGroup
 	errs := make(chan error, streams)
 
@@ -340,4 +372,143 @@ func TestIntegration_ConcurrentStreams_SameFileContent(t *testing.T) {
 	for err := range errs {
 		assert.NoError(t, err)
 	}
+}
+
+// TestIntegration_MissingJobID_StreamRejected verifies a stream opened
+// without job-id metadata is rejected before any file processing.
+func TestIntegration_MissingJobID_StreamRejected(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	ctx := context.Background() // no job-id metadata attached
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestIntegration_BackupJob_RecordedWithSourceHost verifies a completed
+// stream creates a backup_jobs row with the mTLS-verified source host and a
+// non-nil finished_at once the stream closes.
+func TestIntegration_BackupJob_RecordedWithSourceHost(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+
+	ctx := jobContext("job-source-host")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			_, err := backupOneFile(ctx, t, stream, f)
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	require.Eventually(t, func() bool {
+		record, err := backupJobRow(t, env, "job-source-host")
+		return err == nil && record.SourceHost == "bwfs.internal" && record.FinishedAt != nil
+	}, time.Second, 10*time.Millisecond, "backup job should be recorded with source host and finished_at")
+}
+
+// TestIntegration_BackupJob_FinishedAtWaitsForAllStreams verifies finished_at
+// is not set while any stream of the job is still open, and is set once the
+// last one closes.
+func TestIntegration_BackupJob_FinishedAtWaitsForAllStreams(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-multi-stream")
+
+	stream1, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	stream2, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+
+	_, err = backupOneFile(ctx, t, stream1, target)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		_, err := backupJobRow(t, env, "job-multi-stream")
+		return err == nil
+	}, time.Second, 10*time.Millisecond, "backup job row should exist once the first stream starts")
+
+	require.NoError(t, stream1.CloseSend())
+	_, err = stream1.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	// stream2 still open — finished_at must not be set yet.
+	record, err := backupJobRow(t, env, "job-multi-stream")
+	require.NoError(t, err)
+	assert.Nil(t, record.FinishedAt, "finished_at must stay nil while stream2 is still open")
+
+	require.NoError(t, stream2.CloseSend())
+	_, err = stream2.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	require.Eventually(t, func() bool {
+		record, err := backupJobRow(t, env, "job-multi-stream")
+		return err == nil && record.FinishedAt != nil
+	}, time.Second, 10*time.Millisecond, "finished_at should be set once both streams close")
+}
+
+// TestIntegration_DuplicateFileWithinJob_OneFileVersionRow verifies that
+// sending the same file twice within one job (simulating a retry) does not
+// create two file_version rows.
+func TestIntegration_DuplicateFileWithinJob_OneFileVersionRow(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-duplicate")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+	// Same file, same stream, sent again within the same job.
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+
+	require.NoError(t, stream.CloseSend())
+
+	concrete, ok := env.store.store.(*storagefs.Store)
+	require.True(t, ok)
+	var count int64
+	require.NoError(t, concrete.RawDB().Model(&storagefs.FileVersionRecord{}).
+		Where("job_id = ? AND object_id = ?", "job-duplicate", target.ID()).
+		Count(&count).Error)
+	assert.Equal(t, int64(1), count)
 }
