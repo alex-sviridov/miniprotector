@@ -19,8 +19,14 @@ brfs <source_folder> --destination <host:port>
 - `<source_folder>` - Directory to backup **(required)**
 - `--destination <host:port>` - Writer destination address **(required)**
 - `--streams <number>` - Number of concurrent streams *(default: config->default_streams)*
+- `--job-id <id>` - Backup job ID *(default: auto-generated UUID)*
 - `--debug` - Enable debug logging
 - `--quiet` - Suppress stdout logging
+
+Each `brfs` run is a distinct backup job. If `--job-id` is omitted, `brfs` generates a UUID at
+startup; passing one explicitly is useful for correlating a run with an external scheduler's own
+job identifier. The ID is sent to `bwfs` as gRPC metadata on every stream this run opens — see
+[backup protocol](../protocols/backup.md) for the wire-level detail.
 
 ## Examples
 

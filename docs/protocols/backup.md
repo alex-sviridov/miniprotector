@@ -36,6 +36,36 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 - The next backup run then sees those files as not-yet-backed-up (their `FileData` is gone) and re-uploads them via the normal `SEND_FILE` path — chunk-level dedup still skips any of the file's chunks that are intact, so only the actually-missing data is re-transferred
 - This is a reactive, not a proactive, self-heal: corruption is only detected and fixed when something tries to read the affected chunk (a `verify` run, or a real restore). A proactive integrity-scan routine is a possible future addition, not implemented now
 
+## **Backup Job Tracking**
+
+Every `ProcessBackupStream` call carries a `job-id` gRPC metadata key, attached by `brfs` when it
+opens the stream (not a message in the `FileRequest`/`FileResponse` protobuf — this is transport
+metadata, so it requires no `.proto` changes). A stream with no `job-id` metadata is rejected
+immediately with `codes.InvalidArgument`, before any file is processed.
+
+One `brfs` invocation is one backup job: `brfs` generates a UUID at startup, or uses the value
+passed via `--job-id`, and attaches it to every one of its `--streams` concurrent streams.
+
+On the `bwfs` side, the first stream carrying a given `job-id` causes a `backup_jobs` row to be
+created (idempotently — every stream of the job attempts this, only the first succeeds); the row's
+`source_host` is read from the client's mTLS certificate (first SAN entry, falling back to
+CommonName), not from anything the client reports in-band. `bwfs` tracks the number of currently
+open streams per job in memory; when the last stream of a job closes, `finished_at` is set. If
+`brfs` crashes mid-run, or `bwfs` restarts while a job has open streams, `finished_at` simply never
+gets set for that job — this is treated as the correct signal that the run didn't complete cleanly,
+not a bug.
+
+Every file version `bwfs` records (`file_versions` table) carries the `job_id` of the stream that
+produced it. A duplicate observation of the same object within the same job (e.g. a future retry
+re-sending a file) is a safe no-op — the first write for a given `(job_id, object_id)` pair wins.
+
+See [bwfs](../components/bwfs.md) for the schema and [brfs](../components/brfs.md) for the
+`--job-id` flag.
+
+Note on the sequence diagram below: the `START_STREAM:jobId:streamId` step shown there is
+conceptual — in the actual gRPC transport this is the `job-id` metadata described above, attached
+when the stream is opened, not a discrete message exchanged over the stream.
+
 ```mermaid
 sequenceDiagram
 

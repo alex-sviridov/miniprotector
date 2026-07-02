@@ -35,6 +35,17 @@ On startup, before accepting connections, the server runs a vacuum pass over the
 orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
 
+#### Backup Job Tracking
+
+Every stream `bwfs` accepts must carry `job-id` gRPC metadata (sent by `brfs` — see
+[brfs](./brfs.md)); a stream without it is rejected before any file is processed. `bwfs` records
+each job in a `backup_jobs` table (`job_id`, `source_host`, `started_at`, `finished_at`) and tags
+every row in `file_versions` with the `job_id` of the run that produced it. `source_host` is read
+from the client's mTLS certificate, not from client-reported data. `finished_at` is set once the
+job's last concurrent stream closes; a job whose `brfs` crashed mid-run, or that was still open
+when `bwfs` restarted, is left with `finished_at` unset — that's the correct signal, not a bug. See
+[backup protocol](../protocols/backup.md) for the full lifecycle.
+
 ### list
 
 List stored file data from the local SQLite store. Can run concurrently with a live server.
