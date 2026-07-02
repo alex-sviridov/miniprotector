@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -68,6 +69,17 @@ func main() {
 			"incomplete_file_data_removed", vacuumResult.IncompleteFileData,
 			"bytes_reclaimed", vacuumResult.BytesReclaimed,
 		)
+
+		staleCount, err := backupServer.store.FailStaleInProgressJobs()
+		if err != nil {
+			logger.Error("Startup job reconciliation failed", "error", err)
+			os.Exit(1)
+		}
+		if staleCount > 0 {
+			logger.Warn("Marked stale in-progress jobs as failed after restart", "count", staleCount)
+		}
+
+		go watchStaleJobs(ctx, backupServer, time.Duration(conf.JobTimeoutSec)*time.Second)
 
 		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
 		if err != nil {

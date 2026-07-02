@@ -61,6 +61,7 @@ type Config struct {
 	FileLockTimeoutSec       int
 	StopStreamOnFileError    bool
 	CAHost                   string
+	JobTimeoutSec            int
 }
 
 type contextKey string
@@ -84,7 +85,7 @@ func ParseConfig(configPath string) (*Config, error) {
 	}
 	defer file.Close()
 
-	config := &Config{}
+	config := &Config{JobTimeoutSec: 30}
 	foundFields := make(map[string]bool)
 
 	scanner := bufio.NewScanner(file)
@@ -153,6 +154,13 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "StopStreamOnFileError":
 			config.StopStreamOnFileError = value == "true"
 			foundFields["StopStreamOnFileError"] = true
+		case "JobTimeoutSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JobTimeoutSec value at line %d: %s", lineNum, value)
+			}
+			config.JobTimeoutSec = number
+			foundFields["JobTimeoutSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

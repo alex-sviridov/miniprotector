@@ -70,3 +70,24 @@ func TestParseConfig_CAHostParsed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ca.backup.internal:9000", conf.CAHost)
 }
+
+func TestParseConfig_JobTimeoutSecDefaultsTo30(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 30, conf.JobTimeoutSec)
+}
+
+func TestParseConfig_JobTimeoutSecParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nJobTimeoutSec=90\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 90, conf.JobTimeoutSec)
+}
