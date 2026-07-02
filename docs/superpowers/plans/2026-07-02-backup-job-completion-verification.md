@@ -477,7 +477,7 @@ git commit -m "feat(storage): add FileVersionsForJob and FailStaleInProgressJobs
 **Interfaces:**
 - Produces: `pb.BackupCommitRequest{FileListHash []byte}`, `pb.BackupCommitResponse{Success bool}`, `pb.BackupServiceClient.BackupCommit(ctx, *BackupCommitRequest, ...) (*BackupCommitResponse, error)`, and the server-side method `BackupCommit(context.Context, *pb.BackupCommitRequest) (*pb.BackupCommitResponse, error)` that `pb.BackupServiceServer` now requires.
 
-This task has no unit test of its own — it only adds generated code. Task 5 breaks the build until `backupServer` implements the new method; that's expected and fixed there.
+This task has no unit test of its own — it only adds generated code. Note: `backupServer` embeds `pb.UnimplementedBackupServiceServer` (see `server.go`), so adding `BackupCommit` to the proto service does NOT break `cmd/bwfs` compilation — the embedded type auto-satisfies any interface method it doesn't explicitly implement (returning `codes.Unimplemented` at runtime until Task 6 adds the real handler). Separately, and unrelated to this task: `cmd/bwfs` already fails to compile as of Task 1, because `server.go` still calls `server.store.FinishBackupJob(jobID)`, a method Task 1 removed from the `BackupStore` interface. That pre-existing break is fixed in Task 5, not here.
 
 - [ ] **Step 1: Add the RPC and messages to the proto file**
 
@@ -510,7 +510,7 @@ Expected: `Generating protobuf code... ✅` (or equivalent success output), and 
 - [ ] **Step 3: Verify the proto package still builds on its own**
 
 Run: `cd src && go build ./api/...`
-Expected: success (the generated code compiles in isolation; `cmd/bwfs` won't compile yet until Task 5 implements the new server method — don't run `go build ./...` here).
+Expected: success (the generated code compiles in isolation). Don't run `go build ./...` or any `cmd/bwfs` test here — that package is already broken by Task 1's interface change (see the note above) and stays broken until Task 5; that's expected and unrelated to this task's own success criteria.
 
 - [ ] **Step 4: Commit**
 
@@ -521,17 +521,22 @@ git commit -m "feat(api): add BackupCommit RPC to BackupService"
 
 ---
 
-### Task 5: bwfs — jobLiveness tracker (replaces jobtracker)
+### Task 5: bwfs — jobLiveness tracker, replacing jobtracker, wired into the stream handler
 
 **Files:**
 - Create: `src/cmd/bwfs/liveness.go`
 - Test: `src/cmd/bwfs/liveness_test.go`
 - Delete: `src/cmd/bwfs/jobtracker.go`
 - Delete: `src/cmd/bwfs/jobtracker_test.go`
+- Modify: `src/cmd/bwfs/server.go`
+- Modify: `src/cmd/bwfs/integration_test.go`
 
 **Interfaces:**
-- Produces: `newJobLiveness() *jobLiveness`; `(*jobLiveness) Touch(jobID string)`; `(*jobLiveness) Complete(jobID string)`; `(*jobLiveness) IsFinalized(jobID string) bool`; `(*jobLiveness) StaleJobs(timeout time.Duration) []string`.
-- This fully replaces `jobTracker`/`newJobTracker`/`Start`/`Finish` — no code outside this task should reference those names after Task 6.
+- Produces: `newJobLiveness() *jobLiveness`; `(*jobLiveness) Touch(jobID string)`; `(*jobLiveness) Complete(jobID string)`; `(*jobLiveness) IsFinalized(jobID string) bool`; `(*jobLiveness) StaleJobs(timeout time.Duration) []string`; `backupServer.liveness *jobLiveness` field (replaces `jobs *jobTracker`).
+- Consumes: `storage.JobStatusInProgress` (Task 1).
+- This fully replaces `jobTracker`/`newJobTracker`/`Start`/`Finish` — no code anywhere should reference those names after this task. `ProcessBackupStream` no longer calls `FinishBackupJob`/sets `finished_at` on stream close — that's now exclusively driven by `BackupCommit` (Task 6) and the watchdog (Task 7).
+
+**Why this is one task, not two:** `cmd/bwfs` is currently broken — `server.go` calls `server.store.FinishBackupJob(jobID)`, a method Task 1 removed from the `BackupStore` interface. Splitting "add jobLiveness" and "wire it into server.go" into separate tasks would leave `cmd/bwfs` uncompilable (and `liveness_test.go`, which lives in the same `package main`, unable to run) for an entire task boundary. This task adds `jobLiveness` and rewires `server.go` together, so `cmd/bwfs` compiles and all its tests pass by the end of this single task.
 
 - [ ] **Step 1: Delete the old tracker and its test**
 
@@ -539,7 +544,7 @@ git commit -m "feat(api): add BackupCommit RPC to BackupService"
 rm src/cmd/bwfs/jobtracker.go src/cmd/bwfs/jobtracker_test.go
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Write the failing liveness test**
 
 Create `src/cmd/bwfs/liveness_test.go`:
 
@@ -592,7 +597,7 @@ func TestJobLiveness_IsFinalizedFalseForUnknownJob(t *testing.T) {
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `cd src && go test ./cmd/bwfs/... -run TestJobLiveness -v`
-Expected: FAIL — package doesn't compile, `newJobLiveness` undefined.
+Expected: FAIL — the package doesn't compile yet. You'll likely see two independent errors at once: `newJobLiveness` undefined (liveness.go doesn't exist yet), and `server.go`'s reference to the now-deleted `jobTracker` type plus its call to `server.store.FinishBackupJob` (removed from the interface in Task 1). Both are expected at this point — Steps 4–6 below fix all of it in this same task.
 
 - [ ] **Step 4: Implement jobLiveness**
 
@@ -665,134 +670,7 @@ func (l *jobLiveness) StaleJobs(timeout time.Duration) []string {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
-
-Run: `cd src && go test ./cmd/bwfs/... -run TestJobLiveness -v`
-Expected: PASS. (`cmd/bwfs` as a whole still won't build — `server.go` still references the deleted `jobTracker` type. That's fixed in Task 6.)
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/cmd/bwfs/liveness.go src/cmd/bwfs/liveness_test.go
-git rm src/cmd/bwfs/jobtracker.go src/cmd/bwfs/jobtracker_test.go
-git commit -m "feat(bwfs): add jobLiveness tracker, replacing refcount-based jobTracker"
-```
-
----
-
-### Task 6: bwfs — wire jobLiveness into the stream handler
-
-**Files:**
-- Modify: `src/cmd/bwfs/server.go`
-- Modify: `src/cmd/bwfs/integration_test.go`
-
-**Interfaces:**
-- Consumes: `jobLiveness` (Task 5), `storage.JobStatusInProgress` (Task 1).
-- Produces: `backupServer.liveness *jobLiveness` field (replaces `jobs *jobTracker`). `ProcessBackupStream` no longer calls `FinishBackupJob`/sets `finished_at` on stream close — that's now exclusively driven by `BackupCommit` (Task 7) and the watchdog (Task 8).
-
-- [ ] **Step 1: Update the existing tests that assumed refcount-driven finish**
-
-In `src/cmd/bwfs/integration_test.go`, replace `TestIntegration_BackupJob_RecordedWithSourceHost` (it currently asserts `FinishedAt != nil` right after streams close, which is no longer true):
-
-```go
-// TestIntegration_BackupJob_RecordedWithSourceHost verifies a stream creates
-// a backup_jobs row with the mTLS-verified source host, staying in_progress
-// with finished_at nil after the stream closes — completion now requires an
-// explicit BackupCommit (Task 7), not just the stream going away.
-func TestIntegration_BackupJob_RecordedWithSourceHost(t *testing.T) {
-	env := newTestEnv(t)
-	defer env.cleanup()
-
-	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
-	require.NoError(t, err)
-
-	ctx := jobContext("job-source-host")
-	stream, err := env.client.ProcessBackupStream(ctx)
-	require.NoError(t, err)
-
-	for _, f := range files {
-		if f.GetType() == 'f' && f.Size() > 0 {
-			_, err := backupOneFile(ctx, t, stream, f)
-			require.NoError(t, err)
-		}
-	}
-	require.NoError(t, stream.CloseSend())
-	_, err = stream.Recv()
-	require.ErrorIs(t, err, io.EOF)
-
-	require.Eventually(t, func() bool {
-		record, err := backupJobRow(t, env, "job-source-host")
-		return err == nil && record.SourceHost == "bwfs.internal"
-	}, time.Second, 10*time.Millisecond, "backup job should be recorded with source host")
-
-	record, err := backupJobRow(t, env, "job-source-host")
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusInProgress, record.Status)
-	assert.Nil(t, record.FinishedAt, "finished_at must stay nil until BackupCommit — streams closing alone is not completion")
-}
-```
-
-Replace `TestIntegration_BackupJob_FinishedAtWaitsForAllStreams` (it asserts `finished_at` gets set once the last stream closes — that behavior is removed):
-
-```go
-// TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose verifies
-// that closing every stream of a job does NOT, by itself, finalize it —
-// completion now requires an explicit BackupCommit call (Task 7) or the
-// stall watchdog (Task 8), not just stream closure.
-func TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose(t *testing.T) {
-	env := newTestEnv(t)
-	defer env.cleanup()
-
-	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
-	require.NoError(t, err)
-	var target wfs.FileInfo
-	for _, f := range files {
-		if f.GetType() == 'f' && f.Size() > 0 {
-			target = f
-			break
-		}
-	}
-	require.NotEmpty(t, target.ID())
-
-	ctx := jobContext("job-multi-stream")
-
-	stream1, err := env.client.ProcessBackupStream(ctx)
-	require.NoError(t, err)
-	stream2, err := env.client.ProcessBackupStream(ctx)
-	require.NoError(t, err)
-
-	_, err = backupOneFile(ctx, t, stream1, target)
-	require.NoError(t, err)
-
-	require.Eventually(t, func() bool {
-		_, err := backupJobRow(t, env, "job-multi-stream")
-		return err == nil
-	}, time.Second, 10*time.Millisecond, "backup job row should exist once the first stream starts")
-
-	require.NoError(t, stream1.CloseSend())
-	_, err = stream1.Recv()
-	require.ErrorIs(t, err, io.EOF)
-	require.NoError(t, stream2.CloseSend())
-	_, err = stream2.Recv()
-	require.ErrorIs(t, err, io.EOF)
-
-	record, err := backupJobRow(t, env, "job-multi-stream")
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusInProgress, record.Status, "job must stay in_progress after streams close with no BackupCommit sent")
-	assert.Nil(t, record.FinishedAt)
-}
-```
-
-Add `"github.com/alex-sviridov/miniprotector/storage"` to the import block of `integration_test.go` (needed for `storage.JobStatusInProgress` above).
-
-- [ ] **Step 2: Run the updated tests to verify they fail against the current server.go**
-
-Run: `cd src && go test ./cmd/bwfs/... -tags integration -run 'TestIntegration_BackupJob' -v`
-Expected: FAIL to compile or FAIL on assertions — `server.go` still sets `finished_at` on last-stream-close via the old `jobs.Finish` path, so `TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose` should fail its `assert.Nil(t, record.FinishedAt)` check once it compiles. (It may also fail to compile first, since `backupServer` still references the deleted `jobTracker` type — either failure mode is expected here.)
-
-- [ ] **Step 3: Rewire server.go**
+- [ ] **Step 5: Rewire server.go**
 
 In `src/cmd/bwfs/server.go`, change the struct field and constructor:
 
@@ -863,21 +741,122 @@ Update the receive loop to reject further messages for an already-finalized job 
 	}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 6: Update the existing tests that assumed refcount-driven finish**
+
+In `src/cmd/bwfs/integration_test.go`, replace `TestIntegration_BackupJob_RecordedWithSourceHost` (it currently asserts `FinishedAt != nil` right after streams close, which is no longer true):
+
+```go
+// TestIntegration_BackupJob_RecordedWithSourceHost verifies a stream creates
+// a backup_jobs row with the mTLS-verified source host, staying in_progress
+// with finished_at nil after the stream closes — completion now requires an
+// explicit BackupCommit (Task 6), not just the stream going away.
+func TestIntegration_BackupJob_RecordedWithSourceHost(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+
+	ctx := jobContext("job-source-host")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			_, err := backupOneFile(ctx, t, stream, f)
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	require.Eventually(t, func() bool {
+		record, err := backupJobRow(t, env, "job-source-host")
+		return err == nil && record.SourceHost == "bwfs.internal"
+	}, time.Second, 10*time.Millisecond, "backup job should be recorded with source host")
+
+	record, err := backupJobRow(t, env, "job-source-host")
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusInProgress, record.Status)
+	assert.Nil(t, record.FinishedAt, "finished_at must stay nil until BackupCommit — streams closing alone is not completion")
+}
+```
+
+Replace `TestIntegration_BackupJob_FinishedAtWaitsForAllStreams` (it asserts `finished_at` gets set once the last stream closes — that behavior is removed):
+
+```go
+// TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose verifies
+// that closing every stream of a job does NOT, by itself, finalize it —
+// completion now requires an explicit BackupCommit call (Task 6) or the
+// stall watchdog (Task 7), not just stream closure.
+func TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-multi-stream")
+
+	stream1, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	stream2, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+
+	_, err = backupOneFile(ctx, t, stream1, target)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		_, err := backupJobRow(t, env, "job-multi-stream")
+		return err == nil
+	}, time.Second, 10*time.Millisecond, "backup job row should exist once the first stream starts")
+
+	require.NoError(t, stream1.CloseSend())
+	_, err = stream1.Recv()
+	require.ErrorIs(t, err, io.EOF)
+	require.NoError(t, stream2.CloseSend())
+	_, err = stream2.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	record, err := backupJobRow(t, env, "job-multi-stream")
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusInProgress, record.Status, "job must stay in_progress after streams close with no BackupCommit sent")
+	assert.Nil(t, record.FinishedAt)
+}
+```
+
+Add `"github.com/alex-sviridov/miniprotector/storage"` to the import block of `integration_test.go` (needed for `storage.JobStatusInProgress` above).
+
+- [ ] **Step 7: Run tests to verify everything passes**
 
 Run: `cd src && go test ./cmd/bwfs/... -tags integration -v`
-Expected: PASS for all tests in the package, including the two rewritten ones and everything else in `integration_test.go` (which don't depend on the removed finish-on-close behavior). Note `cmd/bwfs` still won't build cleanly stand-alone yet only if something else references `FinishBackupJob`/`jobTracker` — grep to confirm none remain: `grep -rn "FinishBackupJob\|jobTracker" src/cmd/bwfs/` should return nothing.
+Expected: PASS for every test in the package, including `TestJobLiveness_*` and the two rewritten `TestIntegration_BackupJob_*` tests. This is also the point where `cmd/bwfs` compiles cleanly again for the first time since Task 1.
 
-- [ ] **Step 5: Commit**
+Run: `grep -rn "FinishBackupJob\|jobTracker" src/cmd/bwfs/`
+Expected: no matches.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/cmd/bwfs/server.go src/cmd/bwfs/integration_test.go
-git commit -m "feat(bwfs): drive job completion from liveness tracker, not stream refcount"
+git add src/cmd/bwfs/liveness.go src/cmd/bwfs/liveness_test.go src/cmd/bwfs/server.go src/cmd/bwfs/integration_test.go
+git rm src/cmd/bwfs/jobtracker.go src/cmd/bwfs/jobtracker_test.go
+git commit -m "feat(bwfs): add jobLiveness tracker, drive job completion from it instead of stream refcount"
 ```
 
 ---
 
-### Task 7: bwfs — BackupCommit RPC handler
+### Task 6: bwfs — BackupCommit RPC handler
 
 **Files:**
 - Create: `src/cmd/bwfs/commit.go`
@@ -893,7 +872,7 @@ Add to `src/cmd/bwfs/integration_test.go`:
 
 ```go
 // commitHash computes the same SHA256-over-sorted-newline-joined-IDs that
-// brfs computes client-side (see cmd/brfs/commit.go, Task 9) — inlined here
+// brfs computes client-side (see cmd/brfs/commit.go, Task 8) — inlined here
 // so this test file doesn't depend on the brfs package.
 func commitHash(ids ...string) []byte {
 	sorted := append([]string(nil), ids...)
@@ -1086,7 +1065,7 @@ Add these imports to `src/cmd/bwfs/integration_test.go`: `"crypto/sha256"`, `"so
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cd src && go test ./cmd/bwfs/... -tags integration -run TestIntegration_BackupCommit -v`
-Expected: FAIL to compile — `env.client.BackupCommit` exists (from Task 4's codegen) but `backupServer` doesn't implement it yet, so `pb.RegisterBackupServiceServer(grpcSrv, srv)` in `newTestEnv` fails to compile against the `pb.BackupServiceServer` interface.
+Expected: FAIL, but not to compile — `backupServer` embeds `pb.UnimplementedBackupServiceServer`, so it already satisfies `pb.BackupServiceServer` without a `BackupCommit` method of its own; the embedded stub returns `codes.Unimplemented` for any call to it. The new tests should compile fine and fail on assertions instead (e.g. `require.NoError(t, err)` failing because `err` is a `codes.Unimplemented` status error, or `resp` being nil).
 
 - [ ] **Step 3: Implement the handler**
 
@@ -1174,7 +1153,7 @@ git commit -m "feat(bwfs): implement BackupCommit RPC with hash verification"
 
 ---
 
-### Task 8: bwfs — job-timeout config, stall watchdog, startup reconciliation
+### Task 7: bwfs — job-timeout config, stall watchdog, startup reconciliation
 
 **Files:**
 - Modify: `src/common/config/config.go`
@@ -1395,7 +1374,7 @@ git commit -m "feat(bwfs): add job-timeout config, stall watchdog, and startup r
 
 ---
 
-### Task 9: brfs — commit hash computation and retry-with-backoff
+### Task 8: brfs — commit hash computation and retry-with-backoff
 
 **Files:**
 - Create: `src/cmd/brfs/commit.go`
@@ -1566,13 +1545,13 @@ git commit -m "feat(brfs): add BackupCommit hash computation and retry-with-back
 
 ---
 
-### Task 10: brfs — wire BackupCommit into the main run
+### Task 9: brfs — wire BackupCommit into the main run
 
 **Files:**
 - Modify: `src/cmd/brfs/main.go`
 
 **Interfaces:**
-- Consumes: `successFileHash`, `commitBackupJob` (Task 9).
+- Consumes: `successFileHash`, `commitBackupJob` (Task 8).
 
 This task has no new automated test — `cmd/brfs/main.go` isn't unit-tested anywhere else in this codebase (no `main_test.go` exists for either `brfs` or `bwfs`); its wiring is exercised end-to-end by the bwfs integration tests already added in Tasks 6–8 plus the `make test-e2e` Docker suite. Manual verification is Step 3 below.
 
@@ -1647,7 +1626,7 @@ git commit -m "feat(brfs): call BackupCommit after all streams close"
 
 ---
 
-### Task 11: Documentation updates
+### Task 10: Documentation updates
 
 **Files:**
 - Modify: `docs/protocols/backup.md`
@@ -1778,7 +1757,7 @@ git commit -m "docs: document BackupCommit, stall watchdog, and startup reconcil
 
 ---
 
-### Task 12: Full test suite and lint pass
+### Task 11: Full test suite and lint pass
 
 **Files:** none (verification only)
 
