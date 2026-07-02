@@ -133,4 +133,21 @@ func main() {
 		"count.success", successCount,
 		"count.failed", failedCount,
 	)
+
+	if len(filesList) == 0 {
+		// Nothing discovered, no streams ever opened, no job exists server-side to commit.
+		return
+	}
+
+	hash := successFileHash(filesBackupState)
+	committed, err := commitBackupJob(ctx, logger, client, hash)
+	if err != nil {
+		logger.Error("Backup commit failed", "error", err)
+		os.Exit(1)
+	}
+	if !committed {
+		logger.Error("Server rejected backup as incomplete")
+		os.Exit(1)
+	}
+	logger.Info("Backup job committed successfully")
 }
