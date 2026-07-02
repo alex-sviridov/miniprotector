@@ -30,3 +30,21 @@ func TestParseArguments_HelpFlagDoesNotPanic(t *testing.T) {
 		})
 	})
 }
+
+func TestParseArguments_JobIDFlag_ParsesValue(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir, "--job-id", "custom-job-123"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, "custom-job-123", args.JobID)
+	})
+}
+
+func TestParseArguments_JobIDFlag_DefaultsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Empty(t, args.JobID)
+	})
+}

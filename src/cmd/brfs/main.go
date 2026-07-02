@@ -13,6 +13,8 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/metadata"
 
 	"os/signal"
 	"syscall"
@@ -24,14 +26,12 @@ func main() {
 	// Configuration constants
 	const (
 		appName = "brfs"
-		jobId   = "BackupJob"
 	)
 
 	// Put context variables
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx = context.WithValue(ctx, "appName", appName)
-	ctx = context.WithValue(ctx, "jobId", jobId)
 
 	// Get configuration
 	configPath, err := config.ResolveConfigPath()
@@ -60,8 +60,15 @@ func main() {
 	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
 	ctx = context.WithValue(ctx, common.HostnameContextKey, common.GetHostname())
 
+	jobID := arguments.JobID
+	if jobID == "" {
+		jobID = uuid.New().String()
+	}
+	ctx = context.WithValue(ctx, "jobId", jobID)
+	ctx = metadata.AppendToOutgoingContext(ctx, "job-id", jobID)
+
 	// Initialize logger
-	logger, logfile := logging.NewLogger(ctx) 
+	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
 
 	logger.Info("Backup reader started",
@@ -69,6 +76,7 @@ func main() {
 		"writerHost", arguments.WriterHost,
 		"writerPort", arguments.WriterPort,
 		"streamsCount", arguments.Streams,
+		"jobId", jobID,
 	)
 
 	// Get files list

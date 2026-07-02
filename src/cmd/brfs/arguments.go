@@ -19,6 +19,7 @@ var (
 	streams     int
 	debug       bool
 	quiet       bool
+	jobIDFlag   string
 )
 
 // Arguments holds parsed command line arguments
@@ -29,6 +30,7 @@ type Arguments struct {
 	Streams      int
 	Debug        bool
 	Quiet        bool
+	JobID        string
 }
 
 // parseArguments uses Cobra to parse command line arguments
@@ -45,6 +47,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	cmd.Flags().IntVar(&streams, "streams", conf.DefaultStreams, "Number of streams")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress stdout logging")
+	cmd.Flags().StringVar(&jobIDFlag, "job-id", "", "Backup job ID (auto-generated if omitted)")
 
 	// Parse arguments and flags
 	if err := cmd.Execute(); err != nil {
@@ -85,5 +88,6 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		Streams:      streams,
 		Debug:        debug,
 		Quiet:        quiet,
+		JobID:        jobIDFlag,
 	}, nil
 }
