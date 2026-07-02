@@ -213,6 +213,15 @@ bwfs startup: FailStaleInProgressJobs() — cleans up jobs left in_progress by p
 - `brfs` crash before commit, or `bwfs` restart mid-job → bounded instead of unbounded: the stall
   watchdog (30s default) or startup reconciliation flips the job to `failure` shortly after, rather
   than leaving it ambiguously `in_progress` forever.
+- **Known accepted risk**: the per-message `liveness.IsFinalized` check in the stream receive loop
+  is not atomic with the write it gates — if a job is finalized (by `BackupCommit` or the stall
+  watchdog) while one of its messages is already past that check and mid-processing, `fileWritten`'s
+  `EnsureFileVersion` call can still land afterward, leaving one stray `file_versions` row on a job
+  already marked `failure`. This requires a narrow timing coincidence (a legitimately slow transfer
+  racing the watchdog's timeout, or a misbehaving client) and is harmless when it happens — the
+  underlying file data is real and complete, and the job's `success`/`failure` verdict is unaffected;
+  it is not a path to a false `success`. Accepted as-is rather than fixed, given the narrowness and
+  low impact.
 
 ## Testing
 
