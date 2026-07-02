@@ -21,20 +21,22 @@ import (
 type RequestHandlerFunc func(context.Context, pb.BackupService_ProcessBackupStreamServer, *pb.FileRequest) error
 
 type streamHandler struct {
-	config            *config.Config
-	store             storage.BackupStore
-	logger            *slog.Logger
-	currentFile       *filesystem.FileInfo
+	config             *config.Config
+	store              storage.BackupStore
+	logger             *slog.Logger
+	jobID              string
+	currentFile        *filesystem.FileInfo
 	fileChecksumHasher hash.Hash32 // incremental CRC32 over chunk checksums
-	EOF               bool
-	handlerMap        map[string]RequestHandlerFunc
+	EOF                bool
+	handlerMap         map[string]RequestHandlerFunc
 }
 
-func newStreamHandler(ctx context.Context, logger *slog.Logger, store storage.BackupStore) *streamHandler {
+func newStreamHandler(ctx context.Context, logger *slog.Logger, store storage.BackupStore, jobID string) *streamHandler {
 	handler := &streamHandler{
 		config: config.GetConfigFromContext(ctx),
 		store:  store,
 		logger: logger,
+		jobID:  jobID,
 	}
 	handler.handlerMap = map[string]RequestHandlerFunc{
 		fmt.Sprintf("%T", &pb.FileRequest_FileInfo{}):  handler.handleFileInfoRequest,
@@ -96,12 +98,13 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		}
 	} else {
 		// File already known or non-transferable — record it in the backup catalog now.
-		if _, err := h.store.CreateFileVersion(
+		if err := h.store.EnsureFileVersion(
+			h.jobID,
 			h.currentFile.ID(),
 			h.currentFile.MetadataBlob(),
 			h.currentFile.Ctime(),
 		); err != nil {
-			return fmt.Errorf("create file version: %w", err)
+			return fmt.Errorf("ensure file version: %w", err)
 		}
 		// Reset state before sending responses — fileWritten must not be called for skip-path
 		// files because no FileDataRecord was created and fileWritten would create a duplicate FileVersion.
@@ -230,12 +233,13 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 		return fmt.Errorf("finalize file data: %w", err)
 	}
 	// Record this file in the backup catalog now that its content is safely stored.
-	if _, err := h.store.CreateFileVersion(
+	if err := h.store.EnsureFileVersion(
+		h.jobID,
 		h.currentFile.ID(),
 		h.currentFile.MetadataBlob(),
 		h.currentFile.Ctime(),
 	); err != nil {
-		return fmt.Errorf("create file version: %w", err)
+		return fmt.Errorf("ensure file version: %w", err)
 	}
 	fileLogger.Debug("File transfer completed", "fileHash", hex.EncodeToString(fileHash))
 	message := server.Send(&pb.FileResponse{

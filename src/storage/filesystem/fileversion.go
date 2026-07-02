@@ -7,23 +7,28 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/alex-sviridov/miniprotector/storage"
 )
 
-func (s *Store) CreateFileVersion(objectID string, metadata []byte, ctime int64) (string, error) {
-	id := uuid.New().String()
+// EnsureFileVersion idempotently records that objectID was observed during
+// jobID's backup run. The first observation of a given (jobID, objectID)
+// pair wins — a duplicate send of the same object within the same job (e.g.
+// a future retry) is a safe no-op rather than a second catalog row.
+func (s *Store) EnsureFileVersion(jobID, objectID string, metadata []byte, ctime int64) error {
 	record := FileVersionRecord{
-		UUID:      id,
+		UUID:      uuid.New().String(),
+		JobID:     jobID,
 		ObjectID:  objectID,
 		Metadata:  metadata,
 		Ctime:     ctime,
 		CreatedAt: time.Now(),
 	}
-	if err := s.db.Create(&record).Error; err != nil {
-		return "", err
-	}
-	return id, nil
+	return s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "job_id"}, {Name: "object_id"}},
+		DoNothing: true,
+	}).Create(&record).Error
 }
 
 func (s *Store) RemoveFileVersion(versionID string) error {

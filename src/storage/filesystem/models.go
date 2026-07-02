@@ -25,7 +25,8 @@ type FileDataChunkRecord struct {
 
 type FileVersionRecord struct {
 	UUID      string `gorm:"primaryKey"`
-	ObjectID  string `gorm:"index"`
+	ObjectID  string `gorm:"uniqueIndex:idx_job_object"`
+	JobID     string `gorm:"uniqueIndex:idx_job_object"`
 	Metadata  []byte
 	Ctime     int64
 	CreatedAt time.Time

@@ -266,19 +266,36 @@ func TestFileDataChunks_ReturnsOrderedHashes(t *testing.T) {
 	assert.Equal(t, hash1, hashes[1])
 }
 
-func TestCreateFileVersion_ReturnsID(t *testing.T) {
+func TestEnsureFileVersion_CreatesRow(t *testing.T) {
 	store := newTestStore(t)
-	id, err := store.CreateFileVersion("obj-1", []byte("meta"), 12345)
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("meta"), 12345))
+
+	v, err := store.LatestFileVersion("obj-1")
 	require.NoError(t, err)
-	assert.NotEmpty(t, id)
+	assert.Equal(t, []byte("meta"), v.Metadata)
+	assert.Equal(t, int64(12345), v.Ctime)
+}
+
+func TestEnsureFileVersion_DuplicateWithinJobIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("first"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("second"), 200))
+
+	var count int64
+	require.NoError(t, store.db.Model(&FileVersionRecord{}).
+		Where("job_id = ? AND object_id = ?", "job-1", "obj-1").
+		Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+
+	v, err := store.LatestFileVersion("obj-1")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("first"), v.Metadata, "first write within a job should win")
 }
 
 func TestLatestFileVersion_ReturnsNewest(t *testing.T) {
 	store := newTestStore(t)
-	_, err := store.CreateFileVersion("obj-1", []byte("meta-old"), 100)
-	require.NoError(t, err)
-	_, err = store.CreateFileVersion("obj-1", []byte("meta-new"), 200)
-	require.NoError(t, err)
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("meta-old"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-1", []byte("meta-new"), 200))
 
 	v, err := store.LatestFileVersion("obj-1")
 	require.NoError(t, err)
@@ -288,12 +305,14 @@ func TestLatestFileVersion_ReturnsNewest(t *testing.T) {
 
 func TestRemoveFileVersion_Removes(t *testing.T) {
 	store := newTestStore(t)
-	id, err := store.CreateFileVersion("obj-1", []byte("meta"), 100)
-	require.NoError(t, err)
+	id := uuid.New().String()
+	require.NoError(t, store.db.Create(&FileVersionRecord{
+		UUID: id, JobID: "job-1", ObjectID: "obj-1", Metadata: []byte("meta"), Ctime: 100, CreatedAt: time.Now(),
+	}).Error)
 
 	require.NoError(t, store.RemoveFileVersion(id))
 
-	_, err = store.LatestFileVersion("obj-1")
+	_, err := store.LatestFileVersion("obj-1")
 	assert.Error(t, err)
 }
 
@@ -302,8 +321,8 @@ func TestFileVersionAtTime_ReturnsMostRecentBefore(t *testing.T) {
 
 	// Create two versions with explicit created_at by inserting directly
 	now := time.Now()
-	old := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-1", Metadata: []byte("old"), Ctime: 1, CreatedAt: now.Add(-2 * time.Hour)}
-	recent := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-1", Metadata: []byte("recent"), Ctime: 2, CreatedAt: now.Add(-1 * time.Hour)}
+	old := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-old", ObjectID: "obj-1", Metadata: []byte("old"), Ctime: 1, CreatedAt: now.Add(-2 * time.Hour)}
+	recent := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-recent", ObjectID: "obj-1", Metadata: []byte("recent"), Ctime: 2, CreatedAt: now.Add(-1 * time.Hour)}
 	store.db.Create(&old)
 	store.db.Create(&recent)
 
@@ -316,8 +335,8 @@ func TestFileVersionsInPeriod_ReturnsAll(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now()
 
-	r1 := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-1", CreatedAt: now.Add(-3 * time.Hour)}
-	r2 := FileVersionRecord{UUID: uuid.New().String(), ObjectID: "obj-2", CreatedAt: now.Add(-1 * time.Hour)}
+	r1 := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-1", ObjectID: "obj-1", CreatedAt: now.Add(-3 * time.Hour)}
+	r2 := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-2", ObjectID: "obj-2", CreatedAt: now.Add(-1 * time.Hour)}
 	store.db.Create(&r1)
 	store.db.Create(&r2)
 
@@ -335,8 +354,7 @@ func TestStoreInfo_CountsCorrectly(t *testing.T) {
 	require.NoError(t, store.CreateFileData("file-1", int64(len(data))))
 	require.NoError(t, store.LinkChunkToFileData(hash, "file-1", 0))
 	require.NoError(t, store.FinalizeFileData("file-1", []byte("checksum")))
-	_, err := store.CreateFileVersion("obj-1", []byte("meta"), 0)
-	require.NoError(t, err)
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("meta"), 0))
 
 	info, err := store.StoreInfo()
 	require.NoError(t, err)
