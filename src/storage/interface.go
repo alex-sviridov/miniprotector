@@ -33,6 +33,10 @@ type BackupStore interface {
 	CreateFileVersion(objectID string, metadata []byte, ctime int64) (versionID string, err error)
 	RemoveFileVersion(versionID string) error
 
+	// Backup job operations - track discrete backup runs (one brfs invocation each).
+	EnsureBackupJob(jobID, sourceHost string) error
+	FinishBackupJob(jobID string) error
+
 	// Query operations for restore
 	LatestFileVersion(objectID string) (*FileVersion, error)
 	FileVersionAtTime(objectID string, timestamp time.Time) (*FileVersion, error)

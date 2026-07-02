@@ -30,3 +30,10 @@ type FileVersionRecord struct {
 	Ctime     int64
 	CreatedAt time.Time
 }
+
+type BackupJobRecord struct {
+	JobID      string `gorm:"primaryKey"`
+	SourceHost string
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}

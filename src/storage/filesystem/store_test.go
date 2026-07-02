@@ -50,11 +50,49 @@ func TestOpenDB_CreatesSchemaAndFile(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, "metadata.db"))
 	assert.NoError(t, err)
 
-	// All four tables must exist (AutoMigrate creates them)
+	// All five tables must exist (AutoMigrate creates them)
 	assert.NoError(t, db.Exec("SELECT 1 FROM chunk_records LIMIT 1").Error)
 	assert.NoError(t, db.Exec("SELECT 1 FROM file_data_records LIMIT 1").Error)
 	assert.NoError(t, db.Exec("SELECT 1 FROM file_data_chunk_records LIMIT 1").Error)
 	assert.NoError(t, db.Exec("SELECT 1 FROM file_version_records LIMIT 1").Error)
+	assert.NoError(t, db.Exec("SELECT 1 FROM backup_job_records LIMIT 1").Error)
+}
+
+func TestEnsureBackupJob_CreatesRow(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+
+	var record BackupJobRecord
+	require.NoError(t, store.db.First(&record, "job_id = ?", "job-1").Error)
+	assert.Equal(t, "host-a", record.SourceHost)
+	assert.Nil(t, record.FinishedAt)
+	assert.WithinDuration(t, time.Now(), record.StartedAt, 5*time.Second)
+}
+
+func TestEnsureBackupJob_SecondCallIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-b"))
+
+	var count int64
+	require.NoError(t, store.db.Model(&BackupJobRecord{}).Where("job_id = ?", "job-1").Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+
+	var record BackupJobRecord
+	require.NoError(t, store.db.First(&record, "job_id = ?", "job-1").Error)
+	assert.Equal(t, "host-a", record.SourceHost, "first write should win")
+}
+
+func TestFinishBackupJob_SetsFinishedAt(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
+
+	require.NoError(t, store.FinishBackupJob("job-1"))
+
+	var record BackupJobRecord
+	require.NoError(t, store.db.First(&record, "job_id = ?", "job-1").Error)
+	require.NotNil(t, record.FinishedAt)
+	assert.WithinDuration(t, time.Now(), *record.FinishedAt, 5*time.Second)
 }
 
 func TestChunkExists_NotFound(t *testing.T) {
