@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/smallstep/certificates/ca"
@@ -38,7 +39,7 @@ func main() {
 	}
 
 	if hasExistingIdentity(certsDir) {
-		client, err := ca.NewClient(fmt.Sprintf("https://%s", conf.CAHost))
+		client, err := ca.NewClient(fmt.Sprintf("https://%s", conf.CAHost), ca.WithRootFile(filepath.Join(certsDir, "ca.crt")))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create CA client: %v\n", err)
 			os.Exit(1)
