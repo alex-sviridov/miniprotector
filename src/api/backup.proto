@@ -6,6 +6,7 @@ option go_package = "./proto";
 
 service BackupService {
   rpc ProcessBackupStream(stream FileRequest) returns (stream FileResponse);
+  rpc BackupCommit(BackupCommitRequest) returns (BackupCommitResponse);
 }
 
 message FileRequest {
@@ -64,4 +65,12 @@ message FileProcessingResult {
   string file_id = 1;
   bool success = 2;
   bytes hash = 3;
+}
+
+message BackupCommitRequest {
+  bytes file_list_hash = 1; // SHA256 over the sorted, newline-joined object IDs brfs believes it sent successfully
+}
+
+message BackupCommitResponse {
+  bool success = 1;
 }

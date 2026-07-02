@@ -645,6 +645,94 @@ func (x *FileProcessingResult) GetHash() []byte {
 	return nil
 }
 
+type BackupCommitRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FileListHash  []byte                 `protobuf:"bytes,1,opt,name=file_list_hash,json=fileListHash,proto3" json:"file_list_hash,omitempty"` // SHA256 over the sorted, newline-joined object IDs brfs believes it sent successfully
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupCommitRequest) Reset() {
+	*x = BackupCommitRequest{}
+	mi := &file_api_backup_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupCommitRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupCommitRequest) ProtoMessage() {}
+
+func (x *BackupCommitRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_backup_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupCommitRequest.ProtoReflect.Descriptor instead.
+func (*BackupCommitRequest) Descriptor() ([]byte, []int) {
+	return file_api_backup_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *BackupCommitRequest) GetFileListHash() []byte {
+	if x != nil {
+		return x.FileListHash
+	}
+	return nil
+}
+
+type BackupCommitResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupCommitResponse) Reset() {
+	*x = BackupCommitResponse{}
+	mi := &file_api_backup_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupCommitResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupCommitResponse) ProtoMessage() {}
+
+func (x *BackupCommitResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_backup_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupCommitResponse.ProtoReflect.Descriptor instead.
+func (*BackupCommitResponse) Descriptor() ([]byte, []int) {
+	return file_api_backup_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *BackupCommitResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
 var File_api_backup_proto protoreflect.FileDescriptor
 
 const file_api_backup_proto_rawDesc = "" +
@@ -693,9 +781,14 @@ const file_api_backup_proto_rawDesc = "" +
 	"\x14FileProcessingResult\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x12\n" +
-	"\x04hash\x18\x03 \x01(\fR\x04hash2c\n" +
+	"\x04hash\x18\x03 \x01(\fR\x04hash\";\n" +
+	"\x13BackupCommitRequest\x12$\n" +
+	"\x0efile_list_hash\x18\x01 \x01(\fR\ffileListHash\"0\n" +
+	"\x14BackupCommitResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xbc\x01\n" +
 	"\rBackupService\x12R\n" +
-	"\x13ProcessBackupStream\x12\x1a.backupservice.FileRequest\x1a\x1b.backupservice.FileResponse(\x010\x01B\tZ\a./protob\x06proto3"
+	"\x13ProcessBackupStream\x12\x1a.backupservice.FileRequest\x1a\x1b.backupservice.FileResponse(\x010\x01\x12W\n" +
+	"\fBackupCommit\x12\".backupservice.BackupCommitRequest\x1a#.backupservice.BackupCommitResponseB\tZ\a./protob\x06proto3"
 
 var (
 	file_api_backup_proto_rawDescOnce sync.Once
@@ -709,7 +802,7 @@ func file_api_backup_proto_rawDescGZIP() []byte {
 	return file_api_backup_proto_rawDescData
 }
 
-var file_api_backup_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_api_backup_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_api_backup_proto_goTypes = []any{
 	(*FileRequest)(nil),          // 0: backupservice.FileRequest
 	(*FileInfo)(nil),             // 1: backupservice.FileInfo
@@ -720,22 +813,26 @@ var file_api_backup_proto_goTypes = []any{
 	(*ChunkNeeded)(nil),          // 6: backupservice.ChunkNeeded
 	(*ChunkResult)(nil),          // 7: backupservice.ChunkResult
 	(*FileProcessingResult)(nil), // 8: backupservice.FileProcessingResult
+	(*BackupCommitRequest)(nil),  // 9: backupservice.BackupCommitRequest
+	(*BackupCommitResponse)(nil), // 10: backupservice.BackupCommitResponse
 }
 var file_api_backup_proto_depIdxs = []int32{
-	1, // 0: backupservice.FileRequest.file_info:type_name -> backupservice.FileInfo
-	2, // 1: backupservice.FileRequest.chunk_hash:type_name -> backupservice.ChunkHash
-	3, // 2: backupservice.FileRequest.chunk_data:type_name -> backupservice.ChunkData
-	5, // 3: backupservice.FileResponse.file_needed:type_name -> backupservice.FileNeeded
-	6, // 4: backupservice.FileResponse.chunk_needed:type_name -> backupservice.ChunkNeeded
-	7, // 5: backupservice.FileResponse.chunk_result:type_name -> backupservice.ChunkResult
-	8, // 6: backupservice.FileResponse.result:type_name -> backupservice.FileProcessingResult
-	0, // 7: backupservice.BackupService.ProcessBackupStream:input_type -> backupservice.FileRequest
-	4, // 8: backupservice.BackupService.ProcessBackupStream:output_type -> backupservice.FileResponse
-	8, // [8:9] is the sub-list for method output_type
-	7, // [7:8] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	1,  // 0: backupservice.FileRequest.file_info:type_name -> backupservice.FileInfo
+	2,  // 1: backupservice.FileRequest.chunk_hash:type_name -> backupservice.ChunkHash
+	3,  // 2: backupservice.FileRequest.chunk_data:type_name -> backupservice.ChunkData
+	5,  // 3: backupservice.FileResponse.file_needed:type_name -> backupservice.FileNeeded
+	6,  // 4: backupservice.FileResponse.chunk_needed:type_name -> backupservice.ChunkNeeded
+	7,  // 5: backupservice.FileResponse.chunk_result:type_name -> backupservice.ChunkResult
+	8,  // 6: backupservice.FileResponse.result:type_name -> backupservice.FileProcessingResult
+	0,  // 7: backupservice.BackupService.ProcessBackupStream:input_type -> backupservice.FileRequest
+	9,  // 8: backupservice.BackupService.BackupCommit:input_type -> backupservice.BackupCommitRequest
+	4,  // 9: backupservice.BackupService.ProcessBackupStream:output_type -> backupservice.FileResponse
+	10, // 10: backupservice.BackupService.BackupCommit:output_type -> backupservice.BackupCommitResponse
+	9,  // [9:11] is the sub-list for method output_type
+	7,  // [7:9] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_api_backup_proto_init() }
@@ -760,7 +857,7 @@ func file_api_backup_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_backup_proto_rawDesc), len(file_api_backup_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

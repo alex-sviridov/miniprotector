@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	BackupService_ProcessBackupStream_FullMethodName = "/backupservice.BackupService/ProcessBackupStream"
+	BackupService_BackupCommit_FullMethodName        = "/backupservice.BackupService/BackupCommit"
 )
 
 // BackupServiceClient is the client API for BackupService service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BackupServiceClient interface {
 	ProcessBackupStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[FileRequest, FileResponse], error)
+	BackupCommit(ctx context.Context, in *BackupCommitRequest, opts ...grpc.CallOption) (*BackupCommitResponse, error)
 }
 
 type backupServiceClient struct {
@@ -50,11 +52,22 @@ func (c *backupServiceClient) ProcessBackupStream(ctx context.Context, opts ...g
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type BackupService_ProcessBackupStreamClient = grpc.BidiStreamingClient[FileRequest, FileResponse]
 
+func (c *backupServiceClient) BackupCommit(ctx context.Context, in *BackupCommitRequest, opts ...grpc.CallOption) (*BackupCommitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BackupCommitResponse)
+	err := c.cc.Invoke(ctx, BackupService_BackupCommit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BackupServiceServer is the server API for BackupService service.
 // All implementations must embed UnimplementedBackupServiceServer
 // for forward compatibility.
 type BackupServiceServer interface {
 	ProcessBackupStream(grpc.BidiStreamingServer[FileRequest, FileResponse]) error
+	BackupCommit(context.Context, *BackupCommitRequest) (*BackupCommitResponse, error)
 	mustEmbedUnimplementedBackupServiceServer()
 }
 
@@ -67,6 +80,9 @@ type UnimplementedBackupServiceServer struct{}
 
 func (UnimplementedBackupServiceServer) ProcessBackupStream(grpc.BidiStreamingServer[FileRequest, FileResponse]) error {
 	return status.Error(codes.Unimplemented, "method ProcessBackupStream not implemented")
+}
+func (UnimplementedBackupServiceServer) BackupCommit(context.Context, *BackupCommitRequest) (*BackupCommitResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BackupCommit not implemented")
 }
 func (UnimplementedBackupServiceServer) mustEmbedUnimplementedBackupServiceServer() {}
 func (UnimplementedBackupServiceServer) testEmbeddedByValue()                       {}
@@ -96,13 +112,36 @@ func _BackupService_ProcessBackupStream_Handler(srv interface{}, stream grpc.Ser
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type BackupService_ProcessBackupStreamServer = grpc.BidiStreamingServer[FileRequest, FileResponse]
 
+func _BackupService_BackupCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BackupCommitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BackupServiceServer).BackupCommit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BackupService_BackupCommit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BackupServiceServer).BackupCommit(ctx, req.(*BackupCommitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BackupService_ServiceDesc is the grpc.ServiceDesc for BackupService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var BackupService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "backupservice.BackupService",
 	HandlerType: (*BackupServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "BackupCommit",
+			Handler:    _BackupService_BackupCommit_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "ProcessBackupStream",
