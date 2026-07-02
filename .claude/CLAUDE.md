@@ -16,3 +16,8 @@ Before committing any feature change (new command, new flag, changed behavior, n
 - Update `docs/components/<component>.md` for each affected component.
 - Update `README.md` if the change affects the quick-start examples, component list, or documentation index.
 - Update `docs/ARCHITECTURE.md` if the change affects the system topology, data flow, or mermaid diagram.
+
+### Changelog
+
+Before merging any feature branch to `main`, add an entry to `CHANGELOG.md` (most recent first):
+a dated heading and a short paragraph summarizing what changed and why — not a file-by-file diff.
