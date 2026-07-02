@@ -36,7 +36,7 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 - The next backup run then sees those files as not-yet-backed-up (their `FileData` is gone) and re-uploads them via the normal `SEND_FILE` path — chunk-level dedup still skips any of the file's chunks that are intact, so only the actually-missing data is re-transferred
 - This is a reactive, not a proactive, self-heal: corruption is only detected and fixed when something tries to read the affected chunk (a `verify` run, or a real restore). A proactive integrity-scan routine is a possible future addition, not implemented now
 
-## **Backup Job Tracking**
+## **Backup Job Tracking & Completion Verification**
 
 Every `ProcessBackupStream` call carries a `job-id` gRPC metadata key, attached by `brfs` when it
 opens the stream (not a message in the `FileRequest`/`FileResponse` protobuf — this is transport
@@ -47,24 +47,56 @@ One `brfs` invocation is one backup job: `brfs` generates a UUID at startup, or 
 passed via `--job-id`, and attaches it to every one of its `--streams` concurrent streams.
 
 On the `bwfs` side, the first stream carrying a given `job-id` causes a `backup_jobs` row to be
-created (idempotently — every stream of the job attempts this, only the first succeeds); the row's
-`source_host` is read from the client's mTLS certificate (first SAN entry, falling back to
-CommonName), not from anything the client reports in-band. `bwfs` tracks the number of currently
-open streams per job in memory; when the last stream of a job closes, `finished_at` is set. If
-`brfs` crashes mid-run, or `bwfs` restarts while a job has open streams, `finished_at` simply never
-gets set for that job — this is treated as the correct signal that the run didn't complete cleanly,
-not a bug.
+created (idempotently — every stream of the job attempts this, only the first succeeds) with
+`status=in_progress`; the row's `source_host` is read from the client's mTLS certificate (first SAN
+entry, falling back to CommonName), not from anything the client reports in-band.
 
 Every file version `bwfs` records (`file_versions` table) carries the `job_id` of the stream that
 produced it. A duplicate observation of the same object within the same job (e.g. a future retry
 re-sending a file) is a safe no-op — the first write for a given `(job_id, object_id)` pair wins.
 
-See [bwfs](../components/bwfs.md) for the schema and [brfs](../components/brfs.md) for the
-`--job-id` flag.
+**Completion is no longer inferred from streams closing.** After all of its streams have closed,
+`brfs` computes a SHA256 over the sorted IDs of every file it believes it sent successfully this
+run, and submits it via a new unary RPC:
+
+```proto
+rpc BackupCommit(BackupCommitRequest) returns (BackupCommitResponse);
+
+message BackupCommitRequest {
+  bytes file_list_hash = 1;
+}
+message BackupCommitResponse {
+  bool success = 1;
+}
+```
+
+`bwfs` independently recomputes the same hash from its own `file_versions` rows for that job and
+compares. A match sets `status=success`; a mismatch sets `status=failure` and purges the job's
+`file_versions` rows (raw chunk/file data is reclaimed later by the existing vacuum path). Either
+way `finished_at` is set. `brfs` retries the commit call a few times with backoff on transport
+error before giving up, since this one small call is now the only positive signal that a
+(potentially large) transfer succeeded.
+
+Two mechanisms bound how long a job can be left `in_progress` if `brfs` never gets to send a
+commit (crash, network death):
+
+- **Stall watchdog**: `bwfs` tracks, per job, the last time it saw any activity (a stream opening,
+  or any message received on it). A background loop fails any job silent for longer than the
+  configured `JobTimeoutSec` (default 30s) — `status=failure`, `file_versions` purged, same as a
+  hash mismatch. This is a soft-fail: the stream goroutines that were serving the job are not
+  forcibly disconnected, they're just rejected (`codes.FailedPrecondition`) if they try to deliver
+  another message after the job's been decided.
+- **Startup reconciliation**: when `bwfs` starts, any job still `status=in_progress` from a
+  previous, uncleanly-terminated process is immediately failed the same way, before the server
+  starts accepting new connections.
+
+See [bwfs](../components/bwfs.md) for the schema and config key, and [brfs](../components/brfs.md)
+for the commit-with-retry behavior.
 
 Note on the sequence diagram below: the `START_STREAM:jobId:streamId` step shown there is
 conceptual — in the actual gRPC transport this is the `job-id` metadata described above, attached
-when the stream is opened, not a discrete message exchanged over the stream.
+when the stream is opened, not a discrete message exchanged over the stream. The diagram also
+predates `BackupCommit` and doesn't show it.
 
 ```mermaid
 sequenceDiagram

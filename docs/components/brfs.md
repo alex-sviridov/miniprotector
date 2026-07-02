@@ -28,6 +28,12 @@ startup; passing one explicitly is useful for correlating a run with an external
 job identifier. The ID is sent to `bwfs` as gRPC metadata on every stream this run opens — see
 [backup protocol](../protocols/backup.md) for the wire-level detail.
 
+After all of its streams close, `brfs` computes a SHA256 over the sorted IDs of every file it
+believes it sent successfully and submits it to `bwfs` via the `BackupCommit` RPC, retrying a few
+times with backoff on transport error. `brfs` exits non-zero if the commit call ultimately fails to
+reach the server, or if the server reports the hash didn't match what it actually received — see
+[Backup Protocol](../protocols/backup.md) for the full mechanism.
+
 ## Examples
 
 ```bash

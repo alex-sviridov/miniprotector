@@ -35,16 +35,29 @@ On startup, before accepting connections, the server runs a vacuum pass over the
 orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
 
-#### Backup Job Tracking
+#### Backup Job Tracking & Completion Verification
 
 Every stream `bwfs` accepts must carry `job-id` gRPC metadata (sent by `brfs` — see
-[brfs](./brfs.md)); a stream without it is rejected before any file is processed. `bwfs` records
-each job in a `backup_jobs` table (`job_id`, `source_host`, `started_at`, `finished_at`) and tags
-every row in `file_versions` with the `job_id` of the run that produced it. `source_host` is read
-from the client's mTLS certificate, not from client-reported data. `finished_at` is set once the
-job's last concurrent stream closes; a job whose `brfs` crashed mid-run, or that was still open
-when `bwfs` restarted, is left with `finished_at` unset — that's the correct signal, not a bug. See
-[backup protocol](../protocols/backup.md) for the full lifecycle.
+[brfs](brfs.md)). `bwfs` records each job in a `backup_jobs` table (`job_id`, `source_host`,
+`started_at`, `finished_at`, `status`) and tags every row in `file_versions` with the `job_id` of
+the run that produced it. `source_host` is read from the client's verified mTLS identity, not
+anything the client reports in-band.
+
+A job starts `status=in_progress` and is only finalized (`success` or `failure`, with
+`finished_at` set) by one of three paths:
+
+1. `brfs` calls the unary `BackupCommit` RPC after all its streams close; `bwfs` recomputes a
+   SHA256 over its own `file_versions` for that job and compares it to the hash `brfs` submits —
+   match is `success`, mismatch is `failure` (and purges that job's `file_versions`).
+2. The stall watchdog fails any job with no activity for longer than the `JobTimeoutSec` config
+   key (default 30 seconds).
+3. On startup, `bwfs` fails any job left `in_progress` by a previous, uncleanly-terminated process,
+   before accepting new connections.
+
+See [Backup Protocol](../protocols/backup.md) for the full RPC and lifecycle.
+
+**Server configuration keys:**
+- `JobTimeoutSec` — seconds of no activity before an in_progress backup job is marked failed *(default: 30)*
 
 ### list
 
