@@ -10,12 +10,13 @@ A backup system with intelligent deduplication and integrity verification.
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
 | catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
 | catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
+| agent | Node Agent — reconciles local state against embedded policies | Implemented (v1: cert renewal only) |
 
 ## Control Plane vs. Agents
 
 |  | Control plane | Agents |
 |---|---|---|
-| Components | `deploy/control-plane/ca/` (step-ca container), `certrequest`, `catalog` | `bwfs`, `brfs`, `rwfs`, `certclient` |
+| Components | `deploy/control-plane/ca/` (step-ca container), `certrequest`, `catalog` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
 | Runs where | On/near the CA host (`certrequest`); `catalog` runs centrally, wherever the catalog deployment lives — see below | Dial `ca_host:9000` outbound only, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; has no role in backup traffic | Dial `ca_host:9000` outbound only, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Docker/e2e images | `certrequest` never ships onto an agent host or into an agent image | Agent images bundle `certclient` only |
@@ -28,6 +29,11 @@ doesn't fit either row cleanly. It listens on its own port (`catalog_port`, defa
 A node's mTLS identity (`ca.crt`, `client.crt`, `client.key`, consumed by `common/mtls`) is
 obtained via `certclient`, using a token minted by `certrequest`. See
 [certrequest](components/certrequest.md) and [certclient](components/certclient.md).
+
+`agent` is a node-level process that wraps `certclient` — instead of a bare cron entry invoking
+`certclient` directly, `agent serve` runs a reconcile loop that periodically execs `certclient`
+and tracks the outcome in a local cache (`agent list-policies` inspects it). It has no network
+role of its own in v1; all network behavior is `certclient`'s, unchanged.
 
 ## Backup Process
 
