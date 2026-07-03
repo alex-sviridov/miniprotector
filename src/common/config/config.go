@@ -65,6 +65,8 @@ type Config struct {
 	CatalogSyncBatchSize       int
 	CatalogSyncPollIntervalSec int
 	CatalogSyncMaxBackoffSec   int
+	CatalogHost                string
+	CatalogPort                int
 }
 
 type contextKey string
@@ -93,6 +95,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncBatchSize:       500,
 		CatalogSyncPollIntervalSec: 5,
 		CatalogSyncMaxBackoffSec:   60,
+		CatalogPort:                15723,
 	}
 	foundFields := make(map[string]bool)
 
@@ -137,6 +140,16 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "ca_host":
 			config.CAHost = value
 			foundFields["ca_host"] = true
+		case "catalog_host":
+			config.CatalogHost = value
+			foundFields["catalog_host"] = true
+		case "catalog_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid catalog_port value at line %d: %s", lineNum, value)
+			}
+			config.CatalogPort = port
+			foundFields["catalog_port"] = true
 		case "ClientHashQueryBatchSize":
 			number, err := strconv.Atoi(value)
 			if err != nil {

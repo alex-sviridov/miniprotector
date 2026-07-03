@@ -154,3 +154,45 @@ func TestParseConfig_CatalogSyncMaxBackoffSecParsed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 120, conf.CatalogSyncMaxBackoffSec)
 }
+
+func TestParseConfig_CatalogHostOptional(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "", conf.CatalogHost)
+}
+
+func TestParseConfig_CatalogHostParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\ncatalog_host=catalog.backup.internal\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "catalog.backup.internal", conf.CatalogHost)
+}
+
+func TestParseConfig_CatalogPortDefaultsTo15723(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 15723, conf.CatalogPort)
+}
+
+func TestParseConfig_CatalogPortParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\ncatalog_port=9443\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 9443, conf.CatalogPort)
+}
