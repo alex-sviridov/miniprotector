@@ -1,0 +1,27 @@
+services:
+  step-ca:
+    image: smallstep/step-ca
+    volumes:
+      - ./ca/data:/home/step
+      - ./ca/entrypoint.sh:/home/step/entrypoint.sh:ro
+    ports:
+      - "9000:9000"
+    entrypoint: ["/home/step/entrypoint.sh"]
+    restart: unless-stopped
+
+  catalog:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/catalog/Dockerfile
+    depends_on:
+      - step-ca
+    volumes:
+      - ./catalog/data:/data
+      - ./catalog/local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+      - STORAGE_PATH=/data/storage
+    ports:
+      - "15723:15723"
+    restart: unless-stopped

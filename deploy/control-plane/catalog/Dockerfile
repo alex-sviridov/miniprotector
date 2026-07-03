@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /build/bin/catalog /build/bin/certclient ./
-COPY catalog/entrypoint.sh ./entrypoint.sh
+COPY deploy/control-plane/catalog/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
 ENTRYPOINT ["./entrypoint.sh"]
