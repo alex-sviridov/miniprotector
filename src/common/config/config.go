@@ -53,15 +53,18 @@ func ResolveCertsDir() (string, error) {
 
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {
-	DefaultPort              int
-	DefaultStreams           int
-	LogFolder                string
-	ClientHashQueryBatchSize int
-	ConnectionTimeOutSec     int
-	FileLockTimeoutSec       int
-	StopStreamOnFileError    bool
-	CAHost                   string
-	JobTimeoutSec            int
+	DefaultPort                int
+	DefaultStreams             int
+	LogFolder                  string
+	ClientHashQueryBatchSize   int
+	ConnectionTimeOutSec       int
+	FileLockTimeoutSec         int
+	StopStreamOnFileError      bool
+	CAHost                     string
+	JobTimeoutSec              int
+	CatalogSyncBatchSize       int
+	CatalogSyncPollIntervalSec int
+	CatalogSyncMaxBackoffSec   int
 }
 
 type contextKey string
@@ -85,7 +88,12 @@ func ParseConfig(configPath string) (*Config, error) {
 	}
 	defer file.Close()
 
-	config := &Config{JobTimeoutSec: 30}
+	config := &Config{
+		JobTimeoutSec:              30,
+		CatalogSyncBatchSize:       500,
+		CatalogSyncPollIntervalSec: 5,
+		CatalogSyncMaxBackoffSec:   60,
+	}
 	foundFields := make(map[string]bool)
 
 	scanner := bufio.NewScanner(file)
@@ -161,6 +169,27 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.JobTimeoutSec = number
 			foundFields["JobTimeoutSec"] = true
+		case "CatalogSyncBatchSize":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CatalogSyncBatchSize value at line %d: %s", lineNum, value)
+			}
+			config.CatalogSyncBatchSize = number
+			foundFields["CatalogSyncBatchSize"] = true
+		case "CatalogSyncPollIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CatalogSyncPollIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.CatalogSyncPollIntervalSec = number
+			foundFields["CatalogSyncPollIntervalSec"] = true
+		case "CatalogSyncMaxBackoffSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CatalogSyncMaxBackoffSec value at line %d: %s", lineNum, value)
+			}
+			config.CatalogSyncMaxBackoffSec = number
+			foundFields["CatalogSyncMaxBackoffSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

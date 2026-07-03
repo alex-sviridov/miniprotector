@@ -1343,8 +1343,11 @@ hands each batch to a `Sender`:
    - On success: persist the new cursor, then immediately poll again (no sleep) if the batch was
      full-size — this drains a backlog quickly — otherwise sleep the normal poll interval.
    - On failure: sleep with exponential backoff (starting at 1s, capped at
-     `CatalogSyncMaxBackoffSec`) and retry the *same* batch. The cursor never advances on failure,
-     so a crash or restart mid-retry resumes with no data loss.
+     `CatalogSyncMaxBackoffSec`) and poll again from the same, unadvanced cursor. Since the cursor
+     never moved, the retry is guaranteed to include every row from the failed attempt — it may
+     also include newly-arrived rows if more were written during the backoff sleep, which is
+     harmless (nothing is skipped or lost either way) and lets a retry absorb backlog growth
+     instead of sending a stale, undersized batch first.
 
 The cursor is a single integer stored in `<storage_path>/catalogsync.cursor`, written atomically
 (temp file + rename) after each confirmed send. If it's missing, `catalogsync` starts from the

@@ -47,11 +47,11 @@ func queryFileRows(store *wfs.Store, serverName, pathPrefix, filter string) ([]l
 	// Subquery picks the single latest finalized FileDataRecord per file_id,
 	// so non-aggregated columns (id, size, chunk_count, created_at) are
 	// unambiguous even if multiple records share the same file_id.
-	// COUNT(DISTINCT fv.id) avoids inflation from the cross-join when multiple
+	// COUNT(DISTINCT fv.seq) avoids inflation from the cross-join when multiple
 	// FileDataRecords exist.
 	query := store.RawDB().
 		Table("file_data_records fd").
-		Select("fd.uuid AS uuid, fd.file_id, fd.size, fd.chunk_count AS chunks, fd.created_at, COUNT(DISTINCT fv.uuid) AS versions").
+		Select("fd.uuid AS uuid, fd.file_id, fd.size, fd.chunk_count AS chunks, fd.created_at, COUNT(DISTINCT fv.seq) AS versions").
 		Joins("LEFT JOIN file_version_records fv ON fv.object_id = fd.file_id").
 		Where("fd.checksum IS NOT NULL").
 		Where("fd.created_at = (SELECT MAX(fd2.created_at) FROM file_data_records fd2 WHERE fd2.file_id = fd.file_id AND fd2.checksum IS NOT NULL)").

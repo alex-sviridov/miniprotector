@@ -37,7 +37,7 @@ type BackupStore interface {
 
 	// FileVersion operations - create metadata version for each backup
 	EnsureFileVersion(jobID, objectID string, metadata []byte, ctime int64) error
-	RemoveFileVersion(versionID string) error
+	RemoveFileVersion(jobID, objectID string) error
 
 	// Backup job operations - track discrete backup runs (one brfs invocation each).
 	EnsureBackupJob(jobID, sourceHost string) error
@@ -73,7 +73,7 @@ type FileData struct {
 
 // FileVersion represents file metadata for a specific backup
 type FileVersion struct {
-	UUID      string
+	JobID     string
 	ObjectID  string    // Natural key of the backed-up entity (file today; other entity types later)
 	Metadata  []byte    // File attributes, permissions, etc.
 	Ctime     int64     // File change time

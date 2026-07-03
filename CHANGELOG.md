@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-02 — Async catalog replication (catalogsync)
+
+Added `catalogsync`, a new standalone component that tails a `bwfs` node's `file_versions` table
+and forwards new rows to a future backup catalog, independently of `bwfs`'s own availability.
+`catalogsync` opens `bwfs`'s SQLite database strictly read-only and tracks its own replication
+progress in a small local cursor file, retrying with backoff whenever the catalog (represented
+today by a logging stand-in `Sender`) is unreachable — nothing is marked replicated until a batch
+is confirmed sent, so an outage or restart never loses data. This required replacing
+`file_versions`' synthetic `UUID` primary key with a real `INTEGER PRIMARY KEY AUTOINCREMENT`
+`seq` column (immune to the row-number reuse a bare SQLite `rowid` allows after a failed job's
+rows are purged) and its natural `(job_id, object_id)` identity for external consumers.
+
 ## 2026-07-02 — Backup job completion verification
 
 `bwfs` no longer treats a job as finished just because its streams closed. Added a `BackupCommit`

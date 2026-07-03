@@ -156,9 +156,12 @@ against the future catalog service replaces it later behind the same interface �
    - Success: persist cursor as `batch[last].Seq`. If `len(batch) == batchSize` (there may be
      more backlog), go to 1 immediately without sleeping; otherwise sleep `PollIntervalSec` first.
    - Failure: sleep with exponential backoff (starting at 1s, doubling, capped at
-     `MaxBackoffSec`), then retry the *same* batch — the cursor never advances on failure, so a
-     crash or restart mid-retry resumes from the last confirmed point with no gap and no
-     duplication beyond ordinary at-least-once re-delivery.
+     `MaxBackoffSec`), then poll again from the same, unadvanced cursor — the cursor never
+     advances on failure, so a crash or restart mid-retry resumes from the last confirmed point
+     with no gap. Because the cursor didn't move, the retry is guaranteed to re-include every row
+     from the failed attempt, plus any newly-arrived rows if more were written during the backoff
+     sleep — harmless (nothing skipped or lost), and it lets a retry absorb backlog growth instead
+     of resending a stale, undersized batch first.
 
 Graceful shutdown via `signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)`,
 the same pattern `brfs` already uses (`cmd/brfs/main.go`).
@@ -190,13 +193,14 @@ catalogsync (separate process, same host, same storage_path):
       if len(batch) == batchSize: continue immediately  # drain backlog
       else: sleep(pollInterval)
     else:
-      sleep(backoff); backoff = min(backoff*2, maxBackoff)      # retry same batch, cursor untouched
+      sleep(backoff); backoff = min(backoff*2, maxBackoff)      # re-poll from same cursor, unadvanced
 ```
 
 ## Error Handling
 
-- **Catalog/Sender unavailable**: exponential backoff, retry the same unadvanced batch
-  indefinitely. No data loss — `bwfs`'s own `file_versions` table already durably retains
+- **Catalog/Sender unavailable**: exponential backoff, re-poll from the same unadvanced cursor
+  indefinitely (guaranteed to re-include every row from the failed attempt, plus any newly
+  arrived since). No data loss — `bwfs`'s own `file_versions` table already durably retains
   everything regardless of `catalogsync`'s state, so it doubles as the replication backlog for
   free; there is no separate buffer to bound or overflow.
 - **`catalogsync` crash/restart**: resumes from the last persisted cursor. At-least-once delivery —

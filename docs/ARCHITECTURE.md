@@ -8,6 +8,7 @@ A backup system with intelligent deduplication and integrity verification.
 | brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
+| catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented (catalog service itself not yet built) |
 
 ## Control Plane vs. Agents
 
@@ -49,6 +50,11 @@ graph TB
         bwfs[bwfs<br/>Backup Writer]
         BackupFS[Backup Filesystem]
         DB[(SQLite Database)]
+        catalogsync[catalogsync<br/>Catalog Replicator]
+    end
+
+    subgraph "Catalog (planned)"
+        Catalog[(Backup Catalog)]
     end
 
     subgraph "Destination Machine"
@@ -66,13 +72,18 @@ graph TB
     bwfs -->|list/restore protocol<br/>network/unix socket, mTLS| rwfs
     rwfs -->|writes files| DstFS
 
+    %% Catalog Replication Flow (bwfs's own operation is unaffected either way)
+    DB -->|reads file_versions,<br/>read-only| catalogsync
+    catalogsync -.->|replicate batches<br/>planned| Catalog
+
     classDef filesystem fill:#e1f5fe
     classDef component fill:#f3e5f5
     classDef planned fill:#f5f5f5,stroke-dasharray:5
     classDef database fill:#fff3e0
 
     class SrcFS,BackupFS,DstFS filesystem
-    class brfs,bwfs component
+    class brfs,bwfs,catalogsync component
     class rwfs component
     class DB database
+    class Catalog planned
 ```

@@ -372,6 +372,25 @@ func TestEnsureFileVersion_DuplicateWithinJobIsNoOp(t *testing.T) {
 	assert.Equal(t, []byte("first"), v.Metadata, "first write within a job should win")
 }
 
+func TestFileVersionRecord_SeqNeverReusedAfterDelete(t *testing.T) {
+	store := newTestStore(t)
+
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("v1"), 100))
+
+	var first FileVersionRecord
+	require.NoError(t, store.db.Where("job_id = ? AND object_id = ?", "job-1", "obj-1").First(&first).Error)
+
+	// Simulate FinalizeBackupJob purging a failed job's file_versions rows.
+	require.NoError(t, store.db.Delete(&FileVersionRecord{}, "job_id = ?", "job-1").Error)
+
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-2", []byte("v2"), 200))
+
+	var second FileVersionRecord
+	require.NoError(t, store.db.Where("job_id = ? AND object_id = ?", "job-2", "obj-2").First(&second).Error)
+
+	assert.Greater(t, second.Seq, first.Seq, "AUTOINCREMENT must not reuse a deleted row's seq")
+}
+
 func TestLatestFileVersion_ReturnsNewest(t *testing.T) {
 	store := newTestStore(t)
 	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("meta-old"), 100))
@@ -385,12 +404,11 @@ func TestLatestFileVersion_ReturnsNewest(t *testing.T) {
 
 func TestRemoveFileVersion_Removes(t *testing.T) {
 	store := newTestStore(t)
-	id := uuid.New().String()
 	require.NoError(t, store.db.Create(&FileVersionRecord{
-		UUID: id, JobID: "job-1", ObjectID: "obj-1", Metadata: []byte("meta"), Ctime: 100, CreatedAt: time.Now(),
+		JobID: "job-1", ObjectID: "obj-1", Metadata: []byte("meta"), Ctime: 100, CreatedAt: time.Now(),
 	}).Error)
 
-	require.NoError(t, store.RemoveFileVersion(id))
+	require.NoError(t, store.RemoveFileVersion("job-1", "obj-1"))
 
 	_, err := store.LatestFileVersion("obj-1")
 	assert.Error(t, err)
@@ -401,8 +419,8 @@ func TestFileVersionAtTime_ReturnsMostRecentBefore(t *testing.T) {
 
 	// Create two versions with explicit created_at by inserting directly
 	now := time.Now()
-	old := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-old", ObjectID: "obj-1", Metadata: []byte("old"), Ctime: 1, CreatedAt: now.Add(-2 * time.Hour)}
-	recent := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-recent", ObjectID: "obj-1", Metadata: []byte("recent"), Ctime: 2, CreatedAt: now.Add(-1 * time.Hour)}
+	old := FileVersionRecord{JobID: "job-old", ObjectID: "obj-1", Metadata: []byte("old"), Ctime: 1, CreatedAt: now.Add(-2 * time.Hour)}
+	recent := FileVersionRecord{JobID: "job-recent", ObjectID: "obj-1", Metadata: []byte("recent"), Ctime: 2, CreatedAt: now.Add(-1 * time.Hour)}
 	store.db.Create(&old)
 	store.db.Create(&recent)
 
@@ -415,8 +433,8 @@ func TestFileVersionsInPeriod_ReturnsAll(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now()
 
-	r1 := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-1", ObjectID: "obj-1", CreatedAt: now.Add(-3 * time.Hour)}
-	r2 := FileVersionRecord{UUID: uuid.New().String(), JobID: "job-2", ObjectID: "obj-2", CreatedAt: now.Add(-1 * time.Hour)}
+	r1 := FileVersionRecord{JobID: "job-1", ObjectID: "obj-1", CreatedAt: now.Add(-3 * time.Hour)}
+	r2 := FileVersionRecord{JobID: "job-2", ObjectID: "obj-2", CreatedAt: now.Add(-1 * time.Hour)}
 	store.db.Create(&r1)
 	store.db.Create(&r2)
 

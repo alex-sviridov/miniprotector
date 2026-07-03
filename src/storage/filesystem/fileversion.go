@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -18,7 +17,6 @@ import (
 // a future retry) is a safe no-op rather than a second catalog row.
 func (s *Store) EnsureFileVersion(jobID, objectID string, metadata []byte, ctime int64) error {
 	record := FileVersionRecord{
-		UUID:      uuid.New().String(),
 		JobID:     jobID,
 		ObjectID:  objectID,
 		Metadata:  metadata,
@@ -31,8 +29,10 @@ func (s *Store) EnsureFileVersion(jobID, objectID string, metadata []byte, ctime
 	}).Create(&record).Error
 }
 
-func (s *Store) RemoveFileVersion(versionID string) error {
-	return s.db.Delete(&FileVersionRecord{}, "uuid = ?", versionID).Error
+// RemoveFileVersion deletes the file_versions row identified by its natural
+// (jobID, objectID) key.
+func (s *Store) RemoveFileVersion(jobID, objectID string) error {
+	return s.db.Delete(&FileVersionRecord{}, "job_id = ? AND object_id = ?", jobID, objectID).Error
 }
 
 func (s *Store) LatestFileVersion(objectID string) (*storage.FileVersion, error) {
@@ -93,7 +93,7 @@ func (s *Store) FileVersionsForJob(jobID string) ([]string, error) {
 
 func toStorageFileVersion(r *FileVersionRecord) *storage.FileVersion {
 	return &storage.FileVersion{
-		UUID:      r.UUID,
+		JobID:     r.JobID,
 		ObjectID:  r.ObjectID,
 		Metadata:  r.Metadata,
 		Ctime:     r.Ctime,

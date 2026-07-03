@@ -91,3 +91,66 @@ func TestParseConfig_JobTimeoutSecParsed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 90, conf.JobTimeoutSec)
 }
+
+func TestParseConfig_CatalogSyncBatchSizeDefaultsTo500(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 500, conf.CatalogSyncBatchSize)
+}
+
+func TestParseConfig_CatalogSyncBatchSizeParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nCatalogSyncBatchSize=250\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 250, conf.CatalogSyncBatchSize)
+}
+
+func TestParseConfig_CatalogSyncPollIntervalSecDefaultsTo5(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, conf.CatalogSyncPollIntervalSec)
+}
+
+func TestParseConfig_CatalogSyncPollIntervalSecParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nCatalogSyncPollIntervalSec=15\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 15, conf.CatalogSyncPollIntervalSec)
+}
+
+func TestParseConfig_CatalogSyncMaxBackoffSecDefaultsTo60(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 60, conf.CatalogSyncMaxBackoffSec)
+}
+
+func TestParseConfig_CatalogSyncMaxBackoffSecParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nCatalogSyncMaxBackoffSec=120\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 120, conf.CatalogSyncMaxBackoffSec)
+}

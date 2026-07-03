@@ -57,6 +57,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity
 - **[certrequest](docs/components/certrequest.md)** - Mints one-time enrollment tokens for nodes (control-plane, run on/near the CA)
 - **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS identity from the CA
+- **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
 
 ## Documentation
 
