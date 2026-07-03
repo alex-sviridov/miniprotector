@@ -9,7 +9,7 @@ RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest \
 
 WORKDIR /build
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 make brfs bwfs rwfs
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 make brfs bwfs rwfs catalog catalogsync
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,6 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /build/bin/brfs /build/bin/bwfs /build/bin/rwfs ./
+COPY --from=builder /build/bin/brfs /build/bin/bwfs /build/bin/rwfs /build/bin/catalog /build/bin/catalogsync ./
 COPY src/e2e/config.conf local.conf
-COPY src/common/testdata/certs certs
+COPY src/e2e/testdata/certs certs

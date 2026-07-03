@@ -238,6 +238,92 @@ func startBwfsContainer(ctx context.Context, t testingT, imageID, networkID, sto
 	return hostPort
 }
 
+// startCatalogContainer starts catalog and returns the host port it's
+// mapped to. storageDir on the host is bind-mounted to /storage so the
+// test can open catalog.db directly afterward. It joins networkID under
+// the "catalog.internal" alias, matching e2e's baked-in config.conf
+// (catalog_host=catalog.internal).
+func startCatalogContainer(ctx context.Context, t testingT, imageID, networkID, storageDir string) string {
+	t.Helper()
+	cli := newDockerClient(t)
+
+	hostPort, err := freePort()
+	require.NoError(t, err)
+
+	containerPort := nat.Port("15723/tcp")
+	resp, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image:        imageID,
+			Cmd:          []string{"/app/catalog", "/storage", "--port", "15723", "--debug"},
+			User:         fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+			ExposedPorts: nat.PortSet{containerPort: struct{}{}},
+		},
+		&container.HostConfig{
+			Binds: []string{storageDir + ":/storage"},
+			PortBindings: nat.PortMap{
+				containerPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: hostPort}},
+			},
+		},
+		&network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				networkID: {NetworkID: networkID, Aliases: []string{"catalog.internal"}},
+			},
+		},
+		nil,
+		fmt.Sprintf("catalog-server-%d", time.Now().UnixNano()),
+	)
+	require.NoError(t, err)
+	require.NoError(t, cli.ContainerStart(ctx, resp.ID, container.StartOptions{}))
+
+	t.Cleanup(func() {
+		stopCtx := context.Background()
+		timeout := 5
+		_ = cli.ContainerStop(stopCtx, resp.ID, container.StopOptions{Timeout: &timeout})
+		_ = cli.ContainerRemove(stopCtx, resp.ID, container.RemoveOptions{Force: true})
+		cli.Close()
+	})
+
+	return hostPort
+}
+
+// runCatalogsyncContainer starts catalogsync as a long-running background
+// container, reading bwfsStorageDir (the same bind mount bwfs's own
+// container uses) and sending to whatever catalog_host/catalog_port are
+// baked into e2e's config.conf. It joins networkID so DNS resolution of
+// catalog.internal works.
+func runCatalogsyncContainer(ctx context.Context, t testingT, imageID, networkID, bwfsStorageDir string) {
+	t.Helper()
+	cli := newDockerClient(t)
+
+	resp, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image: imageID,
+			Cmd:   []string{"/app/catalogsync", "/storage", "--debug"},
+			User:  fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+		},
+		&container.HostConfig{
+			Binds: []string{bwfsStorageDir + ":/storage"},
+		},
+		&network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				networkID: {NetworkID: networkID},
+			},
+		},
+		nil,
+		fmt.Sprintf("catalogsync-%d", time.Now().UnixNano()),
+	)
+	require.NoError(t, err)
+	require.NoError(t, cli.ContainerStart(ctx, resp.ID, container.StartOptions{}))
+
+	t.Cleanup(func() {
+		stopCtx := context.Background()
+		timeout := 5
+		_ = cli.ContainerStop(stopCtx, resp.ID, container.StopOptions{Timeout: &timeout})
+		_ = cli.ContainerRemove(stopCtx, resp.ID, container.RemoveOptions{Force: true})
+		cli.Close()
+	})
+}
+
 func freePort() (string, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
