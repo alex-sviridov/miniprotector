@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,4 +127,60 @@ func TestHandshake_ServerRejectsUntrustedClientCert(t *testing.T) {
 		ServerName:   "bwfs.internal",
 	}
 	assert.Error(t, dial(addr, cfg))
+}
+
+func copyCertsDir(t *testing.T, src string) string {
+	t.Helper()
+	dst := t.TempDir()
+	for _, name := range []string{"ca.crt", "client.crt", "client.key"} {
+		copyFile(t, filepath.Join(src, name), filepath.Join(dst, name))
+	}
+	return dst
+}
+
+func TestServerTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
+	dir := copyCertsDir(t, fixtureCertsDir)
+	addr := startTestServer(t, dir)
+
+	clientCfg, err := clientTLSConfig(fixtureCertsDir, "bwfs.internal")
+	require.NoError(t, err)
+
+	// Baseline: valid cert on disk, handshake succeeds.
+	require.NoError(t, dial(addr, clientCfg))
+
+	// Corrupt the server's identity cert on disk without restarting the
+	// listener. If GetCertificate were caching the cert captured when
+	// serverTLSConfig was built instead of re-reading, this would still
+	// succeed.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), []byte("not a cert"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), []byte("not a key"), 0o600))
+	assert.Error(t, dial(addr, clientCfg))
+
+	// Restore a valid cert — proves this is a live re-read, not a one-time
+	// failure that got cached.
+	copyFile(t, fixtureCertsDir+"/client.crt", filepath.Join(dir, "client.crt"))
+	copyFile(t, fixtureCertsDir+"/client.key", filepath.Join(dir, "client.key"))
+	assert.NoError(t, dial(addr, clientCfg))
+}
+
+func TestClientTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
+	dir := copyCertsDir(t, fixtureCertsDir)
+	cfg, err := clientTLSConfig(dir, "bwfs.internal")
+	require.NoError(t, err)
+
+	addr := startTestServer(t, fixtureCertsDir)
+
+	// Baseline succeeds.
+	require.NoError(t, dial(addr, cfg))
+
+	// Corrupt the client's identity cert on disk. The test server requires
+	// and verifies client certs, so a stale-cached client cert would still
+	// dial successfully if GetClientCertificate weren't re-reading.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), []byte("not a cert"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), []byte("not a key"), 0o600))
+	assert.Error(t, dial(addr, cfg))
+
+	copyFile(t, fixtureCertsDir+"/client.crt", filepath.Join(dir, "client.crt"))
+	copyFile(t, fixtureCertsDir+"/client.key", filepath.Join(dir, "client.key"))
+	assert.NoError(t, dial(addr, cfg))
 }

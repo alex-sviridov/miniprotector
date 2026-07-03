@@ -21,36 +21,61 @@ const (
 	identKeyFile  = "client.key"
 )
 
-func loadCertAndPool(certsDir string) (tls.Certificate, *x509.CertPool, error) {
+func loadIdentityCert(certsDir string) (tls.Certificate, error) {
 	cert, err := tls.LoadX509KeyPair(
 		filepath.Join(certsDir, identCertFile),
 		filepath.Join(certsDir, identKeyFile),
 	)
 	if err != nil {
-		return tls.Certificate{}, nil, fmt.Errorf("load identity cert/key from %s: %w", certsDir, err)
+		return tls.Certificate{}, fmt.Errorf("load identity cert/key from %s: %w", certsDir, err)
 	}
+	return cert, nil
+}
 
+func loadCAPool(certsDir string) (*x509.CertPool, error) {
 	caPEM, err := os.ReadFile(filepath.Join(certsDir, caCertFile))
 	if err != nil {
-		return tls.Certificate{}, nil, fmt.Errorf("read CA cert from %s: %w", certsDir, err)
+		return nil, fmt.Errorf("read CA cert from %s: %w", certsDir, err)
 	}
 	caPool := x509.NewCertPool()
 	if !caPool.AppendCertsFromPEM(caPEM) {
-		return tls.Certificate{}, nil, fmt.Errorf("parse CA cert from %s: no valid certificates found", certsDir)
+		return nil, fmt.Errorf("parse CA cert from %s: no valid certificates found", certsDir)
 	}
+	return caPool, nil
+}
 
+func loadCertAndPool(certsDir string) (tls.Certificate, *x509.CertPool, error) {
+	cert, err := loadIdentityCert(certsDir)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	caPool, err := loadCAPool(certsDir)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
 	return cert, caPool, nil
 }
 
 func serverTLSConfig(certsDir string) (*tls.Config, error) {
-	cert, caPool, err := loadCertAndPool(certsDir)
+	// Fail fast at build time if certsDir is missing/broken, rather than
+	// only on the first handshake.
+	if _, err := loadIdentityCert(certsDir); err != nil {
+		return nil, err
+	}
+	caPool, err := loadCAPool(certsDir)
 	if err != nil {
 		return nil, err
 	}
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    caPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := loadIdentityCert(certsDir)
+			if err != nil {
+				return nil, err
+			}
+			return &cert, nil
+		},
+		ClientCAs:  caPool,
+		ClientAuth: tls.RequireAndVerifyClientCert,
 	}, nil
 }
 
@@ -91,23 +116,34 @@ func verifyChainOnly(caPool *x509.CertPool) func([][]byte, [][]*x509.Certificate
 }
 
 func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
-	cert, caPool, err := loadCertAndPool(certsDir)
+	if _, err := loadIdentityCert(certsDir); err != nil {
+		return nil, err
+	}
+	caPool, err := loadCAPool(certsDir)
 	if err != nil {
 		return nil, err
 	}
 
+	getClientCert := func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		cert, err := loadIdentityCert(certsDir)
+		if err != nil {
+			return nil, err
+		}
+		return &cert, nil
+	}
+
 	if isLoopbackHost(host) {
 		return &tls.Config{
-			Certificates:          []tls.Certificate{cert},
+			GetClientCertificate:  getClientCert,
 			InsecureSkipVerify:    true, // hostname check disabled; chain is still verified below
 			VerifyPeerCertificate: verifyChainOnly(caPool),
 		}, nil
 	}
 
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caPool,
-		ServerName:   host,
+		GetClientCertificate: getClientCert,
+		RootCAs:              caPool,
+		ServerName:           host,
 	}, nil
 }
 
