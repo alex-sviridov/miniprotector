@@ -21,6 +21,7 @@ RWFS_CMD := cmd/rwfs
 CERTREQUEST_CMD := cmd/certrequest
 CERTCLIENT_CMD := cmd/certclient
 CATALOGSYNC_CMD := cmd/catalogsync
+CATALOG_CMD := cmd/catalog
 
 # Colors for output
 RED := \033[0;31m
@@ -29,7 +30,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync test test-e2e lint
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog test test-e2e lint
 
 # Default target
 all: check-deps proto build
@@ -98,6 +99,12 @@ catalogsync: $(BINARY_DIR) ## Build catalogsync binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/catalogsync ./$(CATALOGSYNC_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/catalogsync"
+
+catalog: $(BINARY_DIR) ## Build catalog binary
+	@printf "$(BLUE)Building catalog...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/catalog ./$(CATALOG_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/catalog"
 
 test: ## Run unit and integration tests
 	cd src && go test ./...
