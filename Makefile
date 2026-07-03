@@ -22,6 +22,7 @@ CERTREQUEST_CMD := cmd/certrequest
 CERTCLIENT_CMD := cmd/certclient
 CATALOGSYNC_CMD := cmd/catalogsync
 CATALOG_CMD := cmd/catalog
+AGENT_CMD := cmd/agent
 
 # Deployment
 CONTROL_PLANE_DIR := deploy/control-plane
@@ -33,7 +34,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog test test-e2e lint control-plane-up
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog agent test test-e2e lint control-plane-up
 
 # Default target
 all: check-deps proto build
@@ -108,6 +109,12 @@ catalog: $(BINARY_DIR) ## Build catalog binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/catalog ./$(CATALOG_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/catalog"
+
+agent: $(BINARY_DIR) ## Build agent binary
+	@printf "$(BLUE)Building agent...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/agent ./$(AGENT_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/agent"
 
 test: ## Run unit and integration tests
 	cd src && go test ./...
