@@ -34,8 +34,9 @@ import (
 // call to a smallstep library function can sail through `go test ./...`
 // undetected.
 //
-// It reuses the exact ca/docker-compose.yml + ca/entrypoint.sh from the repo,
-// copied into a t.TempDir() so it never touches a developer's real ca/data/
+// It reuses the exact deploy/control-plane/docker-compose.yml (step-ca service
+// only) + deploy/control-plane/ca/entrypoint.sh from the repo, copied into a
+// t.TempDir() so it never touches a developer's real deploy/control-plane/ca/data/
 // state. The copied compose file's host port is rewritten from the fixed
 // "9000:9000" to "0:9000" (bind to an OS-assigned ephemeral port) before it's
 // written to the temp dir, and the actual assigned port is discovered after
@@ -52,18 +53,19 @@ func TestE2E_TokenMintAndRedeem(t *testing.T) {
 	repoRoot := repoRootDir(t)
 	tempDir := t.TempDir()
 
-	copyComposeFileWithEphemeralPort(t, filepath.Join(repoRoot, "ca", "docker-compose.yml"), filepath.Join(tempDir, "docker-compose.yml"))
-	copyFile(t, filepath.Join(repoRoot, "ca", "entrypoint.sh"), filepath.Join(tempDir, "entrypoint.sh"))
-	require.NoError(t, os.Chmod(filepath.Join(tempDir, "entrypoint.sh"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, "ca"), 0o755))
+	copyComposeFileWithEphemeralPort(t, filepath.Join(repoRoot, "deploy", "control-plane", "docker-compose.yml"), filepath.Join(tempDir, "docker-compose.yml"))
+	copyFile(t, filepath.Join(repoRoot, "deploy", "control-plane", "ca", "entrypoint.sh"), filepath.Join(tempDir, "ca", "entrypoint.sh"))
+	require.NoError(t, os.Chmod(filepath.Join(tempDir, "ca", "entrypoint.sh"), 0o755))
 
 	// Throwaway provisioner password, unique per run.
-	secretsDir := filepath.Join(tempDir, "data", "secrets")
+	secretsDir := filepath.Join(tempDir, "ca", "data", "secrets")
 	require.NoError(t, os.MkdirAll(secretsDir, 0o700))
 	password := randomPassword(t)
 	require.NoError(t, os.WriteFile(filepath.Join(secretsDir, "password"), []byte(password), 0o600))
 
 	// A unique project name isolates the container/network names from any
-	// other compose project (including a real ca/ stack) that might be
+	// other compose project (including a real deploy/control-plane stack) that might be
 	// running concurrently on this host.
 	projectName := fmt.Sprintf("certrequest-e2e-%d", time.Now().UnixNano())
 	compose := func(args ...string) *exec.Cmd {
@@ -79,13 +81,13 @@ func TestE2E_TokenMintAndRedeem(t *testing.T) {
 		}
 	})
 
-	upCmd := compose("up", "-d")
+	upCmd := compose("up", "-d", "step-ca")
 	out, err := upCmd.CombinedOutput()
 	require.NoError(t, err, "docker compose up failed: %s", out)
 
 	hostPort := discoverHostPort(t, compose)
 	caURL := fmt.Sprintf("https://localhost:%s", hostPort)
-	rootPath := filepath.Join(tempDir, "data", "certs", "root_ca.crt")
+	rootPath := filepath.Join(tempDir, "ca", "data", "certs", "root_ca.crt")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

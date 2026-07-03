@@ -32,10 +32,10 @@ func parseArguments() (*Arguments, error) {
 	}
 	cmd.Flags().StringArrayVar(&args.SANs, "san", nil, "Additional SAN alias for the token (repeatable)")
 	cmd.Flags().StringVar(&caURLFlag, "ca-url", "", "CA URL, e.g. https://localhost:9000 (default: read from --defaults-file)")
-	cmd.Flags().StringVar(&defaultsFile, "defaults-file", "ca/data/config/defaults.json", "Path to step-ca's defaults.json, used to default --ca-url")
-	cmd.Flags().StringVar(&args.RootFile, "root", "ca/data/certs/root_ca.crt", "Path to the CA's root certificate")
+	cmd.Flags().StringVar(&defaultsFile, "defaults-file", "deploy/control-plane/ca/data/config/defaults.json", "Path to step-ca's defaults.json, used to default --ca-url")
+	cmd.Flags().StringVar(&args.RootFile, "root", "deploy/control-plane/ca/data/certs/root_ca.crt", "Path to the CA's root certificate")
 	cmd.Flags().StringVar(&args.Provisioner, "provisioner", "admin@backup.internal", "Provisioner name")
-	cmd.Flags().StringVar(&args.PasswordFile, "password-file", "ca/data/secrets/password", "Path to the provisioner password file")
+	cmd.Flags().StringVar(&args.PasswordFile, "password-file", "deploy/control-plane/ca/data/secrets/password", "Path to the provisioner password file")
 
 	if err := cmd.Execute(); err != nil {
 		return nil, err
