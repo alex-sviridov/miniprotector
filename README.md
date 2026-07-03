@@ -58,6 +58,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[certrequest](docs/components/certrequest.md)** - Mints one-time enrollment tokens for nodes (control-plane, run on/near the CA)
 - **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS identity from the CA
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
+- **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
 
 ## Documentation
 
@@ -65,6 +66,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
 - **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol
+- **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol
 - **[Components](docs/components/)** - Individual component documentation
 
 ## Building

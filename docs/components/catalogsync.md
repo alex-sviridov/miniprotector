@@ -1,9 +1,12 @@
 # catalogsync
 
 Replicates a `bwfs` node's `file_versions` records to a central backup catalog, asynchronously
-and independently of the `bwfs` server's own availability. The catalog service itself does not
-exist yet — this component ships against an abstract `Sender` interface, currently implemented by
-a `LoggingSender` that logs each batch to prove the pipeline end-to-end.
+and independently of the `bwfs` server's own availability. `catalogsync` selects its `Sender` at startup based on configuration: if `catalog_host` is set in
+`local.conf`, it uses `GrpcSender`, a real mTLS gRPC client against the [catalog](./catalog.md)
+service. If `catalog_host` is unset, or the catalog is unreachable at startup, it falls back to
+`LoggingSender`, which logs each batch and always succeeds — this keeps `catalogsync` runnable
+without a `catalog` deployment, and never blocks it from starting just because the catalog is
+temporarily down.
 
 ## Usage
 
@@ -58,6 +61,9 @@ catalog's responsibility, not `catalogsync`'s.
 - `CatalogSyncBatchSize` — max rows per poll/send batch *(default: 500)*
 - `CatalogSyncPollIntervalSec` — idle poll cadence in seconds *(default: 5)*
 - `CatalogSyncMaxBackoffSec` — cap for retry backoff in seconds when a send fails *(default: 60)*
+- `catalog_host` — hostname of the `catalog` service to send batches to; unset means `catalogsync`
+  falls back to `LoggingSender`
+- `catalog_port` — port to dial on `catalog_host` *(default: 15723)*
 
 ## Building
 
@@ -68,4 +74,6 @@ make catalogsync
 ## See Also
 
 - [bwfs](./bwfs.md) — the component whose `file_versions` table this replicates
+- [catalog](./catalog.md) — the service `catalogsync` replicates to
+- [Catalog Sync Protocol](../protocols/catalog-sync.md)
 - [Architecture](../ARCHITECTURE.md) — system overview

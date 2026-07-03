@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-03 — Backup catalog service (catalog)
+
+Added `catalog`, the receiving end of `catalogsync`'s replication pipeline: a standalone gRPC
+service that persists replicated `bwfs` file-version batches to its own SQLite database, keyed by
+`(source_node, job_id, object_id)` — `source_node` comes from the CA-verified mTLS client
+certificate, never the payload, so a single catalog can safely receive from a fleet of `bwfs`
+nodes. `catalogsync` gained a real `GrpcSender` (config-gated by `catalog_host`/`catalog_port`),
+replacing the `LoggingSender` stand-in whenever a catalog is configured and reachable. `catalog`
+ships its own `docker compose` deployment (`catalog/`), using the same `certclient`-bootstrapped
+mTLS identity every other node uses. Also fixed a pre-existing gap in `common/mtls`: server and
+client identity certificates are now re-read from disk on every new connection instead of once at
+startup, so a certificate renewed by a scheduled `certclient` run is picked up without restarting
+the long-running process — this benefits `bwfs`/`brfs`/`rwfs` too, not just this new pair.
+
 ## 2026-07-02 — Async catalog replication (catalogsync)
 
 Added `catalogsync`, a new standalone component that tails a `bwfs` node's `file_versions` table

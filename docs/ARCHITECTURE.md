@@ -9,15 +9,21 @@ A backup system with intelligent deduplication and integrity verification.
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
 | catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented (catalog service itself not yet built) |
+| catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
 
 ## Control Plane vs. Agents
 
 |  | Control plane | Agents |
 |---|---|---|
-| Components | `ca/` (step-ca container), `certrequest` | `bwfs`, `brfs`, `rwfs`, `certclient` |
-| Runs where | On/near the CA host | On every backup node |
+| Components | `ca/` (step-ca container), `certrequest`, `catalog` | `bwfs`, `brfs`, `rwfs`, `certclient` |
+| Runs where | On/near the CA host (`certrequest`); `catalog` runs centrally, wherever the catalog deployment lives — see below | Dial `ca_host:9000` outbound only, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; has no role in backup traffic | Dial `ca_host:9000` outbound only, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Docker/e2e images | `certrequest` never ships onto an agent host or into an agent image | Agent images bundle `certclient` only |
+
+`catalog` is control plane by role (a fleet-wide central service, not colocated with any single
+backup node) but bootstraps its own mTLS identity the same way agents do, via `certclient` — it
+doesn't fit either row cleanly. It listens on its own port (`catalog_port`, default 15723) for
+`catalogsync` connections from every `bwfs` node's agent host.
 
 A node's mTLS identity (`ca.crt`, `client.crt`, `client.key`, consumed by `common/mtls`) is
 obtained via `certclient`, using a token minted by `certrequest`. See
@@ -53,7 +59,7 @@ graph TB
         catalogsync[catalogsync<br/>Catalog Replicator]
     end
 
-    subgraph "Catalog (planned)"
+    subgraph "Catalog"
         Catalog[(Backup Catalog)]
     end
 
@@ -74,7 +80,7 @@ graph TB
 
     %% Catalog Replication Flow (bwfs's own operation is unaffected either way)
     DB -->|reads file_versions,<br/>read-only| catalogsync
-    catalogsync -.->|replicate batches<br/>planned| Catalog
+    catalogsync -->|SyncFileVersions<br/>gRPC, mTLS| Catalog
 
     classDef filesystem fill:#e1f5fe
     classDef component fill:#f3e5f5
@@ -82,8 +88,7 @@ graph TB
     classDef database fill:#fff3e0
 
     class SrcFS,BackupFS,DstFS filesystem
-    class brfs,bwfs,catalogsync component
+    class brfs,bwfs,catalogsync,Catalog component
     class rwfs component
     class DB database
-    class Catalog planned
 ```
