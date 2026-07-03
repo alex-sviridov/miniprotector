@@ -2,7 +2,7 @@
 
 Node-level agent that reconciles local state against a small set of policies compiled into the
 binary. **v1** has exactly one embedded policy — renew this node's mTLS identity via `certclient`
-on a fixed interval — replacing the bare cron entry used previously. `agent` does not fetch
+on a fixed interval — intended to replace the bare cron entry used previously. `agent` does not fetch
 policies over the network yet; see the
 [design doc](../superpowers/specs/2026-07-03-agent-v1-cert-refresh-design.md) for how this grows
 into policy-server-fetched and queue-dispatched work in later iterations.

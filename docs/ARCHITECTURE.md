@@ -30,8 +30,8 @@ A node's mTLS identity (`ca.crt`, `client.crt`, `client.key`, consumed by `commo
 obtained via `certclient`, using a token minted by `certrequest`. See
 [certrequest](components/certrequest.md) and [certclient](components/certclient.md).
 
-`agent` is a node-level process that wraps `certclient` — instead of a bare cron entry invoking
-`certclient` directly, `agent serve` runs a reconcile loop that periodically execs `certclient`
+`agent` is a node-level process that wraps `certclient` — intended to replace the bare cron entry
+that invokes `certclient` directly: `agent serve` runs a reconcile loop that periodically execs `certclient`
 and tracks the outcome in a local cache (`agent list-policies` inspects it). It has no network
 role of its own in v1; all network behavior is `certclient`'s, unchanged.
 

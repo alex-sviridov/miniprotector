@@ -4,7 +4,7 @@ All notable changes to this project are documented here, most recent first.
 
 ## 2026-07-03 — Node agent v1 (embedded cert-refresh reconciliation)
 
-Added `agent`, a node-level process that replaces the bare cron entry for `certclient` with a
+Added `agent`, a node-level process intended to replace the bare cron entry for `certclient` with a
 small reconcile loop: on a configurable interval it checks whether the (currently single,
 compiled-in) `cert-refresh` policy is due, execs `certclient` if so, and records the outcome to a
 local JSON cache — failures back off with jittered delays instead of retrying every tick. `agent
