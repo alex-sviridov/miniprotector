@@ -196,3 +196,60 @@ func TestParseConfig_CatalogPortParsed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 9443, conf.CatalogPort)
 }
+
+func TestParseConfig_VarPathOptional(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "", conf.VarPath)
+}
+
+func TestParseConfig_VarPathParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nvar_path=/var/lib/miniprotector\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/var/lib/miniprotector", conf.VarPath)
+}
+
+func TestParseConfig_ReconcileIntervalSecDefaultsTo30(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 30, conf.ReconcileIntervalSec)
+}
+
+func TestParseConfig_ReconcileIntervalSecParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nReconcileIntervalSec=15\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 15, conf.ReconcileIntervalSec)
+}
+
+func TestResolveVarDir_ReturnsConfiguredPathWhenSet(t *testing.T) {
+	got, err := ResolveVarDir(&Config{VarPath: "/var/lib/miniprotector"})
+	require.NoError(t, err)
+	assert.Equal(t, "/var/lib/miniprotector", got)
+}
+
+func TestResolveVarDir_DefaultsToExecutableDir(t *testing.T) {
+	got, err := ResolveVarDir(&Config{})
+	require.NoError(t, err)
+
+	exePath, err := os.Executable()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Dir(exePath), got)
+}

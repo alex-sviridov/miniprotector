@@ -51,6 +51,23 @@ func ResolveCertsDir() (string, error) {
 	return filepath.Join(baseDir, "certs"), nil
 }
 
+// ResolveVarDir determines the directory for variable/runtime data (cache
+// files, state files). Returns cfg.VarPath if set, otherwise the directory
+// containing the running binary — the same fallback ResolveBaseDir uses,
+// but resolved independently of MP_CONFIG_PATH, since variable data and
+// config-file location are orthogonal concerns that happen to share a
+// default.
+func ResolveVarDir(cfg *Config) (string, error) {
+	if cfg.VarPath != "" {
+		return cfg.VarPath, nil
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine executable path: %w", err)
+	}
+	return filepath.Dir(exePath), nil
+}
+
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {
 	DefaultPort                int
@@ -67,6 +84,8 @@ type Config struct {
 	CatalogSyncMaxBackoffSec   int
 	CatalogHost                string
 	CatalogPort                int
+	VarPath                    string
+	ReconcileIntervalSec       int
 }
 
 type contextKey string
@@ -96,6 +115,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncPollIntervalSec: 5,
 		CatalogSyncMaxBackoffSec:   60,
 		CatalogPort:                15723,
+		ReconcileIntervalSec:       30,
 	}
 	foundFields := make(map[string]bool)
 
@@ -150,6 +170,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CatalogPort = port
 			foundFields["catalog_port"] = true
+		case "var_path":
+			config.VarPath = value
+			foundFields["var_path"] = true
+		case "ReconcileIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid ReconcileIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.ReconcileIntervalSec = number
+			foundFields["ReconcileIntervalSec"] = true
 		case "ClientHashQueryBatchSize":
 			number, err := strconv.Atoi(value)
 			if err != nil {
