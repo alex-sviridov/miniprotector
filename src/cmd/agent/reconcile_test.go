@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -63,8 +65,8 @@ func TestIsDue_HealthyPolicyDueAfterInterval(t *testing.T) {
 func TestIsDue_FailingPolicyIgnoresIntervalUsesNextRetryAt(t *testing.T) {
 	p := Policy{Interval: 5 * time.Minute}
 	now := time.Now()
-	last := now.Add(-1 * time.Minute)      // within Interval — would be "not due" if healthy
-	retryAt := now.Add(-1 * time.Second)   // but the retry threshold already passed
+	last := now.Add(-1 * time.Minute)    // within Interval — would be "not due" if healthy
+	retryAt := now.Add(-1 * time.Second) // but the retry threshold already passed
 	state := PolicyState{LastSuccessAt: &last, ConsecutiveFailures: 1, NextRetryAt: &retryAt}
 	assert.True(t, isDue(p, state, now))
 }
@@ -153,4 +155,36 @@ func TestRun_FailedExecutionRecordsFailureAndRetriesAfterBackoff(t *testing.T) {
 	state := cache["test-policy"]
 	assert.Equal(t, 0, state.ConsecutiveFailures, "resets to 0 after the eventual success")
 	require.NotNil(t, state.LastSuccessAt)
+}
+
+// TestRealExec_ResolvesBinaryColocatedWithOwnExecutable proves realExec
+// finds a sibling binary placed next to the test executable's own
+// directory, even though its bare name is not on $PATH. This mirrors the
+// repo's actual deployment layout (see deploy/control-plane/catalog), where
+// certclient sits alongside its caller rather than being installed onto
+// $PATH.
+func TestRealExec_ResolvesBinaryColocatedWithOwnExecutable(t *testing.T) {
+	exePath, err := os.Executable()
+	require.NoError(t, err)
+
+	// Name is unique per test run (via pid) so it can never collide with a
+	// real binary that happens to be on $PATH.
+	name := fmt.Sprintf("fake-colocated-binary-%d", os.Getpid())
+	scriptPath := filepath.Join(filepath.Dir(exePath), name)
+
+	script := "#!/bin/sh\nexit 0\n"
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
+	defer os.Remove(scriptPath)
+
+	err = realExec(name, nil)
+	assert.NoError(t, err)
+}
+
+// TestRealExec_FallsBackToPathWhenNotColocated proves the pre-existing
+// $PATH-based resolution still works for a bare name that isn't colocated
+// next to the test binary's own directory — a regression guard for local
+// and dev usage where certclient genuinely is on $PATH.
+func TestRealExec_FallsBackToPathWhenNotColocated(t *testing.T) {
+	err := realExec("true", nil)
+	assert.NoError(t, err)
 }

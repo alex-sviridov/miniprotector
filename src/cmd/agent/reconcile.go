@@ -4,7 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"math/rand/v2"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -19,8 +22,30 @@ var (
 // substitute a fake so they don't actually invoke certclient.
 type runner func(binary string, args []string) error
 
+// realExec runs binary with args. If binary is a bare name (no path
+// separator), it is first resolved relative to this agent's own executable
+// directory — the same "colocated sibling binary" layout used elsewhere in
+// this repo (see deploy/control-plane/catalog's entrypoint.sh, which execs
+// ./certclient from the same directory as its own binary, and
+// common/config.ResolveBaseDir/ResolveVarDir, which resolve relative to
+// os.Executable() the same way). This matters because Go's os/exec only
+// resolves a bare name via $PATH, never via the working or executable
+// directory, and nothing in that deployment layout puts certclient on
+// $PATH. If no colocated file is found, binary is passed through unchanged
+// so exec.Command falls back to its normal $PATH lookup — this keeps
+// local/dev usage, where certclient genuinely is on $PATH, working exactly
+// as before.
 func realExec(binary string, args []string) error {
-	return exec.Command(binary, args...).Run()
+	path := binary
+	if !strings.Contains(binary, string(filepath.Separator)) {
+		if exePath, err := os.Executable(); err == nil {
+			candidate := filepath.Join(filepath.Dir(exePath), binary)
+			if _, err := os.Stat(candidate); err == nil {
+				path = candidate
+			}
+		}
+	}
+	return exec.Command(path, args...).Run()
 }
 
 // isDue reports whether p should run now, given its last recorded state.
