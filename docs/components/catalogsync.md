@@ -42,7 +42,7 @@ hands each batch to a `Sender`:
 
 The cursor is a single integer stored in `<storage_path>/catalogsync.cursor`, written atomically
 (temp file + rename) after each confirmed send. If it's missing or corrupt, `catalogsync` starts
-from the beginning (`seq=0`) — safe, because the catalog is expected to treat `(job_id, object_id)`
+from the beginning (`seq=0`) — safe, because the catalog is expected to treat `(source_node, job_id, object_id)`
 as an idempotency key for the resulting at-least-once delivery.
 
 `file_versions.seq` is a genuine `INTEGER PRIMARY KEY AUTOINCREMENT` column, distinct from the

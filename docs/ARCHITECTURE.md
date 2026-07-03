@@ -8,7 +8,7 @@ A backup system with intelligent deduplication and integrity verification.
 | brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
-| catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented (catalog service itself not yet built) |
+| catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
 | catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
 
 ## Control Plane vs. Agents
