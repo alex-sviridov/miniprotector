@@ -44,7 +44,8 @@ incoming connection — no restart required.
 
 ## Deployment
 
-Ships as its own `docker compose` stack — see [`catalog/README.md`](../../catalog/README.md).
+Ships as part of the combined control-plane `docker compose` stack — see
+[`deploy/control-plane/README.md`](../../deploy/control-plane/README.md).
 
 ## Building
 

@@ -103,7 +103,7 @@ All gRPC connections (`BackupService`, `ListService`, `RestoreService`) require 
 (`MP_CONFIG_PATH` defaults to the binary's own directory). Any client presenting a cert signed
 by that CA is trusted — there's no additional per-client allowlist. Missing or invalid certs
 are a fatal startup error; there is no plaintext fallback. Cert issuance itself is out of scope
-for `bwfs` — see the `ca/` step-ca setup for how certs are provisioned today.
+for `bwfs` — see the [control plane setup](../../deploy/control-plane/README.md) for how certs are provisioned today.
 
 ## Building
 

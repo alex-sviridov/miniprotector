@@ -21,10 +21,10 @@ Prints the token to stdout. Relay it to the target node out-of-band (SSH, etc.) 
 |------|---------|-------------|
 | `--san` | | Additional SAN alias for the token (repeatable) |
 | `--ca-url` | read from `--defaults-file` | CA URL, e.g. `https://localhost:9000` |
-| `--defaults-file` | `ca/data/config/defaults.json` | Path to step-ca's `defaults.json`, used to default `--ca-url` when it isn't given explicitly |
-| `--root` | `ca/data/certs/root_ca.crt` | Path to the CA's root certificate, used to trust the connection to the CA |
+| `--defaults-file` | `deploy/control-plane/ca/data/config/defaults.json` | Path to step-ca's `defaults.json`, used to default `--ca-url` when it isn't given explicitly |
+| `--root` | `deploy/control-plane/ca/data/certs/root_ca.crt` | Path to the CA's root certificate, used to trust the connection to the CA |
 | `--provisioner` | `admin@backup.internal` | Provisioner name |
-| `--password-file` | `ca/data/secrets/password` | Path to the provisioner password file |
+| `--password-file` | `deploy/control-plane/ca/data/secrets/password` | Path to the provisioner password file |
 
 `hostname` is a required positional argument — the subject name embedded in the minted token. It
 is automatically included as a SAN alongside any `--san` values.
@@ -50,5 +50,5 @@ make build
 ## See Also
 
 - [certclient](./certclient.md) — redeems the token this mints
-- [ca/ step-ca setup](../../ca/README.md)
+- [control plane setup](../../deploy/control-plane/README.md)
 - [Architecture](../ARCHITECTURE.md)
