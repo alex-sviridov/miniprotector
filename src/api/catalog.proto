@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package catalogservice;
+
+option go_package = "./proto";
+
+service CatalogService {
+  rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
+}
+
+message FileVersionEntry {
+  string job_id     = 1;
+  string object_id  = 2;
+  bytes  metadata   = 3;
+  int64  ctime      = 4;
+  int64  source_seq = 5; // bwfs's local file_versions.seq — informational only
+  int64  created_at = 6; // unix seconds; bwfs's original recording time
+}
+
+message SyncRequest {
+  repeated FileVersionEntry entries = 1;
+}
+
+message SyncResponse {} // empty ack — GrpcSender only checks error/nil
