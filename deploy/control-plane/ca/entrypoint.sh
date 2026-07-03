@@ -3,7 +3,7 @@ set -e
 if [ ! -f /home/step/config/ca.json ]; then
   step ca init --deployment-type=standalone \
     --name="Enterprise Backup Cluster CA" \
-    --dns="ca.backup.internal,localhost" \
+    --dns="ca.backup.internal,localhost,step-ca" \
     --address=":9000" \
     --provisioner="admin@backup.internal" \
     --password-file=/home/step/secrets/password

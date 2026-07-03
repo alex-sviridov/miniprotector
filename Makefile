@@ -23,6 +23,9 @@ CERTCLIENT_CMD := cmd/certclient
 CATALOGSYNC_CMD := cmd/catalogsync
 CATALOG_CMD := cmd/catalog
 
+# Deployment
+CONTROL_PLANE_DIR := deploy/control-plane
+
 # Colors for output
 RED := \033[0;31m
 GREEN := \033[0;32m
@@ -30,7 +33,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog test test-e2e lint
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog test test-e2e lint control-plane-up
 
 # Default target
 all: check-deps proto build
@@ -117,3 +120,12 @@ lint: ## Run go vet
 
 clean: ## Remove built binaries
 	rm -rf $(BINARY_DIR)
+
+control-plane-up: ## Initialize (if needed) and start the control-plane stack (ca + catalog)
+	@if [ ! -f $(CONTROL_PLANE_DIR)/ca/data/secrets/password ]; then \
+		echo -e "$(BLUE)Generating CA provisioner password...$(NC)"; \
+		mkdir -p $(CONTROL_PLANE_DIR)/ca/data/secrets; \
+		openssl rand -base64 32 > $(CONTROL_PLANE_DIR)/ca/data/secrets/password; \
+	fi
+	@cd $(CONTROL_PLANE_DIR) && docker compose up -d
+	@echo -e "$(GREEN)Control plane up.$(NC) ca: https://localhost:9000  catalog: localhost:15723"

@@ -20,15 +20,26 @@ This generates the CA's provisioner password (`ca/data/secrets/password`) if it 
 exist, then runs `docker compose up -d` for both services.
 
 `catalog` itself needs an mTLS identity before it can start successfully — the same enrollment
-flow any other node uses. Mint a token for it once `step-ca` is up:
+flow any other node uses, with one twist: unlike a bare-metal agent node, `catalog` redeems its
+token from *inside its own container*, so the token must be minted with `--ca-url` set to an
+address reachable from there — the Compose service name `step-ca`, not `localhost` (which inside
+`catalog`'s container means its own loopback, not the CA). Mint it from a throwaway container on
+the same Compose network instead of the host-installed `certrequest` binary:
 
 ```bash
-certrequest catalog --ca-url https://localhost:9000
+cd deploy/control-plane
+docker run --rm --network control-plane_default \
+  -v "$(pwd)/../..:/repo" -w /repo/src \
+  golang:1.26 \
+  go run ./cmd/certrequest catalog --ca-url https://step-ca:9000 \
+    --defaults-file /repo/deploy/control-plane/ca/data/config/defaults.json \
+    --root /repo/deploy/control-plane/ca/data/certs/root_ca.crt \
+    --password-file /repo/deploy/control-plane/ca/data/secrets/password
 ```
 
-(No `--san` needed here: this quickstart runs `catalog` on the same host, so `catalog_host` will
-be `localhost`, and hostname/SAN verification is skipped for loopback connections — see
-"Enrolling and connecting an agent" below for the non-`localhost` case.)
+(No `--san` needed here: this token's SAN list only needs to satisfy `catalog`'s *own* enrollment
+against the CA. The SAN that matters for other nodes verifying `catalog`'s identity later is a
+separate concern — see "Enrolling and connecting an agent" below.)
 
 Then bring `catalog` up with the token:
 
@@ -87,10 +98,12 @@ catalog_host=<this-host>:15723
 
 (`catalog_host` only matters for nodes running `catalogsync`.)
 
-**Important:** unlike the `localhost` quickstart above, a non-`localhost` `catalog_host` is
-subject to standard TLS hostname verification — the SAN minted for `catalog`'s own token must
-**exactly match** the `catalog_host` string every connecting node uses. For a real (non-local)
-deployment, mint catalog's token with that hostname instead of `localhost`:
+**Important:** a `catalogsync` process on this same host can simply use `catalog_host=localhost`
+— hostname/SAN verification is skipped for loopback connections regardless of what SAN `catalog`
+enrolled with, which is why the enrollment step above didn't need a `--san`. Any *other* value of
+`catalog_host` is subject to standard TLS hostname verification, though — the SAN minted for
+`catalog`'s own token must **exactly match** the `catalog_host` string every such connecting node
+uses. For a real (non-local) deployment, mint catalog's token with that hostname instead:
 
 ```bash
 certrequest catalog-01 --san catalog.backup.internal --ca-url https://localhost:9000
