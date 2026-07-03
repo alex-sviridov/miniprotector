@@ -53,7 +53,15 @@ func main() {
 	}
 	defer replicaReader.Close()
 
-	sender := NewLoggingSender(logger)
+	certsDir, err := config.ResolveCertsDir()
+	if err != nil {
+		logger.Error("certs directory resolution failed", "error", err)
+		os.Exit(1)
+	}
+	sender := selectSender(conf, logger, certsDir)
+	if closer, ok := sender.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
 	cursorFile := filepath.Join(arguments.StoragePath, "catalogsync.cursor")
 
 	cfg := syncConfig{
