@@ -41,14 +41,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Var directory resolution failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := os.MkdirAll(varDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create var directory %s: %v\n", varDir, err)
-		os.Exit(1)
-	}
 	cachePath := filepath.Join(varDir, "agent-state.json")
 
 	switch arguments.Action {
 	case "serve":
+		if err := os.MkdirAll(varDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create var directory %s: %v\n", varDir, err)
+			os.Exit(1)
+		}
+
 		ctx := context.WithValue(context.Background(), "appName", appName)
 		ctx = context.WithValue(ctx, config.ContextKey, conf)
 		ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
