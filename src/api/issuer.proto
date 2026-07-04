@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package issuerservice;
+
+option go_package = "./proto";
+
+// IssuerService is the sole RPC surface a bootstrapped node calls to keep
+// its operating certificate fresh. The caller's hostname is never a field
+// on this message -- it is always derived from the verified mTLS peer
+// identity, exactly like every other authenticated RPC in this project.
+service IssuerService {
+  rpc RequestOperatingCert(RequestOperatingCertRequest) returns (RequestOperatingCertResponse);
+}
+
+message RequestOperatingCertRequest {
+  // DER-encoded PKCS#10 certificate signing request. The caller's private
+  // key never leaves the caller -- only the CSR crosses the wire.
+  bytes csr_der = 1;
+}
+
+message RequestOperatingCertResponse {
+  // Full certificate chain (leaf + any intermediates), PEM-encoded,
+  // concatenated in order -- ready to write directly to client.crt.
+  bytes cert_chain_pem = 1;
+}
