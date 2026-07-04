@@ -87,6 +87,21 @@ func (s *Store) SetRevoked(hostname string, revoked bool, at time.Time) error {
 	return nil
 }
 
+// UpdateLastSeen records the most recent time hostname successfully
+// obtained an operating certificate. Best-effort telemetry -- callers
+// should log rather than fail a request on this returning an error.
+// Returns ErrClientNotFound if hostname isn't tracked.
+func (s *Store) UpdateLastSeen(hostname string, at time.Time) error {
+	res := s.db.Model(&ClientRecord{}).Where("hostname = ?", hostname).Update("last_seen_at", at)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrClientNotFound
+	}
+	return nil
+}
+
 // KV returns all rows of the given kind for hostname, ordered by key.
 func (s *Store) KV(hostname string, kind KVKind) ([]ClientKVRecord, error) {
 	var recs []ClientKVRecord
