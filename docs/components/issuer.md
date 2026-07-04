@@ -41,6 +41,11 @@ requires a custom X.509 template (`options.x509.templateFile` in the CA's `ca.js
 not something this binary's code prescribes. This phase proves the data reaches `TemplateData`
 correctly (see the e2e test); it does not ship a specific template.
 
+## Configuration Keys
+
+- `issuer_port` — port `issuer` listens on *(default: 9200)*
+- `OperatingCertTTLSec` — requested validity in seconds for operating certificates *(default: 3600)*
+
 ## Building
 
 ```bash
@@ -50,6 +55,6 @@ make issuer
 ## See Also
 
 - [client-manager](./client-manager.md) — owns the database `issuer` reads
-- [Enrollment Broker Protocol](../protocols/issuer.md)
+- [Issuer Protocol](../protocols/issuer.md)
 - [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)
 - [Architecture](../ARCHITECTURE.md)
