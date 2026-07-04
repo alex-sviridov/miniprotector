@@ -12,6 +12,7 @@ A backup system with intelligent deduplication and integrity verification.
 | catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
 | agent | Node Agent — reconciles local state against embedded policies | Implemented (v1: cert renewal only) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement — the phase-2 listening service — not yet built) |
+| issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration and a CA-side custom template are separate, later work) |
 
 ## Control Plane vs. Agents
 
