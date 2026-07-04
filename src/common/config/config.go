@@ -86,6 +86,9 @@ type Config struct {
 	CatalogPort                int
 	VarPath                    string
 	ReconcileIntervalSec       int
+	IssuerHost                 string
+	IssuerPort                 int
+	OperatingCertTTLSec        int
 }
 
 type contextKey string
@@ -116,6 +119,8 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncMaxBackoffSec:   60,
 		CatalogPort:                15723,
 		ReconcileIntervalSec:       30,
+		IssuerPort:                 9200,
+		OperatingCertTTLSec:        3600,
 	}
 	foundFields := make(map[string]bool)
 
@@ -233,6 +238,23 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CatalogSyncMaxBackoffSec = number
 			foundFields["CatalogSyncMaxBackoffSec"] = true
+		case "issuer_host":
+			config.IssuerHost = value
+			foundFields["issuer_host"] = true
+		case "issuer_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid issuer_port value at line %d: %s", lineNum, value)
+			}
+			config.IssuerPort = port
+			foundFields["issuer_port"] = true
+		case "OperatingCertTTLSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid OperatingCertTTLSec value at line %d: %s", lineNum, value)
+			}
+			config.OperatingCertTTLSec = number
+			foundFields["OperatingCertTTLSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}
