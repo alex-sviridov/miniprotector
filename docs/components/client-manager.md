@@ -52,8 +52,12 @@ network interface at all.
 - `attribute`/`san` values are stored only; a client's next `re-enroll` is currently the only way
   to mint a token reflecting a client's current attributes/SANs. Automatic refresh on an ordinary
   credential renewal is what the phase-2 listening service (not yet built) provides.
-- `list`'s `LAST_SEEN` column always reads `unknown` — `client-manager` has no visibility into
-  renewals, which happen directly between `certclient` and the CA.
+- `revoke` now has a real enforcement path: [`issuer`](./issuer.md), sharing this binary's
+  database, refuses to issue a fresh operating certificate to a revoked hostname. `attribute`/`san`
+  changes are read by `issuer` on the client's next operating-certificate request. (`agent`'s own
+  side of requesting that refresh is a separate, later piece of work — not yet built.)
+- `list`'s `LAST_SEEN` column now reflects real data once `issuer` has served at least one request
+  for that hostname; `never` until then.
 
 ## Configuration Keys
 
@@ -69,6 +73,7 @@ make clientmanager
 
 ## See Also
 
+- [issuer](./issuer.md) — enforces revoke/attribute, shares this binary's database
 - [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)
 - [Design: Client Manager (phase 1)](../superpowers/specs/2026-07-04-client-manager-design.md)
 - [Architecture](../ARCHITECTURE.md)
