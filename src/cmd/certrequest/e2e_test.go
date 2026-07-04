@@ -21,6 +21,8 @@ import (
 
 	"github.com/smallstep/certificates/ca"
 	"github.com/stretchr/testify/require"
+
+	"github.com/alex-sviridov/miniprotector/common/certmint"
 )
 
 // TestE2E_TokenMintAndRedeem exercises the real ca.NewProvisioner/
@@ -94,11 +96,13 @@ func TestE2E_TokenMintAndRedeem(t *testing.T) {
 	require.NoError(t, waitForCA(ctx, caURL, rootPath), "step-ca never became ready")
 
 	// --- Exercise the exact library calls certrequest's main() uses ---
-	provisioner, err := ca.NewProvisioner("admin@backup.internal", "", caURL, []byte(password), ca.WithRootFile(rootPath))
-	require.NoError(t, err, "ca.NewProvisioner")
-
-	token, err := provisioner.Token("e2e-test-host")
-	require.NoError(t, err, "Provisioner.Token")
+	token, err := certmint.Mint("e2e-test-host", nil, certmint.Options{
+		CAURL:        caURL,
+		RootFile:     rootPath,
+		Provisioner:  "admin@backup.internal",
+		PasswordFile: filepath.Join(secretsDir, "password"),
+	})
+	require.NoError(t, err, "certmint.Mint")
 	require.NotEmpty(t, token)
 
 	// --- Redeem it, mirroring certclient's bootstrap path ---

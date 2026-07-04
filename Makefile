@@ -23,6 +23,7 @@ CERTCLIENT_CMD := cmd/certclient
 CATALOGSYNC_CMD := cmd/catalogsync
 CATALOG_CMD := cmd/catalog
 AGENT_CMD := cmd/agent
+CLIENTMANAGER_CMD := cmd/clientmanager
 
 # Deployment
 CONTROL_PLANE_DIR := deploy/control-plane
@@ -34,7 +35,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog agent test test-e2e lint control-plane-up
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog agent clientmanager test test-e2e lint control-plane-up
 
 # Default target
 all: check-deps proto build
@@ -115,6 +116,12 @@ agent: $(BINARY_DIR) ## Build agent binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/agent ./$(AGENT_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/agent"
+
+clientmanager: $(BINARY_DIR) ## Build client-manager binary
+	@printf "$(BLUE)Building client-manager...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/clientmanager ./$(CLIENTMANAGER_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/clientmanager"
 
 test: ## Run unit and integration tests
 	cd src && go test ./...

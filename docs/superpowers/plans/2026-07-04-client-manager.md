@@ -969,7 +969,6 @@ git commit -m "feat(certrequest): wire serve subcommand into the CLI, add e2e co
 package clientmanager
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -1100,11 +1099,10 @@ func TestUnsetKV_RemovesRow(t *testing.T) {
 	assert.Empty(t, descs)
 }
 
-func TestClose_IsIdempotentSafeToDeferAfterExplicitCall(t *testing.T) {
+func TestNew_OpensAndClosesCleanly(t *testing.T) {
 	store, err := New(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
-	_ = errors.New // keep errors imported if no other test needs it directly
 }
 ```
 

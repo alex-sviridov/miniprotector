@@ -41,6 +41,39 @@ Anyone able to run `certrequest` with network access to the CA and the provision
 full token-minting authority for any hostname — equivalent to CA-admin privilege. This is why
 `certrequest` stays a control-plane-only tool.
 
+## `serve` mode
+
+```bash
+certrequest serve
+```
+
+Runs as a persistent process, still on/near the CA host, holding the provisioner password and
+exposing exactly one mTLS-authenticated RPC: `MintEnrollmentToken(hostname, sans)`. This is now
+the highest-value target in the system (network-reachable, CA-admin-equivalent privilege), so its
+surface stays deliberately minimal — no other RPCs, no revoke-forwarding, no query API.
+
+It trusts exactly one caller: whoever's mTLS-verified hostname matches `client_manager_host` from
+its own `local.conf`, checked via the same `mtls.PeerHostname` derivation `catalog` already uses
+for `source_node`. Any other caller is rejected outright, regardless of whether its certificate is
+otherwise valid — unlike the rest of the mesh, which trusts any CA-signed cert.
+
+[`client-manager`](./client-manager.md) is the intended (and, after initial bootstrap, only)
+caller — see its docs for the `add`/`re-enroll` flow this powers. This exists specifically so
+`client-manager` never has to hold the CA's provisioner password itself: minting stays confined to
+wherever `certrequest serve` runs, same as today's one-shot CLI.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--debug` | false | Enable debug logging |
+| `--ca-url`, `--defaults-file`, `--root`, `--provisioner`, `--password-file` | same as the one-shot CLI | Provisioner credentials used to mint tokens on callers' behalf |
+
+## Configuration Keys (serve mode)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `client_manager_host` | | The sole hostname `certrequest serve` trusts to call `MintEnrollmentToken` |
+| `certrequest_port` | 9100 | Port `certrequest serve` listens on |
+
 ## Building
 
 ```bash
@@ -50,5 +83,7 @@ make build
 ## See Also
 
 - [certclient](./certclient.md) — redeems the token this mints
+- [client-manager](./client-manager.md) — the intended caller of `serve` mode
+- [Enrollment Broker Protocol](../protocols/enrollment-broker.md)
 - [control plane setup](../../deploy/control-plane/README.md)
 - [Architecture](../ARCHITECTURE.md)

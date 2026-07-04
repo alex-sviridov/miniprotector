@@ -10,16 +10,22 @@ import (
 
 // Arguments holds parsed command line arguments.
 type Arguments struct {
+	Action string // "mint" (default, positional hostname) | "serve"
+
+	// mint fields
 	Hostname     string
 	SANs         []string
 	CAURL        string
 	RootFile     string
 	Provisioner  string
 	PasswordFile string
+
+	// serve-only fields
+	Debug bool
 }
 
 func parseArguments() (*Arguments, error) {
-	args := &Arguments{}
+	args := &Arguments{Action: "mint"}
 	var caURLFlag, defaultsFile string
 
 	cmd := &cobra.Command{
@@ -37,13 +43,42 @@ func parseArguments() (*Arguments, error) {
 	cmd.Flags().StringVar(&args.Provisioner, "provisioner", "admin@backup.internal", "Provisioner name")
 	cmd.Flags().StringVar(&args.PasswordFile, "password-file", "deploy/control-plane/ca/data/secrets/password", "Path to the provisioner password file")
 
+	serveCmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Run the enrollment broker: mints tokens on behalf of the trusted client-manager only",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, _ []string) {
+			args.Action = "serve"
+		},
+	}
+	serveCmd.Flags().StringVar(&caURLFlag, "ca-url", "", "CA URL, e.g. https://localhost:9000 (default: read from --defaults-file)")
+	serveCmd.Flags().StringVar(&defaultsFile, "defaults-file", "deploy/control-plane/ca/data/config/defaults.json", "Path to step-ca's defaults.json, used to default --ca-url")
+	serveCmd.Flags().StringVar(&args.RootFile, "root", "deploy/control-plane/ca/data/certs/root_ca.crt", "Path to the CA's root certificate")
+	serveCmd.Flags().StringVar(&args.Provisioner, "provisioner", "admin@backup.internal", "Provisioner name")
+	serveCmd.Flags().StringVar(&args.PasswordFile, "password-file", "deploy/control-plane/ca/data/secrets/password", "Path to the provisioner password file")
+	serveCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
+	cmd.AddCommand(serveCmd)
+
 	if err := cmd.Execute(); err != nil {
 		return nil, err
 	}
-	if args.Hostname == "" {
-		return nil, fmt.Errorf("hostname is required")
+
+	if args.Action == "mint" {
+		if args.Hostname == "" {
+			return nil, fmt.Errorf("hostname is required")
+		}
+		args.CAURL = caURLFlag
+		if args.CAURL == "" {
+			defaultURL, err := readDefaultCAURL(defaultsFile)
+			if err != nil {
+				return nil, fmt.Errorf("--ca-url not given and could not be read from %s: %w", defaultsFile, err)
+			}
+			args.CAURL = defaultURL
+		}
+		return args, nil
 	}
 
+	// serve
 	args.CAURL = caURLFlag
 	if args.CAURL == "" {
 		defaultURL, err := readDefaultCAURL(defaultsFile)
@@ -52,7 +87,6 @@ func parseArguments() (*Arguments, error) {
 		}
 		args.CAURL = defaultURL
 	}
-
 	return args, nil
 }
 

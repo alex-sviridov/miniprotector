@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package enrollmentbroker;
+
+option go_package = "./proto";
+
+// EnrollmentBrokerService is certrequest serve's entire RPC surface: one
+// method, mint an enrollment token, gated by an exact caller-hostname
+// match against client_manager_host -- not the mesh's usual
+// any-valid-cert-is-trusted posture, since this RPC is equivalent to
+// CA-admin privilege.
+service EnrollmentBrokerService {
+  rpc MintEnrollmentToken(MintEnrollmentTokenRequest) returns (MintEnrollmentTokenResponse);
+}
+
+message MintEnrollmentTokenRequest {
+  string hostname = 1;
+  repeated string sans = 2;
+}
+
+message MintEnrollmentTokenResponse {
+  string token = 1;
+}

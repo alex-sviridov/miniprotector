@@ -6,6 +6,8 @@
 *.dylib
 bin/
 !bin/local.conf
+/src/certrequest
+/src/clientmanager
 
 # Logs
 log/
