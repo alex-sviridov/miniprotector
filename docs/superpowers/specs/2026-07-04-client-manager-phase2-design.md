@@ -42,6 +42,8 @@ architecture this spec builds.
   operator-tunable), including against a compromised node that doesn't cooperate.
 - Attribute changes are automatically reflected in a client's certificate on its next refresh — no
   separate mechanism, no manual re-enroll required.
+- SAN aliases can be added/removed after enrollment and take effect the same way, on the client's
+  next refresh — no manual re-enroll required.
 - `last_seen` becomes real data, not a placeholder.
 - `step-ca` stays completely stock: no webhooks, no admin API, no server-side code changes — one
   plain config file addition (a certificate template).
@@ -82,6 +84,12 @@ architecture this spec builds.
      certificate. Unchanged from phase 1.
    - `attribute set/unset <hostname> k=v` — now genuinely live: read by the listening service on
      the client's very next operating-cert refresh.
+   - `san add <hostname> <alias>` / `san remove <hostname> <alias>` — manage a client's SAN list
+     after enrollment, stored on the same `ClientRecord` phase 1 already added for `re-enroll`
+     reuse. Also genuinely live: since every operating-cert refresh is a fresh `Sign` with a fresh
+     CSR, an added/removed SAN takes effect on the client's very next refresh, the same way an
+     attribute change does — no re-enroll required. (List semantics, not key/value, hence
+     `add`/`remove` rather than `set`/`unset`.)
    - `list` / `show` — local reads; `list`'s `LAST_SEEN` column now reflects real data, updated by
      the listening service on every successful issuance.
 
