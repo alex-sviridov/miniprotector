@@ -96,18 +96,30 @@ architecture this spec builds.
 2. **The listening service** (new binary, shares `storage/clientmanager` and the token-minting
    package with `client-manager` — same source tree, separate `main`) — small, narrow, always-on.
    Its entire job: accept a request from an already-bootstrapped node (mTLS-authenticated by that
-   node's bootstrap credential), read the client's `revoked` flag and current `attribute` values
-   from the same local database, and either mint a fresh short-lived **operating certificate**
-   (attributes embedded via a custom claim) or refuse. Also stamps `last_seen`. Deliberately minimal
-   surface: one request type, mostly a local, fast SQLite read plus one call into step-ca's own
-   stock `/sign` endpoint.
+   node's bootstrap credential, carrying a freshly-generated CSR), read the client's `revoked` flag
+   and current `attribute` values from the same local database, and either mint a fresh short-lived
+   **operating certificate** (attributes embedded via the sign request's `TemplateData`, see below)
+   or refuse. Also stamps `last_seen`. Deliberately minimal surface: one request type, mostly a
+   local, fast SQLite read plus one call into step-ca's own stock `/1.0/sign` endpoint.
 
 3. **`step-ca`** — untouched, stock. Gains one configuration addition: a custom X.509 template
    (`options.x509.templateFile`, a plain file in `ca.json`, no admin API) that reads
-   `.Token.<claim>` to embed the attribute data the listening service put in the token. This reuses
-   the same token-extensibility already present in the pinned library — `cli-utils/token`'s
-   `WithClaim`/`ExtraClaims`, and `authority/provisioner/jwk.go`'s `data.SetToken(v)`, which exposes
-   the full parsed token to the template — both confirmed directly against source, not assumed.
+   `.Insecure.User.<field>` to embed the attribute data the listening service supplies. Mechanism,
+   confirmed directly against source rather than assumed: `api.SignRequest` (the stock `/1.0/sign`
+   request body) has a `TemplateData json.RawMessage` field that any caller holding a valid OTT may
+   set — `SignRequest.Validate()` only checks the CSR and OTT are present, no extra permission gate
+   — which step-ca's own `authority/provisioner/options.go` (`CustomTemplateOptions`) merges via
+   `x509util.TemplateData.SetUserData` into `.Insecure.User` for the template to read. This is
+   deliberately *not* done via custom JWT claims on the token itself (an earlier draft of this
+   design assumed that path): `ca.Provisioner`'s signing key is unexported and inaccessible outside
+   the `smallstep/certificates/ca` package, so minting a token with extra claims would require
+   reimplementing provisioner-key loading ourselves — exactly the kind of hand-rolled,
+   security-critical bootstrap logic this project has consistently avoided (see the phase-1 CA
+   provisioning design's "why reuse smallstep's client library" rationale). `TemplateData` needs no
+   such workaround: the listening service builds its own `api.SignRequest{CsrPEM, OTT,
+   TemplateData}` and calls the existing, exported `(*ca.Client).Sign` directly — the *only* new use
+   of a slightly lower-level call than `certmint.Mint`'s existing `Provisioner.Token` convenience
+   wrapper, and still entirely within the library's public API.
 
 ### Two-tier node credentials, one certs directory
 
@@ -221,7 +233,8 @@ to be validated against real step-ca provisioner claim limits during planning.
 
 - Unit: listening service's revoked/attribute lookup and refusal logic (mirrors phase 1's
   `broker_server_test.go` pattern — fabricated peer identity, stubbed store).
-- Unit: token claim embedding (`token.WithClaim`) round-trips through a parsed JWT.
+- Unit: attribute-to-`TemplateData` JSON encoding round-trips (the map the listening service builds
+  decodes back to the same key/value pairs).
 - Integration: real step-ca instance, custom template configured, confirming an issued operating
   certificate actually contains the expected attribute-derived extension.
 - Integration: revoke a hostname, confirm the listening service refuses its next request; confirm
