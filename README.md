@@ -68,6 +68,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
 - **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol
 - **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol
+- **[Issuer Protocol](docs/protocols/issuer.md)** - issuer operating-certificate minting protocol
 - **[Components](docs/components/)** - Individual component documentation
 
 ## Building
