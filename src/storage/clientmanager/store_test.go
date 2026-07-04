@@ -246,3 +246,44 @@ func TestRemoveSAN_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	err := store.RemoveSAN("ghost", "a.internal")
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
+
+func TestUpdateLastSeen_SetsTimestamp(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	seenAt := time.Now().Truncate(time.Second)
+
+	require.NoError(t, store.UpdateLastSeen("node-1", seenAt))
+
+	got, err := store.GetClient("node-1")
+	require.NoError(t, err)
+	require.NotNil(t, got.LastSeenAt)
+	assert.True(t, seenAt.Equal(*got.LastSeenAt))
+}
+
+func TestUpdateLastSeen_OverwritesPreviousValue(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.UpdateLastSeen("node-1", time.Now().Add(-time.Hour)))
+
+	newSeenAt := time.Now().Truncate(time.Second)
+	require.NoError(t, store.UpdateLastSeen("node-1", newSeenAt))
+
+	got, err := store.GetClient("node-1")
+	require.NoError(t, err)
+	assert.True(t, newSeenAt.Equal(*got.LastSeenAt))
+}
+
+func TestUpdateLastSeen_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
+	store := newTestStore(t)
+	err := store.UpdateLastSeen("ghost", time.Now())
+	assert.ErrorIs(t, err, ErrClientNotFound)
+}
+
+func TestGetClient_NewClientHasNilLastSeenAt(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+
+	got, err := store.GetClient("node-1")
+	require.NoError(t, err)
+	assert.Nil(t, got.LastSeenAt)
+}

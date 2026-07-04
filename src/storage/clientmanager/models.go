@@ -7,11 +7,12 @@ import (
 
 // ClientRecord is one enrolled client tracked by client-manager.
 type ClientRecord struct {
-	Hostname  string `gorm:"primaryKey"`
-	AddedAt   time.Time
-	SANs      string // JSON-encoded []string; "" or "[]" means no extra SANs
-	Revoked   bool
-	RevokedAt *time.Time
+	Hostname   string `gorm:"primaryKey"`
+	AddedAt    time.Time
+	SANs       string // JSON-encoded []string; "" or "[]" means no extra SANs
+	Revoked    bool
+	RevokedAt  *time.Time
+	LastSeenAt *time.Time
 }
 
 // SANsList decodes rec.SANs (JSON-encoded) back into a string slice. A
