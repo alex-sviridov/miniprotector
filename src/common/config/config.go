@@ -86,9 +86,6 @@ type Config struct {
 	CatalogPort                int
 	VarPath                    string
 	ReconcileIntervalSec       int
-	ClientManagerHost          string
-	CertrequestHost            string
-	CertrequestPort            int
 }
 
 type contextKey string
@@ -119,7 +116,6 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncMaxBackoffSec:   60,
 		CatalogPort:                15723,
 		ReconcileIntervalSec:       30,
-		CertrequestPort:            9100,
 	}
 	foundFields := make(map[string]bool)
 
@@ -174,19 +170,6 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CatalogPort = port
 			foundFields["catalog_port"] = true
-		case "client_manager_host":
-			config.ClientManagerHost = value
-			foundFields["client_manager_host"] = true
-		case "certrequest_host":
-			config.CertrequestHost = value
-			foundFields["certrequest_host"] = true
-		case "certrequest_port":
-			port, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid certrequest_port value at line %d: %s", lineNum, value)
-			}
-			config.CertrequestPort = port
-			foundFields["certrequest_port"] = true
 		case "var_path":
 			config.VarPath = value
 			foundFields["var_path"] = true

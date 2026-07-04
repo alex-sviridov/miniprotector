@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/certmint"
 	clientmanagerstore "github.com/alex-sviridov/miniprotector/storage/clientmanager"
 )
 
@@ -23,13 +23,13 @@ func newTestManagerStore(t *testing.T) *clientmanagerstore.Store {
 func TestRunAdd_MintsAndRecordsClient(t *testing.T) {
 	store := newTestManagerStore(t)
 	var out bytes.Buffer
-	stubMint := func(conf *config.Config, certsDir, hostname string, sans []string) (string, error) {
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
 		assert.Equal(t, "node-1", hostname)
 		return "tok-abc", nil
 	}
 
 	args := &Arguments{Action: "add", Hostname: "node-1"}
-	err := runAdd(&config.Config{}, "", store, args, stubMint, &out)
+	err := runAdd(certmint.Options{}, store, args, stubMint, &out)
 	require.NoError(t, err)
 	assert.Equal(t, "tok-abc\n", out.String())
 
@@ -43,40 +43,55 @@ func TestRunAdd_DuplicateHostnameErrors(t *testing.T) {
 	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
 
 	called := false
-	stubMint := func(conf *config.Config, certsDir, hostname string, sans []string) (string, error) {
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
 		called = true
 		return "tok-abc", nil
 	}
 
 	args := &Arguments{Action: "add", Hostname: "node-1"}
-	err := runAdd(&config.Config{}, "", store, args, stubMint, &bytes.Buffer{})
+	err := runAdd(certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
 	assert.Error(t, err)
 	assert.False(t, called, "mint must not be called for a duplicate add")
 }
 
 func TestRunAdd_MintFailureDoesNotRecordClient(t *testing.T) {
 	store := newTestManagerStore(t)
-	stubMint := func(conf *config.Config, certsDir, hostname string, sans []string) (string, error) {
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
 		return "", assert.AnError
 	}
 
 	args := &Arguments{Action: "add", Hostname: "node-1"}
-	err := runAdd(&config.Config{}, "", store, args, stubMint, &bytes.Buffer{})
+	err := runAdd(certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
 	assert.Error(t, err)
 
 	_, err = store.GetClient("node-1")
 	assert.ErrorIs(t, err, clientmanagerstore.ErrClientNotFound)
 }
 
+func TestRunAdd_PassesMintOptsThrough(t *testing.T) {
+	store := newTestManagerStore(t)
+	wantOpts := certmint.Options{CAURL: "https://ca.internal:9000", Provisioner: "admin@backup.internal"}
+	var gotOpts certmint.Options
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
+		gotOpts = opts
+		return "tok-abc", nil
+	}
+
+	args := &Arguments{Action: "add", Hostname: "node-1"}
+	err := runAdd(wantOpts, store, args, stubMint, &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.Equal(t, wantOpts, gotOpts)
+}
+
 func TestRunReEnroll_UnknownHostnameErrors(t *testing.T) {
 	store := newTestManagerStore(t)
-	stubMint := func(conf *config.Config, certsDir, hostname string, sans []string) (string, error) {
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
 		t.Fatal("mint must not be called for an unknown hostname")
 		return "", nil
 	}
 
 	args := &Arguments{Action: "re-enroll", Hostname: "ghost"}
-	err := runReEnroll(&config.Config{}, "", store, args, stubMint, &bytes.Buffer{})
+	err := runReEnroll(certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
 	assert.Error(t, err)
 }
 
@@ -84,12 +99,12 @@ func TestRunReEnroll_MintsFreshToken(t *testing.T) {
 	store := newTestManagerStore(t)
 	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
 	var out bytes.Buffer
-	stubMint := func(conf *config.Config, certsDir, hostname string, sans []string) (string, error) {
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
 		return "tok-fresh", nil
 	}
 
 	args := &Arguments{Action: "re-enroll", Hostname: "node-1"}
-	err := runReEnroll(&config.Config{}, "", store, args, stubMint, &out)
+	err := runReEnroll(certmint.Options{}, store, args, stubMint, &out)
 	require.NoError(t, err)
 	assert.Equal(t, "tok-fresh\n", out.String())
 }
@@ -100,13 +115,13 @@ func TestRunReEnroll_NoSANOverride_ReusesStoredSANsFromAdd(t *testing.T) {
 	require.NoError(t, store.AddClient("node-1", addSANs, time.Now()))
 
 	var gotSANs []string
-	stubMint := func(conf *config.Config, certsDir, hostname string, sans []string) (string, error) {
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
 		gotSANs = sans
 		return "tok-fresh", nil
 	}
 
 	args := &Arguments{Action: "re-enroll", Hostname: "node-1"}
-	err := runReEnroll(&config.Config{}, "", store, args, stubMint, &bytes.Buffer{})
+	err := runReEnroll(certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
 	require.NoError(t, err)
 	assert.Equal(t, addSANs, gotSANs)
 }
@@ -118,13 +133,13 @@ func TestRunReEnroll_WithSANOverride_UsesOverrideNotStoredSANs(t *testing.T) {
 
 	overrideSANs := []string{"override1"}
 	var gotSANs []string
-	stubMint := func(conf *config.Config, certsDir, hostname string, sans []string) (string, error) {
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
 		gotSANs = sans
 		return "tok-fresh", nil
 	}
 
 	args := &Arguments{Action: "re-enroll", Hostname: "node-1", SANs: overrideSANs}
-	err := runReEnroll(&config.Config{}, "", store, args, stubMint, &bytes.Buffer{})
+	err := runReEnroll(certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
 	require.NoError(t, err)
 	assert.Equal(t, overrideSANs, gotSANs)
 }

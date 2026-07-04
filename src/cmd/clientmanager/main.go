@@ -1,8 +1,10 @@
 // client-manager owns the persistent list of enrolled clients: when they
-// were added, their annotations and RBAC attributes, and whether they've
-// been revoked. Enrollment itself is delegated to certrequest serve's
-// MintEnrollmentToken RPC -- client-manager never holds the CA's
-// provisioner password. See docs/components/client-manager.md.
+// were added, their annotations and RBAC attributes, their SAN aliases,
+// and whether they've been revoked. It holds the CA's provisioner
+// password directly and mints enrollment tokens in-process -- see
+// docs/superpowers/specs/2026-07-04-client-manager-phase2-design.md for
+// why this replaced the separate certrequest/certrequest-serve broker.
+// See docs/components/client-manager.md.
 package main
 
 import (
@@ -10,6 +12,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/alex-sviridov/miniprotector/common/certmint"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	clientmanagerstore "github.com/alex-sviridov/miniprotector/storage/clientmanager"
 )
@@ -44,13 +47,14 @@ func main() {
 	}
 	defer store.Close()
 
-	certsDir, err := config.ResolveCertsDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Certs directory resolution failed: %v\n", err)
-		os.Exit(1)
+	mintOpts := certmint.Options{
+		CAURL:        args.CAURL,
+		RootFile:     args.RootFile,
+		Provisioner:  args.Provisioner,
+		PasswordFile: args.PasswordFile,
 	}
 
-	if err := run(conf, certsDir, store, args, os.Stdout); err != nil {
+	if err := run(mintOpts, store, args, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
@@ -58,12 +62,12 @@ func main() {
 
 // run dispatches on args.Action. Broken out from main so tests can drive
 // it directly against a temp-dir store without touching os.Exit.
-func run(conf *config.Config, certsDir string, store *clientmanagerstore.Store, args *Arguments, out io.Writer) error {
+func run(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, out io.Writer) error {
 	switch args.Action {
 	case "add":
-		return runAdd(conf, certsDir, store, args, mintToken, out)
+		return runAdd(mintOpts, store, args, certmint.Mint, out)
 	case "re-enroll":
-		return runReEnroll(conf, certsDir, store, args, mintToken, out)
+		return runReEnroll(mintOpts, store, args, certmint.Mint, out)
 	case "list":
 		return runList(store, out)
 	case "show":
@@ -80,6 +84,10 @@ func run(conf *config.Config, certsDir string, store *clientmanagerstore.Store, 
 		return runKVSet(store, clientmanagerstore.KindAttribute, args)
 	case "attribute-unset":
 		return runKVUnset(store, clientmanagerstore.KindAttribute, args)
+	case "san-add":
+		return runSanAdd(store, args)
+	case "san-remove":
+		return runSanRemove(store, args)
 	default:
 		return fmt.Errorf("unknown action %q", args.Action)
 	}

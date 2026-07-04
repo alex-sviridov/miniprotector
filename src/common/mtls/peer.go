@@ -10,7 +10,7 @@ import (
 
 // PeerHostname extracts the verified hostname identity from the client
 // certificate presented on ctx's gRPC peer connection: the first SAN entry,
-// falling back to the Subject CommonName if no SAN is present. certrequest
+// falling back to the Subject CommonName if no SAN is present. client-manager
 // always places the primary hostname first in a cert's SAN list, so this
 // reflects the CA-verified node identity rather than anything the caller
 // could self-report over the wire.

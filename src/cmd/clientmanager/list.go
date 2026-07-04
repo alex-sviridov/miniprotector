@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -23,9 +24,9 @@ func runList(store *clientmanagerstore.Store, out io.Writer) error {
 		if c.Revoked {
 			revoked = "yes"
 		}
-		// LAST_SEEN is always "unknown" in phase 1 -- renewal happens
-		// directly between certclient and the CA, with no signal back
-		// to client-manager until the phase-2 CA-side responder exists.
+		// LAST_SEEN is always "unknown" -- renewal happens directly
+		// between certclient and the CA, with no signal back to
+		// client-manager until the phase-2 listening service exists.
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.Hostname, c.AddedAt.Format(timeLayout), revoked, "unknown")
 	}
 	return tw.Flush()
@@ -38,6 +39,12 @@ func runShow(store *clientmanagerstore.Store, args *Arguments, out io.Writer) er
 	}
 	fmt.Fprintf(out, "hostname:   %s\n", client.Hostname)
 	fmt.Fprintf(out, "added_at:   %s\n", client.AddedAt.Format(timeLayout))
+	sans := client.SANsList()
+	if len(sans) == 0 {
+		fmt.Fprintln(out, "sans:       (none)")
+	} else {
+		fmt.Fprintf(out, "sans:       %s\n", strings.Join(sans, ", "))
+	}
 	fmt.Fprintf(out, "revoked:    %v\n", client.Revoked)
 	if client.RevokedAt != nil {
 		fmt.Fprintf(out, "revoked_at: %s\n", client.RevokedAt.Format(timeLayout))

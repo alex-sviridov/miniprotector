@@ -6,18 +6,18 @@ import (
 	"io"
 	"time"
 
-	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/certmint"
 	clientmanagerstore "github.com/alex-sviridov/miniprotector/storage/clientmanager"
 )
 
-func runAdd(conf *config.Config, certsDir string, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
+func runAdd(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
 	if _, err := store.GetClient(args.Hostname); err == nil {
 		return fmt.Errorf("client %q already exists; use re-enroll or description/attribute set instead", args.Hostname)
 	} else if !errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		return fmt.Errorf("check existing client: %w", err)
 	}
 
-	token, err := mint(conf, certsDir, args.Hostname, args.SANs)
+	token, err := mint(args.Hostname, args.SANs, mintOpts)
 	if err != nil {
 		return fmt.Errorf("add %s: %w", args.Hostname, err)
 	}
@@ -30,7 +30,7 @@ func runAdd(conf *config.Config, certsDir string, store *clientmanagerstore.Stor
 	return nil
 }
 
-func runReEnroll(conf *config.Config, certsDir string, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
+func runReEnroll(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
 	client, err := store.GetClient(args.Hostname)
 	if err != nil {
 		return fmt.Errorf("re-enroll %s: %w", args.Hostname, err)
@@ -41,7 +41,7 @@ func runReEnroll(conf *config.Config, certsDir string, store *clientmanagerstore
 		sans = client.SANsList()
 	}
 
-	token, err := mint(conf, certsDir, args.Hostname, sans)
+	token, err := mint(args.Hostname, sans, mintOpts)
 	if err != nil {
 		return fmt.Errorf("re-enroll %s: %w", args.Hostname, err)
 	}

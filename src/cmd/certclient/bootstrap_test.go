@@ -38,7 +38,7 @@ func loadFixtureCert(t *testing.T, name string) *x509.Certificate {
 }
 
 // makeTestToken builds a real, validly-signed enrollment token using the same
-// library certrequest uses, so ca.CreateSignRequest (a real, unmocked call)
+// library client-manager uses, so ca.CreateSignRequest (a real, unmocked call)
 // accepts it.
 func makeTestToken(t *testing.T, subject string, sans []string, root *x509.Certificate) string {
 	t.Helper()

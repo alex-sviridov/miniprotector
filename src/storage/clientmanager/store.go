@@ -115,6 +115,49 @@ func (s *Store) UnsetKV(hostname string, kind KVKind, key string) error {
 	return s.db.Delete(&ClientKVRecord{}, "hostname = ? AND kind = ? AND key = ?", hostname, kind, key).Error
 }
 
+// AddSAN appends alias to hostname's SAN list if not already present -- a
+// no-op, not an error, if it's already there. Returns ErrClientNotFound if
+// hostname isn't tracked.
+func (s *Store) AddSAN(hostname, alias string) error {
+	rec, err := s.GetClient(hostname)
+	if err != nil {
+		return err
+	}
+	sans := rec.SANsList()
+	for _, existing := range sans {
+		if existing == alias {
+			return nil
+		}
+	}
+	return s.setSANs(hostname, append(sans, alias))
+}
+
+// RemoveSAN removes alias from hostname's SAN list if present -- a no-op,
+// not an error, if it isn't there. Returns ErrClientNotFound if hostname
+// isn't tracked.
+func (s *Store) RemoveSAN(hostname, alias string) error {
+	rec, err := s.GetClient(hostname)
+	if err != nil {
+		return err
+	}
+	sans := rec.SANsList()
+	filtered := make([]string, 0, len(sans))
+	for _, existing := range sans {
+		if existing != alias {
+			filtered = append(filtered, existing)
+		}
+	}
+	return s.setSANs(hostname, filtered)
+}
+
+func (s *Store) setSANs(hostname string, sans []string) error {
+	sansJSON, err := json.Marshal(sans)
+	if err != nil {
+		return fmt.Errorf("marshal sans: %w", err)
+	}
+	return s.db.Model(&ClientRecord{}).Where("hostname = ?", hostname).Update("sa_ns", string(sansJSON)).Error
+}
+
 func (s *Store) Close() error {
 	sqlDB, err := s.db.DB()
 	if err != nil {

@@ -190,3 +190,59 @@ func TestNew_OpensAndClosesCleanly(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 }
+
+func TestAddSAN_AppendsToEmptyList(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+
+	require.NoError(t, store.AddSAN("node-1", "node-1.internal"))
+
+	got, err := store.GetClient("node-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-1.internal"}, got.SANsList())
+}
+
+func TestAddSAN_DuplicateIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", []string{"a.internal"}, time.Now()))
+
+	require.NoError(t, store.AddSAN("node-1", "a.internal"))
+
+	got, err := store.GetClient("node-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.internal"}, got.SANsList())
+}
+
+func TestAddSAN_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
+	store := newTestStore(t)
+	err := store.AddSAN("ghost", "a.internal")
+	assert.ErrorIs(t, err, ErrClientNotFound)
+}
+
+func TestRemoveSAN_RemovesExistingAlias(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", []string{"a.internal", "b.internal"}, time.Now()))
+
+	require.NoError(t, store.RemoveSAN("node-1", "a.internal"))
+
+	got, err := store.GetClient("node-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b.internal"}, got.SANsList())
+}
+
+func TestRemoveSAN_NonExistentAliasIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", []string{"a.internal"}, time.Now()))
+
+	require.NoError(t, store.RemoveSAN("node-1", "z.internal"))
+
+	got, err := store.GetClient("node-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.internal"}, got.SANsList())
+}
+
+func TestRemoveSAN_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
+	store := newTestStore(t)
+	err := store.RemoveSAN("ghost", "a.internal")
+	assert.ErrorIs(t, err, ErrClientNotFound)
+}

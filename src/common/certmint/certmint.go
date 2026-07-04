@@ -1,7 +1,7 @@
 // Package certmint mints one-time CA enrollment tokens using a
-// provisioner's password-protected key. Shared by certrequest's one-shot
-// CLI and its serve mode -- the only two callers that need CA-admin-
-// equivalent access to a provisioner's key.
+// provisioner's password-protected key. Called directly by client-manager
+// -- the only thing in this system that needs CA-admin-equivalent access
+// to a provisioner's key.
 package certmint
 
 import (

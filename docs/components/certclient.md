@@ -38,6 +38,6 @@ make build
 
 ## See Also
 
-- [certrequest](./certrequest.md) — mints the token this bootstraps from
+- [client-manager](./client-manager.md) — mints the token this bootstraps from
 - [bwfs](./bwfs.md), [brfs](./brfs.md), [rwfs](./rwfs.md) — the services that consume the identity this writes
 - [Architecture](../ARCHITECTURE.md)

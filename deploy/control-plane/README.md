@@ -24,14 +24,14 @@ flow any other node uses, with one twist: unlike a bare-metal agent node, `catal
 token from *inside its own container*, so the token must be minted with `--ca-url` set to an
 address reachable from there — the Compose service name `step-ca`, not `localhost` (which inside
 `catalog`'s container means its own loopback, not the CA). Mint it from a throwaway container on
-the same Compose network instead of the host-installed `certrequest` binary:
+the same Compose network instead of the host-installed `client-manager` binary:
 
 ```bash
 cd deploy/control-plane
 docker run --rm --network control-plane_default \
   -v "$(pwd)/../..:/repo" -w /repo/src \
   golang:1.26 \
-  go run ./cmd/certrequest catalog --ca-url https://step-ca:9000 \
+  go run ./cmd/clientmanager add catalog --ca-url https://step-ca:9000 \
     --defaults-file /repo/deploy/control-plane/ca/data/config/defaults.json \
     --root /repo/deploy/control-plane/ca/data/certs/root_ca.crt \
     --password-file /repo/deploy/control-plane/ca/data/secrets/password
@@ -77,7 +77,7 @@ without needing a restart.
 On (or near) this control-plane host, mint a token for the agent's real hostname:
 
 ```bash
-certrequest node-east-01 --san node-east-01.internal --ca-url https://localhost:9000
+client-manager add node-east-01 --san node-east-01.internal --ca-url https://localhost:9000
 ```
 
 Relay the printed token to the target node out-of-band (SSH, etc.), then on that node:
@@ -106,7 +106,7 @@ enrolled with, which is why the enrollment step above didn't need a `--san`. Any
 uses. For a real (non-local) deployment, mint catalog's token with that hostname instead:
 
 ```bash
-certrequest catalog-01 --san catalog.backup.internal --ca-url https://localhost:9000
+client-manager add catalog-01 --san catalog.backup.internal --ca-url https://localhost:9000
 ```
 
 and use `catalog_host=catalog.backup.internal` (matching the `--san` value exactly) in every
@@ -120,7 +120,7 @@ openssl x509 -in <certs-dir>/client.crt -text -noout
 
 ## See Also
 
-- [certrequest](../../docs/components/certrequest.md)
+- [client-manager](../../docs/components/client-manager.md)
 - [certclient](../../docs/components/certclient.md)
 - [catalog component](../../docs/components/catalog.md)
 - [catalogsync component](../../docs/components/catalogsync.md)

@@ -18,7 +18,6 @@ BINARIES := $(notdir $(wildcard src/cmd/*))
 BRFS_CMD := cmd/brfs
 BWFS_CMD := cmd/bwfs
 RWFS_CMD := cmd/rwfs
-CERTREQUEST_CMD := cmd/certrequest
 CERTCLIENT_CMD := cmd/certclient
 CATALOGSYNC_CMD := cmd/catalogsync
 CATALOG_CMD := cmd/catalog
@@ -35,7 +34,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certrequest certclient catalogsync catalog agent clientmanager test test-e2e lint control-plane-up
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager test test-e2e lint control-plane-up
 
 # Default target
 all: check-deps proto build
@@ -87,12 +86,6 @@ rwfs: $(BINARY_DIR) ## Build rwfs binary
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/rwfs ./$(RWFS_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/rwfs"
 
-certrequest: $(BINARY_DIR) ## Build certrequest binary
-	@printf "$(BLUE)Building certrequest...$(NC) "
-	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certrequest ./$(CERTREQUEST_CMD)
-	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/certrequest"
-
 certclient: $(BINARY_DIR) ## Build certclient binary
 	@printf "$(BLUE)Building certclient...$(NC) "
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
@@ -127,7 +120,7 @@ test: ## Run unit and integration tests
 	cd src && go test ./...
 
 test-e2e: ## Run Docker-based e2e tests (requires Docker daemon, ~3 min)
-	cd src && go test -tags=e2e -timeout=300s ./e2e/... ./cmd/certrequest/...
+	cd src && go test -tags=e2e -timeout=300s ./e2e/...
 
 lint: ## Run go vet
 	cd src && go vet ./...
