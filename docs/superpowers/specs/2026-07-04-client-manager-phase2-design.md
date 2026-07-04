@@ -109,24 +109,39 @@ architecture this spec builds.
    `WithClaim`/`ExtraClaims`, and `authority/provisioner/jwk.go`'s `data.SetToken(v)`, which exposes
    the full parsed token to the template — both confirmed directly against source, not assumed.
 
-### Two-tier node credentials
+### Two-tier node credentials, one certs directory
 
-Every enrolled node holds two distinct certificates:
+Every enrolled node holds two distinct certificates, but in **one** certs directory (`ca.crt`
+shared by both, since they're issued by the same CA and the root is only ever established once,
+during bootstrap — see the "CA root delivery" note below):
 
-- **Bootstrap credential** — long-lived (months). Obtained once via the same
-  `ca.Bootstrap`/`CreateSignRequest`/`Sign` flow `certclient` already uses today. Renewed
-  independently and cheaply via step-ca's native `/renew` — no dependency on the listening service,
-  so it survives that service being down for extended periods. Its only purpose is authenticating
-  to the listening service to request an operating certificate.
-- **Operating credential** — short-lived (minutes-to-hours, operator-tunable). This is what's
-  actually used for real mesh traffic (`bwfs`/`brfs`/`rwfs`/`catalogsync`/`catalog`). Obtained fresh
-  from the listening service every cycle; this is the certificate revocation actually gates, and
-  the one that carries current attribute values.
+- **Operating credential** — `client.crt`/`client.key`, the existing, unchanged filenames
+  `common/mtls` already hardcodes and every other component (`bwfs`/`brfs`/`rwfs`/`catalogsync`/
+  `catalog`) already expects at the standard certs path. Nothing about those components changes.
+  Short-lived (minutes-to-hours, operator-tunable), obtained fresh from the listening service every
+  cycle — this is the certificate revocation actually gates, and the one that carries current
+  attribute/SAN values.
+- **Bootstrap credential** — a second filename pair in the *same* directory (`bootstrap.crt`/
+  `bootstrap.key`), used only by `agent` to authenticate to the listening service. Long-lived
+  (months). Obtained once via the same `ca.Bootstrap`/`CreateSignRequest`/`Sign` flow `certclient`
+  already uses today, then renewed independently and cheaply via step-ca's native `/renew` — no
+  dependency on the listening service, so it survives that service being down for extended periods.
+
+This needs one small, additive change to `common/mtls`: a variant of `LoadClientCredentials` that
+accepts explicit cert/key filenames instead of assuming `client.crt`/`client.key`, used only by
+`agent`'s bootstrap-credential renewal and its calls to the listening service. Every other
+component's usage of `common/mtls` is untouched.
 
 If the listening service is unreachable when an operating-cert refresh is due, the node simply
 doesn't get a new one — it loses mesh access until the service is reachable again, but its
 bootstrap identity is untouched (renewed independently) and recovery is automatic, no
 re-enrollment needed.
+
+**CA root delivery, for clarity:** `ca.crt` is downloaded exactly once, during the initial
+bootstrap redemption (`ca.Bootstrap(token)` fetches step-ca's stock `/roots` endpoint and pins
+trust via the fingerprint claim embedded in the enrollment token) — unchanged from phase 1. The
+operating credential, obtained later and repeatedly from the listening service, is signed by the
+same CA and never triggers a fresh root download; it reuses the `ca.crt` already on disk.
 
 ## Data Flow
 
