@@ -24,10 +24,11 @@ func runList(store *clientmanagerstore.Store, out io.Writer) error {
 		if c.Revoked {
 			revoked = "yes"
 		}
-		// LAST_SEEN is always "unknown" -- renewal happens directly
-		// between certclient and the CA, with no signal back to
-		// client-manager until the phase-2 listening service exists.
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.Hostname, c.AddedAt.Format(timeLayout), revoked, "unknown")
+		lastSeen := "never"
+		if c.LastSeenAt != nil {
+			lastSeen = c.LastSeenAt.Format(timeLayout)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.Hostname, c.AddedAt.Format(timeLayout), revoked, lastSeen)
 	}
 	return tw.Flush()
 }
@@ -49,7 +50,11 @@ func runShow(store *clientmanagerstore.Store, args *Arguments, out io.Writer) er
 	if client.RevokedAt != nil {
 		fmt.Fprintf(out, "revoked_at: %s\n", client.RevokedAt.Format(timeLayout))
 	}
-	fmt.Fprintln(out, "last_seen:  unknown")
+	if client.LastSeenAt != nil {
+		fmt.Fprintf(out, "last_seen:  %s\n", client.LastSeenAt.Format(timeLayout))
+	} else {
+		fmt.Fprintln(out, "last_seen:  never")
+	}
 
 	descs, err := store.KV(args.Hostname, clientmanagerstore.KindDescription)
 	if err != nil {

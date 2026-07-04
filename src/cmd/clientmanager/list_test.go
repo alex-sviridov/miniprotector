@@ -24,7 +24,7 @@ func TestRunList_ShowsAddedClients(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, runList(store, &out))
 	assert.Contains(t, out.String(), "node-1")
-	assert.Contains(t, out.String(), "unknown")
+	assert.Contains(t, out.String(), "never")
 }
 
 func TestRunShow_UnknownErrors(t *testing.T) {
@@ -64,4 +64,26 @@ func TestRunUnrevoke_ClearsFlag(t *testing.T) {
 	got, err := store.GetClient("node-1")
 	require.NoError(t, err)
 	assert.False(t, got.Revoked)
+}
+
+func TestRunList_ShowsRealLastSeenTimestamp(t *testing.T) {
+	store := newTestManagerStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	seenAt := time.Now().Truncate(time.Second)
+	require.NoError(t, store.UpdateLastSeen("node-1", seenAt))
+
+	var out bytes.Buffer
+	require.NoError(t, runList(store, &out))
+	assert.Contains(t, out.String(), seenAt.Format(timeLayout))
+}
+
+func TestRunShow_ShowsRealLastSeenTimestamp(t *testing.T) {
+	store := newTestManagerStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	seenAt := time.Now().Truncate(time.Second)
+	require.NoError(t, store.UpdateLastSeen("node-1", seenAt))
+
+	var out bytes.Buffer
+	require.NoError(t, runShow(store, &Arguments{Hostname: "node-1"}, &out))
+	assert.Contains(t, out.String(), "last_seen:  "+seenAt.Format(timeLayout))
 }
