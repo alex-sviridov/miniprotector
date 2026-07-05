@@ -81,7 +81,7 @@ func backoff(failures int) time.Duration {
 // run polls the embedded policy list every reconcileInterval, executing
 // and recording the outcome of any policy isDue reports as due. It runs
 // until ctx is cancelled, at which point it returns nil.
-func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner) error {
+func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policies []Policy) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
