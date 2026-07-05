@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-05 — Fixed the control-plane docker-compose demo; issuer self-mints its own identity (phase 2d)
+
+Phase 2c's `certclient`/`agent` split broke `deploy/control-plane`'s docker-compose demo: `catalog`
+crash-looped, since its container invoked bare `certclient` the old, single-shot way, which no
+longer matched the new two-tier bootstrap/operating-refresh model. Fixing this properly meant
+closing a gap phase 2c left open — `issuer` itself had no mTLS identity of its own, and couldn't
+get one the normal way, since obtaining one via `certclient`/`agent` would mean either a second
+daemon running on the CA host or `issuer` depending on itself. `issuer` now mints and signs its own
+server certificate directly at startup, reusing the CA provisioner access it already holds for
+`RequestOperatingCert`, and re-mints it on an internal ticker while running
+(`IssuerSelfCertTTLSec`/`IssuerSelfCertRefreshIntervalSec`, defaulting to a 90-day certificate
+refreshed daily); a startup failure is fatal, but a refresh failure just logs and keeps the
+existing certificate. `catalog`'s image now bundles `agent` (not just `certclient`), so it runs as
+an ordinary `agent`-managed enrolled node with continuously-refreshed bootstrap and operating
+credentials for as long as its container runs, instead of a one-shot bootstrap redeemed only at
+container start. `docker-compose.yml` gained an `issuer` service and a real, persistent, shared
+`client-manager` database volume, so the demo's enrollment commands actually persist across runs
+instead of writing to a throwaway container filesystem. `deploy/control-plane/README.md` was
+rewritten around a real, verified enroll→connect→revoke smoke test, replacing the stale
+instructions that had gone unnoticed as broken.
+
 ## 2026-07-05 — Agent-driven operating-certificate refresh (phase 2c)
 
 `agent` now obtains and refreshes operating certificates through `issuer` on a schedule, closing
