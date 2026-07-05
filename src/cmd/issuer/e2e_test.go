@@ -10,7 +10,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -30,61 +32,24 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/certmint"
 )
 
-// TestE2E_MintAndSignAcceptedByCAWithTemplateData proves that a real, live
-// step-ca accepts a Sign request carrying attribute data via TemplateData
-// -- without rejecting it -- and returns a valid, signable certificate
-// chain. It does NOT prove that the attribute data round-trips into a
-// certificate extension: that requires a CA-side custom x509 template,
-// which is explicitly out of scope for this phase (see the phase-2 design
-// doc). What this test confirms is the narrower, previously-unverified
-// fact that the mechanism this design depends on -- a real step-ca signing
-// a request that includes TemplateData -- actually works end to end.
-func TestE2E_MintAndSignAcceptedByCAWithTemplateData(t *testing.T) {
-	requireDocker(t)
+// attributeExtensionOID identifies the custom X.509 extension
+// deploy/control-plane/ca/templates/leaf.tpl embeds attribute data under.
+// See docs/superpowers/specs/2026-07-05-issuer-attribute-template-design.md
+// for why this is a short, arbitrarily-chosen private-use OID rather than a
+// UUID-derived one: crypto/x509's OID parser caps every arc component below
+// 2^31, a limit no UUID-derived arc value survives, truncated or not.
+var attributeExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 1}
 
-	repoRoot := repoRootDir(t)
-	tempDir := t.TempDir()
-
-	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, "ca"), 0o755))
-	copyComposeFileWithEphemeralPort(t, filepath.Join(repoRoot, "deploy", "control-plane", "docker-compose.yml"), filepath.Join(tempDir, "docker-compose.yml"))
-	copyFile(t, filepath.Join(repoRoot, "deploy", "control-plane", "ca", "entrypoint.sh"), filepath.Join(tempDir, "ca", "entrypoint.sh"))
-	require.NoError(t, os.Chmod(filepath.Join(tempDir, "ca", "entrypoint.sh"), 0o755))
-
-	secretsDir := filepath.Join(tempDir, "ca", "data", "secrets")
-	require.NoError(t, os.MkdirAll(secretsDir, 0o700))
-	password := randomPassword(t)
-	require.NoError(t, os.WriteFile(filepath.Join(secretsDir, "password"), []byte(password), 0o600))
-
-	projectName := fmt.Sprintf("issuer-e2e-%d", time.Now().UnixNano())
-	compose := func(args ...string) *exec.Cmd {
-		cmd := exec.Command("docker", append([]string{"compose", "-p", projectName}, args...)...)
-		cmd.Dir = tempDir
-		return cmd
-	}
-	t.Cleanup(func() {
-		downCmd := compose("down", "--volumes", "--remove-orphans")
-		if out, err := downCmd.CombinedOutput(); err != nil {
-			t.Logf("docker compose down failed: %v\n%s", err, out)
-		}
-	})
-	upCmd := compose("up", "-d", "step-ca")
-	out, err := upCmd.CombinedOutput()
-	require.NoError(t, err, "docker compose up failed: %s", out)
-
-	hostPort := discoverHostPort(t, compose)
-	caURL := fmt.Sprintf("https://localhost:%s", hostPort)
-	rootPath := filepath.Join(tempDir, "ca", "data", "certs", "root_ca.crt")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	require.NoError(t, waitForCA(ctx, caURL, rootPath), "step-ca never became ready")
-
-	opts := certmint.Options{
-		CAURL:        caURL,
-		RootFile:     rootPath,
-		Provisioner:  "admin@backup.internal",
-		PasswordFile: filepath.Join(secretsDir, "password"),
-	}
+// TestE2E_MintAndSignEmbedsAttributesAsCertificateExtension proves the final
+// hop the phase-2 design deferred: a real step-ca, using the CA-side x509
+// template this phase adds, actually embeds TemplateData attributes as a
+// real, parseable X.509 extension on the issued certificate -- not just
+// accepting the field without rejecting it. A second mintAndSign call with
+// nil attributes (mirroring what issuer's self-mint always passes) proves
+// the template's `{{ if .Insecure.User }}` guard omits the extension
+// entirely rather than emitting an empty one.
+func TestE2E_MintAndSignEmbedsAttributesAsCertificateExtension(t *testing.T) {
+	opts := startTestCA(t, "issuer-e2e-attrs")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -95,7 +60,8 @@ func TestE2E_MintAndSignAcceptedByCAWithTemplateData(t *testing.T) {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	require.NoError(t, err)
 
-	chainPEM, err := mintAndSign("e2e-issuer-host", nil, map[string]string{"role": "prod-db"}, csr, opts, 3600)
+	wantAttrs := map[string]string{"role": "prod-db"}
+	chainPEM, err := mintAndSign("e2e-issuer-host", nil, wantAttrs, csr, opts, 3600)
 	require.NoError(t, err, "mintAndSign")
 	require.NotEmpty(t, chainPEM)
 
@@ -104,6 +70,30 @@ func TestE2E_MintAndSignAcceptedByCAWithTemplateData(t *testing.T) {
 	leaf, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
 	require.Equal(t, "e2e-issuer-host", leaf.Subject.CommonName)
+
+	ext := findExtension(leaf, attributeExtensionOID)
+	require.NotNil(t, ext, "expected certificate to carry the attribute extension %s", attributeExtensionOID)
+	var gotAttrs map[string]string
+	require.NoError(t, json.Unmarshal(ext.Value, &gotAttrs))
+	assert.Equal(t, wantAttrs, gotAttrs, "attribute extension value must round-trip exactly")
+
+	noAttrsKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	noAttrsCSRDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "e2e-issuer-host-noattrs"},
+	}, noAttrsKey)
+	require.NoError(t, err)
+	noAttrsCSR, err := x509.ParseCertificateRequest(noAttrsCSRDER)
+	require.NoError(t, err)
+
+	noAttrsChainPEM, err := mintAndSign("e2e-issuer-host-noattrs", nil, nil, noAttrsCSR, opts, 3600)
+	require.NoError(t, err, "mintAndSign with nil attributes")
+	noAttrsBlock, _ := pem.Decode(noAttrsChainPEM)
+	require.NotNil(t, noAttrsBlock)
+	noAttrsLeaf, err := x509.ParseCertificate(noAttrsBlock.Bytes)
+	require.NoError(t, err)
+	assert.Nil(t, findExtension(noAttrsLeaf, attributeExtensionOID),
+		"a certificate minted with nil attributes must not carry the attribute extension at all")
 }
 
 // TestE2E_MintAndSignEmbedsSANsInCertificate proves the exact-match SAN
@@ -115,51 +105,7 @@ func TestE2E_MintAndSignAcceptedByCAWithTemplateData(t *testing.T) {
 // matches whatever issuer's DescribeSANs returns; this test proves that
 // when it does, the real CA actually honors it.
 func TestE2E_MintAndSignEmbedsSANsInCertificate(t *testing.T) {
-	requireDocker(t)
-
-	repoRoot := repoRootDir(t)
-	tempDir := t.TempDir()
-
-	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, "ca"), 0o755))
-	copyComposeFileWithEphemeralPort(t, filepath.Join(repoRoot, "deploy", "control-plane", "docker-compose.yml"), filepath.Join(tempDir, "docker-compose.yml"))
-	copyFile(t, filepath.Join(repoRoot, "deploy", "control-plane", "ca", "entrypoint.sh"), filepath.Join(tempDir, "ca", "entrypoint.sh"))
-	require.NoError(t, os.Chmod(filepath.Join(tempDir, "ca", "entrypoint.sh"), 0o755))
-
-	secretsDir := filepath.Join(tempDir, "ca", "data", "secrets")
-	require.NoError(t, os.MkdirAll(secretsDir, 0o700))
-	password := randomPassword(t)
-	require.NoError(t, os.WriteFile(filepath.Join(secretsDir, "password"), []byte(password), 0o600))
-
-	projectName := fmt.Sprintf("issuer-e2e-sans-%d", time.Now().UnixNano())
-	compose := func(args ...string) *exec.Cmd {
-		cmd := exec.Command("docker", append([]string{"compose", "-p", projectName}, args...)...)
-		cmd.Dir = tempDir
-		return cmd
-	}
-	t.Cleanup(func() {
-		downCmd := compose("down", "--volumes", "--remove-orphans")
-		if out, err := downCmd.CombinedOutput(); err != nil {
-			t.Logf("docker compose down failed: %v\n%s", err, out)
-		}
-	})
-	upCmd := compose("up", "-d", "step-ca")
-	out, err := upCmd.CombinedOutput()
-	require.NoError(t, err, "docker compose up failed: %s", out)
-
-	hostPort := discoverHostPort(t, compose)
-	caURL := fmt.Sprintf("https://localhost:%s", hostPort)
-	rootPath := filepath.Join(tempDir, "ca", "data", "certs", "root_ca.crt")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	require.NoError(t, waitForCA(ctx, caURL, rootPath), "step-ca never became ready")
-
-	opts := certmint.Options{
-		CAURL:        caURL,
-		RootFile:     rootPath,
-		Provisioner:  "admin@backup.internal",
-		PasswordFile: filepath.Join(secretsDir, "password"),
-	}
+	opts := startTestCA(t, "issuer-e2e-sans")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -196,22 +142,60 @@ func TestE2E_MintAndSignEmbedsSANsInCertificate(t *testing.T) {
 // actually matches its own hostname (the property that makes real,
 // non-loopback TLS hostname verification succeed later).
 func TestE2E_MintSelfIdentityProducesAWorkingServerCertificate(t *testing.T) {
+	opts := startTestCA(t, "issuer-e2e-selfmint")
+
+	mint := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
+		return mintAndSign(hostname, sans, attributes, csr, opts, 3600)
+	}
+
+	certsDir := filepath.Join(t.TempDir(), "issuer-certs")
+	require.NoError(t, mintSelfIdentity("e2e-issuer", certsDir, opts.RootFile, mint, 3600))
+
+	chainPEM, err := os.ReadFile(filepath.Join(certsDir, "client.crt"))
+	require.NoError(t, err)
+	block, _ := pem.Decode(chainPEM)
+	require.NotNil(t, block)
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, "e2e-issuer", leaf.Subject.CommonName)
+	assert.Equal(t, []string{"e2e-issuer"}, leaf.DNSNames,
+		"issuer's own certificate must carry its hostname as a SAN, not just CommonName, for real (non-loopback) TLS hostname verification to succeed")
+	assert.Nil(t, findExtension(leaf, attributeExtensionOID),
+		"issuer's self-mint always passes nil attributes and must not carry the attribute extension")
+}
+
+// startTestCA spins up a real, throwaway step-ca via docker compose from a
+// copy of the actual deploy/control-plane compose file, CA entrypoint
+// script, and CA-side attribute template -- so every e2e test in this file
+// exercises the exact config real deployments run, not a hand-simplified
+// stand-in. Waits for the CA to become ready and returns options for
+// calling it. Registers a t.Cleanup to tear the compose project down.
+func startTestCA(t *testing.T, projectLabel string) certmint.Options {
+	t.Helper()
 	requireDocker(t)
 
 	repoRoot := repoRootDir(t)
 	tempDir := t.TempDir()
 
-	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, "ca"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, "ca", "templates"), 0o755))
 	copyComposeFileWithEphemeralPort(t, filepath.Join(repoRoot, "deploy", "control-plane", "docker-compose.yml"), filepath.Join(tempDir, "docker-compose.yml"))
 	copyFile(t, filepath.Join(repoRoot, "deploy", "control-plane", "ca", "entrypoint.sh"), filepath.Join(tempDir, "ca", "entrypoint.sh"))
 	require.NoError(t, os.Chmod(filepath.Join(tempDir, "ca", "entrypoint.sh"), 0o755))
+	copyFile(t, filepath.Join(repoRoot, "deploy", "control-plane", "ca", "templates", "leaf.tpl"), filepath.Join(tempDir, "ca", "templates", "leaf.tpl"))
 
 	secretsDir := filepath.Join(tempDir, "ca", "data", "secrets")
 	require.NoError(t, os.MkdirAll(secretsDir, 0o700))
 	password := randomPassword(t)
 	require.NoError(t, os.WriteFile(filepath.Join(secretsDir, "password"), []byte(password), 0o600))
 
-	projectName := fmt.Sprintf("issuer-e2e-selfmint-%d", time.Now().UnixNano())
+	// Pre-create the leaf.tpl bind mount's destination directory so Docker
+	// doesn't auto-create it (as root, since dockerd runs as root) the first
+	// time the container starts. An auto-created directory here would be
+	// unremovable by t.TempDir()'s cleanup, which runs as the test's own
+	// unprivileged user.
+	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, "ca", "data", "templates"), 0o755))
+
+	projectName := fmt.Sprintf("%s-%d", projectLabel, time.Now().UnixNano())
 	compose := func(args ...string) *exec.Cmd {
 		cmd := exec.Command("docker", append([]string{"compose", "-p", projectName}, args...)...)
 		cmd.Dir = tempDir
@@ -235,28 +219,23 @@ func TestE2E_MintSelfIdentityProducesAWorkingServerCertificate(t *testing.T) {
 	defer cancel()
 	require.NoError(t, waitForCA(ctx, caURL, rootPath), "step-ca never became ready")
 
-	opts := certmint.Options{
+	return certmint.Options{
 		CAURL:        caURL,
 		RootFile:     rootPath,
 		Provisioner:  "admin@backup.internal",
 		PasswordFile: filepath.Join(secretsDir, "password"),
 	}
-	mint := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
-		return mintAndSign(hostname, sans, attributes, csr, opts, 3600)
+}
+
+// findExtension returns the certificate extension matching oid, or nil if
+// the certificate doesn't carry one.
+func findExtension(cert *x509.Certificate, oid asn1.ObjectIdentifier) *pkix.Extension {
+	for i := range cert.Extensions {
+		if cert.Extensions[i].Id.Equal(oid) {
+			return &cert.Extensions[i]
+		}
 	}
-
-	certsDir := filepath.Join(tempDir, "issuer-certs")
-	require.NoError(t, mintSelfIdentity("e2e-issuer", certsDir, rootPath, mint, 3600))
-
-	chainPEM, err := os.ReadFile(filepath.Join(certsDir, "client.crt"))
-	require.NoError(t, err)
-	block, _ := pem.Decode(chainPEM)
-	require.NotNil(t, block)
-	leaf, err := x509.ParseCertificate(block.Bytes)
-	require.NoError(t, err)
-	assert.Equal(t, "e2e-issuer", leaf.Subject.CommonName)
-	assert.Equal(t, []string{"e2e-issuer"}, leaf.DNSNames,
-		"issuer's own certificate must carry its hostname as a SAN, not just CommonName, for real (non-loopback) TLS hostname verification to succeed")
+	return nil
 }
 
 // requireDocker skips the test (loudly, with a clear reason) if Docker isn't
