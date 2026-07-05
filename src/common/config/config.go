@@ -70,25 +70,25 @@ func ResolveVarDir(cfg *Config) (string, error) {
 
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {
-	DefaultPort                int
-	DefaultStreams             int
-	LogFolder                  string
-	ClientHashQueryBatchSize   int
-	ConnectionTimeOutSec       int
-	FileLockTimeoutSec         int
-	StopStreamOnFileError      bool
-	CAHost                     string
-	JobTimeoutSec              int
-	CatalogSyncBatchSize       int
-	CatalogSyncPollIntervalSec int
-	CatalogSyncMaxBackoffSec   int
-	CatalogHost                string
-	CatalogPort                int
-	VarPath                    string
-	ReconcileIntervalSec       int
-	IssuerHost                 string
-	IssuerPort                 int
-	OperatingCertTTLSec        int
+	DefaultPort                     int
+	DefaultStreams                  int
+	LogFolder                       string
+	ClientHashQueryBatchSize        int
+	ConnectionTimeOutSec            int
+	FileLockTimeoutSec              int
+	StopStreamOnFileError           bool
+	CAHost                          string
+	JobTimeoutSec                   int
+	CatalogSyncBatchSize            int
+	CatalogSyncPollIntervalSec      int
+	CatalogSyncMaxBackoffSec        int
+	CatalogHost                     string
+	CatalogPort                     int
+	VarPath                         string
+	ReconcileIntervalSec            int
+	IssuerHost                      string
+	IssuerPort                      int
+	OperatingCertTTLSec             int
 	BootstrapCertRefreshIntervalSec int
 	BootstrapCertTTLSec             int
 	OperatingCertFetchIntervalSec   int
@@ -116,14 +116,14 @@ func ParseConfig(configPath string) (*Config, error) {
 	defer file.Close()
 
 	config := &Config{
-		JobTimeoutSec:              30,
-		CatalogSyncBatchSize:       500,
-		CatalogSyncPollIntervalSec: 5,
-		CatalogSyncMaxBackoffSec:   60,
-		CatalogPort:                15723,
-		ReconcileIntervalSec:       30,
-		IssuerPort:                 9200,
-		OperatingCertTTLSec:        3600,
+		JobTimeoutSec:                   30,
+		CatalogSyncBatchSize:            500,
+		CatalogSyncPollIntervalSec:      5,
+		CatalogSyncMaxBackoffSec:        60,
+		CatalogPort:                     15723,
+		ReconcileIntervalSec:            30,
+		IssuerPort:                      9200,
+		OperatingCertTTLSec:             3600,
 		BootstrapCertRefreshIntervalSec: 86400,
 		BootstrapCertTTLSec:             7776000,
 		OperatingCertFetchIntervalSec:   900,

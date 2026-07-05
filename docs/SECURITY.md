@@ -35,7 +35,7 @@ Every enrolled node holds **two** distinct certificates in the same certs direct
 | | Bootstrap credential | Operating credential |
 |---|---|---|
 | Files | `bootstrap.crt` / `bootstrap.key` | `client.crt` / `client.key` |
-| Lifetime | Long (`BootstrapCertTTLSec`, ~90 days by default) | Short (`OperatingCertTTLSec`, 1 hour by default) |
+| Lifetime | Long, governed entirely by the CA provisioner's own claims today — `BootstrapCertTTLSec` (~90 days by default) is parsed and defaulted but not yet consumed by any request path (tracked follow-up) | Short (`OperatingCertTTLSec`, 1 hour by default) |
 | Obtained via | `certclient bootstrap` (redeems a one-time enrollment token from `client-manager`), refreshed by `certclient renew` (step-ca's stock `/renew`) | `certclient operating-refresh`, authenticated *with* the bootstrap credential, talking to `issuer` |
 | Consumed by | Only `certclient operating-refresh`'s connection to `issuer` | Every other component's mTLS transport (`common/mtls`'s hardcoded `client.crt`/`client.key`) — `bwfs`, `brfs`, `rwfs`, `catalogsync`, `catalog` |
 | Scheduled by | `agent`'s `bootstrap-refresh` policy (`BootstrapCertRefreshIntervalSec`, daily by default) | `agent`'s `operating-refresh` policy (`OperatingCertFetchIntervalSec`, every 15 minutes by default) |
