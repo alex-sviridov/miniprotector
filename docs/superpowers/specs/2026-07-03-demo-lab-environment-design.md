@@ -6,7 +6,7 @@ There's no way to see the whole system running together — CA-issued mTLS ident
 backup landing on `bwfs`, `catalogsync` replicating it to a central `catalog`, and `agent`
 keeping every node's certificate fresh — without hand-assembling hosts and running each binary's
 enrollment steps manually. `deploy/control-plane/` covers the CA+catalog pair but expects real
-node hostnames and manual `certrequest`/`certclient` steps per node; there's nothing that stands
+node hostnames and manual `client-manager`/`certclient` steps per node; there's nothing that stands
 up a small, disposable, fully-networked lab in one command.
 
 ## Goals
@@ -28,6 +28,10 @@ up a small, disposable, fully-networked lab in one command.
   loss, no more than the two backup-capable nodes described below).
 - No catalog query UI/CLI — `catalog` genuinely has none yet; verification goes through
   `sqlite3` directly against its DB, or through `bwfs`/`rwfs` on the store side.
+- No `issuer` (enforced revocation, live attributes — see
+  `docs/superpowers/specs/2026-07-04-client-manager-phase2-design.md`) in this lab. `issuer` only
+  does something once `agent` is wired to call it on a schedule, which is separate, later work; the
+  demo's enrollment stays exactly what `client-manager add` + `certclient` already provide today.
 
 ## Architecture
 
@@ -35,7 +39,7 @@ Four containers on one Compose network:
 
 | Service | Base | Role |
 |---|---|---|
-| `ca` | `smallstep/step-ca` + `certrequest` binary | Certificate authority (port 9000) |
+| `ca` | `smallstep/step-ca` + `client-manager` binary | Certificate authority (port 9000) |
 | `catalog` | `ubuntu:24.04` + `catalog`, `certclient`, `sqlite3` | Central catalog (port 15723) |
 | `client` | `ubuntu:24.04` + `brfs`, `rwfs`, `bwfs`, `catalogsync`, `certclient`, `agent` | Interactive backup source |
 | `store` | same image as `client` | Backup target: runs `bwfs` + `catalogsync` in the background |
@@ -54,8 +58,9 @@ via `agent list-policies`.
 Hostnames double as Compose DNS names and mTLS SANs. `client` reaches `store` at `store:8080`;
 `store`'s `catalogsync` reaches `catalog` at `catalog:15723`. Neither is loopback, so each
 target's certificate SAN must exactly equal the hostname used to dial it — satisfied by minting
-each node's enrollment token with that same string as the positional hostname (see control-plane's
-existing SAN-matching rule in `deploy/control-plane/README.md`, which this reuses unchanged).
+each node's enrollment token with that same string as the positional hostname to `client-manager
+add` (see control-plane's existing SAN-matching rule in `deploy/control-plane/README.md`, which
+this reuses unchanged).
 
 ## File Layout
 
@@ -66,7 +71,7 @@ demo/
   local.conf            # single shared config, bind-mounted into catalog/client/store alike
   README.md
   ca/
-    Dockerfile          # golang:1.26 builder (make certrequest) -> FROM smallstep/step-ca
+    Dockerfile          # golang:1.26 builder (make client-manager) -> FROM smallstep/step-ca
     entrypoint.sh        # generates its own provisioner password on first boot, step ca init, exec step-ca
   catalog/
     Dockerfile          # golang:1.26 builder (make catalog certclient) -> FROM ubuntu:24.04, + sqlite3
@@ -110,10 +115,14 @@ not unused ones.
 
 ## Enrollment Flow
 
-`certrequest` is built into the `ca` image itself (multistage: `golang:1.26` builder runs
-`make certrequest`, final stage is `smallstep/step-ca` with the binary copied in) — no separate
-throwaway container. Minting happens via `docker compose exec ca certrequest ...`, dialing
-`https://localhost:9000` since it now runs inside the CA's own container.
+`client-manager` is built into the `ca` image itself (multistage: `golang:1.26` builder runs
+`make client-manager`, final stage is `smallstep/step-ca` with the binary copied in) — no separate
+throwaway container, and matching the phase-2 design's own placement (`client-manager` runs
+directly on the CA host, holding the provisioner password directly, with no network interface of
+its own). Minting happens via `docker compose exec ca client-manager add ...`, dialing
+`https://localhost:9000` since it now runs inside the CA's own container — the same
+`--ca-url`/`--defaults-file`/`--root`/`--password-file` flags `deploy/control-plane/README.md`
+already documents.
 
 Every enrolled node's entrypoint only **waits** for its identity to exist; it never invokes
 `certclient` on its own initiative:
@@ -130,7 +139,7 @@ exec ./agent serve   # or ./catalog for the catalog service
    retries — see Error Handling) until it responds.
 2. `docker compose up -d --build catalog client store` — each starts and blocks in its wait loop.
 3. For each of `catalog`, `client`, `store`:
-   - `TOKEN=$(docker compose exec ca certrequest <name> --ca-url https://localhost:9000 --defaults-file /home/step/config/defaults.json --root /home/step/certs/root_ca.crt --password-file /home/step/secrets/password)`
+   - `TOKEN=$(docker compose exec ca client-manager add <name> --ca-url https://localhost:9000 --defaults-file /home/step/config/defaults.json --root /home/step/certs/root_ca.crt --password-file /home/step/secrets/password)`
    - `docker compose exec -e MP_CERT_TOKEN="$TOKEN" <name> ./certclient`
    - The token exists only in the script's process memory for the duration of one `exec` call; it
      is never written to any file.
@@ -156,8 +165,8 @@ enrolled node).
   is therefore wasted work but never an error.
 - **`docker compose exec` racing an entrypoint still in its wait loop**: harmless — `exec` starts
   a new process inside the container's namespace independent of what PID 1 is doing; the target
-  binaries (`certrequest`, `certclient`) are already present in the image regardless of entrypoint
-  progress.
+  binaries (`client-manager`, `certclient`) are already present in the image regardless of
+  entrypoint progress.
 - **`store`'s background `bwfs`/`catalogsync` dying without killing the container**: the
   entrypoint's `trap ... TERM` only fires on container stop; a crash of one background process
   mid-run is not auto-restarted (no supervisor) — visible via `docker compose logs store` and a
