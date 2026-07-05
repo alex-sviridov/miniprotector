@@ -21,15 +21,19 @@ const (
 	identKeyFile  = "client.key"
 )
 
-func loadIdentityCert(certsDir string) (tls.Certificate, error) {
+func loadIdentityCertFiles(certsDir, certFile, keyFile string) (tls.Certificate, error) {
 	cert, err := tls.LoadX509KeyPair(
-		filepath.Join(certsDir, identCertFile),
-		filepath.Join(certsDir, identKeyFile),
+		filepath.Join(certsDir, certFile),
+		filepath.Join(certsDir, keyFile),
 	)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("load identity cert/key from %s: %w", certsDir, err)
 	}
 	return cert, nil
+}
+
+func loadIdentityCert(certsDir string) (tls.Certificate, error) {
+	return loadIdentityCertFiles(certsDir, identCertFile, identKeyFile)
 }
 
 func loadCAPool(certsDir string) (*x509.CertPool, error) {
@@ -115,8 +119,8 @@ func verifyChainOnly(caPool *x509.CertPool) func([][]byte, [][]*x509.Certificate
 	}
 }
 
-func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
-	if _, err := loadIdentityCert(certsDir); err != nil {
+func clientTLSConfigWithIdentity(certsDir, certFile, keyFile, host string) (*tls.Config, error) {
+	if _, err := loadIdentityCertFiles(certsDir, certFile, keyFile); err != nil {
 		return nil, err
 	}
 	caPool, err := loadCAPool(certsDir)
@@ -125,7 +129,7 @@ func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
 	}
 
 	getClientCert := func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-		cert, err := loadIdentityCert(certsDir)
+		cert, err := loadIdentityCertFiles(certsDir, certFile, keyFile)
 		if err != nil {
 			return nil, err
 		}
@@ -147,6 +151,10 @@ func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
 	}, nil
 }
 
+func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
+	return clientTLSConfigWithIdentity(certsDir, identCertFile, identKeyFile, host)
+}
+
 // LoadServerCredentials builds gRPC transport credentials for a server that
 // requires and verifies every client's certificate against certsDir/ca.crt.
 // Any client cert signed by that CA is trusted; there is no CN/SAN allowlist.
@@ -158,14 +166,23 @@ func LoadServerCredentials(certsDir string) (credentials.TransportCredentials, e
 	return credentials.NewTLS(cfg), nil
 }
 
-// LoadClientCredentials builds gRPC transport credentials for dialing host.
-// Hostname/SAN verification is skipped for loopback hosts (localhost,
-// 127.0.0.0/8, ::1); every other host must match a SAN on the server's
-// presented certificate.
-func LoadClientCredentials(certsDir, host string) (credentials.TransportCredentials, error) {
-	cfg, err := clientTLSConfig(certsDir, host)
+// LoadClientCredentialsWithIdentity is LoadClientCredentials, parameterized
+// on which cert/key filenames to load -- used by callers presenting an
+// identity other than the standard client.crt/client.key pair (e.g.
+// certclient's operating-refresh, authenticating with bootstrap.crt/
+// bootstrap.key). Hostname/SAN verification rules are identical.
+func LoadClientCredentialsWithIdentity(certsDir, certFile, keyFile, host string) (credentials.TransportCredentials, error) {
+	cfg, err := clientTLSConfigWithIdentity(certsDir, certFile, keyFile, host)
 	if err != nil {
 		return nil, err
 	}
 	return credentials.NewTLS(cfg), nil
+}
+
+// LoadClientCredentials builds gRPC transport credentials for dialing host,
+// presenting certsDir/client.crt and certsDir/client.key. Hostname/SAN
+// verification is skipped for loopback hosts (localhost, 127.0.0.0/8, ::1);
+// every other host must match a SAN on the server's presented certificate.
+func LoadClientCredentials(certsDir, host string) (credentials.TransportCredentials, error) {
+	return LoadClientCredentialsWithIdentity(certsDir, identCertFile, identKeyFile, host)
 }

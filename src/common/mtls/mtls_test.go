@@ -184,3 +184,23 @@ func TestClientTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
 	copyFile(t, fixtureCertsDir+"/client.key", filepath.Join(dir, "client.key"))
 	assert.NoError(t, dial(addr, cfg))
 }
+
+func TestLoadClientCredentialsWithIdentity_Success(t *testing.T) {
+	creds, err := LoadClientCredentialsWithIdentity(fixtureCertsDir, "client.crt", "client.key", "bwfs.internal")
+	require.NoError(t, err)
+	assert.NotNil(t, creds)
+}
+
+func TestLoadClientCredentialsWithIdentity_MissingKeyFile(t *testing.T) {
+	_, err := LoadClientCredentialsWithIdentity(fixtureCertsDir, "client.crt", "does-not-exist.key", "bwfs.internal")
+	assert.Error(t, err)
+}
+
+func TestLoadClientCredentials_StillUsesDefaultFilenames(t *testing.T) {
+	// LoadClientCredentials must keep resolving client.crt/client.key by
+	// default -- this is what every existing caller (bwfs/brfs/rwfs/
+	// catalogsync/catalog) depends on continuing to work unchanged.
+	creds, err := LoadClientCredentials(fixtureCertsDir, "bwfs.internal")
+	require.NoError(t, err)
+	assert.NotNil(t, creds)
+}
