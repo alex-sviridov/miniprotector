@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- The custom extension's OID is `2.25.937350326255657553.1` — a truncated (60-bit) form of a generated UUID, **not** a standards-compliant X.667 UUID-arc (the full 128-bit form doesn't fit Go's `asn1.ObjectIdentifier`, which is `[]int`) — documented as arbitrary rather than derived, since no code outside this repo ever interprets it. Do not use the full UUID form anywhere.
+- The custom extension's OID is `1.3.6.1.4.1.61183.1.1` — a short, arbitrarily-chosen, unregistered private-use OID where every arc component is small. **Not** a `2.25.<uuid>` (X.667) arc in any form, truncated or full: `crypto/x509`'s OID parser (`golang.org/x/crypto/cryptobyte`) caps every individual arc component below 2^31, so no UUID-derived arc — 128-bit or truncated — can pass through it; this was confirmed by a real step-ca container rejecting a 60-bit truncated form with HTTP 500 "malformed extension OID field". Do not use any UUID-arc form.
 - The extension is non-critical (`"critical": false`) and its value is the raw JSON encoding of the attributes map, base64'd only because the JSON template schema's `value` field is a Go `[]byte`, which `encoding/json` base64-decodes automatically from a JSON string — do not add any other encoding layer.
 - No production Go code changes and no new Go dependencies — this plan is deploy-config-only, exercised exclusively through `-tags=e2e` Docker tests.
 - Reading or enforcing the extension anywhere in this codebase is explicitly out of scope (see the design spec's Non-goals) — do not add any consumer code.
@@ -28,7 +28,7 @@
 
 **Interfaces:**
 - Consumes: `mintAndSign(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest, opts certmint.Options, ttlSec int) ([]byte, error)` — existing, unchanged, defined in `src/cmd/issuer/mintsign.go`.
-- Produces: nothing new for later tasks (Task 2 is docs-only and doesn't call any code from this task). The OID constant `2.25.937350326255657553.1` is the one durable fact Task 2's docs must state accurately.
+- Produces: nothing new for later tasks (Task 2 is docs-only and doesn't call any code from this task). The OID constant `1.3.6.1.4.1.61183.1.1` is the one durable fact Task 2's docs must state accurately.
 
 This task rewrites `src/cmd/issuer/e2e_test.go` in full: three existing tests each duplicate the same ~25 lines of "spin up a throwaway step-ca via docker compose" boilerplate, and this task must add a template-file-copy step to all three anyway (the container now runs `step ca provisioner update ... --x509-template=...` on every boot, so every test that boots `step-ca` needs that file present, not just the new attribute test) — so it's extracted into one shared `startTestCA` helper as part of making this change, rather than duplicating the new step three times.
 
@@ -74,11 +74,11 @@ import (
 // attributeExtensionOID identifies the custom X.509 extension
 // deploy/control-plane/ca/templates/leaf.tpl embeds attribute data under.
 // See docs/superpowers/specs/2026-07-05-issuer-attribute-template-design.md
-// for why this is a truncated UUID rather than a standards-compliant
-// X.667 2.25 arc: the full 128-bit form doesn't fit Go's
-// asn1.ObjectIdentifier ([]int), and step-ca's own OID parser
-// (go.step.sm/crypto/x509util) fails identically on a number that large.
-var attributeExtensionOID = asn1.ObjectIdentifier{2, 25, 937350326255657553, 1}
+// for why this is a short, arbitrarily-chosen private-use OID rather than
+// a 2.25.<uuid> (X.667) arc: crypto/x509's OID parser caps every arc
+// component below 2^31, which no UUID-derived arc value -- truncated or
+// not -- fits under.
+var attributeExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 1}
 
 // TestE2E_MintAndSignEmbedsAttributesAsCertificateExtension proves the final
 // hop the phase-2 design deferred: a real step-ca, using the CA-side x509
@@ -392,7 +392,7 @@ Create `deploy/control-plane/ca/templates/leaf.tpl`:
 	"extKeyUsage": ["serverAuth", "clientAuth"]
 {{- if .Insecure.User }},
 	"extensions": [{
-		"id": "2.25.937350326255657553.1",
+		"id": "1.3.6.1.4.1.61183.1.1",
 		"critical": false,
 		"value": "{{ toJson .Insecure.User | b64enc }}"
 	}]
@@ -483,7 +483,7 @@ git add deploy/control-plane/ca/templates/leaf.tpl deploy/control-plane/ca/entry
 git commit -m "feat(issuer): bake attributes into a real certificate extension via CA-side template
 
 step-ca's default template silently dropped TemplateData; this adds a
-custom leaf template (2.25.937350326255657553.1, non-critical, JSON-
+custom leaf template (1.3.6.1.4.1.61183.1.1, non-critical, JSON-
 encoded) so attribute values issuer already sends actually land in the
 issued certificate. Proven via the existing docker-backed e2e suite,
 which now also proves the extension is omitted entirely when a client
@@ -501,7 +501,7 @@ has no attributes set (self-mint's nil-attributes path)."
 - Modify: `CHANGELOG.md`
 
 **Interfaces:**
-- Consumes: nothing from Task 1's code (docs reference the OID constant `2.25.937350326255657553.1` as a fact, not a Go symbol).
+- Consumes: nothing from Task 1's code (docs reference the OID constant `1.3.6.1.4.1.61183.1.1` as a fact, not a Go symbol).
 - Produces: nothing further downstream.
 
 No changes to `README.md`, `docs/ARCHITECTURE.md`, or `deploy/control-plane/README.md`: this change adds no new component, doesn't alter system topology or data flow (attributes already flowed from `client-manager` through `issuer` to the CA; this only changes what the CA does with data already in transit), and `deploy/control-plane/README.md`'s walkthrough never described `step-ca`'s internal provisioner/template configuration to begin with, so there's no existing operator-facing text to correct.
@@ -524,13 +524,13 @@ Replace it with:
 
 ```
 **Attribute extension:** `attribute` values are baked into the issued certificate as a real X.509
-extension (OID `2.25.937350326255657553.1`, non-critical, JSON-encoded, present only when a client
+extension (OID `1.3.6.1.4.1.61183.1.1`, non-critical, JSON-encoded, present only when a client
 has at least one attribute set), via a custom step-ca leaf template
 (`deploy/control-plane/ca/templates/leaf.tpl`) wired into the CA's provisioner by
 `deploy/control-plane/ca/entrypoint.sh` on first boot. See
 [Design: Issuer Attribute Template](../superpowers/specs/2026-07-05-issuer-attribute-template-design.md)
-for why the OID is a truncated UUID rather than a standards-compliant X.667 arc, and why nothing
-in this codebase yet reads or enforces the extension it embeds.
+for why the OID is a short, arbitrarily-chosen private-use OID rather than a standards-compliant
+X.667 arc, and why nothing in this codebase yet reads or enforces the extension it embeds.
 ```
 
 - [ ] **Step 2: Update `docs/components/client-manager.md`**
@@ -579,7 +579,7 @@ validity window). `attribute`/`san` changes propagate the same way, on the same 
 every operating-refresh is a fresh `Sign` with a fresh CSR.
 
 `attribute` values land in the certificate itself as a real, non-critical X.509 extension (OID
-`2.25.937350326255657553.1`, JSON-encoded), not just in the `Sign` request sent to the CA — see
+`1.3.6.1.4.1.61183.1.1`, JSON-encoded), not just in the `Sign` request sent to the CA — see
 [issuer](components/issuer.md#behavior). Nothing in this codebase yet reads or enforces that
 extension; it exists so a future authorization check can, without another round of
 certificate-issuance changes.
@@ -596,7 +596,7 @@ Insert a new entry at the top of the changelog list, immediately after the intro
 since the operating-certificate work landed, but step-ca's default template ignored the field
 entirely — the data reached the wire and was silently dropped. A new CA-side template
 (`deploy/control-plane/ca/templates/leaf.tpl`, wired in by `ca/entrypoint.sh`) now embeds those
-attributes as a real, non-critical X.509 extension (OID `2.25.937350326255657553.1`, JSON-encoded,
+attributes as a real, non-critical X.509 extension (OID `1.3.6.1.4.1.61183.1.1`, JSON-encoded,
 present only when a client has attributes set), closing the gap phase 2's design explicitly
 deferred. Nothing yet reads or enforces this extension — that remains separate, later work — but
 the round-trip from `client-manager attribute set` to an actual certificate field now provably

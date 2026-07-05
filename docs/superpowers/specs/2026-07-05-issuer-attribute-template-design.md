@@ -37,19 +37,23 @@ later piece of work, consistent with how phase 2's design already drew this boun
 
 One custom, non-critical extension per certificate:
 
-- **OID:** `2.25.937350326255657553.1`. The X.667/RFC 4122 `2.25.<uuid>` arc is the standard
-  no-registration-required way to mint a private OID, but its canonical form uses the *full*
-  128-bit UUID integer as a single arc component — verified (by attempting to compile it) to
-  overflow Go's `asn1.ObjectIdentifier` (`[]int`, effectively `int64` on any real platform), and
-  step-ca's own template OID parser (`go.step.sm/crypto/x509util/marshal_utils.go`) uses
-  `strconv.Atoi` per component, which fails identically on a number this large. Since this system
-  is entirely closed — certificates are signed by our own private CA and only ever interpreted by
-  our own code, never an external registry or third party — the collision-avoidance the full UUID
-  buys isn't actually load-bearing here. The OID above truncates the generated UUID
-  (`cc60c22b-c6cd-4ed6-8d02-2327ca90a251`) to its low 60 bits (`937350326255657553`, safely within
-  `int64`), kept for continuity with the original generation but explicitly **not** a standards-
-  compliant X.667 UUID-arc — it's just an arbitrarily-chosen, hardcoded-once integer. `.1` under it
-  is reserved for "attributes" specifically, leaving room for a second custom extension under the
+- **OID:** `1.3.6.1.4.1.61183.1.1`. The X.667/RFC 4122 `2.25.<uuid>` arc — the standard
+  no-registration-required way to mint a private OID — turns out to be unusable here in *any*
+  truncated form, not just its full 128-bit canonical one: `crypto/x509`'s OID parser
+  (`golang.org/x/crypto/cryptobyte`'s `readBase128Int`, vendored into the Go toolchain since
+  Go 1.20/1.21) caps every individual arc component below 2^31, by explicit design ("avoid
+  overflowing int on a 32-bit platform"). A 60-bit truncation was tried and confirmed to fail
+  three independent ways: a standalone `encoding/asn1` marshal/unmarshal round-trip
+  ("asn1: structure error: base 128 integer too large"), source inspection of the cryptobyte
+  parser step-ca's own self-validation uses, and a real step-ca container returning HTTP 500
+  ("x509: malformed extension OID field") on every `Sign` call carrying attributes. Since this
+  system is entirely closed — certificates are signed by our own private CA and only ever
+  interpreted by our own code, never an external registry or third party — there's no
+  collision-avoidance property worth preserving anyway, so this abandons the UUID-arc framing
+  entirely: `1.3.6.1.4.1.61183.1.1` is a short, arbitrarily-chosen, unregistered private-use OID
+  where every arc component is trivially small (61183 easily fits in 17 bits), verified to
+  round-trip through `encoding/asn1.Marshal`/`Unmarshal` without error. The trailing `.1` is
+  reserved for "attributes" specifically, leaving room for a second custom extension under the
   same root later.
 - **Value:** the raw JSON encoding of the attributes map (e.g. `{"role":"prod-db"}`), not wrapped in
   further ASN.1 structure. Both producer (this template) and any future consumer are our own Go
@@ -84,7 +88,7 @@ rather than reconstructed from memory) with one addition:
 	"extKeyUsage": ["serverAuth", "clientAuth"]
 {{- if .Insecure.User }},
 	"extensions": [{
-		"id": "2.25.937350326255657553.1",
+		"id": "1.3.6.1.4.1.61183.1.1",
 		"critical": false,
 		"value": "{{ toJson .Insecure.User | b64enc }}"
 	}]
