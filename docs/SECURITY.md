@@ -81,6 +81,12 @@ of the check (bounded from above by `OperatingCertTTLSec`, since that's the cert
 validity window). `attribute`/`san` changes propagate the same way, on the same schedule, since
 every operating-refresh is a fresh `Sign` with a fresh CSR.
 
+`attribute` values land in the certificate itself as a real, non-critical X.509 extension (OID
+`1.3.6.1.4.1.61183.1.1`, JSON-encoded), not just in the `Sign` request sent to the CA — see
+[issuer](components/issuer.md#behavior). Nothing in this codebase yet reads or enforces that
+extension; it exists so a future authorization check can, without another round of
+certificate-issuance changes.
+
 Stated plainly, this design has real costs, not just benefits:
 
 - **`issuer` becomes a hard dependency for the entire fleet's mesh access.** This is not an

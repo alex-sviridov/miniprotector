@@ -74,13 +74,14 @@ in sync.
 a schedule, which is the client of both of these RPCs — see
 [certclient](./certclient.md#behavior) for the exact call sequence.
 
-**Not yet in this phase:** actually baking `attribute` values into a certificate's extensions
-requires a custom X.509 template (`options.x509.templateFile` in the CA's `ca.json`) that reads
-`.Insecure.User.<field>` — that template is deployment configuration for a CA operator to author,
-not something this binary's code prescribes. The e2e test proves a real step-ca accepts a sign
-request carrying `TemplateData` without rejecting it and returns a valid, signable certificate; it
-does not verify that the data reaches a certificate extension, since that requires the template
-above, which this phase does not ship.
+**Attribute extension:** `attribute` values are baked into the issued certificate as a real X.509
+extension (OID `1.3.6.1.4.1.61183.1.1`, non-critical, JSON-encoded, present only when a client
+has at least one attribute set), via a custom step-ca leaf template
+(`deploy/control-plane/ca/templates/leaf.tpl`) wired into the CA's provisioner by
+`deploy/control-plane/ca/entrypoint.sh` on first boot. See
+[Design: Issuer Attribute Template](../superpowers/specs/2026-07-05-issuer-attribute-template-design.md)
+for why the OID is a short, arbitrarily-chosen private-use OID rather than a standards-compliant
+X.667 arc, and why nothing in this codebase yet reads or enforces the extension it embeds.
 
 ## Configuration Keys
 
