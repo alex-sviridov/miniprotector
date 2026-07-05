@@ -106,9 +106,7 @@ func TestBackoff_CappedAtMax(t *testing.T) {
 }
 
 func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
-	origPolicies := policies
-	policies = []Policy{{ID: "test-policy", Binary: "true", Interval: time.Hour}}
-	defer func() { policies = origPolicies }()
+	testPolicies := []Policy{{ID: "test-policy", Binary: "true", Interval: time.Hour}}
 
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
@@ -117,7 +115,7 @@ func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run)
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, testPolicies)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, fr.callCount(), "a healthy 1-hour-interval policy must not re-trigger within the test window")
@@ -130,9 +128,7 @@ func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
 }
 
 func TestRun_FailedExecutionRecordsFailureAndRetriesAfterBackoff(t *testing.T) {
-	origPolicies := policies
-	policies = []Policy{{ID: "test-policy", Binary: "false", Interval: time.Hour}}
-	defer func() { policies = origPolicies }()
+	testPolicies := []Policy{{ID: "test-policy", Binary: "false", Interval: time.Hour}}
 
 	origBase, origMax := backoffBase, backoffMax
 	backoffBase, backoffMax = 20*time.Millisecond, 50*time.Millisecond
@@ -145,7 +141,7 @@ func TestRun_FailedExecutionRecordsFailureAndRetriesAfterBackoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run)
+	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run, testPolicies)
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, fr.callCount(), 2, "must retry after the backoff window elapses")

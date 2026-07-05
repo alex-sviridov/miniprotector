@@ -34,11 +34,13 @@ func TestRenderPolicies_MissingCacheShowsNeverRunAndDueNow(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
 
+	testPolicies := []Policy{{ID: "bootstrap-refresh", Binary: "certclient", Interval: 24 * time.Hour}}
+
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, time.Now()))
+	require.NoError(t, renderPolicies(&buf, cachePath, time.Now(), testPolicies))
 
 	out := buf.String()
-	assert.Contains(t, out, "cert-refresh")
+	assert.Contains(t, out, "bootstrap-refresh")
 	assert.Contains(t, out, "never run")
 	assert.Contains(t, out, "due now")
 }
@@ -47,13 +49,15 @@ func TestRenderPolicies_HealthyPolicyShowsOkAndNotNeverRun(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
 
+	testPolicies := []Policy{{ID: "operating-refresh", Binary: "certclient", Interval: 15 * time.Minute}}
+
 	now := time.Now()
 	require.NoError(t, writeCache(cachePath, Cache{
-		"cert-refresh": {LastSuccessAt: &now},
+		"operating-refresh": {LastSuccessAt: &now},
 	}))
 
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, now))
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
 
 	out := buf.String()
 	assert.Contains(t, out, "ok")
@@ -64,14 +68,16 @@ func TestRenderPolicies_FailingPolicyShowsRetryingWithCount(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
 
+	testPolicies := []Policy{{ID: "operating-refresh", Binary: "certclient", Interval: 15 * time.Minute}}
+
 	now := time.Now()
 	retryAt := now.Add(time.Minute)
 	require.NoError(t, writeCache(cachePath, Cache{
-		"cert-refresh": {LastAttemptAt: &now, ConsecutiveFailures: 3, NextRetryAt: &retryAt},
+		"operating-refresh": {LastAttemptAt: &now, ConsecutiveFailures: 3, NextRetryAt: &retryAt},
 	}))
 
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, now))
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
 
 	assert.Contains(t, buf.String(), "retrying (3 failures)")
 }

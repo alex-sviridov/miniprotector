@@ -52,7 +52,7 @@ func formatNextRun(t time.Time, now time.Time) string {
 // renderPolicies reads cachePath and writes a table of every embedded
 // policy's reconciliation state to w. It never executes a policy — purely
 // a read-only view of what `agent serve` last recorded.
-func renderPolicies(w io.Writer, cachePath string, now time.Time) error {
+func renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Policy) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err

@@ -43,6 +43,8 @@ func main() {
 	}
 	cachePath := filepath.Join(varDir, "agent-state.json")
 
+	pols := policies(conf)
+
 	switch arguments.Action {
 	case "serve":
 		if err := os.MkdirAll(varDir, 0o755); err != nil {
@@ -63,13 +65,13 @@ func main() {
 		defer stop()
 
 		logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath)
-		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec); err != nil {
+		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, pols); err != nil {
 			logger.Error("agent exited with error", "error", err)
 			os.Exit(1)
 		}
 
 	case "list-policies":
-		if err := renderPolicies(os.Stdout, cachePath, time.Now()); err != nil {
+		if err := renderPolicies(os.Stdout, cachePath, time.Now(), pols); err != nil {
 			fmt.Fprintf(os.Stderr, "list-policies failed: %v\n", err)
 			os.Exit(1)
 		}
