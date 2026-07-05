@@ -9,12 +9,31 @@ services:
     entrypoint: ["/home/step/entrypoint.sh"]
     restart: unless-stopped
 
+  issuer:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/issuer/Dockerfile
+    depends_on:
+      - step-ca
+    volumes:
+      - ./issuer/data:/data
+      - ./issuer/local.conf:/data/local.conf:ro
+      - ./ca/data/certs/root_ca.crt:/data/root_ca.crt:ro
+      - ./ca/data/secrets/password:/data/secrets/password:ro
+      - ./client-manager/data:/data/client-manager
+    environment:
+      - MP_CONFIG_PATH=/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+
   catalog:
     build:
       context: ../..
       dockerfile: deploy/control-plane/catalog/Dockerfile
     depends_on:
       - step-ca
+      - issuer
     volumes:
       - ./catalog/data:/data
       - ./catalog/local.conf:/data/local.conf:ro
