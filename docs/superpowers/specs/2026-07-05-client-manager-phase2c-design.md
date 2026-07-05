@@ -148,7 +148,10 @@ lines, which remain as user-facing output alongside the new internal diagnostic 
      (`0o600`, matching `writeIdentity`'s existing key-file convention) — generated once, reused on
      every subsequent call.
   5. Build a CSR from that key with `Subject.CommonName` = the parsed hostname and `DNSNames` =
-     exactly the SAN list from step 3 (an exact match is required — see "SAN Content" below).
+     hostname plus the SAN list from step 3, in that order (an exact match against
+     `certmint.Mint`'s own `append([]string{hostname}, sans...)` token claim is required — CommonName
+     and DNSNames are validated independently, so CommonName alone does not satisfy the DNSNames
+     check; confirmed against a real CA, see "SAN Content" below).
   6. Call `RequestOperatingCert(csr)` through a small `issuerClient` interface (satisfied by the
      real `pb.IssuerServiceClient`), mirroring the existing `signer`/`renewer` interfaces
      `bootstrap.go`/`renew.go` already use to isolate the CA client for testing.
@@ -203,7 +206,7 @@ operating-refresh (every 15 min, OperatingCertFetchIntervalSec):
     -> parse own hostname from bootstrap.crt's CommonName
     -> call DescribeSANs() -> current SAN alias list
     -> load client.key if present, else generate + persist it
-    -> build CSR: CommonName=hostname, DNSNames=exactly the SANs just fetched
+    -> build CSR: CommonName=hostname, DNSNames=[hostname]+SANs just fetched (exact match required)
     -> call RequestOperatingCert(csr)
     -> success: write returned chain to client.crt
     -> failure: non-zero exit, client.crt untouched; agent's existing backoff takes over
@@ -265,6 +268,16 @@ required — not a preference, a consequence of how the CA's own provisioner val
 means the phase 2 design's original assumption ("SAN changes take effect the same mechanism as
 attributes," i.e. via `TemplateData`) was incorrect: this validator runs unconditionally, before
 and independent of any custom template.
+
+**One further detail, confirmed against a real CA during implementation (not just source-reading):**
+`certmint.Mint(hostname, sans, opts)`'s token authorizes `append([]string{hostname}, sans...)`, not
+`sans` alone — the hostname itself must also be one of the CSR's `DNSNames`, even though it's
+separately the CSR's `Subject.CommonName`. `CommonName` and `DNSNames` are validated by different,
+independent checks (`commonNameSliceValidator` vs. `dnsNamesValidator`), so a CSR with `DNSNames`
+containing only the SAN aliases (omitting the hostname) is rejected outright — a real, throwaway-CA
+sign attempt built exactly that way failed with `certificate request does not contain the valid DNS
+names`. `certclient`'s CSR-building must therefore use `DNSNames = append([]string{hostname},
+sans...)`, matching `certmint.Mint`'s own construction.
 
 ## Error Handling
 

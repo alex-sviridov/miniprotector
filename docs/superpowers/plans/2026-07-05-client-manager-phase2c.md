@@ -1159,7 +1159,9 @@ func TestRunOperatingRefresh_Success_WritesClientCrtWithMatchingCSR(t *testing.T
 
 	require.NotNil(t, fake.gotCSR)
 	assert.Equal(t, "node-1", fake.gotCSR.Subject.CommonName)
-	assert.Equal(t, []string{"node-1.internal"}, fake.gotCSR.DNSNames)
+	// DNSNames must be hostname+sans, matching what certmint.Mint actually
+	// authorizes (append([]string{hostname}, sans...)) -- not sans alone.
+	assert.Equal(t, []string{"node-1", "node-1.internal"}, fake.gotCSR.DNSNames)
 
 	_, err = os.Stat(filepath.Join(certsDir, "client.key"))
 	require.NoError(t, err, "client.key should have been generated")
@@ -1373,13 +1375,19 @@ func loadOrGenerateOperatingKey(certsDir string) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-// buildOperatingCSR builds a CSR whose DNSNames are exactly sans -- an
-// exact match, not a superset or subset, is required against whatever
-// issuer authorizes (see the SAN Content section of this phase's design).
+// buildOperatingCSR builds a CSR whose DNSNames exactly match what
+// certmint.Mint will authorize: hostname plus sans, in that order
+// (certmint.Mint builds its token's SAN claim as
+// append([]string{hostname}, sans...) -- confirmed against a real CA by
+// this phase's e2e test, cmd/issuer/e2e_test.go's
+// TestE2E_MintAndSignEmbedsSANsInCertificate). A CSR omitting hostname
+// from DNSNames does NOT satisfy the exact-match validator even though
+// hostname is also the CSR's CommonName -- CommonName and DNSNames are
+// validated independently.
 func buildOperatingCSR(hostname string, sans []string, key *ecdsa.PrivateKey) ([]byte, error) {
 	template := &x509.CertificateRequest{
 		Subject:  pkix.Name{CommonName: hostname},
-		DNSNames: sans,
+		DNSNames: append([]string{hostname}, sans...),
 	}
 	return x509.CreateCertificateRequest(rand.Reader, template, key)
 }
