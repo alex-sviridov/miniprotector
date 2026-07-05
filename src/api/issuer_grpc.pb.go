@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	IssuerService_RequestOperatingCert_FullMethodName = "/issuerservice.IssuerService/RequestOperatingCert"
+	IssuerService_DescribeSANs_FullMethodName         = "/issuerservice.IssuerService/DescribeSANs"
 )
 
 // IssuerServiceClient is the client API for IssuerService service.
@@ -28,10 +29,12 @@ const (
 //
 // IssuerService is the sole RPC surface a bootstrapped node calls to keep
 // its operating certificate fresh. The caller's hostname is never a field
-// on this message -- it is always derived from the verified mTLS peer
-// identity, exactly like every other authenticated RPC in this project.
+// on any of these messages -- it is always derived from the verified mTLS
+// peer identity, exactly like every other authenticated RPC in this
+// project.
 type IssuerServiceClient interface {
 	RequestOperatingCert(ctx context.Context, in *RequestOperatingCertRequest, opts ...grpc.CallOption) (*RequestOperatingCertResponse, error)
+	DescribeSANs(ctx context.Context, in *DescribeSANsRequest, opts ...grpc.CallOption) (*DescribeSANsResponse, error)
 }
 
 type issuerServiceClient struct {
@@ -52,16 +55,28 @@ func (c *issuerServiceClient) RequestOperatingCert(ctx context.Context, in *Requ
 	return out, nil
 }
 
+func (c *issuerServiceClient) DescribeSANs(ctx context.Context, in *DescribeSANsRequest, opts ...grpc.CallOption) (*DescribeSANsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DescribeSANsResponse)
+	err := c.cc.Invoke(ctx, IssuerService_DescribeSANs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IssuerServiceServer is the server API for IssuerService service.
 // All implementations must embed UnimplementedIssuerServiceServer
 // for forward compatibility.
 //
 // IssuerService is the sole RPC surface a bootstrapped node calls to keep
 // its operating certificate fresh. The caller's hostname is never a field
-// on this message -- it is always derived from the verified mTLS peer
-// identity, exactly like every other authenticated RPC in this project.
+// on any of these messages -- it is always derived from the verified mTLS
+// peer identity, exactly like every other authenticated RPC in this
+// project.
 type IssuerServiceServer interface {
 	RequestOperatingCert(context.Context, *RequestOperatingCertRequest) (*RequestOperatingCertResponse, error)
+	DescribeSANs(context.Context, *DescribeSANsRequest) (*DescribeSANsResponse, error)
 	mustEmbedUnimplementedIssuerServiceServer()
 }
 
@@ -74,6 +89,9 @@ type UnimplementedIssuerServiceServer struct{}
 
 func (UnimplementedIssuerServiceServer) RequestOperatingCert(context.Context, *RequestOperatingCertRequest) (*RequestOperatingCertResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RequestOperatingCert not implemented")
+}
+func (UnimplementedIssuerServiceServer) DescribeSANs(context.Context, *DescribeSANsRequest) (*DescribeSANsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DescribeSANs not implemented")
 }
 func (UnimplementedIssuerServiceServer) mustEmbedUnimplementedIssuerServiceServer() {}
 func (UnimplementedIssuerServiceServer) testEmbeddedByValue()                       {}
@@ -114,6 +132,24 @@ func _IssuerService_RequestOperatingCert_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IssuerService_DescribeSANs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DescribeSANsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IssuerServiceServer).DescribeSANs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IssuerService_DescribeSANs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IssuerServiceServer).DescribeSANs(ctx, req.(*DescribeSANsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IssuerService_ServiceDesc is the grpc.ServiceDesc for IssuerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -124,6 +160,10 @@ var IssuerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RequestOperatingCert",
 			Handler:    _IssuerService_RequestOperatingCert_Handler,
+		},
+		{
+			MethodName: "DescribeSANs",
+			Handler:    _IssuerService_DescribeSANs_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

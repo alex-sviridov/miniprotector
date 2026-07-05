@@ -6,10 +6,12 @@ option go_package = "./proto";
 
 // IssuerService is the sole RPC surface a bootstrapped node calls to keep
 // its operating certificate fresh. The caller's hostname is never a field
-// on this message -- it is always derived from the verified mTLS peer
-// identity, exactly like every other authenticated RPC in this project.
+// on any of these messages -- it is always derived from the verified mTLS
+// peer identity, exactly like every other authenticated RPC in this
+// project.
 service IssuerService {
   rpc RequestOperatingCert(RequestOperatingCertRequest) returns (RequestOperatingCertResponse);
+  rpc DescribeSANs(DescribeSANsRequest) returns (DescribeSANsResponse);
 }
 
 message RequestOperatingCertRequest {
@@ -22,4 +24,19 @@ message RequestOperatingCertResponse {
   // Full certificate chain (leaf + any intermediates), PEM-encoded,
   // concatenated in order -- ready to write directly to client.crt.
   bytes cert_chain_pem = 1;
+}
+
+message DescribeSANsRequest {}
+
+message DescribeSANsResponse {
+  // Current SAN aliases for the caller's own hostname (never including the
+  // hostname itself, which the caller always places in the CSR's own
+  // Subject.CommonName). Must be requested and used verbatim as a CSR's
+  // DNSNames before calling RequestOperatingCert: step-ca's OTT provisioner
+  // validates a CSR's requested DNS SANs against the signing token's
+  // authorized set with an exact match, not a subset (confirmed against
+  // smallstep/certificates@v0.30.2's authority/provisioner/sign_options.go
+  // dnsNamesValidator) -- there is no way to learn or guess this list
+  // without asking.
+  repeated string sans = 1;
 }
