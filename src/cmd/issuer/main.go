@@ -20,6 +20,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/common/mtls"
 	clientmanagerstore "github.com/alex-sviridov/miniprotector/storage/clientmanager"
 	"google.golang.org/grpc"
 )
@@ -118,7 +119,13 @@ func main() {
 
 	logger.Info("issuer started", "port", conf.IssuerPort)
 
-	if err := connection.StartServer(signalCtx, logger, conf.IssuerPort, certsDir, func(s *grpc.Server) {
+	creds, err := mtls.LoadIssuerServerCredentials(certsDir)
+	if err != nil {
+		logger.Error("failed to load server credentials", "error", err)
+		os.Exit(1)
+	}
+
+	if err := connection.StartServerWithCredentials(signalCtx, logger, conf.IssuerPort, creds, func(s *grpc.Server) {
 		pb.RegisterIssuerServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("serve failed", "error", err)

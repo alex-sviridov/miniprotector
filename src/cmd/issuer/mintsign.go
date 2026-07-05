@@ -23,9 +23,15 @@ func mintAndSign(hostname string, sans []string, attributes map[string]string, c
 		return nil, fmt.Errorf("mint token: %w", err)
 	}
 
-	templateData, err := json.Marshal(attributes)
+	templateData, err := json.Marshal(struct {
+		Tier       string            `json:"tier"`
+		Attributes map[string]string `json:"attributes,omitempty"`
+	}{
+		Tier:       "operating",
+		Attributes: attributes,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal attributes: %w", err)
+		return nil, fmt.Errorf("marshal template data: %w", err)
 	}
 
 	client, err := ca.NewClient(opts.CAURL, ca.WithRootFile(opts.RootFile))
