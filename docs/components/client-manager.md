@@ -80,5 +80,6 @@ make clientmanager
 - [agent](./agent.md) — schedules that refresh via its `operating-refresh` policy
 - [Security Model](../SECURITY.md)
 - [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)
+- [Design: Credential Tier Enforcement](../superpowers/specs/2026-07-05-credential-tier-enforcement-design.md)
 - [Design: Client Manager (phase 1)](../superpowers/specs/2026-07-04-client-manager-design.md)
 - [Architecture](../ARCHITECTURE.md)

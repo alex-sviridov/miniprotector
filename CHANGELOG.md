@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-05 — Bootstrap credentials can no longer reach bwfs/catalog
+
+`common/mtls` trusted any CA-signed certificate regardless of which of the two credential tiers
+issued it — a leaked bootstrap credential (whose only intended use is authenticating to `issuer`)
+could authenticate to `bwfs`/`catalog` exactly as well as an operating credential, something
+`docs/SECURITY.md` already flagged as a known, unenforced gap. Bootstrap certificates now carry
+`extKeyUsage: ["clientAuth"]` only plus a custom Extended Key Usage marker (`EKUIssuerCaller`, OID
+`1.3.6.1.4.1.61183.1.3`); `common/mtls.LoadServerCredentials` (used by `bwfs`/`catalog`) rejects any
+peer certificate carrying that marker, and a new `mtls.LoadIssuerServerCredentials` (used only by
+`issuer`) rejects any peer certificate that doesn't. Certificates issued before this change lack
+the marker and won't pass either check — the demo lab (`deploy/control-plane`) needs its CA and
+client-manager volumes wiped and the enroll walkthrough re-run after upgrading.
+
 ## 2026-07-05 — Attributes now land in the certificate, not just the Sign request
 
 `issuer` has passed `attribute` key/value pairs to the CA via `TemplateData` on every `Sign` call

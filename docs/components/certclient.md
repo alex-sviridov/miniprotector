@@ -33,7 +33,10 @@ certclient --debug <subcommand>
   writing `ca.crt` and `bootstrap.crt`/`bootstrap.key`. Gets the token from `--token`, then
   `MP_CERT_TOKEN`, then an interactive stdin prompt, in that order. Trust in the CA is established
   from the token's embedded root fingerprint claim (no separately-distributed root cert needed for
-  this step).
+  this step). The redemption's sign request carries `TemplateData {"tier": "bootstrap"}`, which the
+  CA's custom leaf template turns into a certificate with `extKeyUsage: ["clientAuth"]` only plus
+  the custom `EKUIssuerCaller` marker — see
+  [Security Model](../SECURITY.md#the-two-tier-credential-model).
 - **`renew`**: renews the existing bootstrap credential via the CA's mTLS-authenticated renew
   endpoint — authenticated by the existing `bootstrap.crt`/`bootstrap.key`, no token needed. Reuses
   the existing private key; only `bootstrap.crt` is rewritten. Always renews when invoked; there's
@@ -70,4 +73,5 @@ make build
 - [agent](./agent.md) — runs `bootstrap-refresh`/`operating-refresh` as scheduled policies
 - [bwfs](./bwfs.md), [brfs](./brfs.md), [rwfs](./rwfs.md) — the services that consume the identity this writes
 - [Security Model](../SECURITY.md)
+- [Design: Credential Tier Enforcement](../superpowers/specs/2026-07-05-credential-tier-enforcement-design.md)
 - [Architecture](../ARCHITECTURE.md)

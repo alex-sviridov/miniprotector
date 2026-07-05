@@ -83,6 +83,15 @@ has at least one attribute set), via a custom step-ca leaf template
 for why the OID is a short, arbitrarily-chosen private-use OID rather than a standards-compliant
 X.667 arc, and why nothing in this codebase yet reads or enforces the extension it embeds.
 
+**Credential tier enforcement:** `issuer`'s own listener uses `mtls.LoadIssuerServerCredentials`
+instead of the default `mtls.LoadServerCredentials` every other server uses — it accepts only
+bootstrap/issuer-caller credentials (certificates carrying the custom `EKUIssuerCaller` Extended
+Key Usage, OID `1.3.6.1.4.1.61183.1.3`) and rejects operating credentials outright. This is the one
+exception to every other server's default behavior, which is the reverse: reject bootstrap/
+issuer-caller credentials, accept everything else. See
+[Security Model](../SECURITY.md#the-two-tier-credential-model) and
+[Design: Credential Tier Enforcement](../superpowers/specs/2026-07-05-credential-tier-enforcement-design.md).
+
 ## Configuration Keys
 
 - `issuer_port` — port `issuer` listens on *(default: 9200)*
@@ -106,4 +115,5 @@ make issuer
 - [Issuer Protocol](../protocols/issuer.md)
 - [Security Model](../SECURITY.md)
 - [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)
+- [Design: Credential Tier Enforcement](../superpowers/specs/2026-07-05-credential-tier-enforcement-design.md)
 - [Architecture](../ARCHITECTURE.md)
