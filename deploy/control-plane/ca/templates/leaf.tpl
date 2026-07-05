@@ -6,12 +6,17 @@
 {{- else }}
 	"keyUsage": ["digitalSignature"],
 {{- end }}
+{{- if eq .Insecure.User.tier "bootstrap" }}
+	"extKeyUsage": ["clientAuth"],
+	"unknownExtKeyUsage": ["1.3.6.1.4.1.61183.1.3"]
+{{- else }}
 	"extKeyUsage": ["serverAuth", "clientAuth"]
-{{- if .Insecure.User }},
+{{- end }}
+{{- if .Insecure.User.attributes }},
 	"extensions": [{
 		"id": "1.3.6.1.4.1.61183.1.1",
 		"critical": false,
-		"value": "{{ toJson .Insecure.User | b64enc }}"
+		"value": "{{ toJson .Insecure.User.attributes | b64enc }}"
 	}]
 {{- end }}
 }
