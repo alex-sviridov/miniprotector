@@ -89,6 +89,9 @@ type Config struct {
 	IssuerHost                 string
 	IssuerPort                 int
 	OperatingCertTTLSec        int
+	BootstrapCertRefreshIntervalSec int
+	BootstrapCertTTLSec             int
+	OperatingCertFetchIntervalSec   int
 }
 
 type contextKey string
@@ -121,6 +124,9 @@ func ParseConfig(configPath string) (*Config, error) {
 		ReconcileIntervalSec:       30,
 		IssuerPort:                 9200,
 		OperatingCertTTLSec:        3600,
+		BootstrapCertRefreshIntervalSec: 86400,
+		BootstrapCertTTLSec:             7776000,
+		OperatingCertFetchIntervalSec:   900,
 	}
 	foundFields := make(map[string]bool)
 
@@ -255,6 +261,27 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.OperatingCertTTLSec = number
 			foundFields["OperatingCertTTLSec"] = true
+		case "BootstrapCertRefreshIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid BootstrapCertRefreshIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.BootstrapCertRefreshIntervalSec = number
+			foundFields["BootstrapCertRefreshIntervalSec"] = true
+		case "BootstrapCertTTLSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid BootstrapCertTTLSec value at line %d: %s", lineNum, value)
+			}
+			config.BootstrapCertTTLSec = number
+			foundFields["BootstrapCertTTLSec"] = true
+		case "OperatingCertFetchIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid OperatingCertFetchIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.OperatingCertFetchIntervalSec = number
+			foundFields["OperatingCertFetchIntervalSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}
