@@ -4,6 +4,7 @@ services:
     volumes:
       - ./ca/data:/home/step
       - ./ca/entrypoint.sh:/home/step/entrypoint.sh:ro
+      - ./ca/templates/leaf.tpl:/home/step/templates/leaf.tpl:ro
     ports:
       - "9000:9000"
     entrypoint: ["/home/step/entrypoint.sh"]
