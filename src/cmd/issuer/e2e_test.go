@@ -108,8 +108,9 @@ func TestE2E_MintAndSignAcceptedByCAWithTemplateData(t *testing.T) {
 
 // TestE2E_MintAndSignEmbedsSANsInCertificate proves the exact-match SAN
 // constraint this phase's design turned on: a CSR whose DNSNames were built
-// from the same SAN list passed into mintAndSign is accepted by a real
-// step-ca, and the resulting leaf certificate's DNSNames match exactly.
+// from the hostname plus the same SAN list passed into mintAndSign is
+// accepted by a real step-ca, and the resulting leaf certificate's DNSNames
+// match exactly.
 // certclient's own unit tests (see cmd/certclient) prove its CSR always
 // matches whatever issuer's DescribeSANs returns; this test proves that
 // when it does, the real CA actually honors it.
