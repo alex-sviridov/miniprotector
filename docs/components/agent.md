@@ -1,11 +1,11 @@
 # agent
 
-Node-level agent that reconciles local state against a small set of policies compiled into the
-binary. **v1** has exactly one embedded policy — renew this node's mTLS identity via `certclient`
-on a fixed interval — intended to replace the bare cron entry used previously. `agent` does not fetch
-policies over the network yet; see the
-[design doc](../superpowers/specs/2026-07-03-agent-v1-cert-refresh-design.md) for how this grows
-into policy-server-fetched and queue-dispatched work in later iterations.
+Node-level agent that reconciles local state against a small, config-driven set of policies. It
+runs two embedded policies — `bootstrap-refresh` and `operating-refresh` — that keep this node's
+two-tier mTLS credential (see [Security Model](../SECURITY.md)) fresh via `certclient`, replacing
+the bare cron entries used previously. `agent` does not fetch policies over the network yet; see
+the [design doc](../superpowers/specs/2026-07-03-agent-v1-cert-refresh-design.md) for how this
+grows into policy-server-fetched and queue-dispatched work in later iterations.
 
 ## Usage
 
@@ -23,20 +23,27 @@ agent list-policies
 
 ## Behavior
 
-`agent serve` ticks every `ReconcileIntervalSec` seconds. On each tick, for every embedded policy
-it checks whether the policy is due — a healthy policy is due once its own `Interval` has elapsed
-since the last success; a policy that's currently failing is due once a jittered backoff period
-(computed once per failure, not re-derived on every check) has elapsed instead, decoupled from
-`Interval`. When due, `agent` execs the policy's binary (`certclient`, with no arguments, for the
-embedded `cert-refresh` policy) and records the outcome — success or failure, and a running count
-of consecutive failures — to a local JSON cache file.
+`agent serve` ticks every `ReconcileIntervalSec` seconds. On each tick, for every policy it checks
+whether the policy is due — a healthy policy is due once its own `Interval` has elapsed since the
+last success; a policy that's currently failing is due once a jittered backoff period (computed
+once per failure, not re-derived on every check) has elapsed instead, decoupled from `Interval`.
+When due, `agent` execs the policy's binary and records the outcome — success or failure, and a
+running count of consecutive failures — to a local JSON cache file.
+
+`agent`'s two policies:
+
+| Policy | Execs | Interval | Refreshes |
+|--------|-------|----------|-----------|
+| `bootstrap-refresh` | `certclient renew` | `BootstrapCertRefreshIntervalSec` | The long-lived bootstrap credential (`bootstrap.crt`) via the CA's `/renew` |
+| `operating-refresh` | `certclient operating-refresh` | `OperatingCertFetchIntervalSec` | The short-lived operating certificate (`client.crt`/`client.key`) via `issuer` |
 
 `agent list-policies` reads that same cache file and prints each policy's health and estimated
 next run time, without executing anything or requiring a running `agent serve` process:
 
 ```
-POLICY         STATE               LAST SUCCESS         LAST ATTEMPT         FAILURES  NEXT RUN
-cert-refresh   ok                  2026-07-03 14:32:10  2026-07-03 14:32:10  0         2026-07-03 14:37:10
+POLICY              STATE               LAST SUCCESS         LAST ATTEMPT         FAILURES  NEXT RUN
+bootstrap-refresh    ok                  2026-07-03 14:32:10  2026-07-03 14:32:10  0         2026-07-04 14:32:10
+operating-refresh    ok                  2026-07-05 09:10:00  2026-07-05 09:10:00  0         2026-07-05 09:25:00
 ```
 
 The cache file lives at `<var_dir>/agent-state.json`, where `<var_dir>` is `var_path` from
@@ -50,6 +57,9 @@ on the next tick, the same fail-safe direction used everywhere else in this comp
 |-----|---------|-------------|
 | `var_path` | binary's own directory | Directory for runtime/variable data (the cache file) |
 | `ReconcileIntervalSec` | 30 | How often `agent serve` checks whether any policy is due |
+| `BootstrapCertRefreshIntervalSec` | 86400 (1 day) | How often the `bootstrap-refresh` policy runs `certclient renew` |
+| `OperatingCertFetchIntervalSec` | 900 (15 minutes) | How often the `operating-refresh` policy runs `certclient operating-refresh` |
+| `BootstrapCertTTLSec` | 7776000 (90 days) | Intended requested validity for the bootstrap credential. Parsed and defaulted by `common/config`, but not yet consumed by any request path — `certclient bootstrap`/`renew` don't currently pass a requested TTL to the CA, so actual bootstrap credential lifetime is governed entirely by the CA provisioner's own claims today |
 
 ## Building
 
@@ -59,6 +69,8 @@ make agent
 
 ## See Also
 
-- [certclient](./certclient.md) — the binary `agent`'s embedded `cert-refresh` policy execs
+- [certclient](./certclient.md) — the binary both of `agent`'s policies exec
+- [issuer](./issuer.md) — what `operating-refresh` ultimately talks to
+- [Security Model](../SECURITY.md) — the two-tier credential model these policies maintain
 - [Architecture](../ARCHITECTURE.md)
 - [Design: Agent v1](../superpowers/specs/2026-07-03-agent-v1-cert-refresh-design.md)

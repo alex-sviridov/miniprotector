@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-05 — Agent-driven operating-certificate refresh (phase 2c)
+
+`agent` now obtains and refreshes operating certificates through `issuer` on a schedule, closing
+the loop phase 2's design opened: revocation, live attributes, and SAN changes now actually reach
+a node automatically, end to end, without an operator re-enrolling it. This required splitting a
+node's mTLS identity into a two-tier credential model — a long-lived bootstrap credential
+(`bootstrap.crt`/`bootstrap.key`, obtained/renewed via `certclient bootstrap`/`renew`) used only to
+authenticate to `issuer`, and the short-lived operating credential (`client.crt`/`client.key`,
+everything else's mTLS identity) obtained fresh via the new `certclient operating-refresh`
+subcommand. `agent` accordingly runs two independent-cadence, config-driven policies —
+`bootstrap-refresh` and `operating-refresh` — instead of its previous single `cert-refresh` policy.
+While wiring this, a design gap surfaced and was closed: step-ca's OTT provisioner validates a
+CSR's requested SANs against the signing token's authorized set with an exact match, not a subset,
+so a new `issuer.DescribeSANs` RPC was added for a node to learn its own current SAN alias list
+before building its CSR — without it, SAN propagation silently failed to actually reach issued
+certificates. Also added: `docs/SECURITY.md`, a canonical reference for the mTLS/two-tier-credential/
+revocation model, consolidating what had been scattered across dated design docs.
+
 ## 2026-07-05 — Operating-certificate issuance (issuer)
 
 Added `issuer`, a new CA-host-local binary that mints short-lived "operating certificates" for
