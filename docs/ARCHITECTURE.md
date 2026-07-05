@@ -21,12 +21,20 @@ A backup system with intelligent deduplication and integrity verification.
 | Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `client-manager`, `issuer` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
 | Runs where | On the CA host (`client-manager`, `issuer`); `catalog` runs centrally, wherever the catalog deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); neither has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` only |
+| Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` and `agent` — `catalog`'s image is one of them, since it's deployed as an ordinary `agent`-managed enrolled node (see [Control Plane README](../deploy/control-plane/README.md)) |
+
+`issuer` is the one exception to the "obtained via `certclient`" rule below: it mints and signs its
+own mTLS server identity directly at startup and re-mints it on an internal ticker while running,
+reusing the same CA provisioner access it already holds for issuing operating certificates — no
+enrollment token, no `certclient`, no second process on the CA host. See
+[issuer](components/issuer.md#self-identity-minting-its-own-server-certificate).
 
 `catalog` is control plane by role (a fleet-wide central service, not colocated with any single
-backup node) but bootstraps its own mTLS identity the same way agents do, via `certclient` — it
-doesn't fit either row cleanly. It listens on its own port (`catalog_port`, default 15723) for
-`catalogsync` connections from every `bwfs` node's agent host.
+backup node) but obtains its own mTLS identity the same way any other enrolled node does — its
+image bundles `agent` (which wraps `certclient`), and it runs as an ordinary `agent`-managed node
+with continuously-refreshed bootstrap and operating credentials, not a one-shot bootstrap redeemed
+only at container start — it doesn't fit either row cleanly. It listens on its own port
+(`catalog_port`, default 15723) for `catalogsync` connections from every `bwfs` node's agent host.
 
 A node's mTLS identity is obtained in two tiers, both via `certclient`: `bootstrap` redeems a
 one-time token minted by `client-manager` for `ca.crt` plus a long-lived `bootstrap.crt`/
