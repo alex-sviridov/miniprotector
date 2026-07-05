@@ -29,16 +29,16 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/certmint"
 )
 
-// TestE2E_MintAndSignEmbedsAttributesInTemplateData proves the real
-// mintAndSign call, against a genuine throwaway step-ca, produces a
-// signable certificate and that the attributes reach the sign request's
-// TemplateData -- this is the specific, previously-unverified mechanism
-// this whole design depends on (see the phase-2 design spec's corrected
-// "step-ca" component description). It does not configure a custom x509
-// template (that's deployment configuration, out of scope for this test);
-// it confirms the plumbing that makes such a template possible, by
-// checking the request-level artifact directly.
-func TestE2E_MintAndSignEmbedsAttributesInTemplateData(t *testing.T) {
+// TestE2E_MintAndSignAcceptedByCAWithTemplateData proves that a real, live
+// step-ca accepts a Sign request carrying attribute data via TemplateData
+// -- without rejecting it -- and returns a valid, signable certificate
+// chain. It does NOT prove that the attribute data round-trips into a
+// certificate extension: that requires a CA-side custom x509 template,
+// which is explicitly out of scope for this phase (see the phase-2 design
+// doc). What this test confirms is the narrower, previously-unverified
+// fact that the mechanism this design depends on -- a real step-ca signing
+// a request that includes TemplateData -- actually works end to end.
+func TestE2E_MintAndSignAcceptedByCAWithTemplateData(t *testing.T) {
 	requireDocker(t)
 
 	repoRoot := repoRootDir(t)
@@ -94,7 +94,7 @@ func TestE2E_MintAndSignEmbedsAttributesInTemplateData(t *testing.T) {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	require.NoError(t, err)
 
-	chainPEM, err := mintAndSign("e2e-issuer-host", nil, map[string]string{"role": "prod-db"}, csr, opts)
+	chainPEM, err := mintAndSign("e2e-issuer-host", nil, map[string]string{"role": "prod-db"}, csr, opts, 3600)
 	require.NoError(t, err, "mintAndSign")
 	require.NotEmpty(t, chainPEM)
 

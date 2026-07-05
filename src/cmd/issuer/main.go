@@ -76,7 +76,7 @@ func main() {
 		PasswordFile: args.PasswordFile,
 	}
 	mintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
-		return mintAndSign(hostname, sans, attributes, csr, mintOpts)
+		return mintAndSign(hostname, sans, attributes, csr, mintOpts, conf.OperatingCertTTLSec)
 	}
 	srv := newIssuerServer(store, mintSign, logger)
 

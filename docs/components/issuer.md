@@ -38,8 +38,10 @@ in sync.
 **Not yet in this phase:** actually baking `attribute` values into a certificate's extensions
 requires a custom X.509 template (`options.x509.templateFile` in the CA's `ca.json`) that reads
 `.Insecure.User.<field>` — that template is deployment configuration for a CA operator to author,
-not something this binary's code prescribes. This phase proves the data reaches `TemplateData`
-correctly (see the e2e test); it does not ship a specific template.
+not something this binary's code prescribes. The e2e test proves a real step-ca accepts a sign
+request carrying `TemplateData` without rejecting it and returns a valid, signable certificate; it
+does not verify that the data reaches a certificate extension, since that requires the template
+above, which this phase does not ship.
 
 ## Configuration Keys
 
