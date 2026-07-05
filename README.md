@@ -55,7 +55,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[brfs](docs/components/brfs.md)** - Backup Reader for File System — reads files and streams them to `bwfs`
 - **[bwfs](docs/components/bwfs.md)** - Backup Writer for File System — receives, deduplicates, and stores files; also serves the list subprotocol
 - **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity
-- **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS bootstrap credential from the CA, and refreshes its short-lived operating certificate from `issuer`
+- **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS identity from the CA
 - **[agent](docs/components/agent.md)** - Node agent — reconciles local state against embedded policies (v1: mTLS certificate renewal via `certclient`)
 - **[client-manager](docs/components/client-manager.md)** - Owns the enrolled-client list and mints enrollment tokens directly: descriptions, RBAC-bound attributes, SAN aliases, revoked status (control-plane component, runs on the CA host)
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
