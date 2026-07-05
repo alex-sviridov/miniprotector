@@ -94,6 +94,24 @@ func TestE2E_MintAndSignEmbedsAttributesAsCertificateExtension(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, findExtension(noAttrsLeaf, attributeExtensionOID),
 		"a certificate minted with nil attributes must not carry the attribute extension at all")
+
+	emptyAttrsKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	emptyAttrsCSRDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "e2e-issuer-host-emptyattrs"},
+	}, emptyAttrsKey)
+	require.NoError(t, err)
+	emptyAttrsCSR, err := x509.ParseCertificateRequest(emptyAttrsCSRDER)
+	require.NoError(t, err)
+
+	emptyAttrsChainPEM, err := mintAndSign("e2e-issuer-host-emptyattrs", nil, map[string]string{}, emptyAttrsCSR, opts, 3600)
+	require.NoError(t, err, "mintAndSign with empty attributes")
+	emptyAttrsBlock, _ := pem.Decode(emptyAttrsChainPEM)
+	require.NotNil(t, emptyAttrsBlock)
+	emptyAttrsLeaf, err := x509.ParseCertificate(emptyAttrsBlock.Bytes)
+	require.NoError(t, err)
+	assert.Nil(t, findExtension(emptyAttrsLeaf, attributeExtensionOID),
+		"a certificate minted with an empty (non-nil) attributes map must not carry the attribute extension at all")
 }
 
 // TestE2E_MintAndSignEmbedsSANsInCertificate proves the exact-match SAN
