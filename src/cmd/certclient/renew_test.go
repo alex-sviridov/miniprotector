@@ -23,10 +23,14 @@ func (f *fakeRenewer) Renew(_ http.RoundTripper) (*api.SignResponse, error) {
 func setupExistingIdentity(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"ca.crt", "client.crt", "client.key"} {
-		data, err := os.ReadFile(filepath.Join(fixtureCertsDir, name))
+	for _, pair := range []struct{ src, dst string }{
+		{"ca.crt", "ca.crt"},
+		{"client.crt", "bootstrap.crt"},
+		{"client.key", "bootstrap.key"},
+	} {
+		data, err := os.ReadFile(filepath.Join(fixtureCertsDir, pair.src))
 		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, pair.dst), data, 0o600))
 	}
 	return dir
 }
@@ -35,7 +39,7 @@ func TestRenew_OverwritesClientCrt(t *testing.T) {
 	certsDir := setupExistingIdentity(t)
 	leaf := loadFixtureCert(t, "client.crt")
 
-	keyBefore, err := os.ReadFile(filepath.Join(certsDir, "client.key"))
+	keyBefore, err := os.ReadFile(filepath.Join(certsDir, "bootstrap.key"))
 	require.NoError(t, err)
 
 	renewer := &fakeRenewer{resp: &api.SignResponse{
@@ -46,14 +50,14 @@ func TestRenew_OverwritesClientCrt(t *testing.T) {
 	err = renew(renewer, certsDir)
 	require.NoError(t, err)
 
-	got, err := os.ReadFile(filepath.Join(certsDir, "client.crt"))
+	got, err := os.ReadFile(filepath.Join(certsDir, "bootstrap.crt"))
 	require.NoError(t, err)
 	want := append(pemCert(leaf), pemCert(leaf)...)
 	assert.Equal(t, want, got)
 
-	keyAfter, err := os.ReadFile(filepath.Join(certsDir, "client.key"))
+	keyAfter, err := os.ReadFile(filepath.Join(certsDir, "bootstrap.key"))
 	require.NoError(t, err)
-	assert.Equal(t, keyBefore, keyAfter, "client.key must be byte-for-byte unchanged after renew")
+	assert.Equal(t, keyBefore, keyAfter, "bootstrap.key must be byte-for-byte unchanged after renew")
 }
 
 func TestRenew_ErrorPropagates(t *testing.T) {
