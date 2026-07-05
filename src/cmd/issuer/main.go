@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/certmint"
@@ -78,10 +79,42 @@ func main() {
 	mintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
 		return mintAndSign(hostname, sans, attributes, csr, mintOpts, conf.OperatingCertTTLSec)
 	}
+
+	if args.Hostname == "" {
+		fmt.Fprintln(os.Stderr, "Arguments error: --hostname is required")
+		os.Exit(1)
+	}
+
+	selfMintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
+		return mintAndSign(hostname, sans, attributes, csr, mintOpts, conf.IssuerSelfCertTTLSec)
+	}
+
+	logger.Info("minting own server identity", "hostname", args.Hostname)
+	if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign, conf.IssuerSelfCertTTLSec); err != nil {
+		logger.Error("failed to mint own server identity", "error", err)
+		os.Exit(1)
+	}
+
 	srv := newIssuerServer(store, mintSign, logger)
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	refreshInterval := time.Duration(conf.IssuerSelfCertRefreshIntervalSec) * time.Second
+	go func() {
+		ticker := time.NewTicker(refreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-signalCtx.Done():
+				return
+			case <-ticker.C:
+				if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign, conf.IssuerSelfCertTTLSec); err != nil {
+					logger.Error("self-identity refresh failed, keeping existing certificate", "error", err)
+				}
+			}
+		}
+	}()
 
 	logger.Info("issuer started", "port", conf.IssuerPort)
 
