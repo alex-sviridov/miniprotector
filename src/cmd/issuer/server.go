@@ -75,3 +75,23 @@ func (s *issuerServer) RequestOperatingCert(ctx context.Context, req *pb.Request
 
 	return &pb.RequestOperatingCertResponse{CertChainPem: chainPEM}, nil
 }
+
+// DescribeSANs returns the caller's own current SAN alias list, read live
+// from the same database RequestOperatingCert consults -- the only
+// unauthenticated-adjacent-looking read in this service, but it reveals
+// nothing the caller isn't already entitled to know about itself, and it
+// mints/signs nothing. No revoked check: a revoked host's SANs are still
+// readable; only issuance (RequestOperatingCert) is refused.
+func (s *issuerServer) DescribeSANs(ctx context.Context, _ *pb.DescribeSANsRequest) (*pb.DescribeSANsResponse, error) {
+	hostname, err := mtls.PeerHostname(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("determine caller identity: %w", err)
+	}
+
+	client, err := s.store.GetClient(hostname)
+	if err != nil {
+		return nil, fmt.Errorf("hostname %s not tracked: %w", hostname, err)
+	}
+
+	return &pb.DescribeSANsResponse{Sans: client.SANsList()}, nil
+}
