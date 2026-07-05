@@ -90,10 +90,10 @@ func TestBootstrap_WritesIdentityFiles(t *testing.T) {
 	err := bootstrap(tok, signer, certsDir)
 	require.NoError(t, err)
 
-	for _, name := range []string{"ca.crt", "client.crt", "client.key"} {
+	for _, name := range []string{"ca.crt", "bootstrap.crt", "bootstrap.key"} {
 		info, err := os.Stat(filepath.Join(certsDir, name))
 		require.NoError(t, err, "expected %s to exist", name)
-		if name == "client.key" {
+		if name == "bootstrap.key" {
 			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 		}
 	}
@@ -107,8 +107,8 @@ func TestBootstrap_SignErrorPropagates(t *testing.T) {
 
 	err := bootstrap(tok, signer, certsDir)
 	assert.Error(t, err)
-	_, statErr := os.Stat(filepath.Join(certsDir, "client.crt"))
-	assert.True(t, os.IsNotExist(statErr), "client.crt should not be written on sign failure")
+	_, statErr := os.Stat(filepath.Join(certsDir, "bootstrap.crt"))
+	assert.True(t, os.IsNotExist(statErr), "bootstrap.crt should not be written on sign failure")
 }
 
 func TestBootstrap_InvalidTokenErrors(t *testing.T) {

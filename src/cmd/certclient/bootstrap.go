@@ -67,8 +67,8 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 	}
 
 	chain := append(pemCert(leaf), pemCert(intermediate)...)
-	if err := os.WriteFile(filepath.Join(certsDir, "client.crt"), chain, 0o644); err != nil {
-		return fmt.Errorf("write client.crt: %w", err)
+	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.crt"), chain, 0o644); err != nil {
+		return fmt.Errorf("write bootstrap.crt: %w", err)
 	}
 
 	rootPEM := pemCert(root)
@@ -77,8 +77,8 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 	}
 
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(filepath.Join(certsDir, "client.key"), keyPEM, 0o600); err != nil {
-		return fmt.Errorf("write client.key: %w", err)
+	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.key"), keyPEM, 0o600); err != nil {
+		return fmt.Errorf("write bootstrap.key: %w", err)
 	}
 
 	return nil

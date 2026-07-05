@@ -25,8 +25,8 @@ type renewer interface {
 // (a fresh bootstrap handles that rare case).
 func renew(client renewer, certsDir string) error {
 	cert, err := tls.LoadX509KeyPair(
-		filepath.Join(certsDir, "client.crt"),
-		filepath.Join(certsDir, "client.key"),
+		filepath.Join(certsDir, "bootstrap.crt"),
+		filepath.Join(certsDir, "bootstrap.key"),
 	)
 	if err != nil {
 		return fmt.Errorf("load existing identity: %w", err)
@@ -70,8 +70,8 @@ func writeRenewedCert(certsDir string, sign *api.SignResponse) error {
 		pemCert(leaf),
 		pemCert(intermediate)...,
 	)
-	if err := os.WriteFile(filepath.Join(certsDir, "client.crt"), chain, 0o644); err != nil {
-		return fmt.Errorf("write client.crt: %w", err)
+	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.crt"), chain, 0o644); err != nil {
+		return fmt.Errorf("write bootstrap.crt: %w", err)
 	}
 	return nil
 }
