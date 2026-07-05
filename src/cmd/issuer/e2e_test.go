@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -16,6 +17,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,8 +31,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	"github.com/alex-sviridov/miniprotector/common/certmint"
+	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/common/mtls"
+	"github.com/smallstep/certificates/ca"
 )
 
 // attributeExtensionOID identifies the custom X.509 extension
@@ -39,6 +46,11 @@ import (
 // UUID-derived one: crypto/x509's OID parser caps every arc component below
 // 2^31, a limit no UUID-derived arc value survives, truncated or not.
 var attributeExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 1}
+
+// issuerCallerExtKeyUsageOID is the custom Extended Key Usage that marks a
+// bootstrap-tier certificate -- see common/mtls and
+// docs/superpowers/specs/2026-07-05-credential-tier-enforcement-design.md.
+var issuerCallerExtKeyUsageOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 3}
 
 // TestE2E_MintAndSignEmbedsAttributesAsCertificateExtension proves the final
 // hop the phase-2 design deferred: a real step-ca, using the CA-side x509
@@ -180,6 +192,110 @@ func TestE2E_MintSelfIdentityProducesAWorkingServerCertificate(t *testing.T) {
 		"issuer's own certificate must carry its hostname as a SAN, not just CommonName, for real (non-loopback) TLS hostname verification to succeed")
 	assert.Nil(t, findExtension(leaf, attributeExtensionOID),
 		"issuer's self-mint always passes nil attributes and must not carry the attribute extension")
+}
+
+// TestE2E_MintAndSignOperatingCertHasNoIssuerCallerEKU proves the operating
+// tier issued by mintAndSign (used for every real RequestOperatingCert call
+// and issuer's own self-mint) carries the full serverAuth+clientAuth
+// ExtKeyUsage and never the bootstrap-only EKUIssuerCaller marker -- the
+// property common/mtls's default (operating-tier) server config relies on
+// to accept it.
+func TestE2E_MintAndSignOperatingCertHasNoIssuerCallerEKU(t *testing.T) {
+	opts := startTestCA(t, "issuer-e2e-operating-eku")
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "e2e-operating-eku-host"},
+	}, key)
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	chainPEM, err := mintAndSign("e2e-operating-eku-host", nil, nil, csr, opts, 3600)
+	require.NoError(t, err, "mintAndSign")
+
+	block, _ := pem.Decode(chainPEM)
+	require.NotNil(t, block)
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	assert.True(t, hasEKU(leaf, x509.ExtKeyUsageServerAuth), "operating cert must carry serverAuth")
+	assert.True(t, hasEKU(leaf, x509.ExtKeyUsageClientAuth), "operating cert must carry clientAuth")
+	assert.False(t, hasUnknownEKU(leaf, issuerCallerExtKeyUsageOID), "operating cert must not carry the bootstrap-only EKUIssuerCaller marker")
+}
+
+// TestE2E_BootstrapTierCertHasIssuerCallerEKU proves the bootstrap tier
+// certclient/bootstrap.go's real redemption flow produces carries only
+// clientAuth (never serverAuth) plus the custom EKUIssuerCaller marker --
+// the property mtls.LoadIssuerServerCredentials relies on to accept it and
+// mtls.LoadServerCredentials relies on to reject it.
+func TestE2E_BootstrapTierCertHasIssuerCallerEKU(t *testing.T) {
+	opts := startTestCA(t, "issuer-e2e-bootstrap-eku")
+
+	leaf, _, _ := signBootstrapTierCert(t, opts, "e2e-bootstrap-eku-host")
+
+	assert.False(t, hasEKU(leaf, x509.ExtKeyUsageServerAuth), "bootstrap cert must not carry serverAuth")
+	assert.True(t, hasEKU(leaf, x509.ExtKeyUsageClientAuth), "bootstrap cert must carry clientAuth")
+	assert.True(t, hasUnknownEKU(leaf, issuerCallerExtKeyUsageOID), "bootstrap cert must carry the EKUIssuerCaller marker")
+}
+
+// TestE2E_CredentialTierEnforcedAtHandshake proves the whole pipeline this
+// design built actually closes the gap docs/SECURITY.md flagged: a real
+// bootstrap-tier certificate (mirroring certclient bootstrap's redemption
+// flow) is accepted by an issuer-tier listener and rejected by an
+// operating-tier listener, and a real operating-tier certificate (minted via
+// mintAndSign, the same path RequestOperatingCert/self-mint use) is accepted
+// by an operating-tier listener and rejected by an issuer-tier listener.
+func TestE2E_CredentialTierEnforcedAtHandshake(t *testing.T) {
+	opts := startTestCA(t, "issuer-e2e-tier-enforce")
+
+	operatingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	operatingCSRDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "e2e-tier-operating-host"},
+	}, operatingKey)
+	require.NoError(t, err)
+	operatingCSR, err := x509.ParseCertificateRequest(operatingCSRDER)
+	require.NoError(t, err)
+	operatingChainPEM, err := mintAndSign("e2e-tier-operating-host", nil, nil, operatingCSR, opts, 3600)
+	require.NoError(t, err)
+	operatingCertsDir := writeCertsDir(t, opts, operatingChainPEM, operatingKey)
+
+	_, bootstrapChainPEM, bootstrapKey := signBootstrapTierCert(t, opts, "e2e-tier-bootstrap-host")
+	bootstrapCertsDir := writeCertsDir(t, opts, bootstrapChainPEM, bootstrapKey)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	operatingListenerCreds, err := mtls.LoadServerCredentials(operatingCertsDir)
+	require.NoError(t, err)
+	operatingPort := freeTCPPort(t)
+	go func() {
+		_ = connection.StartServerWithCredentials(ctx, logger, operatingPort, operatingListenerCreds, func(s *grpc.Server) {})
+	}()
+
+	issuerListenerCreds, err := mtls.LoadIssuerServerCredentials(operatingCertsDir)
+	require.NoError(t, err)
+	issuerPort := freeTCPPort(t)
+	go func() {
+		_ = connection.StartServerWithCredentials(ctx, logger, issuerPort, issuerListenerCreds, func(s *grpc.Server) {})
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	_, err = connection.ConnectWithIdentity("127.0.0.1", operatingPort, 2, operatingCertsDir, "client.crt", "client.key")
+	assert.NoError(t, err, "operating cert must be accepted by the operating-tier listener")
+
+	_, err = connection.ConnectWithIdentity("127.0.0.1", operatingPort, 2, bootstrapCertsDir, "client.crt", "client.key")
+	assert.Error(t, err, "bootstrap cert must be rejected by the operating-tier listener")
+
+	_, err = connection.ConnectWithIdentity("127.0.0.1", issuerPort, 2, bootstrapCertsDir, "client.crt", "client.key")
+	assert.NoError(t, err, "bootstrap cert must be accepted by the issuer-tier listener")
+
+	_, err = connection.ConnectWithIdentity("127.0.0.1", issuerPort, 2, operatingCertsDir, "client.crt", "client.key")
+	assert.Error(t, err, "operating cert must be rejected by the issuer-tier listener")
 }
 
 // startTestCA spins up a real, throwaway step-ca via docker compose from a
@@ -350,4 +466,101 @@ func waitForCA(ctx context.Context, caURL, rootPath string) error {
 			lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
 		}
 	}
+}
+
+// hasEKU reports whether cert's ExtKeyUsage list contains want.
+func hasEKU(cert *x509.Certificate, want x509.ExtKeyUsage) bool {
+	for _, eku := range cert.ExtKeyUsage {
+		if eku == want {
+			return true
+		}
+	}
+	return false
+}
+
+// hasUnknownEKU reports whether cert's UnknownExtKeyUsage list contains oid.
+func hasUnknownEKU(cert *x509.Certificate, oid asn1.ObjectIdentifier) bool {
+	for _, got := range cert.UnknownExtKeyUsage {
+		if got.Equal(oid) {
+			return true
+		}
+	}
+	return false
+}
+
+// signBootstrapTierCert mints a real enrollment token and redeems it against
+// the CA exactly as certclient/bootstrap.go's bootstrap() does -- including
+// setting TemplateData{"tier":"bootstrap"} -- so this proves the same code
+// path production uses, not a hand-simplified stand-in. Returns the parsed
+// leaf certificate, the full leaf+intermediate chain PEM (assembled the same
+// way mintsign.go's mintAndSign does, from signResp.ServerPEM plus
+// signResp.CertChainPEM -- step-ca's default hierarchy signs leaves with an
+// intermediate, not the root, so a bare leaf can't chain-verify against just
+// root_ca.crt), and the private key generated for it.
+func signBootstrapTierCert(t *testing.T, opts certmint.Options, hostname string) (*x509.Certificate, []byte, crypto.PrivateKey) {
+	t.Helper()
+	token, err := certmint.Mint(hostname, nil, opts)
+	require.NoError(t, err)
+
+	req, pk, err := ca.CreateSignRequest(token)
+	require.NoError(t, err)
+
+	templateData, err := json.Marshal(struct {
+		Tier string `json:"tier"`
+	}{Tier: "bootstrap"})
+	require.NoError(t, err)
+	req.TemplateData = templateData
+
+	client, err := ca.NewClient(opts.CAURL, ca.WithRootFile(opts.RootFile))
+	require.NoError(t, err)
+
+	signResp, err := client.Sign(req)
+	require.NoError(t, err)
+
+	leaf, err := ca.Certificate(signResp)
+	require.NoError(t, err)
+
+	var chainPEM []byte
+	chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: signResp.ServerPEM.Raw})...)
+	for _, c := range signResp.CertChainPEM {
+		chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})...)
+	}
+
+	return leaf, chainPEM, pk
+}
+
+// writeCertsDir writes ca.crt (a copy of opts.RootFile) and chainPEM/key as
+// client.crt/client.key into a fresh temp directory, matching the layout
+// common/mtls expects. chainPEM must be the full leaf+intermediate chain (as
+// mintAndSign and signBootstrapTierCert both produce, and as production's
+// mintsign.go/operatingrefresh.go/bootstrap.go all write to client.crt) --
+// not just the bare leaf -- since common/mtls's client-side chain
+// verification only trusts the root CA and relies on the peer presenting any
+// intermediate itself.
+func writeCertsDir(t *testing.T, opts certmint.Options, chainPEM []byte, key crypto.PrivateKey) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	rootPEM, err := os.ReadFile(opts.RootFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ca.crt"), rootPEM, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), chainPEM, 0o644))
+
+	ecKey, ok := key.(*ecdsa.PrivateKey)
+	require.True(t, ok, "expected an ECDSA private key")
+	keyDER, err := x509.MarshalECPrivateKey(ecKey)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
+
+	return dir
+}
+
+// freeTCPPort returns an ephemeral TCP port free at the time of the call, for
+// spinning up a throwaway gRPC listener in-process.
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
