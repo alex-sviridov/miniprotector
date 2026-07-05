@@ -6,6 +6,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -28,6 +29,14 @@ func bootstrap(token string, client signer, certsDir string) error {
 	if err != nil {
 		return fmt.Errorf("create sign request: %w", err)
 	}
+
+	templateData, err := json.Marshal(struct {
+		Tier string `json:"tier"`
+	}{Tier: "bootstrap"})
+	if err != nil {
+		return fmt.Errorf("marshal template data: %w", err)
+	}
+	req.TemplateData = templateData
 
 	sign, err := client.Sign(req)
 	if err != nil {

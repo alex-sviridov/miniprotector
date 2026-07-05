@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -61,11 +62,13 @@ func makeTestToken(t *testing.T, subject string, sans []string, root *x509.Certi
 }
 
 type fakeSigner struct {
-	resp *api.SignResponse
-	err  error
+	resp   *api.SignResponse
+	err    error
+	gotReq *api.SignRequest
 }
 
-func (f *fakeSigner) Sign(_ *api.SignRequest) (*api.SignResponse, error) {
+func (f *fakeSigner) Sign(req *api.SignRequest) (*api.SignResponse, error) {
+	f.gotReq = req
 	return f.resp, f.err
 }
 
@@ -115,4 +118,23 @@ func TestBootstrap_InvalidTokenErrors(t *testing.T) {
 	certsDir := t.TempDir()
 	err := bootstrap("not-a-real-token", &fakeSigner{}, certsDir)
 	assert.Error(t, err)
+}
+
+func TestBootstrap_SetsBootstrapTierTemplateData(t *testing.T) {
+	root := loadFixtureCert(t, "ca.crt")
+	leaf := loadFixtureCert(t, "client.crt")
+
+	tok := makeTestToken(t, "test-host", []string{"test-host"}, root)
+	signer := &fakeSigner{resp: fakeSignResponse(root, leaf, leaf)}
+	certsDir := t.TempDir()
+
+	err := bootstrap(tok, signer, certsDir)
+	require.NoError(t, err)
+
+	require.NotNil(t, signer.gotReq)
+	var got struct {
+		Tier string `json:"tier"`
+	}
+	require.NoError(t, json.Unmarshal(signer.gotReq.TemplateData, &got))
+	assert.Equal(t, "bootstrap", got.Tier)
 }
