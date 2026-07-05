@@ -46,16 +46,18 @@ network interface at all.
 
 - `add` errors if `hostname` is already tracked (use `re-enroll` or `description|attribute|san`
   instead) and records nothing locally unless minting actually succeeded.
-- `revoke`/`unrevoke` only set a flag in `client-manager`'s own database in this plan — nothing yet
-  blocks a renewal. See the phase-2 design's architecture for the listening service that will
-  enforce this, not yet built.
-- `attribute`/`san` values are stored only; a client's next `re-enroll` is currently the only way
-  to mint a token reflecting a client's current attributes/SANs. Automatic refresh on an ordinary
-  credential renewal is what the phase-2 listening service (not yet built) provides.
-- `revoke` now has a real enforcement path: [`issuer`](./issuer.md), sharing this binary's
-  database, refuses to issue a fresh operating certificate to a revoked hostname. `attribute`/`san`
-  changes are read by `issuer` on the client's next operating-certificate request. (`agent`'s own
-  side of requesting that refresh is a separate, later piece of work — not yet built.)
+- `revoke`/`unrevoke` set a flag in `client-manager`'s own database — `client-manager` itself has
+  no network interface, so it never enforces this directly. Enforcement is
+  [`issuer`](./issuer.md)'s job: sharing this binary's database, `issuer` refuses to issue a fresh
+  operating certificate to a revoked hostname on that hostname's next `RequestOperatingCert` call.
+  `attribute`/`san` changes are likewise read by `issuer` on the client's next operating-certificate
+  request, not applied retroactively to a certificate already issued.
+- On an already-enrolled, not-revoked node, `agent`'s `operating-refresh` policy execs `certclient
+  operating-refresh` on a schedule (`OperatingCertFetchIntervalSec`, `local.conf`), so `revoke`,
+  `attribute`, and `san` changes made here typically reach the node within that interval, without
+  an operator needing to run `re-enroll`. `re-enroll` remains the only way to rotate the node's
+  long-lived bootstrap credential itself (a new enrollment token) rather than just its short-lived
+  operating certificate. See [agent](./agent.md) and [certclient](./certclient.md).
 - `list`'s `LAST_SEEN` column now reflects real data once `issuer` has served at least one request
   for that hostname; `never` until then.
 
@@ -74,6 +76,9 @@ make clientmanager
 ## See Also
 
 - [issuer](./issuer.md) — enforces revoke/attribute, shares this binary's database
+- [certclient](./certclient.md) — `operating-refresh` is how a node picks up revoke/attribute/san changes
+- [agent](./agent.md) — schedules that refresh via its `operating-refresh` policy
+- [Security Model](../SECURITY.md)
 - [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)
 - [Design: Client Manager (phase 1)](../superpowers/specs/2026-07-04-client-manager-design.md)
 - [Architecture](../ARCHITECTURE.md)

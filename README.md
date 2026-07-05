@@ -55,15 +55,17 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[brfs](docs/components/brfs.md)** - Backup Reader for File System — reads files and streams them to `bwfs`
 - **[bwfs](docs/components/bwfs.md)** - Backup Writer for File System — receives, deduplicates, and stores files; also serves the list subprotocol
 - **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity
-- **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS identity from the CA
-- **[agent](docs/components/agent.md)** - Node agent — reconciles local state against embedded policies (v1: mTLS certificate renewal via `certclient`)
+- **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS bootstrap credential from the CA, and refreshes its short-lived operating certificate from `issuer`
+- **[agent](docs/components/agent.md)** - Node agent — reconciles local state against embedded policies (bootstrap credential renewal and operating-certificate refresh, both via `certclient`)
 - **[client-manager](docs/components/client-manager.md)** - Owns the enrolled-client list and mints enrollment tokens directly: descriptions, RBAC-bound attributes, SAN aliases, revoked status (control-plane component, runs on the CA host)
+- **[issuer](docs/components/issuer.md)** - Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares `client-manager`'s database (control-plane component, runs on the CA host)
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
 
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
+- **[Security Model](docs/SECURITY.md)** - mTLS, the two-tier bootstrap/operating credential model, and the revocation trust model
 - **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
 - **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol
