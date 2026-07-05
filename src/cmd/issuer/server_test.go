@@ -193,3 +193,53 @@ func TestRequestOperatingCert_MintSignFailurePropagatesAndSkipsLastSeen(t *testi
 	require.NoError(t, err)
 	assert.Nil(t, got.LastSeenAt)
 }
+
+func TestDescribeSANs_KnownHostReturnsCurrentSANs(t *testing.T) {
+	store := newTestIssuerStore(t)
+	require.NoError(t, store.AddClient("node-1", []string{"node-1.internal", "node-1.alt"}, time.Now()))
+
+	srv := newIssuerServer(store, nil, testLogger())
+	resp, err := srv.DescribeSANs(fakeAuthContext(t, "node-1"), &pb.DescribeSANsRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-1.internal", "node-1.alt"}, resp.Sans)
+}
+
+func TestDescribeSANs_HostWithNoSANsReturnsEmpty(t *testing.T) {
+	store := newTestIssuerStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+
+	srv := newIssuerServer(store, nil, testLogger())
+	resp, err := srv.DescribeSANs(fakeAuthContext(t, "node-1"), &pb.DescribeSANsRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, resp.Sans)
+}
+
+func TestDescribeSANs_RevokedHostStillReturnsSANs(t *testing.T) {
+	// DescribeSANs reveals nothing the caller isn't already entitled to know
+	// about itself and issues nothing -- only RequestOperatingCert enforces
+	// revocation.
+	store := newTestIssuerStore(t)
+	require.NoError(t, store.AddClient("node-1", []string{"node-1.internal"}, time.Now()))
+	require.NoError(t, store.SetRevoked("node-1", true, time.Now()))
+
+	srv := newIssuerServer(store, nil, testLogger())
+	resp, err := srv.DescribeSANs(fakeAuthContext(t, "node-1"), &pb.DescribeSANsRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-1.internal"}, resp.Sans)
+}
+
+func TestDescribeSANs_UnknownHostErrors(t *testing.T) {
+	store := newTestIssuerStore(t)
+
+	srv := newIssuerServer(store, nil, testLogger())
+	_, err := srv.DescribeSANs(fakeAuthContext(t, "ghost"), &pb.DescribeSANsRequest{})
+	assert.Error(t, err)
+}
+
+func TestDescribeSANs_NoPeerIdentityRejected(t *testing.T) {
+	store := newTestIssuerStore(t)
+
+	srv := newIssuerServer(store, nil, testLogger())
+	_, err := srv.DescribeSANs(context.Background(), &pb.DescribeSANsRequest{})
+	assert.Error(t, err)
+}
