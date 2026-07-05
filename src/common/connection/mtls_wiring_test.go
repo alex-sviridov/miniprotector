@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -107,5 +108,32 @@ func TestConnectWithIdentity_RoundTripSucceeds(t *testing.T) {
 		assert.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("StartServer did not shut down in time")
+	}
+}
+
+func TestStartServerWithCredentials_RoundTripSucceeds(t *testing.T) {
+	port := freeTCPPort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	creds, err := mtls.LoadServerCredentials(fixtureCertsDir)
+	require.NoError(t, err)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- StartServerWithCredentials(ctx, testLogger(), port, creds, func(s *grpc.Server) {})
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := Connect("127.0.0.1", port, 5, fixtureCertsDir)
+	require.NoError(t, err)
+	conn.Close()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("StartServerWithCredentials did not shut down in time")
 	}
 }
