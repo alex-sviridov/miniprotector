@@ -374,3 +374,47 @@ func TestParseConfig_OperatingCertFetchIntervalSecParsesCorrectly(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, 300, conf.OperatingCertFetchIntervalSec)
 }
+
+func TestParseConfig_IssuerSelfCertTTLSecDefaultsTo7776000(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 7776000, conf.IssuerSelfCertTTLSec)
+}
+
+func TestParseConfig_IssuerSelfCertTTLSecParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nIssuerSelfCertTTLSec=2592000\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 2592000, conf.IssuerSelfCertTTLSec)
+}
+
+func TestParseConfig_IssuerSelfCertRefreshIntervalSecDefaultsTo86400(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 86400, conf.IssuerSelfCertRefreshIntervalSec)
+}
+
+func TestParseConfig_IssuerSelfCertRefreshIntervalSecParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nIssuerSelfCertRefreshIntervalSec=43200\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 43200, conf.IssuerSelfCertRefreshIntervalSec)
+}
