@@ -36,6 +36,11 @@ The caller's hostname is always derived from its verified mTLS peer identity (`m
 outright. `DescribeSANs` only requires a known hostname — it has no revoked check, since it reveals
 nothing the caller isn't already entitled to know about itself and mints/signs nothing.
 
+Beneath this RPC-level check, the transport itself now also enforces credential tier: `issuer`'s
+listener (`mtls.LoadIssuerServerCredentials`) accepts only bootstrap/issuer-caller certificates,
+rejecting an operating certificate before any RPC-level logic runs. See
+[Security Model](../SECURITY.md#the-two-tier-credential-model).
+
 ## Behavior
 
 - `csr_der` is a DER-encoded PKCS#10 certificate signing request the caller builds itself — its

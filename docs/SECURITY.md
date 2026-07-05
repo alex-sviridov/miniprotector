@@ -99,15 +99,16 @@ Stated plainly, this design has real costs, not just benefits:
   actually wanted.
 - **No HA for `issuer` yet.** It's a single instance backed by SQLite. Its own availability *is*
   the fleet-wide outage risk described above; scaling it out is future work.
-- **The bootstrap credential is not yet cryptographically confined to only reaching `issuer`.**
-  In principle it should be impossible for a bootstrap credential to authenticate to anything
-  other than `issuer` (it grants no other legitimate access, and a leaked bootstrap credential
-  should ideally be useless against `bwfs`/`brfs`/`rwfs`/`catalog`). Today, `common/mtls`'s
-  server-side check trusts any certificate signed by the CA, regardless of which credential tier
-  issued it — so this boundary is an operational expectation (nothing is deployed that would
-  accept a bootstrap credential as if it were an operating one), not an enforced one. Closing this
-  would mean a custom certificate extension distinguishing the two tiers plus one shared
-  `common/mtls` check; it hasn't been built.
+- **The bootstrap credential is now cryptographically confined to only reaching `issuer`.** A
+  bootstrap certificate carries `extKeyUsage: ["clientAuth"]` only (never `serverAuth`) plus a
+  custom Extended Key Usage OID, `1.3.6.1.4.1.61183.1.3` (named `EKUIssuerCaller` in code —
+  deliberately not named around "server"/"client", already overloaded elsewhere in this codebase),
+  identifying it as a bootstrap/issuer-caller credential. `common/mtls.LoadServerCredentials` —
+  used by `bwfs` and `catalog` — rejects any peer certificate carrying that marker;
+  `mtls.LoadIssuerServerCredentials` — used only by `issuer`'s own listener — rejects any peer
+  certificate that *doesn't* carry it. A leaked bootstrap credential can now only ever authenticate
+  to `issuer`, exactly as intended. See
+  [Design: Credential Tier Enforcement](superpowers/specs/2026-07-05-credential-tier-enforcement-design.md).
 
 A brief `issuer` outage degrades mesh access temporarily but never destroys a node's identity or
 requires re-enrollment to recover: the bootstrap credential keeps renewing independently via
