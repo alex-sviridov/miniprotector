@@ -113,6 +113,95 @@ func (x *RequestOperatingCertResponse) GetCertChainPem() []byte {
 	return nil
 }
 
+type DescribeSANsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DescribeSANsRequest) Reset() {
+	*x = DescribeSANsRequest{}
+	mi := &file_api_issuer_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DescribeSANsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DescribeSANsRequest) ProtoMessage() {}
+
+func (x *DescribeSANsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_issuer_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DescribeSANsRequest.ProtoReflect.Descriptor instead.
+func (*DescribeSANsRequest) Descriptor() ([]byte, []int) {
+	return file_api_issuer_proto_rawDescGZIP(), []int{2}
+}
+
+type DescribeSANsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Current SAN aliases for the caller's own hostname (never including the
+	// hostname itself, which the caller always places in the CSR's own
+	// Subject.CommonName). Must be requested and used verbatim as a CSR's
+	// DNSNames before calling RequestOperatingCert: step-ca's OTT provisioner
+	// validates a CSR's requested DNS SANs against the signing token's
+	// authorized set with an exact match, not a subset (confirmed against
+	// smallstep/certificates@v0.30.2's authority/provisioner/sign_options.go
+	// dnsNamesValidator) -- there is no way to learn or guess this list
+	// without asking.
+	Sans          []string `protobuf:"bytes,1,rep,name=sans,proto3" json:"sans,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DescribeSANsResponse) Reset() {
+	*x = DescribeSANsResponse{}
+	mi := &file_api_issuer_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DescribeSANsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DescribeSANsResponse) ProtoMessage() {}
+
+func (x *DescribeSANsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_issuer_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DescribeSANsResponse.ProtoReflect.Descriptor instead.
+func (*DescribeSANsResponse) Descriptor() ([]byte, []int) {
+	return file_api_issuer_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *DescribeSANsResponse) GetSans() []string {
+	if x != nil {
+		return x.Sans
+	}
+	return nil
+}
+
 var File_api_issuer_proto protoreflect.FileDescriptor
 
 const file_api_issuer_proto_rawDesc = "" +
@@ -121,9 +210,13 @@ const file_api_issuer_proto_rawDesc = "" +
 	"\x1bRequestOperatingCertRequest\x12\x17\n" +
 	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\"D\n" +
 	"\x1cRequestOperatingCertResponse\x12$\n" +
-	"\x0ecert_chain_pem\x18\x01 \x01(\fR\fcertChainPem2\x80\x01\n" +
+	"\x0ecert_chain_pem\x18\x01 \x01(\fR\fcertChainPem\"\x15\n" +
+	"\x13DescribeSANsRequest\"*\n" +
+	"\x14DescribeSANsResponse\x12\x12\n" +
+	"\x04sans\x18\x01 \x03(\tR\x04sans2\xd9\x01\n" +
 	"\rIssuerService\x12o\n" +
-	"\x14RequestOperatingCert\x12*.issuerservice.RequestOperatingCertRequest\x1a+.issuerservice.RequestOperatingCertResponseB\tZ\a./protob\x06proto3"
+	"\x14RequestOperatingCert\x12*.issuerservice.RequestOperatingCertRequest\x1a+.issuerservice.RequestOperatingCertResponse\x12W\n" +
+	"\fDescribeSANs\x12\".issuerservice.DescribeSANsRequest\x1a#.issuerservice.DescribeSANsResponseB\tZ\a./protob\x06proto3"
 
 var (
 	file_api_issuer_proto_rawDescOnce sync.Once
@@ -137,16 +230,20 @@ func file_api_issuer_proto_rawDescGZIP() []byte {
 	return file_api_issuer_proto_rawDescData
 }
 
-var file_api_issuer_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_api_issuer_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_api_issuer_proto_goTypes = []any{
 	(*RequestOperatingCertRequest)(nil),  // 0: issuerservice.RequestOperatingCertRequest
 	(*RequestOperatingCertResponse)(nil), // 1: issuerservice.RequestOperatingCertResponse
+	(*DescribeSANsRequest)(nil),          // 2: issuerservice.DescribeSANsRequest
+	(*DescribeSANsResponse)(nil),         // 3: issuerservice.DescribeSANsResponse
 }
 var file_api_issuer_proto_depIdxs = []int32{
 	0, // 0: issuerservice.IssuerService.RequestOperatingCert:input_type -> issuerservice.RequestOperatingCertRequest
-	1, // 1: issuerservice.IssuerService.RequestOperatingCert:output_type -> issuerservice.RequestOperatingCertResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: issuerservice.IssuerService.DescribeSANs:input_type -> issuerservice.DescribeSANsRequest
+	1, // 2: issuerservice.IssuerService.RequestOperatingCert:output_type -> issuerservice.RequestOperatingCertResponse
+	3, // 3: issuerservice.IssuerService.DescribeSANs:output_type -> issuerservice.DescribeSANsResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -163,7 +260,7 @@ func file_api_issuer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_issuer_proto_rawDesc), len(file_api_issuer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
