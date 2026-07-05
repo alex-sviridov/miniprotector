@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-05 — `certclient operating-refresh` (issuer client side)
+
+Implemented `certclient operating-refresh`, the client-side counterpart to `issuer`'s
+`RequestOperatingCert`/`DescribeSANs` RPCs: it dials `issuer` authenticated with the node's
+long-lived bootstrap credential, learns the node's current SAN aliases via `DescribeSANs`, and
+submits a CSR whose `DNSNames` are `[hostname] + sans` — matching, byte for byte, what
+`certmint.Mint` actually authorizes server-side (confirmed against a real CA in earlier work),
+since the CA validates `CommonName` and `DNSNames` independently and a hostname-only `CommonName`
+is not sufficient on its own. The resulting certificate chain is written to `client.crt`; the
+operating keypair (`client.key`) is generated once and reused unchanged across every later
+refresh. This resolves the deliberate build break left by the prior `certclient` subcommand
+restructuring and makes the whole bootstrap → operating-refresh flow buildable end to end.
+
 ## 2026-07-05 — Operating-certificate issuance (issuer)
 
 Added `issuer`, a new CA-host-local binary that mints short-lived "operating certificates" for

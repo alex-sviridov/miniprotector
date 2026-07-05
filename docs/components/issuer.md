@@ -57,6 +57,7 @@ make issuer
 ## See Also
 
 - [client-manager](./client-manager.md) — owns the database `issuer` reads
+- [certclient](./certclient.md) — `operating-refresh` subcommand is the client of this service
 - [Issuer Protocol](../protocols/issuer.md)
 - [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)
 - [Architecture](../ARCHITECTURE.md)
