@@ -18,4 +18,19 @@ fi
 # a real improvement over the old renew-on-restart-only behavior.
 ./agent serve &
 
+# Wait for agent's first operating-refresh to produce client.crt/client.key
+# before starting catalog -- a fresh volume only has the bootstrap credential
+# until agent's reconcile loop completes its first cycle (due immediately for
+# a never-run policy); without this wait, catalog would race agent and could
+# crash-loop on a genuinely fresh deployment's first boot.
+timeout=60
+while [ ! -f /data/certs/client.crt ] && [ "$timeout" -gt 0 ]; do
+	sleep 1
+	timeout=$((timeout - 1))
+done
+if [ ! -f /data/certs/client.crt ]; then
+	echo "agent did not produce an operating certificate within 60s" >&2
+	exit 1
+fi
+
 exec ./catalog "$STORAGE_PATH" --debug="${DEBUG:-false}"
