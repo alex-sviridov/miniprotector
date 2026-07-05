@@ -18,19 +18,22 @@ A backup system with intelligent deduplication and integrity verification.
 
 |  | Control plane | Agents |
 |---|---|---|
-| Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `client-manager` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
-| Runs where | On the CA host (`client-manager`); `catalog` runs centrally, wherever the catalog deployment lives — see below | Dial `ca_host:9000` outbound only, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; has no role in backup traffic | Dial `ca_host:9000` outbound only, for enrollment/renewal; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Docker/e2e images | Control-plane-only binaries (`client-manager`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` only |
+| Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `client-manager`, `issuer` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
+| Runs where | On the CA host (`client-manager`, `issuer`); `catalog` runs centrally, wherever the catalog deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); has no role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` only |
 
 `catalog` is control plane by role (a fleet-wide central service, not colocated with any single
 backup node) but bootstraps its own mTLS identity the same way agents do, via `certclient` — it
 doesn't fit either row cleanly. It listens on its own port (`catalog_port`, default 15723) for
 `catalogsync` connections from every `bwfs` node's agent host.
 
-A node's mTLS identity (`ca.crt`, `client.crt`, `client.key`, consumed by `common/mtls`) is
-obtained via `certclient`, using a token minted by `client-manager`. See
-[client-manager](components/client-manager.md) and [certclient](components/certclient.md).
+A node's mTLS identity is obtained in two steps, both via `certclient`: `bootstrap` redeems a
+token minted by `client-manager` for `ca.crt` and a long-lived `bootstrap.crt`/`bootstrap.key`
+pair; then `operating-refresh` uses that bootstrap credential to authenticate to `issuer` and
+obtain the short-lived `client.crt`/`client.key` that `common/mtls` actually reads. See
+[client-manager](components/client-manager.md), [issuer](components/issuer.md), and
+[certclient](components/certclient.md).
 
 `agent` is a node-level process that wraps `certclient` — intended to replace the bare cron entry
 that invokes `certclient` directly: `agent serve` runs a reconcile loop that periodically execs `certclient`
