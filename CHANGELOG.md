@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-05 — Attributes now land in the certificate, not just the Sign request
+
+`issuer` has passed `attribute` key/value pairs to the CA via `TemplateData` on every `Sign` call
+since the operating-certificate work landed, but step-ca's default template ignored the field
+entirely — the data reached the wire and was silently dropped. A new CA-side template
+(`deploy/control-plane/ca/templates/leaf.tpl`, wired in by `ca/entrypoint.sh`) now embeds those
+attributes as a real, non-critical X.509 extension (OID `1.3.6.1.4.1.61183.1.1`, JSON-encoded,
+present only when a client has attributes set), closing the gap phase 2's design explicitly
+deferred. Nothing yet reads or enforces this extension — that remains separate, later work — but
+the round-trip from `client-manager attribute set` to an actual certificate field now provably
+works end to end, per a new Docker-backed e2e assertion in `src/cmd/issuer/e2e_test.go`.
+
 ## 2026-07-05 — Fixed the control-plane docker-compose demo; issuer self-mints its own identity (phase 2d)
 
 Phase 2c's `certclient`/`agent` split broke `deploy/control-plane`'s docker-compose demo: `catalog`

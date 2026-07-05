@@ -1,8 +1,8 @@
 # client-manager
 
 Owns the persistent list of enrolled clients: when they were added, free-form annotations
-(`description`), attributes intended for baking into a client's certificate (`attribute`), SAN
-aliases (`san`), and a revoked flag. Holds the CA's provisioner password directly and mints
+(`description`), attributes baked into a client's certificate as a real X.509 extension
+(`attribute`), SAN aliases (`san`), and a revoked flag. Holds the CA's provisioner password directly and mints
 enrollment tokens in-process — see
 [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)
 for why this is safe: `client-manager` runs directly on the CA host, as a single-operator CLI tool
