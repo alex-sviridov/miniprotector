@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"time"
 
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/ca"
@@ -16,7 +17,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/certmint"
 )
 
-func mintAndSign(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest, opts certmint.Options) ([]byte, error) {
+func mintAndSign(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest, opts certmint.Options, ttlSec int) ([]byte, error) {
 	token, err := certmint.Mint(hostname, sans, opts)
 	if err != nil {
 		return nil, fmt.Errorf("mint token: %w", err)
@@ -32,10 +33,13 @@ func mintAndSign(hostname string, sans []string, attributes map[string]string, c
 		return nil, fmt.Errorf("create CA client: %w", err)
 	}
 
+	notAfter := api.NewTimeDuration(time.Now().Add(time.Duration(ttlSec) * time.Second))
+
 	signResp, err := client.Sign(&api.SignRequest{
 		CsrPEM:       api.NewCertificateRequest(csr),
 		OTT:          token,
 		TemplateData: templateData,
+		NotAfter:     notAfter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sign certificate: %w", err)

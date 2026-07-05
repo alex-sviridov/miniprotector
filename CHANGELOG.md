@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-05 — Operating-certificate issuance (issuer)
+
+Added `issuer`, a new CA-host-local binary that mints short-lived "operating certificates" for
+already-enrolled nodes and enforces revocation on every issuance, refusing outright for a revoked
+or unknown hostname, by sharing `client-manager`'s SQLite database directly rather than querying it
+over the network. Attributes are embedded via the sign request's `TemplateData` field rather than
+custom JWT claims, since the CA client library's signing key is unexported and inaccessible outside
+its own package. `client-manager`'s `list`/`show` now display real `last_seen` data instead of a
+placeholder. Agent-side integration (actually calling `issuer` on a schedule) and a CA-side custom
+certificate template (to actually bake attributes into certificate extensions) are deliberately
+deferred to a later, separate piece of work.
+
 ## 2026-07-03 — Node agent v1 (embedded cert-refresh reconciliation)
 
 Added `agent`, a node-level process intended to replace the bare cron entry for `certclient` with a
