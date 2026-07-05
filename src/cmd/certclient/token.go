@@ -5,20 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 )
-
-// hasExistingIdentity reports whether all three identity files are already
-// present in certsDir.
-func hasExistingIdentity(certsDir string) bool {
-	for _, name := range []string{"ca.crt", "client.crt", "client.key"} {
-		if _, err := os.Stat(filepath.Join(certsDir, name)); err != nil {
-			return false
-		}
-	}
-	return true
-}
 
 // resolveToken returns the enrollment token from, in preference order: the
 // --token flag (least safe — visible via process listings), MP_CERT_TOKEN,
