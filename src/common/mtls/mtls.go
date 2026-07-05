@@ -7,6 +7,7 @@ package mtls
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/asn1"
 	"fmt"
 	"net"
 	"os"
@@ -20,6 +21,63 @@ const (
 	identCertFile = "client.crt"
 	identKeyFile  = "client.key"
 )
+
+// oidEKUIssuerCaller marks a bootstrap-tier credential: a certificate whose
+// only legitimate purpose is authenticating to issuer's RequestOperatingCert/
+// DescribeSANs RPCs. Never present on an operating-tier certificate. See
+// docs/SECURITY.md and
+// docs/superpowers/specs/2026-07-05-credential-tier-enforcement-design.md.
+var oidEKUIssuerCaller = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 3}
+
+// requiredTier selects which credential tier a server's mTLS listener
+// accepts from its peers.
+type requiredTier int
+
+const (
+	// requireOperatingTier rejects any peer certificate carrying
+	// oidEKUIssuerCaller -- the default for every server except issuer.
+	requireOperatingTier requiredTier = iota
+	// requireIssuerCallerTier rejects any peer certificate that does not
+	// carry oidEKUIssuerCaller -- issuer's own listener uses this, since
+	// its only legitimate caller presents a bootstrap credential.
+	requireIssuerCallerTier
+)
+
+func hasIssuerCallerEKU(cert *x509.Certificate) bool {
+	for _, oid := range cert.UnknownExtKeyUsage {
+		if oid.Equal(oidEKUIssuerCaller) {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyPeerTier returns a VerifyPeerCertificate callback enforcing tier on
+// the peer's leaf certificate, in addition to (not instead of) the normal
+// chain verification already performed via ClientCAs/ClientAuth.
+func verifyPeerTier(tier requiredTier) func([][]byte, [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return fmt.Errorf("no certificate presented by peer")
+		}
+		leaf, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return fmt.Errorf("parse peer certificate: %w", err)
+		}
+		isIssuerCaller := hasIssuerCallerEKU(leaf)
+		switch tier {
+		case requireOperatingTier:
+			if isIssuerCaller {
+				return fmt.Errorf("peer presented a bootstrap/issuer-caller credential, not accepted on this listener")
+			}
+		case requireIssuerCallerTier:
+			if !isIssuerCaller {
+				return fmt.Errorf("peer presented an operating credential; this listener only accepts bootstrap/issuer-caller credentials")
+			}
+		}
+		return nil
+	}
+}
 
 func loadIdentityCertFiles(certsDir, certFile, keyFile string) (tls.Certificate, error) {
 	cert, err := tls.LoadX509KeyPair(
@@ -61,6 +119,12 @@ func loadCertAndPool(certsDir string) (tls.Certificate, *x509.CertPool, error) {
 }
 
 func serverTLSConfig(certsDir string) (*tls.Config, error) {
+	return serverTLSConfigForTier(certsDir, requireOperatingTier)
+}
+
+// serverTLSConfigForTier is serverTLSConfig, parameterized on which
+// credential tier the listener accepts from its peers.
+func serverTLSConfigForTier(certsDir string, tier requiredTier) (*tls.Config, error) {
 	// Fail fast at build time if certsDir is missing/broken, rather than
 	// only on the first handshake.
 	if _, err := loadIdentityCert(certsDir); err != nil {
@@ -78,8 +142,9 @@ func serverTLSConfig(certsDir string) (*tls.Config, error) {
 			}
 			return &cert, nil
 		},
-		ClientCAs:  caPool,
-		ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs:             caPool,
+		ClientAuth:            tls.RequireAndVerifyClientCert,
+		VerifyPeerCertificate: verifyPeerTier(tier),
 	}, nil
 }
 
@@ -157,9 +222,25 @@ func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
 
 // LoadServerCredentials builds gRPC transport credentials for a server that
 // requires and verifies every client's certificate against certsDir/ca.crt.
-// Any client cert signed by that CA is trusted; there is no CN/SAN allowlist.
+// Any client cert signed by that CA is trusted, EXCEPT a bootstrap/
+// issuer-caller credential (one carrying the oidEKUIssuerCaller EKU) --
+// those are rejected here. issuer is the one exception; see
+// LoadIssuerServerCredentials.
 func LoadServerCredentials(certsDir string) (credentials.TransportCredentials, error) {
 	cfg, err := serverTLSConfig(certsDir)
+	if err != nil {
+		return nil, err
+	}
+	return credentials.NewTLS(cfg), nil
+}
+
+// LoadIssuerServerCredentials is LoadServerCredentials with the tier check
+// inverted: it accepts only bootstrap/issuer-caller credentials, rejecting
+// any operating credential. Used solely by issuer's own listener, since
+// issuer's only legitimate caller (certclient operating-refresh) always
+// presents a bootstrap credential.
+func LoadIssuerServerCredentials(certsDir string) (credentials.TransportCredentials, error) {
+	cfg, err := serverTLSConfigForTier(certsDir, requireIssuerCallerTier)
 	if err != nil {
 		return nil, err
 	}
