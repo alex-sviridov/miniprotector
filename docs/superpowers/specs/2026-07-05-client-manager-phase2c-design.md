@@ -45,11 +45,18 @@ through `issuer`, never actually subject to a revoke.
   backoff takes over) without touching the bootstrap credential's independent renewal — the
   "identity survives, only mesh access lapses" property the phase 2 design specified is actually
   realized end-to-end by this phase, not just architected.
+- SAN aliases genuinely reach the issued operating certificate (see "SAN Content" under
+  Architecture, below) — not just attributes/revocation. This closes a gap the phase 2 design
+  itself got wrong (it assumed SANs rode the same `TemplateData` mechanism as attributes; source
+  verification during this phase's planning showed that's a separate, mandatory, exact-match CSR
+  validator untouched by any template).
 
 ## Non-Goals (this pass)
 
-- **No change to `issuer`'s server side.** Phase 2b already built and tested it; this phase only
-  builds its caller.
+- **No change to `issuer`'s `RequestOperatingCert` handler or minting/signing logic.** Phase 2b
+  already built and tested those; this phase only builds their caller. (`issuer` does gain one new,
+  small, read-only RPC — `DescribeSANs`, see Architecture — required to make SAN propagation
+  actually work; this is additive and doesn't touch phase 2b's existing handler.)
 - **No cryptographic isolation of the bootstrap credential from the wider mesh**, no HA for
   `issuer`, no CA-side custom X.509 template — all carried forward unchanged from phase 2's own
   Non-Goals; still out of scope here.
@@ -83,6 +90,40 @@ hardcoded one. `Connect` becomes a wrapper calling it with the same two default 
 This is the smallest change that lets one new caller use different identity filenames while every
 one of the five existing callers keeps its exact current signature and behavior.
 
+### `issuer`: one new RPC, `DescribeSANs`
+
+Confirmed directly against the pinned `smallstep/certificates@v0.30.2` source (see "SAN Content"
+below for the full finding): a CSR's requested DNS SANs must **exactly match** the one-time
+token's authorized SAN set for the JWK/OTT provisioner path `issuer` uses, or `Sign` rejects the
+request outright; an empty-SAN CSR is silently accepted but yields a SAN-less certificate. Since
+that authorized set is computed from `client-manager`'s database — which `certclient` cannot
+read — `certclient` must learn a hostname's current SAN list from `issuer` *before* it builds the
+CSR it will sign. `issuer.proto` therefore gains a second RPC, alongside `RequestOperatingCert`:
+
+```proto
+service IssuerService {
+  rpc RequestOperatingCert(RequestOperatingCertRequest) returns (RequestOperatingCertResponse);
+  rpc DescribeSANs(DescribeSANsRequest) returns (DescribeSANsResponse);
+}
+
+message DescribeSANsRequest {}
+
+message DescribeSANsResponse {
+  // Current SAN aliases for the caller's own hostname (never including the
+  // hostname itself, which is always the CSR's Subject.CommonName) --
+  // exactly the same client.SANsList() value RequestOperatingCert already
+  // reads server-side to build its own signing token.
+  repeated string sans = 1;
+}
+```
+
+Server-side, `issuerServer` gains one small, read-only handler: derive the caller's hostname from
+`mtls.PeerHostname(ctx)` (same as `RequestOperatingCert`, never a request field), look it up via
+the existing `store.GetClient`, return `client.SANsList()`. No revoked check — this call issues
+nothing and reveals nothing the caller isn't already entitled to know about itself; a revoked
+host's actual certificate request is still refused by `RequestOperatingCert` regardless. Unknown
+hostname → same "not tracked" error `RequestOperatingCert` already returns.
+
 ### `certclient`: subcommand split, bootstrap-credential rename, new `operating-refresh`
 
 Today `certclient` has a single `main()` that branches on file presence (bootstrap if no identity
@@ -100,19 +141,27 @@ lines, which remain as user-facing output alongside the new internal diagnostic 
 - **`certclient operating-refresh`** (new) — the phase 2c core:
   1. Load `bootstrap.crt`/`bootstrap.key` via `mtls.LoadClientCredentialsWithIdentity` /
      `connection.ConnectWithIdentity`, dial `issuer` at `IssuerHost`:`IssuerPort`.
-  2. Load `client.key` if it already exists; else generate a fresh ECDSA keypair and persist it
+  2. Parse the node's own hostname from `bootstrap.crt`'s `Subject.CommonName` (safe and
+     coordination-free — hostnames don't change post-enrollment).
+  3. Call `DescribeSANs()` to learn the current SAN alias list for that hostname.
+  4. Load `client.key` if it already exists; else generate a fresh ECDSA keypair and persist it
      (`0o600`, matching `writeIdentity`'s existing key-file convention) — generated once, reused on
      every subsequent call.
-  3. Build a CSR from that key, call `RequestOperatingCert(csr)` through a small `issuerClient`
-     interface (satisfied by the real `pb.IssuerServiceClient`), mirroring the existing
-     `signer`/`renewer` interfaces `bootstrap.go`/`renew.go` already use to isolate the CA client
-     for testing.
-  4. On success: write the returned chain to `client.crt` (plain `os.WriteFile`, matching
+  5. Build a CSR from that key with `Subject.CommonName` = the parsed hostname and `DNSNames` =
+     exactly the SAN list from step 3 (an exact match is required — see "SAN Content" below).
+  6. Call `RequestOperatingCert(csr)` through a small `issuerClient` interface (satisfied by the
+     real `pb.IssuerServiceClient`), mirroring the existing `signer`/`renewer` interfaces
+     `bootstrap.go`/`renew.go` already use to isolate the CA client for testing.
+  7. On success: write the returned chain to `client.crt` (plain `os.WriteFile`, matching
      `writeRenewedCert`'s existing convention — no atomic temp-file/rename dance is used anywhere
      else in this binary, so none is introduced here either).
-  5. On failure (unreachable, revoked, malformed response, etc.): non-zero exit, `client.crt` left
-     untouched; no special-casing between failure kinds — `agent`'s existing backoff handles all of
-     them identically, per the phase 2 design's "refuse outright, no partial success" model.
+  8. On failure at any step (unreachable, revoked, SAN list changed between steps 3 and 6 causing a
+     mismatch, malformed response, etc.): non-zero exit, `client.crt` left untouched; no
+     special-casing between failure kinds — `agent`'s existing backoff handles all of them
+     identically, per the phase 2 design's "refuse outright, no partial success" model. A
+     SAN-changed-mid-request failure simply retries next cycle with fresh, consistent data — same
+     accepted "harmless if wasteful" direction used elsewhere in this project's design (e.g. agent
+     v1's cache-write-failure handling).
 
 ### `agent`: two policies instead of one
 
@@ -151,8 +200,11 @@ operating-refresh (every 15 min, OperatingCertFetchIntervalSec):
   exec certclient operating-refresh
     -> loads bootstrap.crt/bootstrap.key (mtls.LoadClientCredentialsWithIdentity)
     -> dial issuer at IssuerHost:IssuerPort (connection.ConnectWithIdentity)
+    -> parse own hostname from bootstrap.crt's CommonName
+    -> call DescribeSANs() -> current SAN alias list
     -> load client.key if present, else generate + persist it
-    -> build CSR from that key, call RequestOperatingCert(csr)
+    -> build CSR: CommonName=hostname, DNSNames=exactly the SANs just fetched
+    -> call RequestOperatingCert(csr)
     -> success: write returned chain to client.crt
     -> failure: non-zero exit, client.crt untouched; agent's existing backoff takes over
 ```
@@ -181,31 +233,38 @@ is simply their first consumer. Daily bootstrap-cred renewal against a ~90-day T
 slack for missed attempts or extended outages; step-ca's `/renew` has no "too early" restriction,
 so attempting it daily is always safe.
 
-## Open Question, Deferred to Planning: CSR SAN Content
+## SAN Content — Resolved Against Source
 
-`certclient operating-refresh`'s CSR needs a `Subject.CommonName` — safe and coordination-free,
-since it's just the node's own immutable hostname, parsed locally from the caller's own
-`bootstrap.crt` (the same value `mtls.PeerHostname` would derive server-side from that same
-certificate at enrollment time; hostnames don't change post-enrollment).
+Confirmed directly against the pinned `smallstep/certificates@v0.30.2` source (the same
+"confirm against source, don't assume" standard phase 2b applied to `TemplateData`):
 
-**SAN aliases are a real, unresolved gap.** `client-manager san add/remove` changes a hostname's
-alias list in the CA-host-local database *after* enrollment — a plain local write, no network call
-to the node. But `issuer`'s e2e test (phase 2b) demonstrates that step-ca validates a presented
-CSR's requested SANs against the one-time token's authorized claims during `Sign`; the CSR content
-is supplied by the caller *before* `issuer` ever builds that token. `certclient` has no access to
-`client-manager`'s database and thus no way to know a hostname's *current* alias list when building
-its CSR locally on the node.
+- **Enforcement point:** `authority/tls.go` (`signX509`) invokes every `provisioner.SignOption`
+  implementing `CertificateRequestValidator` against the presented CSR; a non-nil error aborts the
+  sign immediately.
+- **The JWK/OTT provisioner path `issuer` uses** (`authority/provisioner/jwk.go`) installs a
+  `dnsNamesValidator` (`authority/provisioner/sign_options.go`) seeded with the token's authorized
+  SANs.
+- **If the CSR's `DNSNames` is empty:** the validator short-circuits and passes unconditionally —
+  but the issued certificate's SANs come straight from the CSR itself, so the result is a
+  certificate with **no SANs at all**. This is silent, not an error: an empty-SAN CSR always
+  "succeeds" and always omits every alias.
+- **If the CSR's `DNSNames` is non-empty:** the validator requires an **exact set match**
+  (`reflect.DeepEqual`) against the token's authorized SANs — not a subset. Any name in the CSR not
+  in the token's claims, or any token SAN the CSR omits, causes `Sign` to reject the request
+  outright (`errs.Forbidden`).
+- A true subset-only validator (`dnsNamesSubsetValidator`) exists in the same package but is wired
+  only into the cloud-attestation provisioners (AWS/Azure/GCP), not the JWK/OTT path `certmint.Mint`
+  uses.
 
-This phase does not resolve it — resolving it requires confirming, directly against the pinned
-`smallstep/certificates` source (the same "confirm against source, don't assume" standard phase 2b
-applied to `TemplateData`), whether the provisioner validation `issuer` triggers requires an exact
-SAN match or only a subset, and what happens to authorized names the CSR doesn't request. **This
-must be the implementation plan's first task**, before any `operating-refresh` CSR-construction
-code is written, since the answer determines the mechanism (e.g., a CSR carrying only `CommonName`
-may be accepted as a subset and simply omit aliases from the issued cert — silently dropping the
-"SAN changes take effect on next refresh" goal — or step-ca may reject the mismatch outright,
-failing every refresh for a hostname with any configured alias). Until confirmed, treat "SAN
-aliases actually reach the operating certificate via this mechanism" as unverified, not assumed.
+**Consequence:** there is no CSR shape `certclient` can construct unilaterally that both (a) is
+guaranteed to be accepted and (b) actually carries the hostname's current SAN aliases onto the
+certificate — the exact-match requirement means the CSR's `DNSNames` must be known, precisely,
+before the CSR is built and signed. Since only `client-manager`'s database (which `certclient`
+cannot read) knows the current list, a lookup RPC (`DescribeSANs`, above) is structurally
+required — not a preference, a consequence of how the CA's own provisioner validates. This also
+means the phase 2 design's original assumption ("SAN changes take effect the same mechanism as
+attributes," i.e. via `TemplateData`) was incorrect: this validator runs unconditionally, before
+and independent of any custom template.
 
 ## Error Handling
 
@@ -230,14 +289,23 @@ aliases actually reach the operating certificate via this mechanism" as unverifi
   `TestLoadClientCredentials_Success`).
 - Unit: `certclient`'s key generate-or-reuse logic — no existing key generates and persists one;
   an existing key is loaded and reused unchanged.
+- Unit: `issuer`'s `DescribeSANs` handler — known hostname returns its exact current SAN list
+  (mirrors `server_test.go`'s existing `fakeAuthContext` pattern); unknown hostname errors; no
+  revoked-host special-casing (a revoked host's SANs are still readable, only issuance is refused).
+- Unit: `operating-refresh`'s CSR-building step — given a fetched SAN list, the built CSR's
+  `DNSNames` exactly equals it (a pure, network-free check, same style as `writeIdentity`).
 - Unit: `operating-refresh`'s top-level flow against a fake `issuerClient` — a success response
-  writes `client.crt`; a revoked/error response leaves `client.crt` untouched and returns an error.
+  writes `client.crt`; a revoked/error response (from either `DescribeSANs` or
+  `RequestOperatingCert`) leaves `client.crt` untouched and returns an error.
 - Unit: `bootstrap`/`renew` tests updated only for the `bootstrap.crt`/`bootstrap.key` rename —
   their logic is otherwise unchanged.
 - Integration/e2e (build-tag gated, mirrors `cmd/issuer/e2e_test.go`'s real-`step-ca`-via-
   `docker compose` pattern): a genuine `certclient bootstrap` against a throwaway CA, a genuine
   `issuer serve` instance, then a genuine `certclient operating-refresh` against it — confirming
-  the full chain produces a `client.crt` a real mTLS handshake accepts.
+  the full chain produces a `client.crt` a real mTLS handshake accepts, **and** that a hostname
+  enrolled with a SAN alias (`client-manager add --san`) ends up with that alias actually present
+  in the issued operating certificate's `DNSNames` — the concrete, end-to-end proof that the
+  `DescribeSANs` round trip closes the gap this phase found.
 - Integration: revoke a hostname via a real `client-manager` store, confirm the next
   `operating-refresh` fails while `bootstrap-refresh`'s `renew` still succeeds independently —
   proving the "identity survives, only mesh access lapses" property end-to-end, not just
@@ -245,9 +313,13 @@ aliases actually reach the operating certificate via this mechanism" as unverifi
 
 ## Documentation Impact
 
-Per `.claude/CLAUDE.md`'s feature-change and gRPC-protocol rules (no `.proto` changes in this
-phase — `issuer`'s RPC shape is untouched, so no `docs/protocols/` changes are needed):
+Per `.claude/CLAUDE.md`'s feature-change and gRPC-protocol rules. Note this phase **does** modify
+`issuer.proto` (adding `DescribeSANs`), which the earlier draft of this design incorrectly said it
+wouldn't — per the protocol-change rule, `docs/protocols/issuer.md` must be updated accordingly:
 
+- **`docs/protocols/issuer.md`** (exists) — add the `DescribeSANs` RPC: its request/response shape,
+  its authorization model (identical to `RequestOperatingCert` — hostname always from verified mTLS
+  peer identity), and why it exists (the CSR SAN exact-match constraint documented above).
 - **`docs/components/certclient.md`** (exists) — rewrite for the subcommand split
   (`bootstrap`/`renew`/`operating-refresh`), the `bootstrap.crt`/`bootstrap.key` rename, and the
   new `--debug` flag.
