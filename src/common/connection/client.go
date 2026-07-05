@@ -11,15 +11,11 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
 
-func Connect(host string, port, timeout int, certsDir string) (*grpc.ClientConn, error) {
-	creds, err := mtls.LoadClientCredentials(certsDir, host)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load client credentials: %w", err)
-	}
-
+func dialWithCredentials(creds credentials.TransportCredentials, host string, port, timeout int) (*grpc.ClientConn, error) {
 	// Configure keepalive for connection health monitoring
 	keepaliveParams := keepalive.ClientParameters{
 		Time:                10 * time.Second, // Send ping every 10 seconds
@@ -44,6 +40,27 @@ func Connect(host string, port, timeout int, certsDir string) (*grpc.ClientConn,
 
 	// Connection remains open; caller wraps it with the generated client it needs.
 	return conn, nil
+}
+
+// Connect dials host:port, presenting certsDir/client.crt and
+// certsDir/client.key as this node's mTLS identity.
+func Connect(host string, port, timeout int, certsDir string) (*grpc.ClientConn, error) {
+	creds, err := mtls.LoadClientCredentials(certsDir, host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client credentials: %w", err)
+	}
+	return dialWithCredentials(creds, host, port, timeout)
+}
+
+// ConnectWithIdentity is Connect, parameterized on which cert/key filenames
+// to present -- used by callers authenticating with an identity other than
+// the standard client.crt/client.key pair.
+func ConnectWithIdentity(host string, port, timeout int, certsDir, certFile, keyFile string) (*grpc.ClientConn, error) {
+	creds, err := mtls.LoadClientCredentialsWithIdentity(certsDir, certFile, keyFile, host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client credentials: %w", err)
+	}
+	return dialWithCredentials(creds, host, port, timeout)
 }
 
 func checkConnection(conn *grpc.ClientConn, timeoutSec int) error {

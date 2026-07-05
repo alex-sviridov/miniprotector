@@ -85,3 +85,27 @@ func TestConnect_MissingCertsDirFailsFast(t *testing.T) {
 	_, err := Connect("127.0.0.1", 1, 1, "does-not-exist")
 	assert.Error(t, err)
 }
+
+func TestConnectWithIdentity_RoundTripSucceeds(t *testing.T) {
+	port := freeTCPPort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- StartServer(ctx, testLogger(), port, fixtureCertsDir, func(s *grpc.Server) {})
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := ConnectWithIdentity("127.0.0.1", port, 5, fixtureCertsDir, "client.crt", "client.key")
+	require.NoError(t, err)
+	conn.Close()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartServer did not shut down in time")
+	}
+}
