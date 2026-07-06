@@ -11,6 +11,22 @@ services:
       - MP_CONFIG_PATH=/data/client-manager-conf
     restart: unless-stopped
 
+  issuer:
+    build:
+      context: ..
+      dockerfile: demo/issuer/Dockerfile
+    depends_on:
+      - ca
+    volumes:
+      - issuer-data:/data
+      - ./local.conf:/data/local.conf:ro
+      - client-manager-data:/data/client-manager
+      - ca-data:/ca-data:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+    restart: unless-stopped
+
 volumes:
   ca-data:
   client-manager-data:
+  issuer-data:
