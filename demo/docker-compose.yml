@@ -1,0 +1,16 @@
+services:
+  ca:
+    build:
+      context: ..
+      dockerfile: demo/ca/Dockerfile
+    volumes:
+      - ca-data:/home/step
+      - client-manager-data:/data/client-manager
+      - ./ca/clientmanager-local.conf:/data/client-manager-conf/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data/client-manager-conf
+    restart: unless-stopped
+
+volumes:
+  ca-data:
+  client-manager-data:
