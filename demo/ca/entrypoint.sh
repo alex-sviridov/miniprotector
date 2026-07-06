@@ -23,6 +23,6 @@ fi
 # Runs unconditionally, every boot (not just first init) -- an
 # already-initialized CA must still pick up template changes on upgrade,
 # the exact gap b212082 fixed for deploy/control-plane's own entrypoint.
-step ca provisioner update admin@backup.internal --x509-template=/home/step/templates/leaf.tpl
+step ca provisioner update admin@backup.internal --x509-template=/home/step/templates/leaf.tpl --x509-max-dur=2200h
 
 exec step-ca /home/step/config/ca.json --password-file=/home/step/secrets/password
