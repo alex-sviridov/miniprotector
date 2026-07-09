@@ -16,6 +16,9 @@ A backup system with intelligent deduplication and integrity verification.
 
 ## Control Plane vs. Agents
 
+See [demo/README.md](../demo/README.md) for a self-contained, one-command lab environment
+exercising this whole topology end to end.
+
 |  | Control plane | Agents |
 |---|---|---|
 | Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `client-manager`, `issuer` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |

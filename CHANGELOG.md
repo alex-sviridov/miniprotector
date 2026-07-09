@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-06 — Self-contained demo lab environment, updated for the current architecture
+
+The 2026-07-03 demo lab design predated `issuer`, the two-tier bootstrap/operating credential
+split, and `client-manager` (it assumed the now-retired `certrequest`) — it could no longer be run
+as written. `demo/` now stands up `ca`, `issuer`, `catalog`, and two backup-capable nodes
+(`client`, `store`) with one command (`make demo-up`), fully self-contained: no host ports
+published, no host bind-mounts of secrets, and no dependency on `deploy/control-plane`'s own
+compose file or volumes. `catalog`'s image is reused directly rather than duplicated; the CA's
+leaf template is read straight from `deploy/control-plane/ca/templates/leaf.tpl` at build time so
+the two deployments can't silently drift apart. Building this as a genuine, fully-automated cold
+start (rather than a hand-run walkthrough) surfaced and fixed several previously-unknown gaps that
+never showed up in the unit/e2e suites or manual deployments: `issuer`'s self-mint requesting a
+longer certificate duration than step-ca's default provisioner claims allow; `issuer` running as
+root and corrupting shared SQLite file ownership on a cold boot; `ConnectionTimeOutSec` and
+`FileLockTimeoutSec` both lacking defaults in `config.ParseConfig`, silently zeroing out
+connection/file-lock timeouts when a deployment's `local.conf` doesn't set them explicitly (as
+`deploy/control-plane`'s own config files also don't — a latent gap there too, not fixed by this
+change). `deploy/control-plane/catalog/Dockerfile` also gains the `sqlite3` CLI, which its image
+never actually had despite being the documented way to inspect its database directly.
+
 ## 2026-07-05 — Bootstrap credentials can no longer reach bwfs/catalog
 
 `common/mtls` trusted any CA-signed certificate regardless of which of the two credential tiers

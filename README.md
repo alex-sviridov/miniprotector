@@ -19,6 +19,8 @@ Miniprotector is a self-learning pet-project based on my Backup & Recovery exper
 
 ## Quick Start
 
+Try the whole system running together in one command: see [demo/README.md](demo/README.md).
+
 **Backup files:**
 ```bash
 # Start backup writer
