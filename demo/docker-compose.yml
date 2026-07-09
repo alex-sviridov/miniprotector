@@ -42,8 +42,43 @@ services:
       - STORAGE_PATH=/data/storage
     restart: unless-stopped
 
+  client:
+    build:
+      context: ..
+      dockerfile: demo/backup-host/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+    volumes:
+      - client-data:/data
+      - ./local.conf:/data/local.conf:ro
+      - ./sample-data:/data/sample-data:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    restart: unless-stopped
+
+  store:
+    build:
+      context: ..
+      dockerfile: demo/backup-host/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+      - catalog
+    volumes:
+      - store-data:/data
+      - ./local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+      - STORAGE_PATH=/data/storage
+    restart: unless-stopped
+
 volumes:
   ca-data:
   client-manager-data:
   issuer-data:
   catalog-data:
+  client-data:
+  store-data:

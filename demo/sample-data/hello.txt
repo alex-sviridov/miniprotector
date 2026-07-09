@@ -1,0 +1,2 @@
+Hello from the miniprotector demo lab.
+This file is backed up by brfs when you run the walkthrough.
