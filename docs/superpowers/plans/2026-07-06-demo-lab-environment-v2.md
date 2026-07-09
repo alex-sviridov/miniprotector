@@ -82,16 +82,38 @@ FROM golang:1.26 AS builder
 
 WORKDIR /build
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 make clientmanager
+RUN cd src && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /build/bin/clientmanager ./cmd/clientmanager
 
 FROM smallstep/step-ca
 
+USER root
 COPY --chmod=0755 --from=builder /build/bin/clientmanager /usr/local/bin/clientmanager
+RUN mkdir -p /home/step/templates /data/client-manager && chown step:step /data/client-manager
 COPY --chmod=0644 deploy/control-plane/ca/templates/leaf.tpl /home/step/templates/leaf.tpl
 COPY --chmod=0755 demo/ca/entrypoint.sh /home/step/entrypoint.sh
+USER step
 
 ENTRYPOINT ["/home/step/entrypoint.sh"]
 ```
+
+(Verified during planning, empirically: `golang:1.26`'s builder is glibc-based while
+`smallstep/step-ca`'s final image is Alpine/musl-based — a `CGO_ENABLED=1` build produces a
+glibc-linked binary that fails at runtime on musl. `storage/clientmanager/db.go` opens its SQLite
+connection via the pure-Go `modernc.org/sqlite` driver (`_ "modernc.org/sqlite"`, `sql.Open("sqlite",
+...)`), not the cgo-based `mattn/go-sqlite3` (an unused indirect dependency pulled in by
+`gorm.io/driver/sqlite`) — so `CGO_ENABLED=0` produces a fully static, libc-independent binary that
+runs unmodified on Alpine, confirmed by both `file` reporting "statically linked" and running it
+inside a real `smallstep/step-ca` container. Two further fixes, also confirmed empirically: (1)
+`COPY --chmod=0644` applied to a file whose parent directory doesn't yet exist applies that same
+mode to the auto-created directory too, producing a directory with no execute bit
+(`drw-r-Sr--`) that nothing — not even root — can traverse; pre-creating `/home/step/templates` with
+a plain `RUN mkdir -p` (default 0755) avoids this. (2) `smallstep/step-ca`'s base image already sets
+`USER step` (uid 1000, non-root), so a bare `RUN mkdir -p /data/...` fails with "Permission denied"
+at `/`; `USER root` before the `RUN`/`COPY` block (switching back to `USER step` after) is required —
+matches the base image's own default runtime user, just bracketing the one build step that needs
+root to prepare `/data/client-manager` (owned by `step:step`, since `clientmanager` — running as
+`step` at container start, per this same `USER step` line — needs write access to create its SQLite
+file there).
 
 - [ ] **Step 4: Write `demo/docker-compose.yml`**
 
@@ -178,9 +200,24 @@ ReconcileIntervalSec=30
 BootstrapCertRefreshIntervalSec=86400
 OperatingCertFetchIntervalSec=900
 JobTimeoutSec=30
+var_path=/data/client-manager
+ConnectionTimeOutSec=30
 ```
 
-(`ca_host` is required by `certclient renew`/`bootstrap` — an omission in the earlier design spec's illustrative `local.conf`, corrected here.)
+(`ca_host` is required by `certclient renew`/`bootstrap` — an omission in the earlier design spec's
+illustrative `local.conf`, corrected here. `var_path` is required by `issuer` — confirmed via
+`config.ResolveVarDir`, which falls back to the binary's own directory when unset, so without it
+`issuer` never sees the SQLite database `clientmanager` actually writes to at
+`/data/client-manager`; `deploy/control-plane/issuer/local.conf` already sets this correctly, this
+demo's consolidated shared config had simply dropped it. `ConnectionTimeOutSec` is required by
+`certclient operating-refresh`'s dial to `issuer` (`cmd/certclient/main.go`, `common/connection`'s
+`checkConnection`) — with no default in `config.ParseConfig`, it's Go's zero value, producing an
+already-expired context and an instant `"connection timeout"` on every attempt regardless of
+whether `issuer` is reachable; `30` matches `src/e2e/config.conf`'s existing value. Both gaps were
+found empirically during Task 3's implementation — see that task's notes; `ConnectionTimeOutSec`'s
+absence appears to be a latent, pre-existing gap in `deploy/control-plane`'s real config too
+(`deploy/control-plane/catalog/local.conf` also lacks it), flagged for separate follow-up, not fixed
+here since it's outside this plan's scope.)
 
 - [ ] **Step 2: Write `demo/issuer/Dockerfile`**
 
@@ -319,7 +356,7 @@ Expected: state shows repeated restarts (`Restarting`) — `catalog`'s entrypoin
 Run:
 ```bash
 TOKEN=$(docker compose exec -T ca clientmanager add catalog \
-    --ca-url https://localhost:9000 \
+    --ca-url https://ca:9000 \
     --root /home/step/certs/root_ca.crt \
     --password-file /home/step/secrets/password \
     --defaults-file /home/step/config/defaults.json)
@@ -329,6 +366,15 @@ docker compose ps catalog
 docker compose exec -T catalog ./agent list-policies
 ```
 Expected: `docker compose ps catalog` shows a stable `Up`/`running` state (no more restarts); `agent list-policies` lists both `bootstrap-refresh` and `operating-refresh` with a recent successful run.
+
+(`--ca-url https://ca:9000`, not `https://localhost:9000` — even though `clientmanager` itself runs
+inside the `ca` container where `localhost` would also work for the *minting* call, `ca.Bootstrap`
+on the *redeeming* side, run inside `catalog`'s own container, dials whatever URL is baked into the
+token at mint time, not `local.conf`'s `ca_host`. `localhost` there would mean `catalog`'s own
+loopback, unreachable — the exact trap `deploy/control-plane/README.md` already documents and
+warns against for its own `catalog` enrollment. Found empirically during Task 3's implementation,
+confirmed against `src/cmd/certclient/bootstrap.go`'s use of `ca.CreateSignRequest`/`ca.Bootstrap`.
+The same correction applies everywhere else this plan mints a token for a non-`ca` node.)
 
 - [ ] **Step 4: Commit**
 
@@ -498,7 +544,7 @@ volumes:
 Run:
 ```bash
 TOKEN=$(docker compose exec -T ca clientmanager add store \
-    --ca-url https://localhost:9000 \
+    --ca-url https://ca:9000 \
     --root /home/step/certs/root_ca.crt \
     --password-file /home/step/secrets/password \
     --defaults-file /home/step/config/defaults.json)
@@ -514,7 +560,7 @@ Expected: `store` reaches a stable `Up` state; `agent list-policies` shows both 
 Run:
 ```bash
 TOKEN=$(docker compose exec -T ca clientmanager add client \
-    --ca-url https://localhost:9000 \
+    --ca-url https://ca:9000 \
     --root /home/step/certs/root_ca.crt \
     --password-file /home/step/secrets/password \
     --defaults-file /home/step/config/defaults.json)
@@ -594,7 +640,7 @@ enroll() {
     fi
     echo "Enrolling $name..."
     token=$(docker compose exec -T ca clientmanager add "$name" \
-        --ca-url https://localhost:9000 \
+        --ca-url https://ca:9000 \
         --root /home/step/certs/root_ca.crt \
         --password-file /home/step/secrets/password \
         --defaults-file /home/step/config/defaults.json)
