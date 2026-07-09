@@ -27,6 +27,11 @@ docker compose up -d issuer
 # for an already-redeemed bootstrap credential via a throwaway container
 # (docker compose run), rather than `exec`ing into a service that may
 # never have started -- correct on both a cold volume and a re-run.
+# Not handled: partial volume loss where a node's bootstrap.crt is wiped but
+# its clientmanager tracking record survives -- the probe would miss the
+# existing DB entry, re-run `clientmanager add`, and (under set -e) abort on
+# the already-tracked-hostname error. Outside this script's idempotency
+# contract (which assumes a clean `down -v` + re-run), so left unhandled.
 enroll() {
     name="$1"
     if docker compose run --rm --no-deps --entrypoint sh "$name" \

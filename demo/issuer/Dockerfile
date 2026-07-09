@@ -5,6 +5,11 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 make issuer
 
 FROM debian:bookworm-slim
+# uid/gid 1000 below must match the smallstep/step-ca base image's `step` user
+# (see demo/ca/Dockerfile), so the shared client-manager-data volume stays
+# writable by both clientmanager (running as `step` in ca's container) and
+# issuer here. If that base image's step uid ever changes, this coupling
+# breaks silently with an ownership mismatch.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

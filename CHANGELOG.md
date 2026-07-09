@@ -14,8 +14,10 @@ leaf template is read straight from `deploy/control-plane/ca/templates/leaf.tpl`
 the two deployments can't silently drift apart. Building this as a genuine, fully-automated cold
 start (rather than a hand-run walkthrough) surfaced and fixed several previously-unknown gaps that
 never showed up in the unit/e2e suites or manual deployments: `issuer`'s self-mint requesting a
-longer certificate duration than step-ca's default provisioner claims allow; `issuer` running as
-root and corrupting shared SQLite file ownership on a cold boot; `ConnectionTimeOutSec` and
+longer certificate duration than step-ca's default provisioner claims allow (`deploy/control-plane/ca/entrypoint.sh`
+has the identical gap — no `--x509-max-dur` flag on its provisioner — so a genuinely fresh
+control-plane deployment would hit the same 90-day-request-vs-24h1m-default rejection; not fixed by
+this change); `issuer` running as root and corrupting shared SQLite file ownership on a cold boot; `ConnectionTimeOutSec` and
 `FileLockTimeoutSec` both lacking defaults in `config.ParseConfig`, silently zeroing out
 connection/file-lock timeouts when a deployment's `local.conf` doesn't set them explicitly (as
 `deploy/control-plane`'s own config files also don't — a latent gap there too, not fixed by this
