@@ -35,7 +35,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer test test-e2e lint control-plane-up
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer test test-e2e lint control-plane-up demo-up demo-down
 
 # Default target
 all: check-deps proto build
@@ -143,3 +143,9 @@ control-plane-up: ## Initialize (if needed) and start the control-plane stack (c
 	fi
 	@cd $(CONTROL_PLANE_DIR) && docker compose up -d
 	@echo -e "$(GREEN)Control plane up.$(NC) ca: https://localhost:9000  catalog: localhost:15723"
+
+demo-up: ## Bring up the self-contained demo lab (ca + issuer + catalog + client + store)
+	@./demo/up.sh
+
+demo-down: ## Tear down the demo lab and wipe all its volumes
+	@cd demo && docker compose down -v
