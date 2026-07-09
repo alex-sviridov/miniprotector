@@ -45,7 +45,7 @@ if [ -n "$STORAGE_PATH" ]; then
         sleep 1
         timeout=$((timeout - 1))
     done
-    if [ "$timeout" -eq 0 ]; then
+    if ! nc -z 127.0.0.1 8080 2>/dev/null; then
         echo "bwfs did not start listening within 30s" >&2
         exit 1
     fi
@@ -59,4 +59,12 @@ fi
 # PID 1 and keeps receiving TERM directly, with a trap that's still live
 # to forward it to every backgrounded child.
 trap 'kill $AGENT_PID $BWFS_PID $CATALOGSYNC_PID 2>/dev/null || true' TERM
+
+# wait blocks until every backgrounded job exits; it doesn't fail early or
+# re-check liveness if one child dies while others keep running, so a
+# post-startup crash of e.g. bwfs or catalogsync stays silent from
+# docker compose ps's point of view (the container keeps reporting Up).
+# Accepted for a demo lab meant to be watched, not unattended reliability
+# -- the same stance this design already takes for a mid-run crash of
+# either process (see the design spec's Error Handling section).
 wait
