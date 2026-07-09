@@ -949,7 +949,16 @@ as written. `demo/` now stands up `ca`, `issuer`, `catalog`, and two backup-capa
 published, no host bind-mounts of secrets, and no dependency on `deploy/control-plane`'s own
 compose file or volumes. `catalog`'s image is reused directly rather than duplicated; the CA's
 leaf template is read straight from `deploy/control-plane/ca/templates/leaf.tpl` at build time so
-the two deployments can't silently drift apart.
+the two deployments can't silently drift apart. Building this as a genuine, fully-automated cold
+start (rather than a hand-run walkthrough) surfaced and fixed several previously-unknown gaps that
+never showed up in the unit/e2e suites or manual deployments: `issuer`'s self-mint requesting a
+longer certificate duration than step-ca's default provisioner claims allow; `issuer` running as
+root and corrupting shared SQLite file ownership on a cold boot; `ConnectionTimeOutSec` and
+`FileLockTimeoutSec` both lacking defaults in `config.ParseConfig`, silently zeroing out
+connection/file-lock timeouts when a deployment's `local.conf` doesn't set them explicitly (as
+`deploy/control-plane`'s own config files also don't — a latent gap there too, not fixed by this
+change). `deploy/control-plane/catalog/Dockerfile` also gains the `sqlite3` CLI, which its image
+never actually had despite being the documented way to inspect its database directly.
 
 ```
 
@@ -976,6 +985,8 @@ EOF
 - [ ] Re-running `make demo-up` without `make demo-down` first completes without error (idempotency).
 - [ ] The full Task 7 walkthrough (backup, list, verify, catalog replication, agent policy health,
       revoke/unrevoke) passes end to end.
-- [ ] `git diff main --stat` shows no changes outside `demo/`, `Makefile`, `README.md`,
-      `docs/ARCHITECTURE.md`, and `CHANGELOG.md` — confirms `deploy/control-plane` itself was
-      never modified, only referenced.
+- [ ] `git diff main --stat` shows every change outside `demo/`, `Makefile`, `README.md`,
+      `docs/ARCHITECTURE.md`, and `CHANGELOG.md` is limited to exactly one file:
+      `deploy/control-plane/catalog/Dockerfile` (Task 7's real, verified `sqlite3` fix to the
+      shared image this plan deliberately reuses rather than duplicates) — nothing else outside
+      `demo/` should be touched.
