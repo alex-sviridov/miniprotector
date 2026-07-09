@@ -33,6 +33,23 @@ fi
 if [ -n "$STORAGE_PATH" ]; then
     ./bwfs "$STORAGE_PATH" server --port 8080 --debug="${DEBUG:-false}" &
     BWFS_PID=$!
+
+    # bwfs opens its own database (including setting WAL mode) before it
+    # starts listening -- see cmd/bwfs/main.go, NewBackupServer runs before
+    # connection.StartServer's net.Listen. Waiting for the port to accept a
+    # TCP connection is therefore a reliable signal that catalogsync's
+    # concurrent read-only open of the same SQLite file won't race bwfs's
+    # own database initialization.
+    timeout=30
+    while ! nc -z 127.0.0.1 8080 2>/dev/null && [ "$timeout" -gt 0 ]; do
+        sleep 1
+        timeout=$((timeout - 1))
+    done
+    if [ "$timeout" -eq 0 ]; then
+        echo "bwfs did not start listening within 30s" >&2
+        exit 1
+    fi
+
     ./catalogsync "$STORAGE_PATH" --debug="${DEBUG:-false}" &
     CATALOGSYNC_PID=$!
 fi
