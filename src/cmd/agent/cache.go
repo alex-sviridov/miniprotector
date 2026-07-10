@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/alex-sviridov/miniprotector/common/atomicfile"
 )
 
 // PolicyState is one policy's reconciliation history, persisted as part of
@@ -44,24 +45,15 @@ func readCache(path string) (Cache, error) {
 	return c, nil
 }
 
-// writeCache persists c atomically: write to a temp file in the same
-// directory, then rename over the target, so a crash mid-write never
-// leaves a torn cache file. Creates the parent directory if it doesn't
-// exist yet.
+// writeCache persists c atomically via common/atomicfile, so a crash
+// mid-write never leaves a torn cache file.
 func writeCache(path string, c Cache) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create cache directory: %w", err)
-	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal cache: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write temp cache: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename cache into place: %w", err)
+	if err := atomicfile.Write(path, data); err != nil {
+		return fmt.Errorf("write cache: %w", err)
 	}
 	return nil
 }
