@@ -418,3 +418,45 @@ func TestParseConfig_IssuerSelfCertRefreshIntervalSecParsesCorrectly(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, 43200, conf.IssuerSelfCertRefreshIntervalSec)
 }
+
+func TestParseConfig_PolicyServerHostParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\npolicy_server_host=policy.backup.internal\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "policy.backup.internal", conf.PolicyServerHost)
+}
+
+func TestParseConfig_PolicyServerPortDefaultsTo9300(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 9300, conf.PolicyServerPort)
+}
+
+func TestParseConfig_PolicyServerPortParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\npolicy_server_port=9301\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 9301, conf.PolicyServerPort)
+}
+
+func TestResolvePoliciesDir_JoinsBaseDirWithPolicies(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(ConfigPathEnvVar, dir)
+
+	got, err := ResolvePoliciesDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "policies"), got)
+}

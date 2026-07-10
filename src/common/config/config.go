@@ -51,6 +51,16 @@ func ResolveCertsDir() (string, error) {
 	return filepath.Join(baseDir, "certs"), nil
 }
 
+// ResolvePoliciesDir determines the policy-server policy directory:
+// <base>/policies, where base comes from ResolveBaseDir.
+func ResolvePoliciesDir() (string, error) {
+	baseDir, err := ResolveBaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(baseDir, "policies"), nil
+}
+
 // ResolveVarDir determines the directory for variable/runtime data (cache
 // files, state files). Returns cfg.VarPath if set, otherwise the directory
 // containing the running binary — the same fallback ResolveBaseDir uses,
@@ -94,6 +104,8 @@ type Config struct {
 	OperatingCertFetchIntervalSec    int
 	IssuerSelfCertTTLSec             int
 	IssuerSelfCertRefreshIntervalSec int
+	PolicyServerHost                 string
+	PolicyServerPort                 int
 }
 
 type contextKey string
@@ -131,6 +143,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		OperatingCertFetchIntervalSec:    900,
 		IssuerSelfCertTTLSec:             7776000,
 		IssuerSelfCertRefreshIntervalSec: 86400,
+		PolicyServerPort:                 9300,
 	}
 	foundFields := make(map[string]bool)
 
@@ -300,6 +313,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.IssuerSelfCertRefreshIntervalSec = number
 			foundFields["IssuerSelfCertRefreshIntervalSec"] = true
+		case "policy_server_host":
+			config.PolicyServerHost = value
+			foundFields["policy_server_host"] = true
+		case "policy_server_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid policy_server_port value at line %d: %s", lineNum, value)
+			}
+			config.PolicyServerPort = port
+			foundFields["policy_server_port"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}
