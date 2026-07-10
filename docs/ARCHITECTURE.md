@@ -22,10 +22,10 @@ exercising this whole topology end to end.
 
 |  | Control plane | Agents |
 |---|---|---|
-| Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `client-manager`, `issuer` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
-| Runs where | On the CA host (`client-manager`, `issuer`); `catalog` runs centrally, wherever the catalog deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); neither has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` and `agent` — `catalog`'s image is one of them, since it's deployed as an ordinary `agent`-managed enrolled node (see [Control Plane README](../deploy/control-plane/README.md)) |
+| Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `policy-server`, `client-manager`, `issuer` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
+| Runs where | On the CA host (`client-manager`, `issuer`); `catalog`/`policy-server` run centrally, wherever each deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, no client-side consumer wired yet); none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` and `agent` — `catalog`'s and `policy-server`'s images are both among them, since each is deployed as an ordinary `agent`-managed enrolled node (see [Control Plane README](../deploy/control-plane/README.md)) |
 
 `issuer` is the one exception to the "obtained via `certclient`" rule below: it mints and signs its
 own mTLS server identity directly at startup and re-mints it on an internal ticker while running,
@@ -39,6 +39,14 @@ image bundles `agent` (which wraps `certclient`), and it runs as an ordinary `ag
 with continuously-refreshed bootstrap and operating credentials, not a one-shot bootstrap redeemed
 only at container start — it doesn't fit either row cleanly. It listens on its own port
 (`catalog_port`, default 15723) for `catalogsync` connections from every `bwfs` node's agent host.
+
+`policy-server` is control plane by role (a fleet-wide policy distribution service) but, like
+`catalog`, obtains its own mTLS identity as an ordinary `agent`-managed enrolled node rather than a
+one-shot bootstrap — its image bundles `agent` the same way `catalog`'s does. It listens on its own
+port (`policy_server_port`, default 9300); nothing dials it yet, since no client-side consumer of
+`GetPolicies` exists in this codebase — wiring one (`agent` or `brfs` fetching and acting on
+policies) is separate, later work, the same way `issuer`'s own phase 2b deliberately left `agent`
+integration for a follow-up phase.
 
 A node's mTLS identity is obtained in two tiers, both via `certclient`: `bootstrap` redeems a
 one-time token minted by `client-manager` for `ca.crt` plus a long-lived `bootstrap.crt`/

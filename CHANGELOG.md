@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-10 — Deploy policy-server as an enrolled control-plane node
+
+`policy-server` (added earlier this same day) now has a real deployment story in both
+`deploy/control-plane/` and `demo/`, following `catalog`'s existing pattern exactly: its own
+Docker image bundling `agent`/`certclient`, enrolled through the same bootstrap-token flow every
+node uses, with continuously-refreshed bootstrap and operating credentials rather than a one-shot
+identity. It differs from `catalog` in one structural way — no local database, so no
+`STORAGE_PATH`/positional CLI argument, and its entrypoint needs no directory-creation step since
+`policy-server` already creates its own `policies/` directory on startup. Still no client-side
+consumer of `GetPolicies` in either environment — that remains separate, later work.
+
 ## 2026-07-10 — Backup policy serving (policy-server)
 
 Added `policy-server`, a new control-plane binary that serves backup policies — static,
