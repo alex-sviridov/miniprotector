@@ -70,6 +70,7 @@ make policy-server
 
 - [issuer](./issuer.md) — mints the operating certificates whose embedded attribute extension
   `policy-server` reads
+- [policyclient](./policyclient.md) — fetches `GetPolicies` on `agent`'s `policy-update` schedule
 - [Policy Server Protocol](../protocols/policy-server.md)
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
 - [Architecture](../ARCHITECTURE.md)

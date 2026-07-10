@@ -10,10 +10,10 @@ A backup system with intelligent deduplication and integrity verification.
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
 | catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
 | catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
-| agent | Node Agent — reconciles local state against embedded policies | Implemented (two policies: bootstrap credential renewal and operating-certificate refresh via `issuer`) |
+| agent | Node Agent — reconciles local state against embedded policies | Implemented (three policies: bootstrap credential renewal, operating-certificate refresh via `issuer`, and policy fetch via `policyclient`) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
-| policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (no client-side consumer yet — agent integration is separate, later work) |
+| policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (`agent` now fetches and caches its policies via `policyclient`; nothing yet acts on the cache — that remains separate, later work) |
 
 ## Control Plane vs. Agents
 
@@ -23,8 +23,8 @@ exercising this whole topology end to end.
 |  | Control plane | Agents |
 |---|---|---|
 | Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `policy-server`, `client-manager`, `issuer` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
-| Runs where | On the CA host (`client-manager`, `issuer`); `catalog`/`policy-server` run centrally, wherever each deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, no client-side consumer wired yet); none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Runs where | On the CA host (`client-manager`, `issuer`); `catalog`/`policy-server` run centrally, wherever each deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh, and `policy_server_host:9300` outbound for policy fetching; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, fetched by `agent` via `policyclient`); none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` and `agent` — `catalog`'s and `policy-server`'s images are both among them, since each is deployed as an ordinary `agent`-managed enrolled node (see [Control Plane README](../deploy/control-plane/README.md)) |
 
 `issuer` is the one exception to the "obtained via `certclient`" rule below: it mints and signs its
@@ -43,10 +43,10 @@ only at container start — it doesn't fit either row cleanly. It listens on its
 `policy-server` is control plane by role (a fleet-wide policy distribution service) but, like
 `catalog`, obtains its own mTLS identity as an ordinary `agent`-managed enrolled node rather than a
 one-shot bootstrap — its image bundles `agent` the same way `catalog`'s does. It listens on its own
-port (`policy_server_port`, default 9300); nothing dials it yet, since no client-side consumer of
-`GetPolicies` exists in this codebase — wiring one (`agent` or `brfs` fetching and acting on
-policies) is separate, later work, the same way `issuer`'s own phase 2b deliberately left `agent`
-integration for a follow-up phase.
+port (`policy_server_port`, default 9300); `agent` now dials it on a schedule (`policy-update`, via
+`policyclient fetch`) and caches the result locally, though nothing yet acts on that cache — turning
+it into anything that actually runs a backup (`agent` or `brfs` consuming it) is separate, later
+work.
 
 A node's mTLS identity is obtained in two tiers, both via `certclient`: `bootstrap` redeems a
 one-time token minted by `client-manager` for `ca.crt` plus a long-lived `bootstrap.crt`/
@@ -57,11 +57,14 @@ every other component's transport. See [client-manager](components/client-manage
 rationale behind this split and its trust-model trade-offs, [Security Model](SECURITY.md).
 
 `agent` is a node-level process that wraps `certclient` — intended to replace the bare cron entries
-that would otherwise invoke `certclient` directly: `agent serve` runs a reconcile loop with two
-config-driven policies, `bootstrap-refresh` (`certclient renew`, daily) and `operating-refresh`
-(`certclient operating-refresh`, every 15 minutes by default), tracking each policy's outcome in a
-local cache (`agent list-policies` inspects it). It has no network role of its own; all network
-behavior is `certclient`'s, unchanged. See [agent](components/agent.md).
+that would otherwise invoke `certclient` directly: `agent serve` runs a reconcile loop with three
+config-driven policies: `bootstrap-refresh` (`certclient renew`, daily) and `operating-refresh`
+(`certclient operating-refresh`, every 15 minutes by default) keep this node's mTLS credentials
+fresh; `policy-update` (`policyclient fetch`, every 15 minutes by default) fetches this node's
+applicable backup policies from `policy-server` into a local cache. Each policy's outcome is
+tracked in the same local cache (`agent list-policies` inspects it). It has no network role of its
+own; all network behavior is `certclient`'s and `policyclient`'s, unchanged. See
+[agent](components/agent.md).
 
 `client-manager` is control plane by role (an admin-facing tool tracking the enrolled-client
 fleet) but, unlike every other component in this table, has no mTLS identity and no network

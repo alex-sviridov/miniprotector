@@ -1,11 +1,12 @@
 # agent
 
-Node-level agent that reconciles local state against a small, config-driven set of policies. It
-runs two embedded policies — `bootstrap-refresh` and `operating-refresh` — that keep this node's
-two-tier mTLS credential (see [Security Model](../SECURITY.md)) fresh via `certclient`, replacing
-the bare cron entries used previously. `policy-server` (see [policy-server](./policy-server.md)) now exists as a standalone component
-serving backup policies, but `agent` does not yet fetch from it — no policy-driven scheduling is
-wired into `agent`'s reconcile loop. That integration remains separate, later work.
+Node-level agent that reconciles local state against a small, config-driven set of policies.
+It runs three embedded policies — `bootstrap-refresh`, `operating-refresh`, and `policy-update` —
+the first two keep this node's two-tier mTLS credential (see [Security Model](../SECURITY.md))
+fresh via `certclient`; the third fetches this node's applicable backup policies from
+`policy-server` (see [policy-server](./policy-server.md)) into a local cache via `policyclient`.
+Nothing yet acts on that cache — no policy-driven scheduling is wired into `agent`'s reconcile
+loop. That integration remains separate, later work.
 
 ## Usage
 
@@ -30,12 +31,13 @@ once per failure, not re-derived on every check) has elapsed instead, decoupled 
 When due, `agent` execs the policy's binary and records the outcome — success or failure, and a
 running count of consecutive failures — to a local JSON cache file.
 
-`agent`'s two policies:
+`agent`'s three policies:
 
 | Policy | Execs | Interval | Refreshes |
 |--------|-------|----------|-----------|
 | `bootstrap-refresh` | `certclient renew` | `BootstrapCertRefreshIntervalSec` | The long-lived bootstrap credential (`bootstrap.crt`) via the CA's `/renew` |
 | `operating-refresh` | `certclient operating-refresh` | `OperatingCertFetchIntervalSec` | The short-lived operating certificate (`client.crt`/`client.key`) via `issuer` |
+| `policy-update` | `policyclient fetch` | `PolicyFetchIntervalSec` | The local backup-policy cache (`policies-cache.json`) via `policy-server` |
 
 `agent list-policies` reads that same cache file and prints each policy's health and estimated
 next run time, without executing anything or requiring a running `agent serve` process:
@@ -59,6 +61,7 @@ on the next tick, the same fail-safe direction used everywhere else in this comp
 | `ReconcileIntervalSec` | 30 | How often `agent serve` checks whether any policy is due |
 | `BootstrapCertRefreshIntervalSec` | 86400 (1 day) | How often the `bootstrap-refresh` policy runs `certclient renew` |
 | `OperatingCertFetchIntervalSec` | 900 (15 minutes) | How often the `operating-refresh` policy runs `certclient operating-refresh` |
+| `PolicyFetchIntervalSec` | 900 (15 minutes) | How often the `policy-update` policy runs `policyclient fetch` |
 | `BootstrapCertTTLSec` | 7776000 (90 days) | Intended requested validity for the bootstrap credential. Parsed and defaulted by `common/config`, but not yet consumed by any request path — `certclient bootstrap`/`renew` don't currently pass a requested TTL to the CA, so actual bootstrap credential lifetime is governed entirely by the CA provisioner's own claims today |
 
 ## Building
@@ -69,8 +72,10 @@ make agent
 
 ## See Also
 
-- [certclient](./certclient.md) — the binary both of `agent`'s policies exec
+- [certclient](./certclient.md) — the binary both of `agent`'s credential-refresh policies exec
 - [issuer](./issuer.md) — what `operating-refresh` ultimately talks to
+- [policyclient](./policyclient.md) — the binary `agent`'s `policy-update` policy execs
+- [policy-server](./policy-server.md) — what `policyclient fetch` ultimately talks to
 - [Security Model](../SECURITY.md) — the two-tier credential model these policies maintain
 - [Architecture](../ARCHITECTURE.md)
 - [Design: Agent v1](../superpowers/specs/2026-07-03-agent-v1-cert-refresh-design.md)
