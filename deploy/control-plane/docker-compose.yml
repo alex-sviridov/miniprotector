@@ -45,3 +45,20 @@ services:
     ports:
       - "15723:15723"
     restart: unless-stopped
+
+  policy-server:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/policy-server/Dockerfile
+    depends_on:
+      - step-ca
+      - issuer
+    volumes:
+      - ./policy-server/data:/data
+      - ./policy-server/local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    ports:
+      - "9300:9300"
+    restart: unless-stopped

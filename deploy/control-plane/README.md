@@ -1,13 +1,14 @@
-# Control Plane (ca + issuer + catalog)
+# Control Plane (ca + issuer + catalog + policy-server)
 
 Combined `docker compose` stack for miniprotector's control-plane components: the `step-ca`
-certificate authority, the `issuer` operating-certificate service, and the backup `catalog`. See
-[Architecture](../../docs/ARCHITECTURE.md) for how these fit into the rest of the system.
+certificate authority, the `issuer` operating-certificate service, the backup `catalog`, and
+`policy-server`. See [Architecture](../../docs/ARCHITECTURE.md) for how these fit into the rest of
+the system.
 
-One `docker-compose.yml` runs all three as separate containers. Each service can also be started
-alone (`docker compose up -d step-ca`, `up -d issuer`, or `up -d catalog`) — useful once a
-deployment splits them across hosts; just point `catalog/local.conf`'s `ca_host`/`issuer_host` at
-wherever `step-ca`/`issuer` end up.
+One `docker-compose.yml` runs all four as separate containers. Each service can also be started
+alone (`docker compose up -d step-ca`, `up -d issuer`, `up -d catalog`, or `up -d policy-server`)
+— useful once a deployment splits them across hosts; just point each service's own `local.conf`'s
+`ca_host`/`issuer_host` at wherever `step-ca`/`issuer` end up.
 
 ## First-time setup
 
@@ -73,6 +74,33 @@ container runs — the bootstrap credential daily (`BootstrapCertRefreshInterval
 short-lived operating certificate every `OperatingCertFetchIntervalSec` (15 minutes by default,
 fetched from `issuer`) — with no container restart needed to pick up either refresh.
 
+### Enrolling policy-server
+
+The same enrollment flow, condensed (see the `catalog` walkthrough above for the fully-explained
+version — the mechanics are identical, just a different service name and no `--san` consideration
+since nothing yet resolves `policy-server` by a SAN-verified hostname):
+
+```bash
+cd deploy/control-plane
+docker compose up -d issuer   # if not already up
+
+docker run --rm --network control-plane_default \
+  -v "$(pwd)/../..:/repo" -w /repo/src \
+  -v "$(pwd)/client-manager/data:/data" \
+  -v "$(pwd)/client-manager/local.conf:/data/local.conf:ro" \
+  -e MP_CONFIG_PATH=/data \
+  golang:1.26 \
+  go run ./cmd/clientmanager add policy-server --ca-url https://step-ca:9000 \
+    --root /repo/deploy/control-plane/ca/data/certs/root_ca.crt \
+    --password-file /repo/deploy/control-plane/ca/data/secrets/password
+
+MP_CERT_TOKEN=<token> docker compose up -d policy-server
+```
+
+Until a token is supplied, `policy-server` will exit and restart repeatedly
+(`restart: unless-stopped`) — expected, not a bug. Once enrolled, its bundled `agent` keeps both
+credential tiers fresh continuously, the same as `catalog`'s.
+
 ## Running
 
 ```bash
@@ -83,10 +111,11 @@ is the primary entry point (idempotent — safe to re-run). Underneath, it's jus
 
 ```bash
 cd deploy/control-plane
-docker compose up -d          # all three services
-docker compose up -d step-ca  # just the CA
-docker compose up -d issuer   # just the operating-cert issuer
-docker compose up -d catalog  # just the catalog
+docker compose up -d                 # all four services
+docker compose up -d step-ca         # just the CA
+docker compose up -d issuer          # just the operating-cert issuer
+docker compose up -d catalog         # just the catalog
+docker compose up -d policy-server   # just policy-server
 ```
 
 Once enrolled, `catalog` no longer depends on being restarted to keep its certificates fresh:
@@ -206,4 +235,5 @@ Teardown: `docker compose down` (stop/remove containers; named data volumes pers
 - [agent](../../docs/components/agent.md)
 - [catalog component](../../docs/components/catalog.md)
 - [catalogsync component](../../docs/components/catalogsync.md)
+- [policy-server component](../../docs/components/policy-server.md)
 - [Architecture](../../docs/ARCHITECTURE.md)
