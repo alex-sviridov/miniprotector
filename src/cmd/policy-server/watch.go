@@ -32,12 +32,10 @@ func watchForReload(ctx context.Context, dir string, cache *Cache, logger *slog.
 			return nil
 		case event, ok := <-watcher.Events:
 			if !ok {
+				logger.Warn("policy watcher events channel closed, hot-reload has stopped")
 				return nil
 			}
 			if event.Name != changedPath {
-				continue
-			}
-			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {
 				continue
 			}
 			if err := cache.Reload(dir, logger); err != nil {
@@ -47,6 +45,7 @@ func watchForReload(ctx context.Context, dir string, cache *Cache, logger *slog.
 			logger.Info("policies reloaded")
 		case err, ok := <-watcher.Errors:
 			if !ok {
+				logger.Warn("policy watcher errors channel closed, hot-reload has stopped")
 				return nil
 			}
 			logger.Error("policy watcher error", "error", err)
