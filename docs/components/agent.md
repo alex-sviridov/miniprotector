@@ -3,9 +3,9 @@
 Node-level agent that reconciles local state against a small, config-driven set of policies. It
 runs two embedded policies — `bootstrap-refresh` and `operating-refresh` — that keep this node's
 two-tier mTLS credential (see [Security Model](../SECURITY.md)) fresh via `certclient`, replacing
-the bare cron entries used previously. `agent` does not fetch policies over the network yet; see
-the [design doc](../superpowers/specs/2026-07-03-agent-v1-cert-refresh-design.md) for how this
-grows into policy-server-fetched and queue-dispatched work in later iterations.
+the bare cron entries used previously. `policy-server` (see [policy-server](./policy-server.md)) now exists as a standalone component
+serving backup policies, but `agent` does not yet fetch from it — no policy-driven scheduling is
+wired into `agent`'s reconcile loop. That integration remains separate, later work.
 
 ## Usage
 

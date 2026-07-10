@@ -63,6 +63,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[issuer](docs/components/issuer.md)** - Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares `client-manager`'s database (control-plane component, runs on the CA host)
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
+- **[policy-server](docs/components/policy-server.md)** - Serves backup policies filtered by a requesting client's hostname and attribute labels (control-plane component)
 
 ## Documentation
 
@@ -73,6 +74,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol
 - **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol
 - **[Issuer Protocol](docs/protocols/issuer.md)** - issuer operating-certificate minting protocol
+- **[Policy Server Protocol](docs/protocols/policy-server.md)** - policy-server's GetPolicies protocol
 - **[Components](docs/components/)** - Individual component documentation
 
 ## Building

@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-10 — Backup policy serving (policy-server)
+
+Added `policy-server`, a new control-plane binary that serves backup policies — static,
+operator-authored JSON files under `$MP_CONFIG_PATH/policies/` — filtered to whatever a requesting
+client's hostname and attribute labels match. It holds no database and calls no other service: a
+client's attribute labels are read directly off its own mTLS certificate, since `issuer` already
+embeds them there as a custom X.509 extension on every operating certificate it mints. Policies are
+cached in memory and hot-reloaded as a single atomic swap whenever an operator touches a
+`policies/.changed` sentinel file after editing one or more policy files. A client-side consumer
+(`agent` fetching and acting on policies) is deliberately deferred to later, separate work.
+
 ## 2026-07-06 — Self-contained demo lab environment, updated for the current architecture
 
 The 2026-07-03 demo lab design predated `issuer`, the two-tier bootstrap/operating credential

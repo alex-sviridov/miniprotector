@@ -13,6 +13,7 @@ A backup system with intelligent deduplication and integrity verification.
 | agent | Node Agent — reconciles local state against embedded policies | Implemented (two policies: bootstrap credential renewal and operating-certificate refresh via `issuer`) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
+| policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (no client-side consumer yet — agent integration is separate, later work) |
 
 ## Control Plane vs. Agents
 
