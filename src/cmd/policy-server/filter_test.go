@@ -63,6 +63,13 @@ func TestPolicy_Matches(t *testing.T) {
 			labels:   map[string]string{"env": "prod"},
 			want:     true,
 		},
+		{
+			name:     "labels match but hostname does not -- AND fails",
+			filters:  ClientFilters{Hostnames: []string{"web-*"}, Labels: map[string]string{"env": "prod"}},
+			hostname: "db-01",
+			labels:   map[string]string{"env": "prod"},
+			want:     false,
+		},
 	}
 
 	for _, tc := range cases {
