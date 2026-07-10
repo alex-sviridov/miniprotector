@@ -24,6 +24,7 @@ CATALOG_CMD := cmd/catalog
 AGENT_CMD := cmd/agent
 CLIENTMANAGER_CMD := cmd/clientmanager
 ISSUER_CMD := cmd/issuer
+POLICY_SERVER_CMD := cmd/policy-server
 
 # Deployment
 CONTROL_PLANE_DIR := deploy/control-plane
@@ -35,7 +36,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer test test-e2e lint control-plane-up demo-up demo-down
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server test test-e2e lint control-plane-up demo-up demo-down
 
 # Default target
 all: check-deps proto build
@@ -122,6 +123,12 @@ issuer: $(BINARY_DIR) ## Build issuer binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/issuer ./$(ISSUER_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/issuer"
+
+policy-server: $(BINARY_DIR) ## Build policy-server binary
+	@printf "$(BLUE)Building policy-server...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/policy-server ./$(POLICY_SERVER_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/policy-server"
 
 test: ## Run unit and integration tests
 	cd src && go test ./...
