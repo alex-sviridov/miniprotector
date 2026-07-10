@@ -390,7 +390,11 @@ git commit -m "feat(policy-server): add policy schema and file parsing"
 ```go
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestPolicy_Matches(t *testing.T) {
 	cases := []struct {
@@ -454,10 +458,7 @@ func TestPolicy_Matches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := Policy{ClientFilters: tc.filters}
-			got := p.Matches(tc.hostname, tc.labels)
-			if got != tc.want {
-				t.Errorf("Matches(%q, %v) = %v, want %v", tc.hostname, tc.labels, got, tc.want)
-			}
+			assert.Equal(t, tc.want, p.Matches(tc.hostname, tc.labels))
 		})
 	}
 }
@@ -557,8 +558,6 @@ import (
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
-
-const validPolicyJSON = `{"metadata": {"name": "%s"}}`
 
 func TestCache_ReloadLoadsValidPolicies(t *testing.T) {
 	dir := t.TempDir()
