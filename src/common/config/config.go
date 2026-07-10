@@ -106,6 +106,7 @@ type Config struct {
 	IssuerSelfCertRefreshIntervalSec int
 	PolicyServerHost                 string
 	PolicyServerPort                 int
+	PolicyFetchIntervalSec           int
 }
 
 type contextKey string
@@ -144,6 +145,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		IssuerSelfCertTTLSec:             7776000,
 		IssuerSelfCertRefreshIntervalSec: 86400,
 		PolicyServerPort:                 9300,
+		PolicyFetchIntervalSec:           900,
 	}
 	foundFields := make(map[string]bool)
 
@@ -323,6 +325,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.PolicyServerPort = port
 			foundFields["policy_server_port"] = true
+		case "PolicyFetchIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid PolicyFetchIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.PolicyFetchIntervalSec = number
+			foundFields["PolicyFetchIntervalSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

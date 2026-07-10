@@ -460,3 +460,25 @@ func TestResolvePoliciesDir_JoinsBaseDirWithPolicies(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(dir, "policies"), got)
 }
+
+func TestParseConfig_PolicyFetchIntervalSecDefaultsTo900(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 900, conf.PolicyFetchIntervalSec)
+}
+
+func TestParseConfig_PolicyFetchIntervalSecParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nPolicyFetchIntervalSec=300\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 300, conf.PolicyFetchIntervalSec)
+}
