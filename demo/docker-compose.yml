@@ -1,0 +1,84 @@
+services:
+  ca:
+    build:
+      context: ..
+      dockerfile: demo/ca/Dockerfile
+    volumes:
+      - ca-data:/home/step
+      - client-manager-data:/data/client-manager
+      - ./ca/clientmanager-local.conf:/data/client-manager-conf/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data/client-manager-conf
+    restart: unless-stopped
+
+  issuer:
+    build:
+      context: ..
+      dockerfile: demo/issuer/Dockerfile
+    depends_on:
+      - ca
+    volumes:
+      - issuer-data:/data
+      - ./local.conf:/data/local.conf:ro
+      - client-manager-data:/data/client-manager
+      - ca-data:/ca-data:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+    restart: unless-stopped
+
+  catalog:
+    build:
+      context: ..
+      dockerfile: deploy/control-plane/catalog/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+    volumes:
+      - catalog-data:/data
+      - ./local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+      - STORAGE_PATH=/data/storage
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ..
+      dockerfile: demo/backup-host/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+    volumes:
+      - client-data:/data
+      - ./local.conf:/data/local.conf:ro
+      - ./sample-data:/data/sample-data:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    restart: unless-stopped
+
+  store:
+    build:
+      context: ..
+      dockerfile: demo/backup-host/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+      - catalog
+    volumes:
+      - store-data:/data
+      - ./local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+      - STORAGE_PATH=/data/storage
+    restart: unless-stopped
+
+volumes:
+  ca-data:
+  client-manager-data:
+  issuer-data:
+  catalog-data:
+  client-data:
+  store-data:
