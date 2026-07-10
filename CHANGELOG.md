@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-10 — Agent policy-update job
+
+`agent` gains a third standard job, `policy-update`, alongside its existing credential-refresh
+policies: a new `policyclient fetch` binary pulls this node's applicable backup policies from
+`policy-server` and atomically caches them as `policies-cache.json`, authenticated with the node's
+existing operating credential. A new shared `common/atomicfile` helper backs the atomic write
+(temp file + rename), replacing what had been a copy of the same logic private to `agent`. A
+failed fetch leaves the previous cache untouched, the same fail-safe direction used everywhere
+else in this codebase. Deliberately stops at fetching and caching — nothing yet reads the cache to
+schedule or run a backup; that remains separate, later work.
+
 ## 2026-07-10 — Deploy policy-server as an enrolled control-plane node
 
 `policy-server` (added earlier this same day) now has a real deployment story in both
