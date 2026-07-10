@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package policyserverservice;
+
+option go_package = "./proto";
+
+import "google/protobuf/timestamp.proto";
+
+// PolicyService is policy-server's sole RPC surface: a running node asks
+// "which policies apply to me?" and gets back exactly the policies whose
+// client_filters match its own verified identity. The caller's hostname and
+// attribute labels are never fields on this message -- both are derived
+// entirely from the mTLS peer certificate presented on the connection, the
+// same trust model every other authenticated RPC in this project uses.
+service PolicyService {
+  rpc GetPolicies(GetPoliciesRequest) returns (GetPoliciesResponse);
+}
+
+message GetPoliciesRequest {}
+
+message GetPoliciesResponse {
+  repeated Policy policies = 1;
+}
+
+message ObjectFilter {
+  string path = 1;
+}
+
+message Policy {
+  string name = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  repeated ObjectFilter object_filters = 4;
+  // Duration string, e.g. "24h" (time.ParseDuration format). policy-server
+  // never parses or evaluates this -- opaque pass-through data.
+  string rpo = 5;
+  // List of cron expressions (5-field). policy-server never parses or
+  // evaluates these -- opaque pass-through data.
+  repeated string backup_window = 6;
+}
