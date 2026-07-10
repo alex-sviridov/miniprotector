@@ -50,6 +50,7 @@ enroll() {
 }
 
 enroll catalog
+enroll policy-server
 enroll client
 enroll store
 
@@ -61,6 +62,7 @@ Demo stack is up. Try:
   docker compose -f demo/docker-compose.yml exec client ./rwfs verify store:8080
   docker compose -f demo/docker-compose.yml logs -f store
   docker compose -f demo/docker-compose.yml exec catalog sqlite3 /data/storage/catalog.db "select * from entry_records;"
+  docker compose -f demo/docker-compose.yml exec policy-server ./agent list-policies
   docker compose -f demo/docker-compose.yml exec store ./agent list-policies
 
 Reset with: docker compose -f demo/docker-compose.yml down -v

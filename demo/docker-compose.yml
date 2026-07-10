@@ -42,6 +42,21 @@ services:
       - STORAGE_PATH=/data/storage
     restart: unless-stopped
 
+  policy-server:
+    build:
+      context: ..
+      dockerfile: deploy/control-plane/policy-server/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+    volumes:
+      - policy-server-data:/data
+      - ./local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    restart: unless-stopped
+
   client:
     build:
       context: ..
@@ -80,5 +95,6 @@ volumes:
   client-manager-data:
   issuer-data:
   catalog-data:
+  policy-server-data:
   client-data:
   store-data:

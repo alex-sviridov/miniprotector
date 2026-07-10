@@ -13,9 +13,9 @@ exec`.
 make demo-up
 ```
 
-Equivalent to `./demo/up.sh` directly. Builds all five images, brings up `ca` and `issuer` first,
-then mints and redeems an enrollment token for `catalog`, `client`, and `store` in turn (skipping
-re-minting on a re-run against an already-enrolled node).
+Equivalent to `./demo/up.sh` directly. Builds all six images, brings up `ca` and `issuer` first,
+then mints and redeems an enrollment token for `catalog`, `policy-server`, `client`, and `store` in
+turn (skipping re-minting on a re-run against an already-enrolled node).
 
 ## Try it
 
@@ -26,6 +26,7 @@ docker compose -f demo/docker-compose.yml exec client ./rwfs verify store:8080
 docker compose -f demo/docker-compose.yml logs -f store          # watch bwfs receive + catalogsync replicate
 docker compose -f demo/docker-compose.yml exec catalog sqlite3 /data/storage/catalog.db "select * from entry_records;"
 docker compose -f demo/docker-compose.yml exec catalog ./agent list-policies
+docker compose -f demo/docker-compose.yml exec policy-server ./agent list-policies
 docker compose -f demo/docker-compose.yml exec client ./agent list-policies
 docker compose -f demo/docker-compose.yml exec store ./agent list-policies
 ```
