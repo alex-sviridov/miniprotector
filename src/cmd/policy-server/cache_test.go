@@ -67,14 +67,41 @@ func TestCache_ReloadEmptyDirectoryYieldsEmptyPolicies(t *testing.T) {
 
 func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, dir, "a.json", `{
+		"metadata": {"name": "policy-a"},
+		"client_filters": {
+			"hostnames": ["host1", "host2"],
+			"labels": {"env": "prod", "team": "platform"}
+		},
+		"object_filters": [{"path": "/data/*"}],
+		"rpo": "1h",
+		"backup_window": ["08:00", "12:00"]
+	}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
 
+	// Test mutation of plain value field (should not affect cache)
 	got := c.Policies()
-	got[0].Metadata.Name = "mutated"
+	got[0].Metadata.Name = "mutated-name"
 
+	// Test mutation of nested slice field
+	got[0].ClientFilters.Hostnames[0] = "mutated-host"
+
+	// Test mutation of nested map field
+	got[0].ClientFilters.Labels["env"] = "dev"
+
+	// Test mutation of ObjectFilters slice
+	got[0].ObjectFilters[0].Path = "/mutated/*"
+
+	// Test mutation of BackupWindow slice
+	got[0].BackupWindow[0] = "23:00"
+
+	// Verify that a fresh call to Policies() returns the original values
 	got2 := c.Policies()
-	assert.Equal(t, "policy-a", got2[0].Metadata.Name, "mutating a returned snapshot must not affect the cache")
+	assert.Equal(t, "policy-a", got2[0].Metadata.Name, "mutating Metadata.Name in returned snapshot must not affect cache")
+	assert.Equal(t, "host1", got2[0].ClientFilters.Hostnames[0], "mutating Hostnames in returned snapshot must not affect cache")
+	assert.Equal(t, "prod", got2[0].ClientFilters.Labels["env"], "mutating Labels in returned snapshot must not affect cache")
+	assert.Equal(t, "/data/*", got2[0].ObjectFilters[0].Path, "mutating ObjectFilters in returned snapshot must not affect cache")
+	assert.Equal(t, "08:00", got2[0].BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
 }

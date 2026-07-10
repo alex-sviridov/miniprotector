@@ -25,7 +25,28 @@ func (c *Cache) Policies() []Policy {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	out := make([]Policy, len(c.policies))
-	copy(out, c.policies)
+	for i, p := range c.policies {
+		// Deep copy the Policy: Metadata and RPO are plain value types,
+		// but Hostnames, Labels, ObjectFilters, and BackupWindow are reference types.
+		out[i] = Policy{
+			Metadata: p.Metadata, // plain types: string, time.Time, time.Time
+			ClientFilters: ClientFilters{
+				Hostnames: make([]string, len(p.ClientFilters.Hostnames)),
+				Labels:    make(map[string]string, len(p.ClientFilters.Labels)),
+			},
+			ObjectFilters: make([]ObjectFilter, len(p.ObjectFilters)),
+			RPO:           p.RPO, // plain string
+			BackupWindow:  make([]string, len(p.BackupWindow)),
+		}
+
+		// Copy the slice and map contents
+		copy(out[i].ClientFilters.Hostnames, p.ClientFilters.Hostnames)
+		for k, v := range p.ClientFilters.Labels {
+			out[i].ClientFilters.Labels[k] = v
+		}
+		copy(out[i].ObjectFilters, p.ObjectFilters)
+		copy(out[i].BackupWindow, p.BackupWindow)
+	}
 	return out
 }
 
