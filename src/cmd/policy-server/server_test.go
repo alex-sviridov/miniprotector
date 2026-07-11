@@ -128,7 +128,8 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 		"metadata": {"name": "full-policy", "created_at": "2026-07-10T00:00:00Z", "updated_at": "2026-07-11T00:00:00Z"},
 		"object_filters": [{"path": "/var/www"}, {"path": "/etc"}],
 		"rpo": "24h",
-		"backup_window": ["0 2 * * *"]
+		"backup_window": ["0 2 * * *"],
+		"destination": "bwfs-east.internal:8080"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -139,6 +140,7 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	assert.Equal(t, "full-policy", p.Name)
 	assert.Equal(t, "24h", p.Rpo)
 	assert.Equal(t, []string{"0 2 * * *"}, p.BackupWindow)
+	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
 	require.Len(t, p.ObjectFilters, 2)
 	assert.Equal(t, "/var/www", p.ObjectFilters[0].Path)
 	assert.Equal(t, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC), p.CreatedAt.AsTime())

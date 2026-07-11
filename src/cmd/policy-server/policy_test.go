@@ -24,7 +24,8 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
 		"object_filters": [{"path": "/var/www"}],
 		"rpo": "24h",
-		"backup_window": ["0 2 * * *", "0 20 * * *"]
+		"backup_window": ["0 2 * * *", "0 20 * * *"],
+		"destination": "bwfs-east.internal:8080"
 	}`)
 
 	p, err := parsePolicyFile(path)
@@ -36,6 +37,7 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 	assert.Equal(t, []ObjectFilter{{Path: "/var/www"}}, p.ObjectFilters)
 	assert.Equal(t, "24h", p.RPO)
 	assert.Equal(t, []string{"0 2 * * *", "0 20 * * *"}, p.BackupWindow)
+	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
 }
 
 func TestParsePolicyFile_MissingNameFails(t *testing.T) {

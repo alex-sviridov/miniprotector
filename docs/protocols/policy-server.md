@@ -28,6 +28,7 @@ message Policy {
   repeated ObjectFilter object_filters = 4;
   string rpo = 5;
   repeated string backup_window = 6;
+  string destination = 7;
 }
 ```
 
@@ -47,7 +48,8 @@ certificate — the same requirement every server except `issuer`'s own listener
   hostname glob match (or no hostname restriction) **and** every required label present — both
   conditions must hold. `client_filters` itself is never echoed back.
 - `rpo` and `backup_window` are opaque, pass-through strings — `policy-server` never parses or
-  evaluates either.
+  evaluates either. `destination` is likewise opaque, pass-through data — `policy-server` never
+  validates or connects to it.
 
 ## See Also
 

@@ -42,8 +42,9 @@ are opaque strings, stored and returned verbatim for a future consumer to interp
 
 Each `$MP_CONFIG_PATH/policies/*.json` file is one policy: `metadata` (`name` plus operator-set
 `created_at`/`updated_at`), `client_filters` (`hostnames` glob list, `labels` map), `object_filters`
-(a list of `{"path": "..."}` entries), `rpo` (a duration string, e.g. `"24h"`), and `backup_window`
-(a list of cron expressions, e.g. `["0 2 * * *", "0 20 * * *"]`).
+(a list of `{"path": "..."}` entries), `rpo` (a duration string, e.g. `"24h"`), `backup_window`
+(a list of cron expressions, e.g. `["0 2 * * *", "0 20 * * *"]`), and `destination` (a `host:port`
+string, the target `bwfs` for this policy's backups).
 
 All policies are loaded into memory at startup. To pick up edits, touch
 `$MP_CONFIG_PATH/policies/.changed` after finishing your edit(s) — `policy-server` watches that one

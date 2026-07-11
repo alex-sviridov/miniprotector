@@ -158,6 +158,7 @@ type Policy struct {
 	// List of cron expressions (5-field). policy-server never parses or
 	// evaluates these -- opaque pass-through data.
 	BackupWindow  []string `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
+	Destination   string   `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -234,6 +235,13 @@ func (x *Policy) GetBackupWindow() []string {
 	return nil
 }
 
+func (x *Policy) GetDestination() string {
+	if x != nil {
+		return x.Destination
+	}
+	return ""
+}
+
 var File_api_policyserver_proto protoreflect.FileDescriptor
 
 const file_api_policyserver_proto_rawDesc = "" +
@@ -243,7 +251,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x13GetPoliciesResponse\x127\n" +
 	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\"\"\n" +
 	"\fObjectFilter\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"\x93\x02\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\"\xb5\x02\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -252,7 +260,8 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12H\n" +
 	"\x0eobject_filters\x18\x04 \x03(\v2!.policyserverservice.ObjectFilterR\robjectFilters\x12\x10\n" +
 	"\x03rpo\x18\x05 \x01(\tR\x03rpo\x12#\n" +
-	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow2q\n" +
+	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12 \n" +
+	"\vdestination\x18\a \x01(\tR\vdestination2q\n" +
 	"\rPolicyService\x12`\n" +
 	"\vGetPolicies\x12'.policyserverservice.GetPoliciesRequest\x1a(.policyserverservice.GetPoliciesResponseB\tZ\a./protob\x06proto3"
 

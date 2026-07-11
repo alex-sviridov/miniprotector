@@ -60,5 +60,6 @@ func toProtoPolicy(p Policy) *pb.Policy {
 		ObjectFilters: objectFilters,
 		Rpo:           p.RPO,
 		BackupWindow:  p.BackupWindow,
+		Destination:   p.Destination,
 	}
 }

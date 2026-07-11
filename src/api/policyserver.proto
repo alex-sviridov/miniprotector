@@ -37,4 +37,5 @@ message Policy {
   // List of cron expressions (5-field). policy-server never parses or
   // evaluates these -- opaque pass-through data.
   repeated string backup_window = 6;
+  string destination = 7;
 }

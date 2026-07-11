@@ -32,6 +32,7 @@ type Policy struct {
 	ObjectFilters []ObjectFilter `json:"object_filters"`
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
+	Destination   string         `json:"destination"`
 }
 
 // parsePolicyFile reads and validates a single policy JSON file. A policy
