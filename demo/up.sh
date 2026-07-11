@@ -32,8 +32,15 @@ docker compose up -d issuer
 # existing DB entry, re-run `clientmanager add`, and (under set -e) abort on
 # the already-tracked-hostname error. Outside this script's idempotency
 # contract (which assumes a clean `down -v` + re-run), so left unhandled.
+# $2, if given, is a space-separated "key=value" attribute string applied
+# via `clientmanager attribute set` right after `add` and before the
+# node's own container starts -- only on first enrollment (the branch
+# below that runs `add` at all), so the attribute is already in
+# client-manager's database before the node's first operating-refresh
+# mints a certificate embedding it.
 enroll() {
     name="$1"
+    attrs="$2"
     if docker compose run --rm --no-deps --entrypoint sh "$name" \
         -c 'test -f /data/certs/bootstrap.crt' >/dev/null 2>&1; then
         echo "$name already enrolled, starting..."
@@ -46,23 +53,30 @@ enroll() {
         --root /home/step/certs/root_ca.crt \
         --password-file /home/step/secrets/password \
         --defaults-file /home/step/config/defaults.json)
+    if [ -n "$attrs" ]; then
+        docker compose exec -T ca clientmanager attribute set "$name" $attrs
+    fi
     MP_CERT_TOKEN="$token" docker compose up -d "$name"
 }
 
 enroll catalog
 enroll policy-server
-enroll client
+enroll database
+enroll webserver "role=web"
 enroll store
 
 cat <<'MSG'
 
 Demo stack is up. Try:
-  docker compose -f demo/docker-compose.yml exec client ./brfs /data/sample-data --destination store:8080
-  docker compose -f demo/docker-compose.yml exec client ./rwfs list store:8080
-  docker compose -f demo/docker-compose.yml exec client ./rwfs verify store:8080
-  docker compose -f demo/docker-compose.yml logs -f store
+  docker compose -f demo/docker-compose.yml exec database ./brfs /var/lib/dbdata --destination store:8080
+  docker compose -f demo/docker-compose.yml exec database ./rwfs list store:8080
+  docker compose -f demo/docker-compose.yml exec database ./rwfs verify store:8080
+  docker compose -f demo/docker-compose.yml logs -f store          # watch bwfs receive + catalogsync replicate
   docker compose -f demo/docker-compose.yml exec catalog sqlite3 /data/storage/catalog.db "select * from entry_records;"
+  docker compose -f demo/docker-compose.yml exec catalog ./agent list-policies
   docker compose -f demo/docker-compose.yml exec policy-server ./agent list-policies
+  docker compose -f demo/docker-compose.yml exec database ./agent list-policies
+  docker compose -f demo/docker-compose.yml exec webserver ./agent list-policies
   docker compose -f demo/docker-compose.yml exec store ./agent list-policies
 
 Reset with: docker compose -f demo/docker-compose.yml down -v
