@@ -7,18 +7,18 @@ import (
 	"time"
 )
 
-// estimatedNextRun mirrors isDue's own comparisons exactly (see
-// reconcile.go) so this display can never disagree with what the daemon
-// would actually do. Returns the zero time.Time for "due now".
-func estimatedNextRun(p Policy, s PolicyState) time.Time {
+// estimatedNextRun calls isDue directly (rather than re-deriving its
+// logic) so this display can never disagree with what the daemon would
+// actually do. Returns the zero time.Time for "due now".
+func estimatedNextRun(p Policy, s PolicyState, now time.Time) time.Time {
+	if isDue(p, s, now) {
+		return time.Time{}
+	}
 	if s.ConsecutiveFailures == 0 {
-		if s.LastSuccessAt == nil {
-			return time.Time{}
+		if p.NextRun != nil {
+			return p.NextRun(s, now)
 		}
 		return s.LastSuccessAt.Add(p.Interval)
-	}
-	if s.NextRetryAt == nil {
-		return time.Time{}
 	}
 	return *s.NextRetryAt
 }
@@ -68,7 +68,7 @@ func renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Pol
 			formatTime(s.LastSuccessAt),
 			formatTime(s.LastAttemptAt),
 			s.ConsecutiveFailures,
-			formatNextRun(estimatedNextRun(p, s), now),
+			formatNextRun(estimatedNextRun(p, s, now), now),
 		)
 	}
 	return tw.Flush()

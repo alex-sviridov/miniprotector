@@ -6,13 +6,23 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 )
 
-// Policy is a single reconcilable unit: run Binary with Args whenever more
-// than Interval has elapsed since the last successful run.
+// Policy is a single reconcilable unit. By default (Due == nil), it's due
+// once more than Interval has elapsed since the last successful run --
+// agent's original behavior, unchanged for bootstrap-refresh,
+// operating-refresh, and policy-update. A non-nil Due overrides that
+// check entirely (see backup.go's backupTasks, whose window+RPO due-check
+// doesn't fit a bare interval). NextRun is the equivalent override for
+// list-policies' display only (see list.go's estimatedNextRun).
+// Background, when true, makes run() execute this policy in a goroutine
+// instead of synchronously in the reconcile loop (see reconcile.go).
 type Policy struct {
-	ID       string
-	Binary   string
-	Args     []string
-	Interval time.Duration
+	ID         string
+	Binary     string
+	Args       []string
+	Interval   time.Duration
+	Due        func(PolicyState, time.Time) bool
+	NextRun    func(PolicyState, time.Time) time.Time
+	Background bool
 }
 
 // policies returns agent's three embedded policies, their intervals read

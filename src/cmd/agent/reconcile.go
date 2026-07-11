@@ -55,6 +55,9 @@ func realExec(binary string, args []string) error {
 // every tick, and doesn't wait a full Interval either.
 func isDue(p Policy, s PolicyState, now time.Time) bool {
 	if s.ConsecutiveFailures == 0 {
+		if p.Due != nil {
+			return p.Due(s, now)
+		}
 		if s.LastSuccessAt == nil {
 			return true // never succeeded, run immediately
 		}

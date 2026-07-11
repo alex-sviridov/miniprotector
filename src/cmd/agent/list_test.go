@@ -12,22 +12,34 @@ import (
 
 func TestEstimatedNextRun_NeverRunReturnsZeroValue(t *testing.T) {
 	p := Policy{Interval: 5 * time.Minute}
-	got := estimatedNextRun(p, PolicyState{})
+	got := estimatedNextRun(p, PolicyState{}, time.Now())
 	assert.True(t, got.IsZero())
 }
 
 func TestEstimatedNextRun_HealthyUsesLastSuccessPlusInterval(t *testing.T) {
 	p := Policy{Interval: 5 * time.Minute}
 	last := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
-	got := estimatedNextRun(p, PolicyState{LastSuccessAt: &last})
+	now := last.Add(1 * time.Minute) // within Interval, so not due yet
+	got := estimatedNextRun(p, PolicyState{LastSuccessAt: &last}, now)
 	assert.Equal(t, last.Add(5*time.Minute), got)
 }
 
 func TestEstimatedNextRun_FailingUsesStoredNextRetryAt(t *testing.T) {
 	p := Policy{Interval: 5 * time.Minute}
 	retryAt := time.Date(2026, 7, 3, 12, 5, 0, 0, time.UTC)
-	got := estimatedNextRun(p, PolicyState{ConsecutiveFailures: 2, NextRetryAt: &retryAt})
+	now := retryAt.Add(-1 * time.Minute) // before the retry threshold, so not due yet
+	got := estimatedNextRun(p, PolicyState{ConsecutiveFailures: 2, NextRetryAt: &retryAt}, now)
 	assert.Equal(t, retryAt, got)
+}
+
+func TestEstimatedNextRun_NotDueDefersToCustomNextRunFunc(t *testing.T) {
+	fixed := time.Date(2026, 7, 4, 2, 0, 0, 0, time.UTC)
+	p := Policy{
+		Due:     func(PolicyState, time.Time) bool { return false },
+		NextRun: func(PolicyState, time.Time) time.Time { return fixed },
+	}
+	got := estimatedNextRun(p, PolicyState{}, time.Now())
+	assert.Equal(t, fixed, got)
 }
 
 func TestRenderPolicies_MissingCacheShowsNeverRunAndDueNow(t *testing.T) {

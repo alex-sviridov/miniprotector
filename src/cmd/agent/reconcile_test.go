@@ -79,6 +79,24 @@ func TestIsDue_FailingPolicyNotDueBeforeNextRetryAt(t *testing.T) {
 	assert.False(t, isDue(p, state, now))
 }
 
+func TestIsDue_HealthyPolicyDefersToCustomDueFunc(t *testing.T) {
+	always := Policy{Due: func(PolicyState, time.Time) bool { return true }}
+	assert.True(t, isDue(always, PolicyState{}, time.Now()))
+
+	never := Policy{Due: func(PolicyState, time.Time) bool { return false }}
+	assert.False(t, isDue(never, PolicyState{}, time.Now()))
+}
+
+func TestIsDue_FailingPolicyIgnoresCustomDueFunc(t *testing.T) {
+	// Even with Due present, a currently-failing policy is still governed
+	// by NextRetryAt, not Due -- Due is only consulted on the healthy path.
+	p := Policy{Due: func(PolicyState, time.Time) bool { return false }}
+	now := time.Now()
+	retryAt := now.Add(-1 * time.Second)
+	state := PolicyState{ConsecutiveFailures: 1, NextRetryAt: &retryAt}
+	assert.True(t, isDue(p, state, now))
+}
+
 func TestBackoff_JitterWithinHalfToFullRange(t *testing.T) {
 	origBase, origMax := backoffBase, backoffMax
 	backoffBase, backoffMax = 10*time.Second, time.Minute
