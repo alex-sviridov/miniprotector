@@ -52,12 +52,13 @@ services:
     volumes:
       - policy-server-data:/data
       - ./local.conf:/data/local.conf:ro
+      - ./policy-server/policies:/data/policies
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
     restart: unless-stopped
 
-  client:
+  database:
     build:
       context: ..
       dockerfile: demo/backup-host/Dockerfile
@@ -65,9 +66,27 @@ services:
       - ca
       - issuer
     volumes:
-      - client-data:/data
+      - database-data:/data
       - ./local.conf:/data/local.conf:ro
-      - ./sample-data:/data/sample-data:ro
+      - ./sample-data/audit:/var/log/audit:ro
+      - ./sample-data/db:/var/lib/dbdata:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    restart: unless-stopped
+
+  webserver:
+    build:
+      context: ..
+      dockerfile: demo/backup-host/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+    volumes:
+      - webserver-data:/data
+      - ./local.conf:/data/local.conf:ro
+      - ./sample-data/audit:/var/log/audit:ro
+      - ./sample-data/web:/var/www/html:ro
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
@@ -96,5 +115,6 @@ volumes:
   issuer-data:
   catalog-data:
   policy-server-data:
-  client-data:
+  database-data:
+  webserver-data:
   store-data:
