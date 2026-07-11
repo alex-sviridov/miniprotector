@@ -138,19 +138,43 @@ Nothing is lost — Alloy tails rotated files by glob, following both the active
 file, which is standard log-shipper behavior — logs from one invocation can just end up briefly
 split across two files in this narrow window.
 
-### Correlation IDs, extended uniformly
+### Correlation IDs, extended uniformly — including across hosts
 
-Today only `brfs` tags its logs with a correlation ID (`--job-id`, embedded in the log content via
-`ctx.Value("jobId")`, read by `common/logging`). `certclient` and `policyclient` gain the same
-`--job-id` flag, and `agent` passes one on every exec, not just backup tasks:
-- Static policies (`bootstrap-refresh`, `operating-refresh`, `policy-update`): `<policy-id>:
+`brfs` already does more than locally tag its own logs: it sends `job-id` as outgoing gRPC metadata
+(`metadata.AppendToOutgoingContext`), auto-generating a UUID if `--job-id` was omitted, and `bwfs`'s
+server *requires* that metadata, extracts it, and tags its own logs with the identical value
+(`bwfs/server.go`'s `jobIDFromMetadata`) — which then threads through `catalogsync` into `catalog`'s
+own logs too (`JobID` carried on `FileVersionRecord`, through to `catalog/server.go`). A single
+`job_id` today already glues `brfs` (source host) → `bwfs` (destination host) → `catalog` (central)
+logs together end-to-end. This is pre-existing, not part of this design — but it's the precedent
+this design extends, not a new pattern invented for it.
+
+`certclient`/`policyclient` currently have no equivalent, and neither `issuer` nor `policy-server`
+reads any request-scoped ID from incoming metadata — so without this extension, cert-refresh and
+policy-fetch operations would only be locally correlatable, unlike backups. This design closes that
+gap by applying the identical pattern to both remaining paths:
+
+- `certclient` and `policyclient` gain a `--job-id` flag with the same auto-generate-if-omitted
+  behavior as `brfs` (a UUID when invoked without one), used both for local log tagging
+  (`ctx.Value("jobId")`, as `brfs` already does) and sent as outgoing `job-id` gRPC metadata to
+  `issuer`/`policy-server` respectively.
+- `issuer` and `policy-server` extract that metadata and require it (same enforcement `bwfs`
+  already applies), tagging their own log lines with the identical `job_id`.
+- `agent` passes an explicit job-id on every exec, not just backup tasks: for the three static
+  policies (`bootstrap-refresh`, `operating-refresh`, `policy-update`), `<policy-id>:
   <unix-timestamp>`, mirroring the shape `brfs`'s job-id already has for backup tasks
   (`backup:<policy>:<slug(path)>:<timestamp>`) — giving every invocation, not just every policy, a
-  distinguishable identity in log content.
-- Backup tasks: unchanged, already have this.
+  distinguishable identity, on both ends of the call.
+- Since `issuer` and `policy-server` now need the identical metadata-extraction logic `bwfs`
+  already has, that logic moves out of `cmd/bwfs` into a small shared helper (e.g.
+  `common/mtls` or a new minimal package) — three independent copies of the same extraction/
+  requirement logic would be exactly the kind of duplication worth fixing while touching this code,
+  not left to drift.
 
 `job_id` stays in log line content, never becomes a Loki label (see Data Flow) — it's
-per-invocation and would blow up label cardinality if indexed.
+per-invocation and would blow up label cardinality if indexed. Its value is what lets an operator
+pivot from one host's log line to the corresponding line on the other end of any cross-host call in
+this system, backup or otherwise.
 
 ## Data Flow
 
@@ -158,6 +182,9 @@ per-invocation and would blow up label cardinality if indexed.
 subprocess exec (as today, via agent's realExec)
   -> JSON log line appended to <log_dir>/<binary-name>.log
      (fields already include app, pid, and now job_id on every exec, not just brfs)
+  -> for certclient/policyclient/brfs, the same job_id also rides outgoing gRPC metadata to
+     issuer/policy-server/bwfs, whose own logs carry the identical value -- one job_id glues
+     both hosts' log lines together for any cross-host call, not just backups
 
 Alloy (sidecar, same host) tails <log_dir>
   -> extracts `binary` label from the filename (low-cardinality: a handful of binary names)
@@ -230,8 +257,11 @@ Loki's own retention already is):
   `server_test.go` pattern.
 - Unit: `common/logging`'s new path/rotation wiring — confirms `<log_dir>/<binary-name>.log`
   naming and that a rotation-triggering write produces a bounded set of files.
-- Unit: `certclient`/`policyclient`'s new `--job-id` flag parsing and logger tagging, mirroring
-  `brfs`'s existing `arguments_test.go` coverage.
+- Unit: `certclient`/`policyclient`'s new `--job-id` flag parsing, auto-generation when omitted,
+  and logger tagging, mirroring `brfs`'s existing `arguments_test.go` coverage.
+- Unit: the shared job-id metadata-extraction helper, plus `issuer`/`policy-server` each rejecting
+  a request with no `job-id` metadata, mirroring `bwfs`'s existing
+  `TestIntegration_MissingJobID_StreamRejected` coverage.
 - Integration: a real, throwaway Loki instance (own `docker-compose.yml` service, same pattern as
   `issuer`'s existing e2e test against a throwaway `step-ca`) — confirms a push through
   `log-gateway` round-trips with the gateway-enforced `hostname` label, and that a request
