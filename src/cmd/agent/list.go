@@ -18,6 +18,9 @@ func estimatedNextRun(p Policy, s PolicyState, now time.Time) time.Time {
 		if p.NextRun != nil {
 			return p.NextRun(s, now)
 		}
+		if s.LastSuccessAt == nil {
+			return time.Time{}
+		}
 		return s.LastSuccessAt.Add(p.Interval)
 	}
 	return *s.NextRetryAt
