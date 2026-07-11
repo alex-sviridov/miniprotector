@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-11 — Agent backup state hygiene: pruning and last-error tracking
+
+`agent-state.json` entries for backup tasks whose policy or path has been removed from
+`policies-cache.json` are now pruned automatically, gated on a confirmed-good cache read so a
+transient unreadable or corrupt cache file can never be mistaken for "everything was removed" and
+wipe live backoff/RPO history. `PolicyState` also gains `LastError`, the most recent failure's
+message, cleared on the next success and surfaced as a new `ERROR` column in `agent list-policies`.
+
 ## 2026-07-11 — Agent acts on cached backup policies
 
 `agent` closes the loop left open by the `policy-update` job: it now derives one backup task per

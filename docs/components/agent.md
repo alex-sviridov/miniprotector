@@ -44,9 +44,9 @@ running count of consecutive failures — to a local JSON cache file.
 next run time, without executing anything or requiring a running `agent serve` process:
 
 ```
-POLICY              STATE               LAST SUCCESS         LAST ATTEMPT         FAILURES  NEXT RUN
-bootstrap-refresh    ok                  2026-07-03 14:32:10  2026-07-03 14:32:10  0         2026-07-04 14:32:10
-operating-refresh    ok                  2026-07-05 09:10:00  2026-07-05 09:10:00  0         2026-07-05 09:25:00
+POLICY              STATE               LAST SUCCESS         LAST ATTEMPT         FAILURES  ERROR  NEXT RUN
+bootstrap-refresh    ok                  2026-07-03 14:32:10  2026-07-03 14:32:10  0         -      2026-07-04 14:32:10
+operating-refresh    ok                  2026-07-05 09:10:00  2026-07-05 09:10:00  0         -      2026-07-05 09:25:00
 ```
 
 The cache file lives at `<var_dir>/agent-state.json`, where `<var_dir>` is `var_path` from
@@ -84,9 +84,16 @@ A missing or invalid `destination` is not checked in advance — the task is sti
 `brfs` exec simply fails (recorded as an ordinary failure with backoff), the same as any other exec
 failure.
 
+A backup task's `agent-state.json` entry is removed automatically once its `(policy, path)` pair no
+longer appears in `policies-cache.json` — checked every reconcile tick, but only acted on when that
+tick's read of the cache file succeeded; a momentarily missing or corrupt cache file never triggers
+pruning, so a transient read glitch can never be mistaken for "every policy was removed" and wipe a
+live task's backoff/RPO history.
+
 `agent list-policies` shows backup tasks as additional rows (`backup:<policy>:<path>`) alongside
 the three static policies; a task's "NEXT RUN" reflects its next `backup_window` occurrence rather
-than a fixed interval.
+than a fixed interval. Each row's `ERROR` column shows the most recent failure's message (truncated
+to 60 characters, `-` if there isn't one), cleared automatically on that policy/task's next success.
 
 ## Configuration Keys
 
