@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-11 — Agent acts on cached backup policies
+
+`agent` closes the loop left open by the `policy-update` job: it now derives one backup task per
+`(cached policy, object_filters path)` pair and runs `brfs` for each, scheduled by that policy's
+`backup_window` (cron) and `rpo` (staleness) — both must hold, a slot must be open and the path
+must actually be stale. `policy-server`'s policy schema gains a `destination` field (the target
+`bwfs`), threaded through `policyclient`'s cache unchanged in shape otherwise. Backup execs run in
+background goroutines bounded by a new `MaxConcurrentBackupJobs` config key, so a long backup never
+delays credential refresh; a `SIGTERM` cleanly terminates in-flight backups rather than orphaning
+them.
+
 ## 2026-07-10 — Agent policy-update job
 
 `agent` gains a third standard job, `policy-update`, alongside its existing credential-refresh

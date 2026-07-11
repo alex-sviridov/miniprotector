@@ -10,10 +10,10 @@ A backup system with intelligent deduplication and integrity verification.
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
 | catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
 | catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
-| agent | Node Agent — reconciles local state against embedded policies | Implemented (three policies: bootstrap credential renewal, operating-certificate refresh via `issuer`, and policy fetch via `policyclient`) |
+| agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, and policy-driven backup execution via `brfs`) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
-| policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (`agent` now fetches and caches its policies via `policyclient`; nothing yet acts on the cache — that remains separate, later work) |
+| policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (`agent` fetches, caches, and now acts on its policies — deriving and running scheduled `brfs` backups via `policyclient`) |
 
 ## Control Plane vs. Agents
 
@@ -44,9 +44,8 @@ only at container start — it doesn't fit either row cleanly. It listens on its
 `catalog`, obtains its own mTLS identity as an ordinary `agent`-managed enrolled node rather than a
 one-shot bootstrap — its image bundles `agent` the same way `catalog`'s does. It listens on its own
 port (`policy_server_port`, default 9300); `agent` now dials it on a schedule (`policy-update`, via
-`policyclient fetch`) and caches the result locally, though nothing yet acts on that cache — turning
-it into anything that actually runs a backup (`agent` or `brfs` consuming it) is separate, later
-work.
+`policyclient fetch`) and caches the result locally, and `agent` now acts on that cache directly, deriving and running scheduled `brfs` backups from
+it — see [agent](components/agent.md#policy-driven-backup-execution).
 
 A node's mTLS identity is obtained in two tiers, both via `certclient`: `bootstrap` redeems a
 one-time token minted by `client-manager` for `ca.crt` plus a long-lived `bootstrap.crt`/
@@ -61,10 +60,11 @@ that would otherwise invoke `certclient` directly: `agent serve` runs a reconcil
 config-driven policies: `bootstrap-refresh` (`certclient renew`, daily) and `operating-refresh`
 (`certclient operating-refresh`, every 15 minutes by default) keep this node's mTLS credentials
 fresh; `policy-update` (`policyclient fetch`, every 15 minutes by default) fetches this node's
-applicable backup policies from `policy-server` into a local cache. Each policy's outcome is
-tracked in the same local cache (`agent list-policies` inspects it). It has no network role of its
-own; all network behavior is `certclient`'s and `policyclient`'s, unchanged. See
-[agent](components/agent.md).
+applicable backup policies from `policy-server` into a local cache. `agent` also derives a dynamic
+backup task per cached policy's object path and executes `brfs` for each one on a schedule gated by
+that policy's `backup_window` and `rpo` — see [agent](components/agent.md#policy-driven-backup-execution).
+Each policy's (and backup task's) outcome is tracked in the same local cache (`agent list-policies`
+inspects it). See [agent](components/agent.md).
 
 `client-manager` is control plane by role (an admin-facing tool tracking the enrolled-client
 fleet) but, unlike every other component in this table, has no mTLS identity and no network

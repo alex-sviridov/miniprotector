@@ -1,12 +1,13 @@
 # agent
 
 Node-level agent that reconciles local state against a small, config-driven set of policies.
-It runs three embedded policies — `bootstrap-refresh`, `operating-refresh`, and `policy-update` —
-the first two keep this node's two-tier mTLS credential (see [Security Model](../SECURITY.md))
-fresh via `certclient`; the third fetches this node's applicable backup policies from
-`policy-server` (see [policy-server](./policy-server.md)) into a local cache via `policyclient`.
-Nothing yet acts on that cache — no policy-driven scheduling is wired into `agent`'s reconcile
-loop. That integration remains separate, later work.
+It runs three embedded, statically-configured policies — `bootstrap-refresh`, `operating-refresh`,
+and `policy-update` — the first two keep this node's two-tier mTLS credential (see
+[Security Model](../SECURITY.md)) fresh via `certclient`; the third fetches this node's applicable
+backup policies from `policy-server` (see [policy-server](./policy-server.md)) into a local cache
+via `policyclient`. On top of those three, `agent` also derives a dynamic **backup task** for every
+`(cached policy, object_filters path)` pair in that cache, and executes `brfs` for each one on its
+own schedule — see "Policy-driven backup execution" below.
 
 ## Usage
 
@@ -53,6 +54,38 @@ The cache file lives at `<var_dir>/agent-state.json`, where `<var_dir>` is `var_
 A missing or corrupt cache is treated as empty — every policy then looks "never run" and executes
 on the next tick, the same fail-safe direction used everywhere else in this component.
 
+## Policy-driven backup execution
+
+Every reconcile tick, `agent` re-reads `policies-cache.json` fresh (so it notices `policy-update`
+refreshing the cache without needing a restart) and derives one backup task per
+`(policy, object_filters path)` pair. Each task is tracked independently in `agent-state.json`
+(ID: `backup:<policy-name>:<path>`) — one path's failures and backoff never affect any other path,
+including a sibling path in the same policy.
+
+A backup task is due when **both**:
+- a `backup_window` cron slot is currently open (a trigger fired within the last
+  `BackupWindowGraceSec`, and hasn't closed yet), **and**
+- the path's last successful backup is older than the policy's `rpo` (or it has never succeeded).
+
+When due, `agent` execs `brfs <path> --destination <destination> --job-id
+backup:<policy>:<slug(path)>:<timestamp>` — the explicit job-id lets an operator correlate a
+`bwfs` job record back to the policy and path that produced it. Unlike the three static policies,
+backup task execs run in a background goroutine rather than the synchronous reconcile loop, so a
+long-running backup never delays `bootstrap-refresh`/`operating-refresh`. Concurrency is bounded by
+`MaxConcurrentBackupJobs`; a due task that can't acquire a slot this tick simply stays due and is
+retried next tick. On `agent serve` shutdown (`SIGTERM`), in-flight backup execs are terminated
+cleanly rather than orphaned — the resulting `bwfs` job simply never completes, the same outcome
+already assigned to a crashed `brfs`.
+
+A policy with an unparseable `rpo`, or no valid `backup_window` entry at all, contributes no tasks.
+A missing or invalid `destination` is not checked in advance — the task is still created, and its
+`brfs` exec simply fails (recorded as an ordinary failure with backoff), the same as any other exec
+failure.
+
+`agent list-policies` shows backup tasks as additional rows (`backup:<policy>:<path>`) alongside
+the three static policies; a task's "NEXT RUN" reflects its next `backup_window` occurrence rather
+than a fixed interval.
+
 ## Configuration Keys
 
 | Key | Default | Description |
@@ -62,6 +95,8 @@ on the next tick, the same fail-safe direction used everywhere else in this comp
 | `BootstrapCertRefreshIntervalSec` | 86400 (1 day) | How often the `bootstrap-refresh` policy runs `certclient renew` |
 | `OperatingCertFetchIntervalSec` | 900 (15 minutes) | How often the `operating-refresh` policy runs `certclient operating-refresh` |
 | `PolicyFetchIntervalSec` | 900 (15 minutes) | How often the `policy-update` policy runs `policyclient fetch` |
+| `BackupWindowGraceSec` | 3600 (1 hour) | How long after a `backup_window` cron trigger a backup task's window stays "open" |
+| `MaxConcurrentBackupJobs` | 2 | Upper bound on simultaneously in-flight `brfs` execs launched by backup tasks |
 | `BootstrapCertTTLSec` | 7776000 (90 days) | Intended requested validity for the bootstrap credential. Parsed and defaulted by `common/config`, but not yet consumed by any request path — `certclient bootstrap`/`renew` don't currently pass a requested TTL to the CA, so actual bootstrap credential lifetime is governed entirely by the CA provisioner's own claims today |
 
 ## Building
@@ -72,6 +107,7 @@ make agent
 
 ## See Also
 
+- [brfs](./brfs.md) — the binary backup tasks exec
 - [certclient](./certclient.md) — the binary both of `agent`'s credential-refresh policies exec
 - [issuer](./issuer.md) — what `operating-refresh` ultimately talks to
 - [policyclient](./policyclient.md) — the binary `agent`'s `policy-update` policy execs

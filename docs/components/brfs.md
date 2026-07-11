@@ -44,6 +44,10 @@ brfs /home/user/documents --destination 192.168.1.100:8080
 brfs /var/log --destination localhost:8080 --debug --streams 5
 ```
 
+`agent`'s policy-driven backup tasks (see [agent](./agent.md#policy-driven-backup-execution)) use
+the job-id convention `backup:<policy-name>:<slug-of-path>:<unix-timestamp>` — useful when grepping
+`bwfs`'s job history for which policy produced a given run.
+
 ## Protocol
 
 Communicates with [bwfs](./bwfs.md) (backup writer) using the protocol specified in [doc/protocols/backup.md](../protocols/backup.md).
