@@ -1,0 +1,172 @@
+// backup.go derives agent's dynamic "backup task" policies from
+// policies-cache.json (written by policyclient's policy-update job) --
+// one task per (cached policy, object_filters path) pair, due when a
+// backup_window cron slot is open and that path's rpo has elapsed. See
+// docs/superpowers/specs/2026-07-10-agent-backup-execution-design.md.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/robfig/cron/v3"
+)
+
+// cachedPolicy mirrors the subset of policyclient's on-disk CachedPolicy
+// schema (cmd/policyclient/fetch.go) that agent needs. agent can't import
+// cmd/policyclient directly -- Go forbids importing another command's
+// main package -- so these fields are duplicated here rather than shared.
+type cachedPolicy struct {
+	Name          string   `json:"name"`
+	ObjectFilters []string `json:"object_filters"`
+	RPO           string   `json:"rpo"`
+	BackupWindow  []string `json:"backup_window"`
+	Destination   string   `json:"destination"`
+}
+
+// readCachedPolicies reads policiesCachePath, returning nil (never an
+// error) if the file is missing or unparseable -- the same fail-safe
+// direction used throughout this codebase: on any doubt, assume there is
+// nothing to do yet.
+func readCachedPolicies(policiesCachePath string) []cachedPolicy {
+	data, err := os.ReadFile(policiesCachePath)
+	if err != nil {
+		return nil
+	}
+	var policies []cachedPolicy
+	if err := json.Unmarshal(data, &policies); err != nil {
+		return nil
+	}
+	return policies
+}
+
+// parseSchedules parses each cron expression independently -- one
+// malformed entry is dropped, not treated as invalidating the rest of the
+// list, mirroring policy-server's own "skip the bad file, keep the good
+// ones" direction (cmd/policy-server/cache.go's Reload).
+func parseSchedules(exprs []string) []cron.Schedule {
+	var out []cron.Schedule
+	for _, expr := range exprs {
+		sched, err := cron.ParseStandard(expr)
+		if err != nil {
+			continue
+		}
+		out = append(out, sched)
+	}
+	return out
+}
+
+// windowOpen reports whether any schedule fired within the last grace
+// window ending at now -- i.e., a trigger occurred and the window hasn't
+// closed yet. schedule.Next(t) returns the first activation strictly
+// after t, so checking it against now-grace catches any trigger from that
+// point forward, up to and including now.
+func windowOpen(schedules []cron.Schedule, now time.Time, grace time.Duration) bool {
+	threshold := now.Add(-grace)
+	for _, s := range schedules {
+		if !s.Next(threshold).After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+// nextWindow returns the soonest upcoming trigger across all schedules,
+// strictly after now. Only meaningful when the task is not currently due
+// -- see list.go's estimatedNextRun, which checks isDue first.
+func nextWindow(schedules []cron.Schedule, now time.Time) time.Time {
+	var next time.Time
+	for _, s := range schedules {
+		t := s.Next(now)
+		if next.IsZero() || t.Before(next) {
+			next = t
+		}
+	}
+	return next
+}
+
+// rpoElapsed reports whether the path's last successful backup is older
+// than rpo, or never happened at all.
+func rpoElapsed(s PolicyState, now time.Time, rpo time.Duration) bool {
+	if s.LastSuccessAt == nil {
+		return true
+	}
+	return now.Sub(*s.LastSuccessAt) > rpo
+}
+
+// slug makes path safe to embed in a job-id: strips leading/trailing "/"
+// and replaces the rest with "-". Cosmetic only -- job-id is opaque
+// metadata to both brfs and bwfs, it never needs to round-trip back to a
+// literal path.
+func slug(path string) string {
+	s := strings.Trim(path, "/")
+	s = strings.ReplaceAll(s, "/", "-")
+	if s == "" {
+		return "root"
+	}
+	return s
+}
+
+// backupTaskID is the stable identifier for one (policy, path) pair's
+// PolicyState entry in agent-state.json -- stable across ticks, so its
+// backoff/success history persists as long as the pair keeps appearing in
+// policies-cache.json.
+func backupTaskID(policyName, path string) string {
+	return fmt.Sprintf("backup:%s:%s", policyName, path)
+}
+
+// backupJobID is the --job-id passed to brfs for one run -- unlike
+// backupTaskID, it includes a timestamp so every run gets a distinct ID,
+// and it slugs the path so bwfs's job records stay easy to grep.
+func backupJobID(policyName, path string, now time.Time) string {
+	return fmt.Sprintf("backup:%s:%s:%d", policyName, slug(path), now.Unix())
+}
+
+// backupTasks derives one Policy per (cached policy, object_filters path)
+// pair from policiesCachePath, valid at the instant it's called. Callers
+// that need to notice policies-cache.json changing over time (agent
+// serve's reconcile loop) must call this fresh every tick rather than
+// caching its result once.
+//
+// A policy with an unparseable rpo, or with no valid backup_window
+// schedule at all, contributes no tasks -- there is no sound due-check
+// that could be built for it, so skipping entirely (rather than running
+// on a guess) is the fail-safe choice. A missing/invalid destination is
+// not checked here: the task is still built, and simply fails at brfs
+// exec time like any other exec failure (see reconcile.go).
+func backupTasks(policiesCachePath string, conf *config.Config) []Policy {
+	grace := time.Duration(conf.BackupWindowGraceSec) * time.Second
+
+	var tasks []Policy
+	for _, p := range readCachedPolicies(policiesCachePath) {
+		rpo, err := time.ParseDuration(p.RPO)
+		if err != nil {
+			continue
+		}
+		schedules := parseSchedules(p.BackupWindow)
+		if len(schedules) == 0 {
+			continue
+		}
+
+		policyName, destination := p.Name, p.Destination
+		for _, path := range p.ObjectFilters {
+			tasks = append(tasks, Policy{
+				ID:         backupTaskID(policyName, path),
+				Binary:     "brfs",
+				Args:       []string{path, "--destination", destination, "--job-id", backupJobID(policyName, path, time.Now())},
+				Background: true,
+				Due: func(s PolicyState, now time.Time) bool {
+					return windowOpen(schedules, now, grace) && rpoElapsed(s, now, rpo)
+				},
+				NextRun: func(s PolicyState, now time.Time) time.Time {
+					return nextWindow(schedules, now)
+				},
+			})
+		}
+	}
+	return tasks
+}
