@@ -42,8 +42,15 @@ func main() {
 		os.Exit(1)
 	}
 	cachePath := filepath.Join(varDir, "agent-state.json")
+	policiesCachePath := filepath.Join(varDir, "policies-cache.json")
 
-	pols := policies(conf)
+	// policiesFunc combines the three static policies with the dynamic
+	// backup tasks derived from policies-cache.json -- called fresh every
+	// reconcile tick (not resolved once here) so agent serve notices
+	// policy-update's cache changing over time without needing a restart.
+	policiesFunc := func() []Policy {
+		return append(policies(conf), backupTasks(policiesCachePath, conf)...)
+	}
 
 	switch arguments.Action {
 	case "serve":
@@ -65,13 +72,13 @@ func main() {
 		defer stop()
 
 		logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath)
-		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, func() []Policy { return pols }, conf.MaxConcurrentBackupJobs); err != nil {
+		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs); err != nil {
 			logger.Error("agent exited with error", "error", err)
 			os.Exit(1)
 		}
 
 	case "list-policies":
-		if err := renderPolicies(os.Stdout, cachePath, time.Now(), pols); err != nil {
+		if err := renderPolicies(os.Stdout, cachePath, time.Now(), policiesFunc()); err != nil {
 			fmt.Fprintf(os.Stderr, "list-policies failed: %v\n", err)
 			os.Exit(1)
 		}
