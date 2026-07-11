@@ -62,12 +62,13 @@ pipeline reads from continuously.
   fleet-wide. A future mechanism — `agent` recognizing some per-job debug request and passing an
   elevated log level to just that one exec — is worth exploring later; deferred here, noted so it
   isn't lost.
-- **No in-application TLS hot-reload for the log shipper.** Confirmed against Grafana's own docs
-  and Prometheus's long-standing, still-open behavior (both `loki.write`'s underlying HTTP client
+- **No hot-reload of Alloy's own TLS config.** Confirmed against Grafana's own docs and
+  Prometheus's long-standing, still-open behavior (both `loki.write`'s underlying HTTP client
   config and Prometheus's identical lineage): reloading configuration does not reliably reload an
-  in-use client certificate — only a full process restart reliably picks up a new one. Handled by
-  restarting the shipper on a timer (see Architecture), which is deployment configuration, not
-  something this design solves in Go.
+  in-use client certificate — only a full process restart reliably picks up a new one. This design
+  doesn't patch Alloy to fix that; instead `agent` restarts the whole Alloy process itself
+  whenever a fresh cert lands (see Architecture) — solved by supervision, not by making Alloy's TLS
+  handling live-reloadable.
 
 ## Architecture
 
@@ -96,9 +97,14 @@ pipeline reads from continuously.
      certificate, in logs any more than anywhere else in this project.
    - Forwards the corrected request to Loki's real push endpoint.
 
-3. **Grafana Alloy sidecar** — bundled into the same image/deployment as `agent`, so it runs
-   wherever `agent` already runs (`agent` itself, `catalog`, `policy-server`, `bwfs`/`brfs`/`rwfs`
-   hosts). Tails the standardized log directory (below), batches new lines, and pushes them to
+3. **Grafana Alloy sidecar, supervised directly by `agent`** — the Alloy binary ships in the same
+   image as `agent`, so it runs wherever `agent` already runs (`agent` itself, `catalog`,
+   `policy-server`, `bwfs`/`brfs`/`rwfs` hosts), but unlike `certclient`/`policyclient`/`brfs`
+   (short commands `agent` execs to completion via the existing `Policy`/`runner` model), Alloy is
+   long-running — `agent` starts it once at `agent serve` startup and keeps it alive for as long as
+   `agent serve` runs, a genuinely different lifecycle from the due-and-complete `Policy` model, so
+   it's handled by its own small supervision loop rather than shoehorned into that abstraction.
+   Alloy tails the standardized log directory (below), batches new lines, and pushes them to
    `log-gateway` over mTLS using the node's existing operating certificate
    (`client.crt`/`client.key`) — no new credential type. Alloy's own on-disk WAL provides local
    buffering across a `log-gateway`/Loki outage; once the WAL's configured bound is exceeded, oldest
@@ -107,14 +113,20 @@ pipeline reads from continuously.
    **Cert rotation vs. Alloy's TLS reload:** the operating cert is refreshed in place roughly every
    `OperatingCertFetchIntervalSec` (15 minutes by default) and expires within `OperatingCertTTLSec`
    (1 hour by default). Alloy's `loki.write` component will not pick up a rotated cert file without
-   a process restart (see Non-Goals). The fix is deployment-level, not application code: the Alloy
-   sidecar process is restarted on a timer shorter than `OperatingCertTTLSec` (matching
-   `OperatingCertFetchIntervalSec` is the natural choice, since that's already the cadence at which
-   a fresh cert becomes available) via ordinary process supervision (a systemd timer, or a
-   restart-loop wrapper in the agent image). Alloy resumes cleanly from its positions file across
-   this restart, so scheduled restarts don't lose buffered-but-unsent lines. This also means a
-   revoked node's log-shipping ability lapses on its next scheduled Alloy restart — no separate
-   revocation path needed, the same property `operating-refresh` already gives every other
+   a process restart (see Non-Goals). `agent` already knows exactly when a fresh cert lands — it's
+   the same event `reconcileState.recordOutcome` already observes for the `operating-refresh`
+   policy — so instead of a separate, independently-drifting timer, `agent` restarts its supervised
+   Alloy process immediately after every *successful* `operating-refresh`, event-driven rather than
+   clock-driven. Alloy resumes cleanly from its positions file across this restart, so a restart
+   never loses buffered-but-unsent lines. If Alloy exits unexpectedly for any other reason (a
+   crash, unrelated to cert rotation), `agent`'s supervision loop restarts it with the same
+   jittered backoff (`backoff()`, `cmd/agent/reconcile.go`) already used for failing policies,
+   rather than leaving log shipping silently dead until the next successful refresh. On `agent
+   serve` shutdown (`SIGTERM`), `agent` terminates its Alloy child cleanly, the same graceful-
+   shutdown symmetry it already gives in-flight backup execs, rather than leaving it orphaned.
+   This also means a revoked node's log-shipping ability lapses once its current operating cert
+   expires and no further successful refresh (and therefore no further Alloy restart) occurs — no
+   separate revocation path needed, the same property `operating-refresh` already gives every other
    capability.
 
 ### Standardized local logging
@@ -218,12 +230,14 @@ subprocess exec (as today, via agent's realExec)
      issuer/policy-server/bwfs, whose own logs carry the identical value -- one job_id glues
      both hosts' log lines together for any cross-host call, not just backups
 
-Alloy (sidecar, same host) tails <log_dir>
+Alloy (started and supervised by agent, same host) tails <log_dir>
   -> extracts `binary` label from the filename (low-cardinality: a handful of binary names)
   -> batches lines, pushes to log-gateway over mTLS using client.crt/client.key
      (buffered to Alloy's own disk-backed WAL if log-gateway/Loki is unreachable;
       oldest entries drop only once the WAL's configured bound is exceeded)
-  -> restarted on a timer inside OperatingCertTTLSec to keep picking up the rotating operating cert
+  -> agent restarts it right after every successful operating-refresh (fresh cert available),
+     and independently on any unexpected exit (crash-restart with the same backoff as a
+     failing policy) -- never left running on a cert past its useful reload point
 
 log-gateway
   -> verifies the peer cert is operating-tier (rejects a bootstrap/issuer-caller credential,
@@ -263,9 +277,12 @@ machinery entirely — no new revocation path to build or reason about.
 - No HA for `log-gateway`/Loki (Non-Goals) — a prolonged outage is a fleet-wide loss of *log
   visibility*, not of any operational capability (unlike `issuer`, where an outage costs mesh
   access itself).
-- The Alloy sidecar's periodic restart (needed for cert-rotation pickup, see Architecture) means a
-  short, deployment-config-driven gap in live shipping around each restart — not a gap in captured
-  data, since local files and Alloy's WAL both persist across it.
+- Alloy's restart-on-refresh (needed for cert-rotation pickup, see Architecture) means a short gap
+  in live shipping around each restart — not a gap in captured data, since local files and Alloy's
+  WAL both persist across it.
+- `agent` now supervises a second, long-running child process in addition to its own reconcile
+  loop — a real increase in what `agent` itself is responsible for getting right (start-up
+  ordering, crash-restart backoff, clean shutdown), not just a deployment-config addition.
 
 ## Configuration
 
@@ -277,10 +294,12 @@ conventions:
   `policy-server`'s `9300`) — where `log-gateway` runs; read by the Alloy sidecar's push config and
   set on the host `log-gateway` binds to.
 
-Deployment-level, not `local.conf` keys (operator-tunable at the infrastructure layer, the same way
-Loki's own retention already is):
-- Alloy's restart interval (recommended: `OperatingCertFetchIntervalSec`).
-- Loki's retention period.
+No separate Alloy-restart-interval key is needed — restarts are event-driven off
+`operating-refresh`'s own existing cadence (`OperatingCertFetchIntervalSec`), not an independently
+configured timer (Architecture).
+
+Deployment-level, not a `local.conf` key (operator-tunable at the infrastructure layer, the same
+way it already is today): Loki's retention period.
 
 ## Testing
 
@@ -298,6 +317,11 @@ Loki's own retention already is):
   in `cmd/agent/reconcile_test.go`) — confirms a dispatched exec logs on start, logs on both
   success and failure completion (not only failure, as today), and that the logged `job_id` matches
   what was passed to `execute`.
+- Unit: `agent`'s new Alloy-supervision loop — starts Alloy once at `serve` startup; restarts it
+  after a successful `operating-refresh` outcome and *not* after a failed one; restarts it with
+  backoff on an unexpected exit; terminates it cleanly on context cancellation. Fabricated
+  supervised-process stub, mirroring how `reconcile_test.go` already fakes `execute` rather than
+  invoking a real binary.
 - Integration: a real, throwaway Loki instance (own `docker-compose.yml` service, same pattern as
   `issuer`'s existing e2e test against a throwaway `step-ca`) — confirms a push through
   `log-gateway` round-trips with the gateway-enforced `hostname` label, and that a request
