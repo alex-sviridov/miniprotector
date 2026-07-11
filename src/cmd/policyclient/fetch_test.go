@@ -49,6 +49,7 @@ func TestRunFetch_Success_WritesCacheFile(t *testing.T) {
 				ObjectFilters: []*pb.ObjectFilter{{Path: "/var/lib/postgres"}, {Path: "/etc/postgres"}},
 				Rpo:           "24h",
 				BackupWindow:  []string{"0 2 * * *"},
+				Destination:   "bwfs-east.internal:8080",
 			},
 		},
 	}}
@@ -68,6 +69,7 @@ func TestRunFetch_Success_WritesCacheFile(t *testing.T) {
 	assert.Equal(t, []string{"/var/lib/postgres", "/etc/postgres"}, got[0].ObjectFilters)
 	assert.Equal(t, "24h", got[0].RPO)
 	assert.Equal(t, []string{"0 2 * * *"}, got[0].BackupWindow)
+	assert.Equal(t, "bwfs-east.internal:8080", got[0].Destination)
 }
 
 func TestRunFetch_EmptyPoliciesWritesEmptyArrayNotNull(t *testing.T) {

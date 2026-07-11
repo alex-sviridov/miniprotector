@@ -45,7 +45,8 @@ directly:
     "updated_at": "2026-07-05T00:00:00Z",
     "object_filters": ["/var/lib/postgres", "/etc/postgres"],
     "rpo": "24h",
-    "backup_window": ["0 2 * * *"]
+    "backup_window": ["0 2 * * *"],
+    "destination": "bwfs-east.internal:8080"
   }
 ]
 ```

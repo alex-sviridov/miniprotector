@@ -31,6 +31,7 @@ type CachedPolicy struct {
 	ObjectFilters []string  `json:"object_filters"`
 	RPO           string    `json:"rpo"`
 	BackupWindow  []string  `json:"backup_window"`
+	Destination   string    `json:"destination"`
 }
 
 // policyServiceClient is the subset of pb.PolicyServiceClient runFetch
@@ -100,6 +101,7 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			ObjectFilters: filters,
 			RPO:           p.GetRpo(),
 			BackupWindow:  p.GetBackupWindow(),
+			Destination:   p.GetDestination(),
 		})
 	}
 	return out
