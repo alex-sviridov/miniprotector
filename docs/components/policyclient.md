@@ -1,8 +1,9 @@
 # policyclient
 
 Fetches this node's applicable backup policies from `policy-server` and caches them locally as
-`policies-cache.json`. Does not act on the cached policies — no scheduling, no interpretation of
-`rpo`/`backup_window`; that remains separate, later work. See
+`policies-cache.json`. `policyclient` itself does no scheduling or interpretation of
+`rpo`/`backup_window` — it only fetches and caches; `agent` is what reads this cache and acts on it
+(see [agent](./agent.md#policy-driven-backup-execution)). See
 [Design: Agent Policy-Update Job](../superpowers/specs/2026-07-10-agent-policy-update-job-design.md).
 **Agent tool** — bundled onto every node also running `agent`.
 
