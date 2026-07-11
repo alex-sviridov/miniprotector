@@ -176,6 +176,32 @@ per-invocation and would blow up label cardinality if indexed. Its value is what
 pivot from one host's log line to the corresponding line on the other end of any cross-host call in
 this system, backup or otherwise.
 
+### No stdout capture in `agent` — one log per binary, not two
+
+An earlier direction for this design had `agent` itself capture and forward each subprocess's
+stdout/stderr. That's now unnecessary and explicitly dropped: every subprocess already writes its
+own structured, job-id-tagged log via `common/logging` (Standardized local logging, above), and
+Alloy already ships it. Having `agent` *also* capture and re-log the same subprocess's console
+output would duplicate that content under a different, less structured path for no benefit —
+`realExec` stays exactly as it is today (`exec.CommandContext(...).Run()`, no `Stdout`/`Stderr`
+wired up).
+
+What `agent` *does* still need, and doesn't fully have today: its own log
+(`<log_dir>/agent.log`) should record that it started and finished each exec, not just failures.
+Today `reconcileState.recordOutcome` (`cmd/agent/reconcile.go`) only logs on failure
+(`rs.logger.Error("policy execution failed", ...)`) — a successful run leaves no trace in `agent`'s
+own log beyond a silent cache update. This design adds:
+- An `Info`-level log line when `agent` dispatches an exec (`policy`/`binary`/`job_id`), before
+  calling `execute`.
+- An `Info`-level log line when it completes, on both success and failure (`job_id`, exit code —
+  available for free from the `*exec.ExitError` a non-zero exit already returns, no stdout capture
+  required — and duration), not only the existing failure-only `Error` line.
+
+Both carry the same `job_id` `agent` now passes to the exec (Correlation IDs, above), so `agent`'s
+own lifecycle log line for a given run and that run's own subprocess log file (and, for
+cert-refresh/policy-fetch/backups, the corresponding server-side log line on the other host) all
+share one value an operator can pivot between.
+
 ## Data Flow
 
 ```
@@ -262,6 +288,10 @@ Loki's own retention already is):
 - Unit: the shared job-id metadata-extraction helper, plus `issuer`/`policy-server` each rejecting
   a request with no `job-id` metadata, mirroring `bwfs`'s existing
   `TestIntegration_MissingJobID_StreamRejected` coverage.
+- Unit: `reconcile.go`'s new start/completion log lines (mirrors the existing `TestRun_*` coverage
+  in `cmd/agent/reconcile_test.go`) — confirms a dispatched exec logs on start, logs on both
+  success and failure completion (not only failure, as today), and that the logged `job_id` matches
+  what was passed to `execute`.
 - Integration: a real, throwaway Loki instance (own `docker-compose.yml` service, same pattern as
   `issuer`'s existing e2e test against a throwaway `step-ca`) — confirms a push through
   `log-gateway` round-trips with the gateway-enforced `hostname` label, and that a request
