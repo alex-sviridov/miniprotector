@@ -62,13 +62,12 @@ pipeline reads from continuously.
   fleet-wide. A future mechanism — `agent` recognizing some per-job debug request and passing an
   elevated log level to just that one exec — is worth exploring later; deferred here, noted so it
   isn't lost.
-- **No hot-reload of Alloy's own TLS config.** Confirmed against Grafana's own docs and
-  Prometheus's long-standing, still-open behavior (both `loki.write`'s underlying HTTP client
-  config and Prometheus's identical lineage): reloading configuration does not reliably reload an
-  in-use client certificate — only a full process restart reliably picks up a new one. This design
-  doesn't patch Alloy to fix that; instead `agent` restarts the whole Alloy process itself
-  whenever a fresh cert lands (see Architecture) — solved by supervision, not by making Alloy's TLS
-  handling live-reloadable.
+- **No reliance on the log shipper's own TLS hot-reload behavior, whatever it is.** Several
+  candidates in this space (confirmed for Grafana Alloy specifically, and true of Prometheus's
+  identical HTTP-client-config lineage more broadly) don't reliably pick up a rotated client
+  certificate without a process restart. Rather than audit and depend on one tool's exact behavior
+  here, `agent` restarts the shipper itself on every successful `operating-refresh` regardless (see
+  Architecture) — the shipper's own reload characteristics become a non-issue either way.
 
 ## Architecture
 
@@ -97,37 +96,62 @@ pipeline reads from continuously.
      certificate, in logs any more than anywhere else in this project.
    - Forwards the corrected request to Loki's real push endpoint.
 
-3. **Grafana Alloy sidecar, supervised directly by `agent`** — the Alloy binary ships in the same
-   image as `agent`, so it runs wherever `agent` already runs (`agent` itself, `catalog`,
-   `policy-server`, `bwfs`/`brfs`/`rwfs` hosts), but unlike `certclient`/`policyclient`/`brfs`
-   (short commands `agent` execs to completion via the existing `Policy`/`runner` model), Alloy is
-   long-running — `agent` starts it once at `agent serve` startup and keeps it alive for as long as
-   `agent serve` runs, a genuinely different lifecycle from the due-and-complete `Policy` model, so
-   it's handled by its own small supervision loop rather than shoehorned into that abstraction.
-   Alloy tails the standardized log directory (below), batches new lines, and pushes them to
-   `log-gateway` over mTLS using the node's existing operating certificate
-   (`client.crt`/`client.key`) — no new credential type. Alloy's own on-disk WAL provides local
-   buffering across a `log-gateway`/Loki outage; once the WAL's configured bound is exceeded, oldest
-   entries are dropped rather than blocking or growing without limit.
+3. **Vector, bundled and supervised directly by `agent`** — chosen over the initially-considered
+   Grafana Alloy specifically because Vector's own HTTP API/health server is disabled by default
+   (`api.enabled: false`) and, left disabled, opens **no listening socket at all**. That matters
+   here because every agent-managed node in this project already holds to one invariant for the
+   `agent` process's own footprint: it only ever dials out (to `issuer`, `policy-server`, the CA),
+   it never accepts inbound connections itself (unlike `bwfs`/`catalog`/`policy-server`, which are
+   deliberately servers). Alloy has no way to turn its HTTP server off — confirmed against Grafana's
+   own docs and an open upstream issue asking for exactly that — so it would have broken that
+   invariant for the first time. Vector, with its API left at its default, doesn't.
 
-   **Cert rotation vs. Alloy's TLS reload:** the operating cert is refreshed in place roughly every
-   `OperatingCertFetchIntervalSec` (15 minutes by default) and expires within `OperatingCertTTLSec`
-   (1 hour by default). Alloy's `loki.write` component will not pick up a rotated cert file without
-   a process restart (see Non-Goals). `agent` already knows exactly when a fresh cert lands — it's
-   the same event `reconcileState.recordOutcome` already observes for the `operating-refresh`
-   policy — so instead of a separate, independently-drifting timer, `agent` restarts its supervised
-   Alloy process immediately after every *successful* `operating-refresh`, event-driven rather than
-   clock-driven. Alloy resumes cleanly from its positions file across this restart, so a restart
-   never loses buffered-but-unsent lines. If Alloy exits unexpectedly for any other reason (a
-   crash, unrelated to cert rotation), `agent`'s supervision loop restarts it with the same
-   jittered backoff (`backoff()`, `cmd/agent/reconcile.go`) already used for failing policies,
-   rather than leaving log shipping silently dead until the next successful refresh. On `agent
-   serve` shutdown (`SIGTERM`), `agent` terminates its Alloy child cleanly, the same graceful-
-   shutdown symmetry it already gives in-flight backup execs, rather than leaving it orphaned.
-   This also means a revoked node's log-shipping ability lapses once its current operating cert
-   expires and no further successful refresh (and therefore no further Alloy restart) occurs — no
-   separate revocation path needed, the same property `operating-refresh` already gives every other
-   capability.
+   **Bundling and isolation** (so a pre-existing, unrelated log shipper on the same host, if any,
+   is never touched or interfered with):
+   - The Vector binary is copied into the same directory as `agent`/`certclient`/`policyclient`/
+     `brfs` at image-build time, pinned to a specific released version — not assumed to already be
+     on the host. `agent` resolves it via the same colocated-binary-resolution logic `realExec`
+     already uses for its other execs (pulled into a shared helper, since this is now the second
+     caller of that logic) — but, unlike those, **with no `$PATH` fallback**: if the colocated
+     binary is missing, `agent` fails loudly rather than risking a silent, version-mismatched
+     substitute from whatever else is installed on the host.
+   - Vector's config (which files to tail, where to push, which certs to present) depends on that
+     node's `local.conf`, so it can't be a static file baked into the image. `agent` renders it
+     from a small template at `serve` startup and writes it to `<var_dir>/vector-config.yaml` —
+     `var_dir` (`config.ResolveVarDir`), not the binary's own install directory, matching where
+     `agent` already keeps its own generated runtime state (`agent-state.json`).
+   - Vector's disk buffer (its equivalent of a WAL, for resilience across a `log-gateway`/Loki
+     outage) is pointed at an explicit `<var_dir>/vector-buffer` path via its `buffer.type: disk`
+     sink config — never Vector's own default location, so it can't collide with an unrelated
+     instance's state even in the (already-avoided, per above) case where one exists.
+   - No listening socket at all (above) — there's no port to isolate or firewall in the first
+     place, unlike a tool whose admin/health server can only be relocated, not disabled.
+
+   Vector tails the standardized log directory (below), batches new lines, and pushes them to
+   `log-gateway` over mTLS using the node's existing operating certificate
+   (`client.crt`/`client.key`) — no new credential type. Its disk buffer provides local resilience
+   across a `log-gateway`/Loki outage; once its configured bound is exceeded, oldest entries are
+   dropped rather than blocking or growing without limit.
+
+   **Lifecycle:** unlike `certclient`/`policyclient`/`brfs` (short commands `agent` execs to
+   completion via the existing `Policy`/`runner` model), Vector is long-running — `agent` starts it
+   once at `serve` startup and keeps it alive for as long as `agent serve` runs, a genuinely
+   different lifecycle from the due-and-complete `Policy` model, so it's handled by its own small
+   supervision loop rather than shoehorned into that abstraction. `agent` restarts its supervised
+   Vector process immediately after every *successful* `operating-refresh` (the same event
+   `reconcileState.recordOutcome` already observes), event-driven rather than clock-driven, so a
+   fresh cert is always picked up promptly regardless of whatever Vector's own TLS-reload behavior
+   turns out to be (see Non-Goals). Vector resumes from its own on-disk checkpoint across this
+   restart, so a restart never loses buffered-but-unsent lines. If Vector exits unexpectedly for
+   any other reason (a crash, unrelated to cert rotation), `agent`'s supervision loop restarts it
+   with the same jittered backoff (`backoff()`, `cmd/agent/reconcile.go`) already used for failing
+   policies, rather than leaving log shipping silently dead until the next successful refresh. On
+   `agent serve` shutdown (`SIGTERM`), `agent` terminates its Vector child cleanly, the same
+   graceful-shutdown symmetry it already gives in-flight backup execs, rather than leaving it
+   orphaned. This also means a revoked node's log-shipping ability lapses once its current
+   operating cert expires and no further successful refresh (and therefore no further Vector
+   restart) occurs — no separate revocation path needed, the same property `operating-refresh`
+   already gives every other capability.
 
 ### Standardized local logging
 
@@ -152,7 +176,7 @@ file descriptor is atomic — so concurrent processes' lines interleave cleanly 
 corrupting each other. The one edge case worth naming: if lumberjack rotates the file (rename +
 reopen) while another process still holds its old file descriptor open, that process's remaining
 lines land in the just-rotated backup file until it next reopens (i.e., until its next invocation).
-Nothing is lost — Alloy tails rotated files by glob, following both the active and recently-rotated
+Nothing is lost — Vector tails rotated files by glob, following both the active and recently-rotated
 file, which is standard log-shipper behavior — logs from one invocation can just end up briefly
 split across two files in this narrow window.
 
@@ -199,7 +223,7 @@ this system, backup or otherwise.
 An earlier direction for this design had `agent` itself capture and forward each subprocess's
 stdout/stderr. That's now unnecessary and explicitly dropped: every subprocess already writes its
 own structured, job-id-tagged log via `common/logging` (Standardized local logging, above), and
-Alloy already ships it. Having `agent` *also* capture and re-log the same subprocess's console
+Vector already ships it. Having `agent` *also* capture and re-log the same subprocess's console
 output would duplicate that content under a different, less structured path for no benefit —
 `realExec` stays exactly as it is today (`exec.CommandContext(...).Run()`, no `Stdout`/`Stderr`
 wired up).
@@ -230,11 +254,12 @@ subprocess exec (as today, via agent's realExec)
      issuer/policy-server/bwfs, whose own logs carry the identical value -- one job_id glues
      both hosts' log lines together for any cross-host call, not just backups
 
-Alloy (started and supervised by agent, same host) tails <log_dir>
+Vector (bundled, config-generated, and supervised by agent -- no listening socket, api.enabled
+left false) tails <log_dir>
   -> extracts `binary` label from the filename (low-cardinality: a handful of binary names)
   -> batches lines, pushes to log-gateway over mTLS using client.crt/client.key
-     (buffered to Alloy's own disk-backed WAL if log-gateway/Loki is unreachable;
-      oldest entries drop only once the WAL's configured bound is exceeded)
+     (buffered to its own disk buffer at <var_dir>/vector-buffer if log-gateway/Loki is
+      unreachable; oldest entries drop only once the buffer's configured bound is exceeded)
   -> agent restarts it right after every successful operating-refresh (fresh cert available),
      and independently on any unexpected exit (crash-restart with the same backoff as a
      failing policy) -- never left running on a cert past its useful reload point
@@ -261,14 +286,15 @@ operator
 every other authenticated data path in this project already has — mTLS transport throughout,
 identity derived strictly from the verified peer certificate, and Loki itself never directly
 reachable from any agent-managed node. Revoking a node cuts off its logging ability within roughly
-one operating-cert refresh/Alloy-restart cycle, reusing the existing credential and revocation
-machinery entirely — no new revocation path to build or reason about.
+one operating-cert refresh/Vector-restart cycle, reusing the existing credential and revocation
+machinery entirely — no new revocation path to build or reason about. `agent`'s own network
+footprint stays outbound-only throughout, including its supervised Vector process (Architecture).
 
 **What this costs, stated plainly:**
 
 - `log-gateway` (and Loki behind it) is a new always-on dependency; its outage doesn't block backup
   operations (per Goals), but it does mean recent logs stop arriving until it's reachable again,
-  bounded by Alloy's WAL capacity.
+  bounded by Vector's disk-buffer capacity.
 - Log line *content* is not verified against the sending node's actual state or identity — only the
   *label* (`hostname`) is cryptographically bound. A compromised, not-yet-revoked node can write
   misleading log content and have it shipped faithfully. This is a pre-existing level of trust
@@ -277,9 +303,9 @@ machinery entirely — no new revocation path to build or reason about.
 - No HA for `log-gateway`/Loki (Non-Goals) — a prolonged outage is a fleet-wide loss of *log
   visibility*, not of any operational capability (unlike `issuer`, where an outage costs mesh
   access itself).
-- Alloy's restart-on-refresh (needed for cert-rotation pickup, see Architecture) means a short gap
-  in live shipping around each restart — not a gap in captured data, since local files and Alloy's
-  WAL both persist across it.
+- Vector's restart-on-refresh (needed for cert-rotation pickup, see Architecture) means a short gap
+  in live shipping around each restart — not a gap in captured data, since local files and Vector's
+  disk buffer both persist across it.
 - `agent` now supervises a second, long-running child process in addition to its own reconcile
   loop — a real increase in what `agent` itself is responsible for getting right (start-up
   ordering, crash-restart backoff, clean shutdown), not just a deployment-config addition.
@@ -291,10 +317,10 @@ conventions:
 - `log_dir` (renamed from `logfolder`, same required-field status) — where every component writes
   its own `<binary-name>.log`.
 - `log_gateway_host` / `log_gateway_port` (default `9400`, following `issuer`'s `9200` and
-  `policy-server`'s `9300`) — where `log-gateway` runs; read by the Alloy sidecar's push config and
-  set on the host `log-gateway` binds to.
+  `policy-server`'s `9300`) — where `log-gateway` runs; read by `agent` when rendering Vector's
+  generated push config and set on the host `log-gateway` binds to.
 
-No separate Alloy-restart-interval key is needed — restarts are event-driven off
+No separate Vector-restart-interval key is needed — restarts are event-driven off
 `operating-refresh`'s own existing cadence (`OperatingCertFetchIntervalSec`), not an independently
 configured timer (Architecture).
 
@@ -317,17 +343,22 @@ way it already is today): Loki's retention period.
   in `cmd/agent/reconcile_test.go`) — confirms a dispatched exec logs on start, logs on both
   success and failure completion (not only failure, as today), and that the logged `job_id` matches
   what was passed to `execute`.
-- Unit: `agent`'s new Alloy-supervision loop — starts Alloy once at `serve` startup; restarts it
+- Unit: `agent`'s new Vector-supervision loop — starts Vector once at `serve` startup; restarts it
   after a successful `operating-refresh` outcome and *not* after a failed one; restarts it with
-  backoff on an unexpected exit; terminates it cleanly on context cancellation. Fabricated
-  supervised-process stub, mirroring how `reconcile_test.go` already fakes `execute` rather than
-  invoking a real binary.
+  backoff on an unexpected exit; terminates it cleanly on context cancellation; fails loudly at
+  startup if the colocated Vector binary is missing rather than falling back to `$PATH`.
+  Fabricated supervised-process stub, mirroring how `reconcile_test.go` already fakes `execute`
+  rather than invoking a real binary.
+- Unit: `agent`'s Vector-config template rendering — confirms the generated
+  `<var_dir>/vector-config.yaml` reflects `local.conf`'s `log_dir`/`log_gateway_host`/
+  `log_gateway_port`/certs path, and that Vector's API/listener config is never emitted.
 - Integration: a real, throwaway Loki instance (own `docker-compose.yml` service, same pattern as
   `issuer`'s existing e2e test against a throwaway `step-ca`) — confirms a push through
   `log-gateway` round-trips with the gateway-enforced `hostname` label, and that a request
   attempting to spoof a different `hostname` label is overwritten, not honored.
-- Demo: extend `demo/` to add `loki`, `log-gateway`, and per-node Alloy sidecars, confirming the
-  demo's existing `database`/`webserver` nodes' logs are queryable centrally by hostname.
+- Demo: extend `demo/` to add `loki`, `log-gateway`, and per-node Vector processes (supervised by
+  each node's own `agent`), confirming the demo's existing `database`/`webserver` nodes' logs are
+  queryable centrally by hostname.
 
 ## Documentation Impact
 
