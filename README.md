@@ -59,7 +59,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity
 - **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS bootstrap credential from the CA, and refreshes its short-lived operating certificate from `issuer`
 - **[agent](docs/components/agent.md)** - Node agent — reconciles local state against embedded policies (credential renewal via `certclient`, policy fetch via `policyclient`, and policy-driven backup execution via `brfs`)
-- **[policyclient](docs/components/policyclient.md)** - Fetches backup policies from `policy-server` into a local cache (nothing acts on the cache yet)
+- **[policyclient](docs/components/policyclient.md)** - Fetches backup policies from `policy-server` into a local cache (consumed by `agent` for policy-driven backup execution)
 - **[client-manager](docs/components/client-manager.md)** - Owns the enrolled-client list and mints enrollment tokens directly: descriptions, RBAC-bound attributes, SAN aliases, revoked status (control-plane component, runs on the CA host)
 - **[issuer](docs/components/issuer.md)** - Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares `client-manager`'s database (control-plane component, runs on the CA host)
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability

@@ -73,9 +73,11 @@ backup:<policy>:<slug(path)>:<timestamp>` — the explicit job-id lets an operat
 backup task execs run in a background goroutine rather than the synchronous reconcile loop, so a
 long-running backup never delays `bootstrap-refresh`/`operating-refresh`. Concurrency is bounded by
 `MaxConcurrentBackupJobs`; a due task that can't acquire a slot this tick simply stays due and is
-retried next tick. On `agent serve` shutdown (`SIGTERM`), in-flight backup execs are terminated
-cleanly rather than orphaned — the resulting `bwfs` job simply never completes, the same outcome
-already assigned to a crashed `brfs`.
+retried next tick. Independently of that cap, a task still running from a previous tick is never
+re-dispatched — each `(policy, path)` pair can have at most one in-flight `brfs` exec at a time.
+On `agent serve` shutdown (`SIGTERM`), in-flight backup execs are terminated cleanly rather than
+orphaned — the resulting `bwfs` job simply never completes, the same outcome already assigned to a
+crashed `brfs`.
 
 A policy with an unparseable `rpo`, or no valid `backup_window` entry at all, contributes no tasks.
 A missing or invalid `destination` is not checked in advance — the task is still created, and its
