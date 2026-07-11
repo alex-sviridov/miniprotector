@@ -43,6 +43,24 @@ func formatTime(t *time.Time) string {
 	return t.Format("2006-01-02 15:04:05")
 }
 
+// maxErrorColumnWidth caps how many runes of LastError renderPolicies
+// shows in its table -- a rune cap, not a byte cap, since the "…"
+// truncation marker is one rune but three UTF-8 bytes, and error strings
+// aren't guaranteed to be ASCII. The full, untruncated message is always
+// available by reading agent-state.json directly.
+const maxErrorColumnWidth = 60
+
+func formatError(s string) string {
+	if s == "" {
+		return "-"
+	}
+	runes := []rune(s)
+	if len(runes) <= maxErrorColumnWidth {
+		return s
+	}
+	return string(runes[:maxErrorColumnWidth-1]) + "…"
+}
+
 // formatNextRun renders a due-now policy (zero value, or already past) as
 // "due now" instead of a stale-looking timestamp.
 func formatNextRun(t time.Time, now time.Time) string {
@@ -62,15 +80,16 @@ func renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Pol
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "POLICY\tSTATE\tLAST SUCCESS\tLAST ATTEMPT\tFAILURES\tNEXT RUN")
+	fmt.Fprintln(tw, "POLICY\tSTATE\tLAST SUCCESS\tLAST ATTEMPT\tFAILURES\tERROR\tNEXT RUN")
 	for _, p := range policies {
 		s := cache[p.ID]
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			p.ID,
 			health(s),
 			formatTime(s.LastSuccessAt),
 			formatTime(s.LastAttemptAt),
 			s.ConsecutiveFailures,
+			formatError(s.LastError),
 			formatNextRun(estimatedNextRun(p, s, now), now),
 		)
 	}

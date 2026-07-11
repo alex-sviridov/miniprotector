@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,4 +93,57 @@ func TestRenderPolicies_FailingPolicyShowsRetryingWithCount(t *testing.T) {
 	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
 
 	assert.Contains(t, buf.String(), "retrying (3 failures)")
+}
+
+func TestFormatError_EmptyReturnsDash(t *testing.T) {
+	assert.Equal(t, "-", formatError(""))
+}
+
+func TestFormatError_ShortReturnsUnchanged(t *testing.T) {
+	assert.Equal(t, "boom", formatError("boom"))
+}
+
+func TestFormatError_LongIsTruncatedWithEllipsis(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	got := formatError(long)
+	// maxErrorColumnWidth is a rune-count cap, not a byte-count cap -- "…"
+	// is one rune but three UTF-8 bytes, so the check must count runes.
+	assert.LessOrEqual(t, len([]rune(got)), maxErrorColumnWidth)
+	assert.True(t, strings.HasSuffix(got, "…"))
+}
+
+func TestRenderPolicies_FailingPolicyShowsLastError(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+
+	testPolicies := []Policy{{ID: "operating-refresh", Binary: "certclient", Interval: 15 * time.Minute}}
+
+	now := time.Now()
+	require.NoError(t, writeCache(cachePath, Cache{
+		"operating-refresh": {LastAttemptAt: &now, ConsecutiveFailures: 1, LastError: "connection refused"},
+	}))
+
+	var buf bytes.Buffer
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
+
+	assert.Contains(t, buf.String(), "connection refused")
+}
+
+func TestRenderPolicies_LongLastErrorIsTruncatedInTable(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+
+	testPolicies := []Policy{{ID: "p", Binary: "b", Interval: time.Minute}}
+
+	longErr := strings.Repeat("x", 200)
+	now := time.Now()
+	require.NoError(t, writeCache(cachePath, Cache{
+		"p": {LastAttemptAt: &now, ConsecutiveFailures: 1, LastError: longErr},
+	}))
+
+	var buf bytes.Buffer
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
+
+	out := buf.String()
+	assert.NotContains(t, out, longErr, "the full 200-char error must not appear verbatim in table output")
 }
