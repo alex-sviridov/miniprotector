@@ -107,6 +107,8 @@ type Config struct {
 	PolicyServerHost                 string
 	PolicyServerPort                 int
 	PolicyFetchIntervalSec           int
+	BackupWindowGraceSec             int
+	MaxConcurrentBackupJobs          int
 }
 
 type contextKey string
@@ -146,6 +148,8 @@ func ParseConfig(configPath string) (*Config, error) {
 		IssuerSelfCertRefreshIntervalSec: 86400,
 		PolicyServerPort:                 9300,
 		PolicyFetchIntervalSec:           900,
+		BackupWindowGraceSec:             3600,
+		MaxConcurrentBackupJobs:          2,
 	}
 	foundFields := make(map[string]bool)
 
@@ -332,6 +336,20 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.PolicyFetchIntervalSec = number
 			foundFields["PolicyFetchIntervalSec"] = true
+		case "BackupWindowGraceSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid BackupWindowGraceSec value at line %d: %s", lineNum, value)
+			}
+			config.BackupWindowGraceSec = number
+			foundFields["BackupWindowGraceSec"] = true
+		case "MaxConcurrentBackupJobs":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid MaxConcurrentBackupJobs value at line %d: %s", lineNum, value)
+			}
+			config.MaxConcurrentBackupJobs = number
+			foundFields["MaxConcurrentBackupJobs"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

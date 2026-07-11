@@ -482,3 +482,47 @@ func TestParseConfig_PolicyFetchIntervalSecParsesCorrectly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 300, conf.PolicyFetchIntervalSec)
 }
+
+func TestParseConfig_BackupWindowGraceSecDefaultsTo3600(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 3600, conf.BackupWindowGraceSec)
+}
+
+func TestParseConfig_BackupWindowGraceSecParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nBackupWindowGraceSec=600\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 600, conf.BackupWindowGraceSec)
+}
+
+func TestParseConfig_MaxConcurrentBackupJobsDefaultsTo2(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 2, conf.MaxConcurrentBackupJobs)
+}
+
+func TestParseConfig_MaxConcurrentBackupJobsParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nMaxConcurrentBackupJobs=5\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, conf.MaxConcurrentBackupJobs)
+}
