@@ -98,6 +98,30 @@ type reconcileState struct {
 	cachePath string
 	cache     Cache
 	logger    *slog.Logger
+	inFlight  map[string]bool
+}
+
+// tryMarkInFlight marks id as in-flight and returns true if it wasn't
+// already -- a background policy that's still running from a previous
+// tick must not be dispatched again, even though its persisted
+// PolicyState won't reflect that until the in-flight run completes.
+func (rs *reconcileState) tryMarkInFlight(id string) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.inFlight == nil {
+		rs.inFlight = make(map[string]bool)
+	}
+	if rs.inFlight[id] {
+		return false
+	}
+	rs.inFlight[id] = true
+	return true
+}
+
+func (rs *reconcileState) clearInFlight(id string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	delete(rs.inFlight, id)
 }
 
 func (rs *reconcileState) get(id string) PolicyState {
@@ -163,15 +187,20 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 			}
 
 			if p.Background {
+				if !rs.tryMarkInFlight(p.ID) {
+					continue // still running from a previous tick; stays due, skip this tick
+				}
 				select {
 				case sem <- struct{}{}:
 				default:
+					rs.clearInFlight(p.ID)
 					continue // no free slot this tick; stays due, retried next tick
 				}
 				wg.Add(1)
 				go func(p Policy) {
 					defer wg.Done()
 					defer func() { <-sem }()
+					defer rs.clearInFlight(p.ID)
 					attemptErr := execute(ctx, p.Binary, p.Args)
 					rs.recordOutcome(p.ID, attemptErr, time.Now())
 				}(p)

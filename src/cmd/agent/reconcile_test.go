@@ -240,6 +240,7 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 	var mu sync.Mutex
 	inFlight, maxObserved := 0, 0
 	release := make(chan struct{})
+	entered := make(chan struct{}, 3)
 
 	blockingRunner := func(ctx context.Context, binary string, args []string) error {
 		mu.Lock()
@@ -249,6 +250,10 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 		}
 		mu.Unlock()
 
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
 		<-release
 
 		mu.Lock()
@@ -272,7 +277,8 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() []Policy { return testPolicies }, 1)
 	}()
 
-	time.Sleep(50 * time.Millisecond) // let several ticks pass, all contending for the single slot
+	<-entered
+	time.Sleep(20 * time.Millisecond) // give a few more ticks a chance to (correctly) be refused a slot
 	close(release)
 	cancel()
 	<-done
@@ -280,6 +286,45 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal(t, 1, maxObserved, "concurrency cap of 1 must never be exceeded")
+}
+
+func TestRun_SamePolicyNotRedispatchedWhileStillInFlight(t *testing.T) {
+	var mu sync.Mutex
+	dispatchCount := 0
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+
+	blockingRunner := func(ctx context.Context, binary string, args []string) error {
+		mu.Lock()
+		dispatchCount++
+		mu.Unlock()
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		return nil
+	}
+
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+	testPolicies := []Policy{{ID: "slow-backup", Binary: "slow", Interval: time.Hour, Background: true}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() []Policy { return testPolicies }, 5)
+	}()
+
+	<-entered
+	time.Sleep(50 * time.Millisecond) // several more ticks pass while the one dispatch is still blocked on release
+	close(release)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, dispatchCount, "a still-running background policy must not be dispatched again on a later tick")
 }
 
 func TestRun_BackgroundExecReceivesCancelledContextOnShutdown(t *testing.T) {
