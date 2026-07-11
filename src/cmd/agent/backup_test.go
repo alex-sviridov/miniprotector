@@ -58,6 +58,29 @@ func TestRpoElapsed_OldSuccessIsElapsed(t *testing.T) {
 	assert.True(t, rpoElapsed(PolicyState{LastSuccessAt: &last}, now, time.Hour))
 }
 
+func TestReadCachedPolicies_MissingFileReturnsOkFalse(t *testing.T) {
+	dir := t.TempDir()
+	policies, ok := readCachedPolicies(filepath.Join(dir, "does-not-exist.json"))
+	assert.False(t, ok)
+	assert.Empty(t, policies)
+}
+
+func TestReadCachedPolicies_CorruptFileReturnsOkFalse(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `not json`)
+	policies, ok := readCachedPolicies(path)
+	assert.False(t, ok)
+	assert.Empty(t, policies)
+}
+
+func TestReadCachedPolicies_ValidEmptyListReturnsOkTrue(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[]`)
+	policies, ok := readCachedPolicies(path)
+	assert.True(t, ok)
+	assert.Empty(t, policies)
+}
+
 func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
@@ -69,8 +92,9 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, conf)
 
+	require.True(t, ok)
 	require.Len(t, tasks, 2)
 	ids := []string{tasks[0].ID, tasks[1].ID}
 	assert.Contains(t, ids, "backup:daily-db-backup:/var/lib/postgres")
@@ -89,8 +113,9 @@ func TestBackupTasks_TaskArgsMatchBrfsShape(t *testing.T) {
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, conf)
 
+	require.True(t, ok)
 	require.Len(t, tasks, 1)
 	task := tasks[0]
 	assert.Equal(t, "brfs", task.Binary)
@@ -113,7 +138,8 @@ func TestBackupTasks_DueRequiresBothWindowOpenAndRpoElapsed(t *testing.T) {
 		"destination": "bwfs:8080"
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, conf)
+	require.True(t, ok)
 	require.Len(t, tasks, 1)
 	task := tasks[0]
 
@@ -138,7 +164,8 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 		"destination": "bwfs:8080"
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, conf)
+	require.True(t, ok)
 	require.Len(t, tasks, 2)
 
 	windowOpenTime := time.Date(2026, 7, 4, 2, 10, 0, 0, time.UTC)
@@ -168,7 +195,9 @@ func TestBackupTasks_UnparseableRpoSkipsPolicyEntirely(t *testing.T) {
 		"destination": "bwfs:8080"
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	assert.Empty(t, backupTasks(path, conf))
+	tasks, ok := backupTasks(path, conf)
+	assert.True(t, ok, "the file itself was still validly read")
+	assert.Empty(t, tasks)
 }
 
 func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
@@ -181,12 +210,25 @@ func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
 		"destination": "bwfs:8080"
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	assert.Empty(t, backupTasks(path, conf))
+	tasks, ok := backupTasks(path, conf)
+	assert.True(t, ok)
+	assert.Empty(t, tasks)
 }
 
-func TestBackupTasks_MissingCacheFileYieldsNoTasks(t *testing.T) {
+func TestBackupTasks_MissingCacheFileReturnsOkFalseWithNoTasks(t *testing.T) {
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	assert.Empty(t, backupTasks(filepath.Join(t.TempDir(), "does-not-exist.json"), conf))
+	tasks, ok := backupTasks(filepath.Join(t.TempDir(), "does-not-exist.json"), conf)
+	assert.False(t, ok)
+	assert.Empty(t, tasks)
+}
+
+func TestBackupTasks_CorruptCacheFileReturnsOkFalseWithNoTasks(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `not json`)
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	tasks, ok := backupTasks(path, conf)
+	assert.False(t, ok)
+	assert.Empty(t, tasks)
 }
 
 func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
@@ -198,8 +240,12 @@ func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
 		"name": "p", "object_filters": ["/data"], "rpo": "1h",
 		"backup_window": ["0 2 * * *"], "destination": "bwfs:8080"
 	}]`), 0o644))
-	require.Len(t, backupTasks(cachePath, conf), 1)
+	tasks, ok := backupTasks(cachePath, conf)
+	require.True(t, ok)
+	require.Len(t, tasks, 1)
 
 	require.NoError(t, os.WriteFile(cachePath, []byte(`[]`), 0o644))
-	assert.Empty(t, backupTasks(cachePath, conf))
+	tasks, ok = backupTasks(cachePath, conf)
+	assert.True(t, ok, "an empty-but-valid file is still a confirmed-good read")
+	assert.Empty(t, tasks)
 }

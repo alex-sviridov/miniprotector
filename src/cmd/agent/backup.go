@@ -28,20 +28,22 @@ type cachedPolicy struct {
 	Destination   string   `json:"destination"`
 }
 
-// readCachedPolicies reads policiesCachePath, returning nil (never an
-// error) if the file is missing or unparseable -- the same fail-safe
-// direction used throughout this codebase: on any doubt, assume there is
-// nothing to do yet.
-func readCachedPolicies(policiesCachePath string) []cachedPolicy {
+// readCachedPolicies reads policiesCachePath, returning ok=false if the
+// file is missing or unparseable -- distinct from a confirmed-good read
+// that happens to list zero policies (ok=true, nil slice). Callers that
+// prune state derived from this list (see reconcile.go's prune) rely on
+// this distinction: a transient read failure must never be mistaken for
+// "every policy was removed."
+func readCachedPolicies(policiesCachePath string) ([]cachedPolicy, bool) {
 	data, err := os.ReadFile(policiesCachePath)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var policies []cachedPolicy
 	if err := json.Unmarshal(data, &policies); err != nil {
-		return nil
+		return nil, false
 	}
-	return policies
+	return policies, true
 }
 
 // parseSchedules parses each cron expression independently -- one
@@ -132,17 +134,26 @@ func backupJobID(policyName, path string, now time.Time) string {
 // serve's reconcile loop) must call this fresh every tick rather than
 // caching its result once.
 //
+// The second return value is ok=false whenever the underlying read
+// failed (see readCachedPolicies) -- callers must treat that as "this
+// tick's view is untrustworthy," never as "there are zero tasks."
+//
 // A policy with an unparseable rpo, or with no valid backup_window
 // schedule at all, contributes no tasks -- there is no sound due-check
 // that could be built for it, so skipping entirely (rather than running
 // on a guess) is the fail-safe choice. A missing/invalid destination is
 // not checked here: the task is still built, and simply fails at brfs
 // exec time like any other exec failure (see reconcile.go).
-func backupTasks(policiesCachePath string, conf *config.Config) []Policy {
+func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool) {
 	grace := time.Duration(conf.BackupWindowGraceSec) * time.Second
 
+	cachedPolicies, ok := readCachedPolicies(policiesCachePath)
+	if !ok {
+		return nil, false
+	}
+
 	var tasks []Policy
-	for _, p := range readCachedPolicies(policiesCachePath) {
+	for _, p := range cachedPolicies {
 		rpo, err := time.ParseDuration(p.RPO)
 		if err != nil {
 			continue
@@ -168,5 +179,5 @@ func backupTasks(policiesCachePath string, conf *config.Config) []Policy {
 			})
 		}
 	}
-	return tasks
+	return tasks, true
 }
