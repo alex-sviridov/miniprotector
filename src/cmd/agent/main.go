@@ -48,8 +48,12 @@ func main() {
 	// backup tasks derived from policies-cache.json -- called fresh every
 	// reconcile tick (not resolved once here) so agent serve notices
 	// policy-update's cache changing over time without needing a restart.
-	policiesFunc := func() []Policy {
-		return append(policies(conf), backupTasks(policiesCachePath, conf)...)
+	// ok is false whenever backupTasks's own read of policies-cache.json
+	// failed this tick -- see reconcile.go's prune, which must not treat a
+	// failed read as "every backup task was removed."
+	policiesFunc := func() ([]Policy, bool) {
+		tasks, ok := backupTasks(policiesCachePath, conf)
+		return append(policies(conf), tasks...), ok
 	}
 
 	switch arguments.Action {
@@ -78,7 +82,8 @@ func main() {
 		}
 
 	case "list-policies":
-		if err := renderPolicies(os.Stdout, cachePath, time.Now(), policiesFunc()); err != nil {
+		allPolicies, _ := policiesFunc()
+		if err := renderPolicies(os.Stdout, cachePath, time.Now(), allPolicies); err != nil {
 			fmt.Fprintf(os.Stderr, "list-policies failed: %v\n", err)
 			os.Exit(1)
 		}

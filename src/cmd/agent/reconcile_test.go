@@ -133,7 +133,7 @@ func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, func() []Policy { return testPolicies }, 2)
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, fr.callCount(), "a healthy 1-hour-interval policy must not re-trigger within the test window")
@@ -159,7 +159,7 @@ func TestRun_FailedExecutionRecordsFailureAndRetriesAfterBackoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run, func() []Policy { return testPolicies }, 2)
+	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2)
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, fr.callCount(), 2, "must retry after the backoff window elapses")
@@ -223,7 +223,7 @@ func TestRun_BackgroundPolicyDoesNotBlockSyncPolicyInSameTick(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, blockingRunner, func() []Policy { return testPolicies }, 2)
+		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 2)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -274,7 +274,7 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() []Policy { return testPolicies }, 1)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 1)
 	}()
 
 	<-entered
@@ -313,7 +313,7 @@ func TestRun_SamePolicyNotRedispatchedWhileStillInFlight(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() []Policy { return testPolicies }, 5)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 5)
 	}()
 
 	<-entered
@@ -342,7 +342,7 @@ func TestRun_BackgroundExecReceivesCancelledContextOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() []Policy { return testPolicies }, 2)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 2)
 	}()
 
 	time.Sleep(20 * time.Millisecond) // let the background goroutine launch and block on ctx.Done()
@@ -375,4 +375,145 @@ func TestRealExec_ContextCancellationKillsProcess(t *testing.T) {
 		t.Fatal("realExec did not terminate promptly after context cancellation")
 	}
 	assert.Less(t, time.Since(start), 2*time.Second, "sleep 5 should have been killed well before its natural completion")
+}
+
+func TestPrune_RemovesEntryNotInCurrentIDs(t *testing.T) {
+	dir := t.TempDir()
+	rs := &reconcileState{
+		cachePath: filepath.Join(dir, "agent-state.json"),
+		cache: Cache{
+			"backup:p:/a": {ConsecutiveFailures: 1},
+			"backup:p:/b": {ConsecutiveFailures: 0},
+		},
+		logger: testLogger(),
+	}
+
+	rs.prune(map[string]struct{}{"backup:p:/a": {}})
+
+	assert.Contains(t, rs.cache, "backup:p:/a")
+	assert.NotContains(t, rs.cache, "backup:p:/b")
+
+	onDisk, err := readCache(rs.cachePath)
+	require.NoError(t, err)
+	assert.NotContains(t, onDisk, "backup:p:/b", "prune must persist the removal")
+}
+
+func TestPrune_NoWriteWhenNothingRemoved(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+	rs := &reconcileState{
+		cachePath: cachePath,
+		cache:     Cache{"backup:p:/a": {ConsecutiveFailures: 1}},
+		logger:    testLogger(),
+	}
+
+	rs.prune(map[string]struct{}{"backup:p:/a": {}})
+
+	_, err := os.Stat(cachePath)
+	assert.True(t, os.IsNotExist(err), "prune must not write the cache file when nothing changed")
+}
+
+func TestRun_PrunesOrphanedEntryOnConfirmedGoodTick(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+	require.NoError(t, writeCache(cachePath, Cache{
+		"orphaned": {ConsecutiveFailures: 2},
+	}))
+
+	testPolicies := []Policy{{ID: "current", Binary: "true", Interval: time.Hour}}
+	fr := &fakeRunner{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run,
+		func() ([]Policy, bool) { return testPolicies, true }, 2)
+	require.NoError(t, err)
+
+	cache, err := readCache(cachePath)
+	require.NoError(t, err)
+	assert.NotContains(t, cache, "orphaned")
+	assert.Contains(t, cache, "current")
+}
+
+func TestRun_SkipsPruneWhenPoliciesFuncReportsNotOk(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+	require.NoError(t, writeCache(cachePath, Cache{
+		"stale": {ConsecutiveFailures: 2},
+	}))
+
+	fr := &fakeRunner{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	// ok=false every tick, mirroring a persistently unreadable
+	// policies-cache.json -- "stale" must survive untouched.
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run,
+		func() ([]Policy, bool) { return nil, false }, 2)
+	require.NoError(t, err)
+
+	cache, err := readCache(cachePath)
+	require.NoError(t, err)
+	assert.Contains(t, cache, "stale", "a not-ok tick must never prune")
+}
+
+// TestRun_PruneRaceResurrectedEntryPrunedAgainNextTick exercises the
+// "accepted race" documented in the design: a task's cache entry, pruned
+// while that task's own previous-tick run is still in flight, is
+// resurrected by recordOutcome once the run completes (it writes
+// unconditionally by ID) -- and, if the task is genuinely gone, gets
+// pruned again on the next confirmed-good tick. Uses the same fake
+// blocking-runner pattern as TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs.
+func TestRun_PruneRaceResurrectedEntryPrunedAgainNextTick(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+
+	old := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, writeCache(cachePath, Cache{
+		"slow-backup": {LastSuccessAt: &old},
+	}))
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	blockingRunner := func(ctx context.Context, binary string, args []string) error {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		return nil
+	}
+
+	var mu sync.Mutex
+	removed := false
+	policiesFunc := func() ([]Policy, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if removed {
+			return nil, true
+		}
+		return []Policy{{ID: "slow-backup", Binary: "slow", Interval: time.Hour, Background: true}}, true
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, policiesFunc, 2)
+	}()
+
+	<-entered // dispatched while "slow-backup" was still present in the policy list
+
+	mu.Lock()
+	removed = true
+	mu.Unlock()
+
+	time.Sleep(20 * time.Millisecond) // let several ticks prune the now-absent entry while the run is still in flight
+	close(release)                    // let the in-flight run complete; recordOutcome resurrects the entry
+	time.Sleep(20 * time.Millisecond) // let at least one more tick prune it again
+	cancel()
+	<-done
+
+	cache, err := readCache(cachePath)
+	require.NoError(t, err)
+	assert.NotContains(t, cache, "slow-backup", "resurrected entry must be pruned again on the next confirmed-good tick")
 }

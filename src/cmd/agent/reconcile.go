@@ -157,6 +157,31 @@ func (rs *reconcileState) recordOutcome(id string, attemptErr error, attemptTime
 	}
 }
 
+// prune removes any cache entry whose ID isn't present in currentIDs --
+// called once per reconcile tick, only when that tick's policy list came
+// from a confirmed-good read (run passes ok from policiesFunc), so a
+// transient unreadable policies-cache.json can never be mistaken for
+// "every backup task was removed" and wipe live backoff/RPO history for
+// tasks that are still current.
+func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+
+	changed := false
+	for id := range rs.cache {
+		if _, ok := currentIDs[id]; !ok {
+			delete(rs.cache, id)
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if err := writeCache(rs.cachePath, rs.cache); err != nil {
+		rs.logger.Error("failed to persist cache after prune", "error", err)
+	}
+}
+
 // run polls policiesFunc() every reconcileInterval, executing and
 // recording the outcome of any policy isDue reports as due. A due policy
 // with Background == false runs synchronously, exactly as before this
@@ -168,7 +193,7 @@ func (rs *reconcileState) recordOutcome(id string, attemptErr error, attemptTime
 // goroutine it launched has finished (each one's execute call receives
 // the same ctx, so a context-respecting runner like realExec terminates
 // rather than being orphaned).
-func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() []Policy, maxConcurrentBackgroundJobs int) error {
+func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
@@ -180,7 +205,16 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 
 	for ctx.Err() == nil {
 		now := time.Now()
-		for _, p := range policiesFunc() {
+		policyList, ok := policiesFunc()
+		if ok {
+			currentIDs := make(map[string]struct{}, len(policyList))
+			for _, p := range policyList {
+				currentIDs[p.ID] = struct{}{}
+			}
+			rs.prune(currentIDs)
+		}
+
+		for _, p := range policyList {
 			state := rs.get(p.ID)
 			if !isDue(p, state, now) {
 				continue
