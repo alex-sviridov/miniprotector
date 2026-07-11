@@ -517,3 +517,35 @@ func TestRun_PruneRaceResurrectedEntryPrunedAgainNextTick(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, cache, "slow-backup", "resurrected entry must be pruned again on the next confirmed-good tick")
 }
+
+func TestRecordOutcome_SetsLastErrorOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+
+	rs.recordOutcome("p", errors.New("boom"), time.Now())
+
+	assert.Equal(t, "boom", rs.cache["p"].LastError)
+}
+
+func TestRecordOutcome_ClearsLastErrorOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	rs := &reconcileState{
+		cachePath: filepath.Join(dir, "agent-state.json"),
+		cache:     Cache{"p": {LastError: "boom"}},
+		logger:    testLogger(),
+	}
+
+	rs.recordOutcome("p", nil, time.Now())
+
+	assert.Empty(t, rs.cache["p"].LastError)
+}
+
+func TestRecordOutcome_LastErrorReflectsMostRecentFailure(t *testing.T) {
+	dir := t.TempDir()
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+
+	rs.recordOutcome("p", errors.New("first failure"), time.Now())
+	rs.recordOutcome("p", errors.New("second failure"), time.Now())
+
+	assert.Equal(t, "second failure", rs.cache["p"].LastError)
+}

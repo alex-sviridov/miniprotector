@@ -19,6 +19,7 @@ type PolicyState struct {
 	LastAttemptAt       *time.Time `json:"last_attempt_at"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
 	NextRetryAt         *time.Time `json:"next_retry_at,omitempty"`
+	LastError           string     `json:"last_error,omitempty"`
 }
 
 // Cache is keyed by Policy.ID and persisted as one JSON file.

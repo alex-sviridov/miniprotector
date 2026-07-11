@@ -144,10 +144,12 @@ func (rs *reconcileState) recordOutcome(id string, attemptErr error, attemptTime
 		state.LastSuccessAt = &attemptTime
 		state.ConsecutiveFailures = 0
 		state.NextRetryAt = nil
+		state.LastError = ""
 	} else {
 		state.ConsecutiveFailures++
 		retryAt := attemptTime.Add(backoff(state.ConsecutiveFailures))
 		state.NextRetryAt = &retryAt
+		state.LastError = attemptErr.Error()
 		rs.logger.Error("policy execution failed", "policy", id, "error", attemptErr)
 	}
 	rs.cache[id] = state
