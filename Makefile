@@ -158,7 +158,7 @@ control-plane-up: ## Initialize (if needed) and start the control-plane stack (c
 	@cd $(CONTROL_PLANE_DIR) && docker compose up -d
 	@echo -e "$(GREEN)Control plane up.$(NC) ca: https://localhost:9000  catalog: localhost:15723"
 
-demo-up: ## Bring up the self-contained demo lab (ca + issuer + catalog + client + store)
+demo-up: ## Bring up the self-contained demo lab (ca + issuer + catalog + policy-server + database + webserver + store)
 	@./demo/up.sh
 
 demo-down: ## Tear down the demo lab and wipe all its volumes

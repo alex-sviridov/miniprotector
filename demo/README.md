@@ -1,11 +1,12 @@
 # Demo Lab Environment
 
-A self-contained `docker compose` stack — CA, `issuer`, `catalog`, and two backup-capable nodes
-(`client`, `store`) — mutually enrolled via mTLS, brought up with one script. Unlike
-[`deploy/control-plane`](../deploy/control-plane/README.md), this never touches your host
-filesystem beyond this directory: every secret and every byte of state lives in Docker-managed
-named volumes, and no port is published to the host. Everything is reached via `docker compose
-exec`.
+A self-contained `docker compose` stack — CA, `issuer`, `catalog`, `policy-server`, and three
+backup-capable nodes (`database`, `webserver`, `store`) — mutually enrolled via mTLS, brought up
+with one script. Unlike [`deploy/control-plane`](../deploy/control-plane/README.md), this never
+touches your host filesystem beyond this directory (except `demo/policy-server/policies/`, which
+you're meant to edit — see "Backup policies" below): every secret and every byte of state lives in
+Docker-managed named volumes, and no port is published to the host. Everything is reached via
+`docker compose exec`.
 
 ## Bring it up
 
@@ -13,22 +14,63 @@ exec`.
 make demo-up
 ```
 
-Equivalent to `./demo/up.sh` directly. Builds all six images, brings up `ca` and `issuer` first,
-then mints and redeems an enrollment token for `catalog`, `policy-server`, `client`, and `store` in
-turn (skipping re-minting on a re-run against an already-enrolled node).
+Equivalent to `./demo/up.sh` directly. Builds all seven images, brings up `ca` and `issuer` first,
+then mints and redeems an enrollment token for `catalog`, `policy-server`, `database`, `webserver`,
+and `store` in turn (skipping re-minting on a re-run against an already-enrolled node). `webserver`
+is additionally tagged with the attribute `role=web`, used by one of the example backup policies
+below.
 
 ## Try it
 
 ```bash
-docker compose -f demo/docker-compose.yml exec client ./brfs /data/sample-data --destination store:8080
-docker compose -f demo/docker-compose.yml exec client ./rwfs list store:8080
-docker compose -f demo/docker-compose.yml exec client ./rwfs verify store:8080
+docker compose -f demo/docker-compose.yml exec database ./brfs /var/lib/dbdata --destination store:8080
+docker compose -f demo/docker-compose.yml exec database ./rwfs list store:8080
+docker compose -f demo/docker-compose.yml exec database ./rwfs verify store:8080
 docker compose -f demo/docker-compose.yml logs -f store          # watch bwfs receive + catalogsync replicate
 docker compose -f demo/docker-compose.yml exec catalog sqlite3 /data/storage/catalog.db "select * from entry_records;"
+```
+
+## Backup policies
+
+`policy-server` ships with three example policies (`demo/policy-server/policies/`), each
+demonstrating a different way `client_filters` can select clients:
+
+| Policy | Selects | Backs up |
+|---|---|---|
+| `audit-logs` | `database` and `webserver`, by explicit hostname list | `/var/log/audit` |
+| `database-backup` | `database`, by hostname | `/var/lib/dbdata` |
+| `webserver-backup` | any client labeled `role=web` (only `webserver`, here) | `/var/www/html` |
+
+Confirm each node resolves the policies meant for it (`catalog`, `policy-server`, and `store` run
+`policy-update` too, like every `agent`-managed node, but match none of these three policies — their
+own `list-policies` output is still worth checking, just to confirm the job itself is succeeding
+rather than failing on a missing `policy_server_host`):
+
+```bash
 docker compose -f demo/docker-compose.yml exec catalog ./agent list-policies
 docker compose -f demo/docker-compose.yml exec policy-server ./agent list-policies
-docker compose -f demo/docker-compose.yml exec client ./agent list-policies
+docker compose -f demo/docker-compose.yml exec database ./agent list-policies
+docker compose -f demo/docker-compose.yml exec webserver ./agent list-policies
 docker compose -f demo/docker-compose.yml exec store ./agent list-policies
+```
+
+`database` should show `audit-logs` and `database-backup`; `webserver` should show `audit-logs` and
+`webserver-backup`. Every policy's `backup_window` is hourly, so within `agent`'s own reconcile
+loop a due backup runs for real shortly after enrollment — watch one land:
+
+```bash
+docker compose -f demo/docker-compose.yml logs -f database
+docker compose -f demo/docker-compose.yml exec catalog sqlite3 /data/storage/catalog.db "select * from entry_records;"
+```
+
+Edit a policy and watch it reload live. `policy-server` watches one sentinel file,
+`policies/.changed` — any write to it triggers a full reload of every `*.json` file under
+`policies/`, so a multi-file edit reloads atomically instead of file-by-file:
+
+```bash
+docker compose -f demo/docker-compose.yml exec policy-server sh -c \
+  "sed -i 's/1h/30m/' /data/policies/database-backup.json && touch /data/policies/.changed"
+docker compose -f demo/docker-compose.yml logs policy-server | tail -5   # confirm the reload log line
 ```
 
 ## Revoke, and watch mesh access lapse without losing identity

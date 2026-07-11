@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-11 — Policy server consumer wiring and demo content
+
+`policy_server_host` — missing from every `local.conf` since `policy-update` shipped, silently
+failing that job every reconcile cycle everywhere — is now set in `demo/local.conf` and both
+`deploy/control-plane/catalog/local.conf` and `deploy/control-plane/policy-server/local.conf`. The
+demo lab's single generic `client` node is renamed to `database` and a new `webserver` node
+(labeled `role=web`) joins it; `policy-server` ships with three example policies covering every
+`client_filters` selection mechanism (explicit multi-hostname, single hostname, label) against
+themed fixture content (`/var/log/audit`, `/var/lib/dbdata`, `/var/www/html`).
+
 ## 2026-07-11 — Agent backup state hygiene: pruning and last-error tracking
 
 `agent-state.json` entries for backup tasks whose policy or path has been removed from
