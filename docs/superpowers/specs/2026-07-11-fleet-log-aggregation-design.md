@@ -56,6 +56,12 @@ pipeline reads from continuously.
   different from the trust already extended to any enrolled, non-revoked node.
 - **No HA for Loki or the new `log-gateway` component.** Single instance each, the same accepted
   trade-off `issuer`'s design made for its own listening service.
+- **No per-job debug-level control.** Today's `--debug` flag toggles debug logging for an entire
+  process; there's no way to request verbose logging for one specific troublesome `job_id` (e.g.
+  one flaky backup task) without turning on debug output for every invocation of that binary
+  fleet-wide. A future mechanism — `agent` recognizing some per-job debug request and passing an
+  elevated log level to just that one exec — is worth exploring later; deferred here, noted so it
+  isn't lost.
 - **No in-application TLS hot-reload for the log shipper.** Confirmed against Grafana's own docs
   and Prometheus's long-standing, still-open behavior (both `loki.write`'s underlying HTTP client
   config and Prometheus's identical lineage): reloading configuration does not reliably reload an
