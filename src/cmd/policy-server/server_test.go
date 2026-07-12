@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -28,11 +29,12 @@ import (
 // exported from common/mtls.
 var attributeExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 1}
 
-// fakeAuthContext mirrors cmd/catalog/server_test.go's and cmd/issuer/
-// server_test.go's helper of the same name: a self-signed cert with the
-// given hostname as its SAN and attributes as its embedded extension,
-// simulating a verified mTLS peer identity without a real handshake.
-func fakeAuthContext(t *testing.T, hostname string, attrs map[string]string) context.Context {
+// peerCertContext builds a context carrying only a verified mTLS peer
+// certificate (with attrs as its embedded extension) for hostname, with no
+// gRPC metadata attached. fakeAuthContext (below) layers job-id metadata
+// on top for the common case; TestGetPolicies_MissingJobIDRejected uses
+// this directly to exercise the "no job-id metadata at all" path.
+func peerCertContext(t *testing.T, hostname string, attrs map[string]string) context.Context {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -62,6 +64,14 @@ func fakeAuthContext(t *testing.T, hostname string, attrs map[string]string) con
 			State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}},
 		},
 	})
+}
+
+// fakeAuthContext mirrors cmd/catalog/server_test.go's helper of the same
+// name, plus job-id metadata every GetPolicies test needs by default now
+// that it's required.
+func fakeAuthContext(t *testing.T, hostname string, attrs map[string]string) context.Context {
+	t.Helper()
+	return metadata.NewIncomingContext(peerCertContext(t, hostname, attrs), metadata.Pairs("job-id", "test-job-id"))
 }
 
 func newTestServerWithPolicies(t *testing.T, dir string) *policyServerServer {
@@ -119,6 +129,18 @@ func TestGetPolicies_NoPeerIdentityRejected(t *testing.T) {
 	srv := newTestServerWithPolicies(t, dir)
 
 	_, err := srv.GetPolicies(context.Background(), &pb.GetPoliciesRequest{})
+	assert.Error(t, err)
+}
+
+func TestGetPolicies_MissingJobIDRejected(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	_, err := srv.GetPolicies(peerCertContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
 	assert.Error(t, err)
 }
 

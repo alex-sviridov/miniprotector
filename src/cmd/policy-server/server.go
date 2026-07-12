@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -30,9 +31,16 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 		s.logger.Error("GetPolicies: could not determine peer identity", "error", err)
 		return nil, err
 	}
+
+	jobID, err := jobid.FromIncoming(ctx)
+	if err != nil {
+		s.logger.Error("GetPolicies: job-id metadata required", "hostname", hostname, "error", err)
+		return nil, err
+	}
+
 	labels, err := mtls.PeerAttributes(ctx)
 	if err != nil {
-		s.logger.Error("GetPolicies: could not read peer attributes", "hostname", hostname, "error", err)
+		s.logger.Error("GetPolicies: could not read peer attributes", "hostname", hostname, "job_id", jobID, "error", err)
 		return nil, err
 	}
 
@@ -44,7 +52,7 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 		matched = append(matched, toProtoPolicy(p))
 	}
 
-	s.logger.Info("GetPolicies", "hostname", hostname, "matched", len(matched))
+	s.logger.Info("GetPolicies", "hostname", hostname, "job_id", jobID, "matched", len(matched))
 	return &pb.GetPoliciesResponse{Policies: matched}, nil
 }
 
