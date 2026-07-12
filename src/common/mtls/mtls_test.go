@@ -377,3 +377,37 @@ func TestLoadIssuerServerCredentials_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, creds)
 }
+
+func TestServerTLSConfig_AcceptsOperatingPeerCert(t *testing.T) {
+	ca, caKey := generateTestCA(t)
+	serverIdentity := generateTestLeaf(t, ca, caKey, "tier-test-server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, nil)
+	dir := writeTestCertsDir(t, ca, serverIdentity)
+
+	cfg, err := ServerTLSConfig(dir)
+	require.NoError(t, err)
+	addr := startListener(t, cfg)
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+	operatingLikeCert := generateTestLeaf(t, ca, caKey, "peer", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil)
+
+	err = dial(addr, peerConfig(caPool, operatingLikeCert))
+	assert.NoError(t, err, "an operating-tier peer cert must be accepted")
+}
+
+func TestServerTLSConfig_RejectsIssuerCallerPeerCert(t *testing.T) {
+	ca, caKey := generateTestCA(t)
+	serverIdentity := generateTestLeaf(t, ca, caKey, "tier-test-server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, nil)
+	dir := writeTestCertsDir(t, ca, serverIdentity)
+
+	cfg, err := ServerTLSConfig(dir)
+	require.NoError(t, err)
+	addr := startListener(t, cfg)
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+	bootstrapLikeCert := generateTestLeaf(t, ca, caKey, "peer", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, []asn1.ObjectIdentifier{oidEKUIssuerCaller})
+
+	err = dial(addr, peerConfig(caPool, bootstrapLikeCert))
+	assert.Error(t, err, "a peer cert carrying EKUIssuerCaller must be rejected by ServerTLSConfig, same as LoadServerCredentials")
+}

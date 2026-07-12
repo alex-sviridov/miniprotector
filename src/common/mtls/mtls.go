@@ -247,6 +247,16 @@ func LoadIssuerServerCredentials(certsDir string) (credentials.TransportCredenti
 	return credentials.NewTLS(cfg), nil
 }
 
+// ServerTLSConfig returns the raw operating-tier *tls.Config
+// LoadServerCredentials wraps into gRPC transport credentials -- for a
+// server built directly on net/http.Server (like log-gateway) instead of
+// gRPC. Same tier enforcement (rejects a bootstrap/issuer-caller peer
+// cert) and the same per-handshake certificate reload every gRPC server's
+// credentials already get from serverTLSConfigForTier.
+func ServerTLSConfig(certsDir string) (*tls.Config, error) {
+	return serverTLSConfigForTier(certsDir, requireOperatingTier)
+}
+
 // LoadClientCredentialsWithIdentity is LoadClientCredentials, parameterized
 // on which cert/key filenames to load -- used by callers presenting an
 // identity other than the standard client.crt/client.key pair (e.g.

@@ -173,3 +173,31 @@ func TestPeerAttributes_NoPeerInContext(t *testing.T) {
 	_, err := PeerAttributes(context.Background())
 	assert.Error(t, err)
 }
+
+func TestPeerHostnameFromConnState_ReturnsFirstSAN(t *testing.T) {
+	cert := loadFixtureCert(t, fixtureCertsDir+"/client.crt")
+	state := &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+
+	host, err := PeerHostnameFromConnState(state)
+	require.NoError(t, err)
+	assert.Equal(t, "bwfs.internal", host)
+}
+
+func TestPeerHostnameFromConnState_FallsBackToCommonName(t *testing.T) {
+	cert := selfSignedCertNoSAN(t, "cn-only-node")
+	state := &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+
+	host, err := PeerHostnameFromConnState(state)
+	require.NoError(t, err)
+	assert.Equal(t, "cn-only-node", host)
+}
+
+func TestPeerHostnameFromConnState_NilState(t *testing.T) {
+	_, err := PeerHostnameFromConnState(nil)
+	assert.Error(t, err)
+}
+
+func TestPeerHostnameFromConnState_NoPeerCertificates(t *testing.T) {
+	_, err := PeerHostnameFromConnState(&tls.ConnectionState{})
+	assert.Error(t, err)
+}

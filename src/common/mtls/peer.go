@@ -2,6 +2,8 @@ package mtls
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/asn1"
 	"encoding/json"
 	"fmt"
@@ -9,6 +11,21 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 )
+
+// hostnameFromCert extracts the verified hostname identity from cert: the
+// first SAN entry, falling back to the Subject CommonName if no SAN is
+// present. Shared by PeerHostname (gRPC) and PeerHostnameFromConnState
+// (plain net/http, e.g. log-gateway) so both transports apply the exact
+// same identity rule.
+func hostnameFromCert(cert *x509.Certificate) (string, error) {
+	if len(cert.DNSNames) > 0 {
+		return cert.DNSNames[0], nil
+	}
+	if cert.Subject.CommonName != "" {
+		return cert.Subject.CommonName, nil
+	}
+	return "", fmt.Errorf("peer certificate has no SAN or CommonName")
+}
 
 // PeerHostname extracts the verified hostname identity from the client
 // certificate presented on ctx's gRPC peer connection: the first SAN entry,
@@ -28,14 +45,19 @@ func PeerHostname(ctx context.Context) (string, error) {
 	if len(tlsInfo.State.PeerCertificates) == 0 {
 		return "", fmt.Errorf("no peer certificate presented")
 	}
-	cert := tlsInfo.State.PeerCertificates[0]
-	if len(cert.DNSNames) > 0 {
-		return cert.DNSNames[0], nil
+	return hostnameFromCert(tlsInfo.State.PeerCertificates[0])
+}
+
+// PeerHostnameFromConnState is PeerHostname's plain-HTTP equivalent, for a
+// server (like log-gateway) that terminates TLS via net/http.Server
+// directly rather than gRPC. Same identity rule as PeerHostname: the first
+// SAN entry, falling back to Subject CommonName. state is typically an
+// *http.Request's own TLS field.
+func PeerHostnameFromConnState(state *tls.ConnectionState) (string, error) {
+	if state == nil || len(state.PeerCertificates) == 0 {
+		return "", fmt.Errorf("no peer certificate presented")
 	}
-	if cert.Subject.CommonName != "" {
-		return cert.Subject.CommonName, nil
-	}
-	return "", fmt.Errorf("peer certificate has no SAN or CommonName")
+	return hostnameFromCert(state.PeerCertificates[0])
 }
 
 // attributeExtensionOID identifies the custom X.509 extension issuer embeds
