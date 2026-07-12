@@ -31,3 +31,35 @@ func TestResolveVectorBinary_MissingBinaryFailsLoudly(t *testing.T) {
 	_, err := resolveVectorBinaryIn(dir)
 	assert.Error(t, err, "must fail loudly, never fall back to $PATH")
 }
+
+func TestRenderVectorConfig_IncludesLogDirGlob(t *testing.T) {
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	require.NoError(t, err)
+	assert.Contains(t, got, `"/var/log/mp/*.log"`)
+}
+
+func TestRenderVectorConfig_PointsAtLogGatewayEndpoint(t *testing.T) {
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	require.NoError(t, err)
+	assert.Contains(t, got, "https://log-gateway.internal:9400")
+}
+
+func TestRenderVectorConfig_UsesCertsDirForTLS(t *testing.T) {
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	require.NoError(t, err)
+	assert.Contains(t, got, "/var/lib/mp/certs/client.crt")
+	assert.Contains(t, got, "/var/lib/mp/certs/client.key")
+	assert.Contains(t, got, "/var/lib/mp/certs/ca.crt")
+}
+
+func TestRenderVectorConfig_UsesVarDirForDataAndBuffer(t *testing.T) {
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	require.NoError(t, err)
+	assert.Contains(t, got, "/var/lib/mp/vector-data")
+}
+
+func TestRenderVectorConfig_NeverEnablesTheHTTPAPI(t *testing.T) {
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	require.NoError(t, err)
+	assert.NotContains(t, got, "api:", "must never enable Vector's own HTTP API/listener -- agent's own network footprint stays outbound-only")
+}
