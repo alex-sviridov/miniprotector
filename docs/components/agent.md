@@ -102,10 +102,14 @@ stable, rotated file per binary — not one file per invocation), and every exec
 now carries a `--job-id` (auto-generated per invocation if not explicitly set): `<policy-id>:
 <unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<timestamp>` for
 backup tasks (unchanged). That same job-id rides as outgoing gRPC metadata to whatever server the
-exec calls (`issuer` for `certclient`, `policy-server` for `policyclient`, `bwfs` for `brfs`), and
-each of those servers tags its own log lines with the identical value — so one job-id correlates
-`agent`'s own start/completion log line, the exec's local log file, and the corresponding log line
-on whichever remote host it called, end to end. `agent`'s own log
+exec calls (`issuer` for `certclient operating-refresh`, `policy-server` for `policyclient`, `bwfs`
+for `brfs`), and each of those servers tags its own log lines with the identical value — so one
+job-id correlates `agent`'s own start/completion log line, the exec's local log file, and the
+corresponding log line on whichever remote host it called, end to end. The `bootstrap-refresh`
+policy is the one exception: `certclient renew` talks to step-ca's stock `/renew` endpoint
+directly, not one of this project's own instrumented servers, so its job-id correlates `agent`'s
+own log and `certclient`'s local log only — there is no remote log line to find for it. `agent`'s
+own log
 (`<log_dir>/agent.log`) records a start and a completion line (success or failure, with exit code
 when available) for every dispatched exec, not just failures.
 
