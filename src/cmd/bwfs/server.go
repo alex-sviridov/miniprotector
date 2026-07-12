@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"github.com/alex-sviridov/miniprotector/storage"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
@@ -14,7 +15,6 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -42,25 +42,10 @@ func NewBackupServer(ctx context.Context, logger *slog.Logger, storagePath strin
 	}, nil
 }
 
-// jobIDFromMetadata reads the job-id gRPC metadata key that brfs attaches
-// when it opens each stream. There is no default: a stream without it is
-// rejected rather than silently treated as jobless.
-func jobIDFromMetadata(ctx context.Context) (string, error) {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return "", fmt.Errorf("no metadata in request")
-	}
-	values := md.Get("job-id")
-	if len(values) == 0 || values[0] == "" {
-		return "", fmt.Errorf("missing job-id metadata")
-	}
-	return values[0], nil
-}
-
 func (server *backupServer) ProcessBackupStream(stream pb.BackupService_ProcessBackupStreamServer) error {
 	ctx := stream.Context()
 
-	jobID, err := jobIDFromMetadata(ctx)
+	jobID, err := jobid.FromIncoming(ctx)
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "job-id metadata required: %v", err)
 	}

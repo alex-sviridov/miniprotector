@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"github.com/alex-sviridov/miniprotector/storage"
 
@@ -21,7 +22,7 @@ import (
 // two agree — the streams having closed is not, by itself, proof that
 // everything brfs intended to send actually arrived.
 func (server *backupServer) BackupCommit(ctx context.Context, req *pb.BackupCommitRequest) (*pb.BackupCommitResponse, error) {
-	jobID, err := jobIDFromMetadata(ctx)
+	jobID, err := jobid.FromIncoming(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "job-id metadata required: %v", err)
 	}

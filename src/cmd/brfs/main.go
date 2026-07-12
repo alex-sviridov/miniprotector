@@ -11,10 +11,9 @@ import (
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
-	"github.com/google/uuid"
-	"google.golang.org/grpc/metadata"
 
 	"os/signal"
 	"syscall"
@@ -60,12 +59,9 @@ func main() {
 	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
 	ctx = context.WithValue(ctx, common.HostnameContextKey, common.GetHostname())
 
-	jobID := arguments.JobID
-	if jobID == "" {
-		jobID = uuid.New().String()
-	}
+	jobID := jobid.Resolve(arguments.JobID)
 	ctx = context.WithValue(ctx, "jobId", jobID)
-	ctx = metadata.AppendToOutgoingContext(ctx, "job-id", jobID)
+	ctx = jobid.Outgoing(ctx, jobID)
 
 	// Initialize logger
 	logger, logfile := logging.NewLogger(ctx)
