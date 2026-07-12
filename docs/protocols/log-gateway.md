@@ -33,8 +33,9 @@ anywhere else in this project (see [Security Model](../SECURITY.md)).
 
 Whatever Loki's own push endpoint returns, proxied through unchanged (`204 No Content` on success,
 per Loki's own convention). `502 Bad Gateway` if Loki itself is unreachable. `401 Unauthorized` if
-no verified peer certificate was presented. `400 Bad Request` for a malformed body or the wrong
-HTTP method.
+no verified peer certificate was presented. `400 Bad Request` for a malformed body. `405 Method Not
+Allowed` for anything other than `POST`. `500 Internal Server Error` in the (expected-never)
+case where re-marshaling the rewritten body itself fails.
 
 ## See Also
 
