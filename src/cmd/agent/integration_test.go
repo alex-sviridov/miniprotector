@@ -52,7 +52,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr, policiesFunc, 2)
+	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr, policiesFunc, 2, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, "brfs", capturedBinary)

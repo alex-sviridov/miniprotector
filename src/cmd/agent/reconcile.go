@@ -224,7 +224,7 @@ func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
 // goroutine it launched has finished (each one's execute call receives
 // the same ctx, so a context-respecting runner like realExec terminates
 // rather than being orphaned).
-func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int) error {
+func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string)) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
@@ -271,6 +271,9 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 					attemptErr := execute(ctx, p.Binary, p.Args)
 					logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 					rs.recordOutcome(p.ID, attemptErr, time.Now())
+					if attemptErr == nil && onSuccess != nil {
+						onSuccess(p.ID)
+					}
 				}(p)
 				continue
 			}
@@ -280,6 +283,9 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 			attemptErr := execute(ctx, p.Binary, p.Args)
 			logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 			rs.recordOutcome(p.ID, attemptErr, now)
+			if attemptErr == nil && onSuccess != nil {
+				onSuccess(p.ID)
+			}
 		}
 
 		if !sleepOrDone(ctx, reconcileInterval) {
