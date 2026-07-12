@@ -2,14 +2,13 @@ package logging
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type multiHandler struct {
@@ -58,6 +57,14 @@ func (mh *multiHandler) WithGroup(name string) slog.Handler {
 	return newHandler
 }
 
+// nopCloser satisfies io.Closer with a no-op Close -- returned by NewLogger
+// when no file handler was created (log_dir unset or unwritable), so
+// callers can always safely `defer logfile.Close()` without risking a
+// nil-interface panic.
+type nopCloser struct{}
+
+func (nopCloser) Close() error { return nil }
+
 func getLevel(debugMode bool) slog.Level {
 	if debugMode {
 		return slog.LevelDebug
@@ -72,7 +79,7 @@ func NewLogger(ctx context.Context) (*slog.Logger, io.Closer) {
 	quietMode := ctx.Value("quietMode").(bool)
 	appName := ctx.Value("appName").(string)
 
-	var logFile *os.File
+	var logFile io.Closer = nopCloser{}
 	handler := &multiHandler{}
 
 	// Console output (logfmt format, only if not quiet)
@@ -89,17 +96,23 @@ func NewLogger(ctx context.Context) (*slog.Logger, io.Closer) {
 		})
 	}
 
-	// File output (JSON format, optional - don't fail if unavailable)
-	if conf.LogFolder != "" {
-		if err := os.MkdirAll(conf.LogFolder, 0755); err == nil {
-			filename := fmt.Sprintf("%s-%s.%d.log", appName, time.Now().Format("2006-01-02"), os.Getpid())
-			if file, err := os.OpenFile(filepath.Join(conf.LogFolder, filename), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
-				handler.fileHandler = slog.NewJSONHandler(file, &slog.HandlerOptions{
-					Level:     level,
-					AddSource: level == slog.LevelDebug,
-				})
-				logFile = file
+	// File output (JSON format): one stable, rotated file per binary name --
+	// <log_dir>/<appName>.log -- not one file per process invocation.
+	// Optional: don't fail startup if the directory is unavailable.
+	if conf.LogDir != "" {
+		if err := os.MkdirAll(conf.LogDir, 0755); err == nil {
+			ljLogger := &lumberjack.Logger{
+				Filename:   filepath.Join(conf.LogDir, appName+".log"),
+				MaxSize:    50, // megabytes
+				MaxBackups: 5,
+				MaxAge:     14, // days
+				Compress:   true,
 			}
+			handler.fileHandler = slog.NewJSONHandler(ljLogger, &slog.HandlerOptions{
+				Level:     level,
+				AddSource: level == slog.LevelDebug,
+			})
+			logFile = ljLogger
 		}
 	}
 
