@@ -82,7 +82,7 @@ func ResolveVarDir(cfg *Config) (string, error) {
 type Config struct {
 	DefaultPort                      int
 	DefaultStreams                   int
-	LogFolder                        string
+	LogDir                           string
 	ClientHashQueryBatchSize         int
 	ConnectionTimeOutSec             int
 	FileLockTimeoutSec               int
@@ -188,9 +188,9 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.DefaultStreams = streams
 			foundFields["default_streams"] = true
-		case "logfolder":
-			config.LogFolder = value
-			foundFields["logfolder"] = true
+		case "log_dir":
+			config.LogDir = value
+			foundFields["log_dir"] = true
 		case "ca_host":
 			config.CAHost = value
 			foundFields["ca_host"] = true
@@ -360,7 +360,7 @@ func ParseConfig(configPath string) (*Config, error) {
 	}
 
 	// Validate required fields
-	requiredFields := []string{"default_port", "default_streams", "logfolder"}
+	requiredFields := []string{"default_port", "default_streams", "log_dir"}
 	for _, field := range requiredFields {
 		if !foundFields[field] {
 			return nil, fmt.Errorf("missing required configuration field: %s", field)

@@ -53,7 +53,7 @@ func TestResolveCertsDir_JoinsBaseDirWithCerts(t *testing.T) {
 func TestParseConfig_CAHostOptional(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestParseConfig_CAHostOptional(t *testing.T) {
 func TestParseConfig_CAHostParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nca_host=ca.backup.internal:9000\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nca_host=ca.backup.internal:9000\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -74,7 +74,7 @@ func TestParseConfig_CAHostParsed(t *testing.T) {
 func TestParseConfig_JobTimeoutSecDefaultsTo30(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestParseConfig_JobTimeoutSecDefaultsTo30(t *testing.T) {
 func TestParseConfig_JobTimeoutSecParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nJobTimeoutSec=90\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nJobTimeoutSec=90\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -95,7 +95,7 @@ func TestParseConfig_JobTimeoutSecParsed(t *testing.T) {
 func TestParseConfig_CatalogSyncBatchSizeDefaultsTo500(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestParseConfig_CatalogSyncBatchSizeDefaultsTo500(t *testing.T) {
 func TestParseConfig_CatalogSyncBatchSizeParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nCatalogSyncBatchSize=250\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nCatalogSyncBatchSize=250\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -116,7 +116,7 @@ func TestParseConfig_CatalogSyncBatchSizeParsed(t *testing.T) {
 func TestParseConfig_CatalogSyncPollIntervalSecDefaultsTo5(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestParseConfig_CatalogSyncPollIntervalSecDefaultsTo5(t *testing.T) {
 func TestParseConfig_CatalogSyncPollIntervalSecParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nCatalogSyncPollIntervalSec=15\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nCatalogSyncPollIntervalSec=15\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -137,7 +137,7 @@ func TestParseConfig_CatalogSyncPollIntervalSecParsed(t *testing.T) {
 func TestParseConfig_CatalogSyncMaxBackoffSecDefaultsTo60(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestParseConfig_CatalogSyncMaxBackoffSecDefaultsTo60(t *testing.T) {
 func TestParseConfig_CatalogSyncMaxBackoffSecParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nCatalogSyncMaxBackoffSec=120\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nCatalogSyncMaxBackoffSec=120\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -158,7 +158,7 @@ func TestParseConfig_CatalogSyncMaxBackoffSecParsed(t *testing.T) {
 func TestParseConfig_CatalogHostOptional(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func TestParseConfig_CatalogHostOptional(t *testing.T) {
 func TestParseConfig_CatalogHostParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\ncatalog_host=catalog.backup.internal\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ncatalog_host=catalog.backup.internal\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -179,7 +179,7 @@ func TestParseConfig_CatalogHostParsed(t *testing.T) {
 func TestParseConfig_CatalogPortDefaultsTo15723(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestParseConfig_CatalogPortDefaultsTo15723(t *testing.T) {
 func TestParseConfig_CatalogPortParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\ncatalog_port=9443\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ncatalog_port=9443\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -200,7 +200,7 @@ func TestParseConfig_CatalogPortParsed(t *testing.T) {
 func TestParseConfig_VarPathOptional(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -210,7 +210,7 @@ func TestParseConfig_VarPathOptional(t *testing.T) {
 func TestParseConfig_VarPathParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nvar_path=/var/lib/miniprotector\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nvar_path=/var/lib/miniprotector\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -221,7 +221,7 @@ func TestParseConfig_VarPathParsed(t *testing.T) {
 func TestParseConfig_ReconcileIntervalSecDefaultsTo30(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
@@ -231,7 +231,7 @@ func TestParseConfig_ReconcileIntervalSecDefaultsTo30(t *testing.T) {
 func TestParseConfig_ReconcileIntervalSecParsed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nReconcileIntervalSec=15\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nReconcileIntervalSec=15\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -257,7 +257,7 @@ func TestResolveVarDir_DefaultsToExecutableDir(t *testing.T) {
 func TestParseConfig_IssuerHostParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nissuer_host=ca.backup.internal\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nissuer_host=ca.backup.internal\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -268,7 +268,7 @@ func TestParseConfig_IssuerHostParsesCorrectly(t *testing.T) {
 func TestParseConfig_IssuerPortDefaultsTo9200(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -279,7 +279,7 @@ func TestParseConfig_IssuerPortDefaultsTo9200(t *testing.T) {
 func TestParseConfig_IssuerPortParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nissuer_port=9300\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nissuer_port=9300\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -290,7 +290,7 @@ func TestParseConfig_IssuerPortParsesCorrectly(t *testing.T) {
 func TestParseConfig_OperatingCertTTLSecDefaultsTo3600(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -301,7 +301,7 @@ func TestParseConfig_OperatingCertTTLSecDefaultsTo3600(t *testing.T) {
 func TestParseConfig_OperatingCertTTLSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nOperatingCertTTLSec=1800\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nOperatingCertTTLSec=1800\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -312,7 +312,7 @@ func TestParseConfig_OperatingCertTTLSecParsesCorrectly(t *testing.T) {
 func TestParseConfig_BootstrapCertRefreshIntervalSecDefaultsTo86400(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -323,7 +323,7 @@ func TestParseConfig_BootstrapCertRefreshIntervalSecDefaultsTo86400(t *testing.T
 func TestParseConfig_BootstrapCertRefreshIntervalSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nBootstrapCertRefreshIntervalSec=43200\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nBootstrapCertRefreshIntervalSec=43200\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -334,7 +334,7 @@ func TestParseConfig_BootstrapCertRefreshIntervalSecParsesCorrectly(t *testing.T
 func TestParseConfig_BootstrapCertTTLSecDefaultsTo7776000(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -345,7 +345,7 @@ func TestParseConfig_BootstrapCertTTLSecDefaultsTo7776000(t *testing.T) {
 func TestParseConfig_BootstrapCertTTLSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nBootstrapCertTTLSec=2592000\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nBootstrapCertTTLSec=2592000\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -356,7 +356,7 @@ func TestParseConfig_BootstrapCertTTLSecParsesCorrectly(t *testing.T) {
 func TestParseConfig_OperatingCertFetchIntervalSecDefaultsTo900(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -367,7 +367,7 @@ func TestParseConfig_OperatingCertFetchIntervalSecDefaultsTo900(t *testing.T) {
 func TestParseConfig_OperatingCertFetchIntervalSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nOperatingCertFetchIntervalSec=300\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nOperatingCertFetchIntervalSec=300\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -378,7 +378,7 @@ func TestParseConfig_OperatingCertFetchIntervalSecParsesCorrectly(t *testing.T) 
 func TestParseConfig_IssuerSelfCertTTLSecDefaultsTo7776000(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -389,7 +389,7 @@ func TestParseConfig_IssuerSelfCertTTLSecDefaultsTo7776000(t *testing.T) {
 func TestParseConfig_IssuerSelfCertTTLSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nIssuerSelfCertTTLSec=2592000\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nIssuerSelfCertTTLSec=2592000\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -400,7 +400,7 @@ func TestParseConfig_IssuerSelfCertTTLSecParsesCorrectly(t *testing.T) {
 func TestParseConfig_IssuerSelfCertRefreshIntervalSecDefaultsTo86400(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -411,7 +411,7 @@ func TestParseConfig_IssuerSelfCertRefreshIntervalSecDefaultsTo86400(t *testing.
 func TestParseConfig_IssuerSelfCertRefreshIntervalSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nIssuerSelfCertRefreshIntervalSec=43200\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nIssuerSelfCertRefreshIntervalSec=43200\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -422,7 +422,7 @@ func TestParseConfig_IssuerSelfCertRefreshIntervalSecParsesCorrectly(t *testing.
 func TestParseConfig_PolicyServerHostParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\npolicy_server_host=policy.backup.internal\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\npolicy_server_host=policy.backup.internal\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -433,7 +433,7 @@ func TestParseConfig_PolicyServerHostParsesCorrectly(t *testing.T) {
 func TestParseConfig_PolicyServerPortDefaultsTo9300(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -444,7 +444,7 @@ func TestParseConfig_PolicyServerPortDefaultsTo9300(t *testing.T) {
 func TestParseConfig_PolicyServerPortParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\npolicy_server_port=9301\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\npolicy_server_port=9301\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -464,7 +464,7 @@ func TestResolvePoliciesDir_JoinsBaseDirWithPolicies(t *testing.T) {
 func TestParseConfig_PolicyFetchIntervalSecDefaultsTo900(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -475,7 +475,7 @@ func TestParseConfig_PolicyFetchIntervalSecDefaultsTo900(t *testing.T) {
 func TestParseConfig_PolicyFetchIntervalSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nPolicyFetchIntervalSec=300\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nPolicyFetchIntervalSec=300\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -486,7 +486,7 @@ func TestParseConfig_PolicyFetchIntervalSecParsesCorrectly(t *testing.T) {
 func TestParseConfig_BackupWindowGraceSecDefaultsTo3600(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -497,7 +497,7 @@ func TestParseConfig_BackupWindowGraceSecDefaultsTo3600(t *testing.T) {
 func TestParseConfig_BackupWindowGraceSecParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nBackupWindowGraceSec=600\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nBackupWindowGraceSec=600\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -508,7 +508,7 @@ func TestParseConfig_BackupWindowGraceSecParsesCorrectly(t *testing.T) {
 func TestParseConfig_MaxConcurrentBackupJobsDefaultsTo2(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
@@ -519,7 +519,7 @@ func TestParseConfig_MaxConcurrentBackupJobsDefaultsTo2(t *testing.T) {
 func TestParseConfig_MaxConcurrentBackupJobsParsesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlogfolder=/tmp\nMaxConcurrentBackupJobs=5\n"
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nMaxConcurrentBackupJobs=5\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	conf, err := ParseConfig(path)
