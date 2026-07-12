@@ -21,6 +21,7 @@ import (
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"google.golang.org/grpc"
 )
 
@@ -34,8 +35,10 @@ type issuerClient interface {
 
 // operatingRefresh is the real, network-dialing entry point main.go calls:
 // it authenticates to issuer with the bootstrap credential and delegates
-// to runOperatingRefresh.
-func operatingRefresh(certsDir, issuerHost string, issuerPort, timeoutSec int, logger *slog.Logger) error {
+// to runOperatingRefresh. jobID rides the RPC as outgoing job-id metadata,
+// so issuer's own log for this exact refresh attempt is correlatable back
+// to this process's local log.
+func operatingRefresh(certsDir, issuerHost string, issuerPort, timeoutSec int, jobID string, logger *slog.Logger) error {
 	conn, err := connection.ConnectWithIdentity(issuerHost, issuerPort, timeoutSec, certsDir, "bootstrap.crt", "bootstrap.key")
 	if err != nil {
 		return fmt.Errorf("connect to issuer: %w", err)
@@ -45,6 +48,7 @@ func operatingRefresh(certsDir, issuerHost string, issuerPort, timeoutSec int, l
 	client := pb.NewIssuerServiceClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
+	ctx = jobid.Outgoing(ctx, jobID)
 
 	return runOperatingRefresh(ctx, certsDir, client, logger)
 }

@@ -11,6 +11,7 @@ type Arguments struct {
 	Action string // "bootstrap" | "renew" | "operating-refresh"
 	Token  string
 	Debug  bool
+	JobID  string
 }
 
 func parseArguments() (*Arguments, error) {
@@ -37,6 +38,7 @@ func parseArguments() (*Arguments, error) {
 		Args:  cobra.NoArgs,
 		Run:   func(cmd *cobra.Command, _ []string) { args.Action = "renew" },
 	}
+	renewCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted)")
 
 	operatingRefreshCmd := &cobra.Command{
 		Use:   "operating-refresh",
@@ -44,6 +46,7 @@ func parseArguments() (*Arguments, error) {
 		Args:  cobra.NoArgs,
 		Run:   func(cmd *cobra.Command, _ []string) { args.Action = "operating-refresh" },
 	}
+	operatingRefreshCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to issuer as job-id metadata")
 
 	rootCmd.AddCommand(bootstrapCmd, renewCmd, operatingRefreshCmd)
 
