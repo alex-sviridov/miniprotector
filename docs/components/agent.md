@@ -95,6 +95,20 @@ the three static policies; a task's "NEXT RUN" reflects its next `backup_window`
 than a fixed interval. Each row's `ERROR` column shows the most recent failure's message (truncated
 to 60 characters, `-` if there isn't one), cleared automatically on that policy/task's next success.
 
+## Logging and correlation
+
+Every binary `agent` execs writes structured JSON logs to `<log_dir>/<binary-name>.log` (one
+stable, rotated file per binary — not one file per invocation), and every exec `agent` dispatches
+now carries a `--job-id` (auto-generated per invocation if not explicitly set): `<policy-id>:
+<unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<timestamp>` for
+backup tasks (unchanged). That same job-id rides as outgoing gRPC metadata to whatever server the
+exec calls (`issuer` for `certclient`, `policy-server` for `policyclient`, `bwfs` for `brfs`), and
+each of those servers tags its own log lines with the identical value — so one job-id correlates
+`agent`'s own start/completion log line, the exec's local log file, and the corresponding log line
+on whichever remote host it called, end to end. `agent`'s own log
+(`<log_dir>/agent.log`) records a start and a completion line (success or failure, with exit code
+when available) for every dispatched exec, not just failures.
+
 ## Configuration Keys
 
 | Key | Default | Description |
