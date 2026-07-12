@@ -26,6 +26,7 @@ CLIENTMANAGER_CMD := cmd/clientmanager
 ISSUER_CMD := cmd/issuer
 POLICY_SERVER_CMD := cmd/policy-server
 POLICYCLIENT_CMD := cmd/policyclient
+LOG_GATEWAY_CMD := cmd/log-gateway
 
 # Deployment
 CONTROL_PLANE_DIR := deploy/control-plane
@@ -37,7 +38,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server policyclient test test-e2e lint control-plane-up demo-up demo-down
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server policyclient log-gateway test test-e2e lint control-plane-up demo-up demo-down
 
 # Default target
 all: check-deps proto build
@@ -136,6 +137,12 @@ policyclient: $(BINARY_DIR) ## Build policyclient binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/policyclient ./$(POLICYCLIENT_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/policyclient"
+
+log-gateway: $(BINARY_DIR) ## Build log-gateway binary
+	@printf "$(BLUE)Building log-gateway...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/log-gateway ./$(LOG_GATEWAY_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/log-gateway"
 
 test: ## Run unit and integration tests
 	cd src && go test ./...
