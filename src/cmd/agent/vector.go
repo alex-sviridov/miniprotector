@@ -5,10 +5,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"text/template"
+	"time"
 )
 
 // resolveVectorBinary finds the Vector binary colocated with agent's own
@@ -99,4 +105,144 @@ func renderVectorConfig(logDir, varDir, certsDir, logGatewayHost string, logGate
 		return "", fmt.Errorf("render vector config: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// vectorSupervisor owns the lifecycle of agent's bundled Vector process: a
+// long-running child, not a due-and-complete Policy exec, so it gets its
+// own small supervision loop rather than being shoehorned into
+// reconcile.go's due/execute/record cycle. It restarts Vector immediately
+// (no backoff) whenever TriggerRestart is called -- the expected,
+// roughly-15-minute-interval event of a fresh operating cert landing --
+// and with the same jittered backoff() reconcile.go already uses for
+// failing policies whenever Vector exits unexpectedly for any other
+// reason.
+type vectorSupervisor struct {
+	binary     string
+	configPath string
+	logger     *slog.Logger
+
+	mu           sync.Mutex
+	cmd          *exec.Cmd
+	shuttingDown bool
+	restarting   bool
+
+	// onSpawnForTest, when non-nil, is called once per spawn attempt --
+	// test-only instrumentation, never set in production.
+	onSpawnForTest func()
+
+	// loopDone is closed when superviseLoop returns, giving callers (and
+	// tests) a real signal to synchronize on instead of guessing at a
+	// sleep duration -- important because ctx cancellation alone must
+	// also tear down whatever Vector process is currently running, not
+	// just stop future respawns.
+	loopDone chan struct{}
+}
+
+func newVectorSupervisor(binary, configPath string, logger *slog.Logger) *vectorSupervisor {
+	return &vectorSupervisor{binary: binary, configPath: configPath, logger: logger}
+}
+
+// Start launches the supervise loop in its own goroutine and returns
+// immediately; the loop itself runs until ctx is done, at which point the
+// currently-running Vector process (if any) is also signalled to exit --
+// ctx cancellation is a real shutdown path, not just a "stop respawning"
+// switch.
+func (v *vectorSupervisor) Start(ctx context.Context) {
+	v.loopDone = make(chan struct{})
+	go func() {
+		defer close(v.loopDone)
+		v.superviseLoop(ctx)
+	}()
+}
+
+// TriggerRestart signals the currently-running Vector process to exit
+// (SIGTERM) and marks the next respawn as deliberate, so the supervise
+// loop skips the crash-backoff delay for it.
+func (v *vectorSupervisor) TriggerRestart() {
+	v.mu.Lock()
+	cmd := v.cmd
+	v.restarting = true
+	v.mu.Unlock()
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+	}
+}
+
+// Stop signals the currently-running Vector process to exit and tells the
+// supervise loop not to respawn it.
+func (v *vectorSupervisor) Stop() {
+	v.mu.Lock()
+	v.shuttingDown = true
+	cmd := v.cmd
+	v.mu.Unlock()
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+	}
+}
+
+func (v *vectorSupervisor) superviseLoop(ctx context.Context) {
+	failures := 0
+	for ctx.Err() == nil {
+		if err := v.spawnAndWait(ctx); err != nil {
+			v.logger.Error("vector process error", "error", err)
+		}
+
+		v.mu.Lock()
+		shuttingDown := v.shuttingDown
+		deliberate := v.restarting
+		v.restarting = false
+		v.mu.Unlock()
+
+		if shuttingDown || ctx.Err() != nil {
+			return
+		}
+		if deliberate {
+			failures = 0
+			continue
+		}
+
+		failures++
+		v.logger.Error("vector exited unexpectedly, restarting with backoff", "failures", failures)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff(failures)):
+		}
+	}
+}
+
+// spawnAndWait starts Vector and blocks until it exits. If ctx is cancelled
+// while Vector is still running, it is sent SIGTERM so cancellation is a
+// real shutdown signal for the child process, not just a marker that stops
+// future respawns -- without this, a caller that only cancels ctx (rather
+// than also calling Stop) would leak both the Vector process and this
+// goroutine forever, since cmd.Wait() would never return.
+func (v *vectorSupervisor) spawnAndWait(ctx context.Context) error {
+	args := []string{}
+	if v.configPath != "" {
+		args = []string{"--config", v.configPath}
+	}
+	cmd := exec.Command(v.binary, args...)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start vector: %w", err)
+	}
+	if v.onSpawnForTest != nil {
+		v.onSpawnForTest()
+	}
+
+	v.mu.Lock()
+	v.cmd = cmd
+	v.mu.Unlock()
+
+	waitDone := make(chan struct{})
+	defer close(waitDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		case <-waitDone:
+		}
+	}()
+
+	return cmd.Wait()
 }
