@@ -217,22 +217,40 @@ func (v *vectorSupervisor) superviseLoop(ctx context.Context) {
 // future respawns -- without this, a caller that only cancels ctx (rather
 // than also calling Stop) would leak both the Vector process and this
 // goroutine forever, since cmd.Wait() would never return.
+//
+// cmd.Start() runs under v.mu so v.cmd is updated atomically with the
+// process actually starting: without this, TriggerRestart/Stop could read
+// v.cmd in the gap between a successful Start() and the assignment below,
+// see the previous (already-exited) cmd, and signal a no-op instead of the
+// live process -- self-healing for TriggerRestart (the restarting flag
+// just persists to the next exit) but a real leak for Stop, the same class
+// of bug as the ctx-cancellation case above. cmd.Start() itself is a
+// fork/exec that returns as soon as the child is launched -- it does not
+// block the way cmd.Wait() does -- so holding the lock across it only
+// costs a concurrent TriggerRestart/Stop a fork/exec-duration wait, not a
+// process-lifetime one. v.cmd is only assigned on success, so a failed
+// Start() never leaves v.cmd pointing at a cmd that never ran; it leaves
+// the previous (already-exited) cmd in place, which is harmless since
+// TriggerRestart/Stop signaling it is already a no-op.
 func (v *vectorSupervisor) spawnAndWait(ctx context.Context) error {
 	args := []string{}
 	if v.configPath != "" {
 		args = []string{"--config", v.configPath}
 	}
 	cmd := exec.Command(v.binary, args...)
-	if err := cmd.Start(); err != nil {
+
+	v.mu.Lock()
+	err := cmd.Start()
+	if err == nil {
+		v.cmd = cmd
+	}
+	v.mu.Unlock()
+	if err != nil {
 		return fmt.Errorf("start vector: %w", err)
 	}
 	if v.onSpawnForTest != nil {
 		v.onSpawnForTest()
 	}
-
-	v.mu.Lock()
-	v.cmd = cmd
-	v.mu.Unlock()
 
 	waitDone := make(chan struct{})
 	defer close(waitDone)
