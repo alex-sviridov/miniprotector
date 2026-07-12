@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -18,6 +21,11 @@ import (
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func testLoggerWithBuffer() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewJSONHandler(&buf, nil)), &buf
 }
 
 type fakeRunner struct {
@@ -548,4 +556,63 @@ func TestRecordOutcome_LastErrorReflectsMostRecentFailure(t *testing.T) {
 	rs.recordOutcome("p", errors.New("second failure"), time.Now())
 
 	assert.Equal(t, "second failure", rs.cache["p"].LastError)
+}
+
+func TestLogExecOutcome_SuccessLogsStartAndCompletionWithJobID(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "test-policy", JobID: "test-policy:123"}
+
+	logExecStart(logger, p)
+	logExecCompletion(logger, p, nil, 250*time.Millisecond)
+
+	out := buf.String()
+	assert.Contains(t, out, "policy execution started")
+	assert.Contains(t, out, "policy execution completed")
+	assert.Contains(t, out, "test-policy:123")
+}
+
+func TestLogExecOutcome_FailureLogsExitCodeWhenAvailable(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "test-policy", JobID: "test-policy:123"}
+
+	err := exec.Command("false").Run()
+	require.Error(t, err, "exec.Command(\"false\") must fail with a real *exec.ExitError")
+
+	logExecCompletion(logger, p, err, time.Second)
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &entry))
+	assert.Equal(t, float64(1), entry["exit_code"])
+}
+
+func TestLogExecOutcome_FailureWithoutExitErrorOmitsExitCode(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "test-policy", JobID: "test-policy:123"}
+
+	logExecCompletion(logger, p, errors.New("simulated failure"), time.Second)
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &entry))
+	_, hasExitCode := entry["exit_code"]
+	assert.False(t, hasExitCode, "a non-exec.ExitError failure must not fabricate an exit_code field")
+}
+
+func TestRun_LogsStartAndCompletionForEveryDispatchedExec(t *testing.T) {
+	testPolicies := []Policy{{ID: "test-policy", Binary: "true", JobID: "test-policy:456", Interval: time.Hour}}
+
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+	logger, buf := testLoggerWithBuffer()
+
+	fr := &fakeRunner{}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+
+	err := run(ctx, logger, cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "policy execution started")
+	assert.Contains(t, out, "policy execution completed")
+	assert.Contains(t, out, "test-policy:456")
 }

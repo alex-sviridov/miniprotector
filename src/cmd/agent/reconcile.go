@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"os"
@@ -130,6 +131,34 @@ func (rs *reconcileState) get(id string) PolicyState {
 	return rs.cache[id]
 }
 
+// logExecStart logs that agent is about to dispatch p's exec. Called
+// immediately before execute for both the synchronous and background
+// dispatch paths in run(), so agent's own log always shows an exec
+// starting even if it never finishes (e.g. agent is killed mid-exec).
+func logExecStart(logger *slog.Logger, p Policy) {
+	logger.Info("policy execution started", "policy", p.ID, "binary", p.Binary, "job_id", p.JobID)
+}
+
+// logExecCompletion logs the outcome of one exec attempt at Info level, on
+// both success and failure -- unlike recordOutcome's existing Error-level
+// line (which only fires on failure, for operators grepping specifically
+// for errors), this gives agent's own log a complete start/end timeline
+// for every dispatched exec. exit_code is included only when attemptErr is
+// a real *exec.ExitError -- fabricating one for any other error type would
+// be misleading.
+func logExecCompletion(logger *slog.Logger, p Policy, attemptErr error, duration time.Duration) {
+	if attemptErr == nil {
+		logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration)
+		return
+	}
+	var exitErr *exec.ExitError
+	if errors.As(attemptErr, &exitErr) {
+		logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "exit_code", exitErr.ExitCode(), "error", attemptErr)
+		return
+	}
+	logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "error", attemptErr)
+}
+
 // recordOutcome updates and immediately persists id's state given the
 // outcome of one attempt at attemptTime. It's the single place both the
 // synchronous and background-goroutine paths in run() update PolicyState,
@@ -237,13 +266,19 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 					defer wg.Done()
 					defer func() { <-sem }()
 					defer rs.clearInFlight(p.ID)
+					logExecStart(rs.logger, p)
+					start := time.Now()
 					attemptErr := execute(ctx, p.Binary, p.Args)
+					logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 					rs.recordOutcome(p.ID, attemptErr, time.Now())
 				}(p)
 				continue
 			}
 
+			logExecStart(rs.logger, p)
+			start := time.Now()
 			attemptErr := execute(ctx, p.Binary, p.Args)
+			logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 			rs.recordOutcome(p.ID, attemptErr, now)
 		}
 
