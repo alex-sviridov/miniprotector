@@ -71,12 +71,44 @@ func main() {
 		logger, logfile := logging.NewLogger(ctx)
 		defer logfile.Close()
 
+		certsDir, err := config.ResolveCertsDir()
+		if err != nil {
+			logger.Error("certs directory resolution failed", "error", err)
+			os.Exit(1)
+		}
+
+		vectorBinary, err := resolveVectorBinary()
+		if err != nil {
+			logger.Error("vector binary resolution failed", "error", err)
+			os.Exit(1)
+		}
+		vectorConfig, err := renderVectorConfig(conf.LogDir, varDir, certsDir, conf.LogGatewayHost, conf.LogGatewayPort)
+		if err != nil {
+			logger.Error("vector config render failed", "error", err)
+			os.Exit(1)
+		}
+		vectorConfigPath := filepath.Join(varDir, "vector-config.yaml")
+		if err := os.WriteFile(vectorConfigPath, []byte(vectorConfig), 0o644); err != nil {
+			logger.Error("vector config write failed", "path", vectorConfigPath, "error", err)
+			os.Exit(1)
+		}
+
 		reconcileInterval := time.Duration(conf.ReconcileIntervalSec) * time.Second
 		signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath)
-		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs); err != nil {
+		vectorSup := newVectorSupervisor(vectorBinary, vectorConfigPath, logger)
+		vectorSup.Start(signalCtx)
+		defer vectorSup.Stop()
+
+		onSuccess := func(policyID string) {
+			if policyID == "operating-refresh" {
+				vectorSup.TriggerRestart()
+			}
+		}
+
+		logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath, "vector_config", vectorConfigPath)
+		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess); err != nil {
 			logger.Error("agent exited with error", "error", err)
 			os.Exit(1)
 		}
