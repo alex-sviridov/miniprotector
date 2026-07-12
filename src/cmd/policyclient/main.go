@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
 
@@ -45,10 +46,13 @@ func main() {
 	}
 	cachePath := filepath.Join(varDir, "policies-cache.json")
 
+	jobID := jobid.Resolve(args.JobID)
+
 	ctx := context.WithValue(context.Background(), "appName", "policyclient")
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
 	ctx = context.WithValue(ctx, "debugMode", args.Debug)
 	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = context.WithValue(ctx, "jobId", jobID)
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
 
@@ -58,7 +62,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Configuration error: policy_server_host not set in local.conf")
 			os.Exit(1)
 		}
-		if err := fetchAndCache(certsDir, conf.PolicyServerHost, conf.PolicyServerPort, conf.ConnectionTimeOutSec, cachePath, logger); err != nil {
+		if err := fetchAndCache(certsDir, conf.PolicyServerHost, conf.PolicyServerPort, conf.ConnectionTimeOutSec, cachePath, jobID, logger); err != nil {
 			logger.Error("fetch failed", "error", err)
 			fmt.Fprintf(os.Stderr, "Fetch failed: %v\n", err)
 			os.Exit(1)

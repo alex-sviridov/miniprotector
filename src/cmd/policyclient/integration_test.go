@@ -59,7 +59,7 @@ func TestFetchAndCache_Integration_RealServerRealMTLS(t *testing.T) {
 	cachePath := t.TempDir() + "/policies-cache.json"
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	err = fetchAndCache(testCertsDir, "127.0.0.1", port, 5, cachePath, logger)
+	err = fetchAndCache(testCertsDir, "127.0.0.1", port, 5, cachePath, "test-job-id", logger)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(cachePath)

@@ -15,6 +15,7 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/atomicfile"
 	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"google.golang.org/grpc"
 )
 
@@ -45,8 +46,10 @@ type policyServiceClient interface {
 // authenticates to policy-server with this node's operating credential
 // (the default connection.Connect identity -- required, since policy-server
 // matches policies against attribute labels embedded only in the operating
-// certificate) and delegates to runFetch.
-func fetchAndCache(certsDir, host string, port, timeoutSec int, cachePath string, logger *slog.Logger) error {
+// certificate) and delegates to runFetch. jobID rides the RPC as outgoing
+// job-id metadata, so policy-server's own log for this exact fetch is
+// correlatable back to this process's local log.
+func fetchAndCache(certsDir, host string, port, timeoutSec int, cachePath, jobID string, logger *slog.Logger) error {
 	conn, err := connection.Connect(host, port, timeoutSec, certsDir)
 	if err != nil {
 		return fmt.Errorf("connect to policy-server: %w", err)
@@ -56,6 +59,7 @@ func fetchAndCache(certsDir, host string, port, timeoutSec int, cachePath string
 	client := pb.NewPolicyServiceClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
+	ctx = jobid.Outgoing(ctx, jobID)
 
 	return runFetch(ctx, client, cachePath, logger)
 }

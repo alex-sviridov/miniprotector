@@ -10,6 +10,7 @@ import (
 type Arguments struct {
 	Action string // "fetch"
 	Debug  bool
+	JobID  string
 }
 
 func parseArguments() (*Arguments, error) {
@@ -27,6 +28,7 @@ func parseArguments() (*Arguments, error) {
 		Args:  cobra.NoArgs,
 		Run:   func(cmd *cobra.Command, _ []string) { args.Action = "fetch" },
 	}
+	fetchCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to policy-server as job-id metadata")
 
 	rootCmd.AddCommand(fetchCmd)
 
