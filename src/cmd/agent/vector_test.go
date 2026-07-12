@@ -3,22 +3,19 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// buildAndRunAsOwnExecutable copies a trivial no-op script/binary to dir
-// under name, then re-execs the current test binary with a temp
-// GOOS-appropriate wrapper so os.Executable() resolves to a path inside
-// dir -- mirrors TestRealExec_ResolvesBinaryColocatedWithOwnExecutable's
-// existing technique in reconcile_test.go (same package, same trick).
+// TestResolveVectorBinary_FindsColocatedBinary writes a fake vector binary
+// into a temp directory and confirms resolveVectorBinaryIn finds it --
+// testing the pure, directory-parameterized core directly, without needing
+// to re-exec the test binary the way
+// TestRealExec_ResolvesBinaryColocatedWithOwnExecutable (reconcile_test.go)
+// does for the equivalent real-os.Executable()-based path.
 func TestResolveVectorBinary_FindsColocatedBinary(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("colocated-binary resolution test assumes a POSIX layout")
-	}
 	dir := t.TempDir()
 	vectorPath := filepath.Join(dir, "vector")
 	require.NoError(t, os.WriteFile(vectorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
