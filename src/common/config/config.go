@@ -109,6 +109,8 @@ type Config struct {
 	PolicyFetchIntervalSec           int
 	BackupWindowGraceSec             int
 	MaxConcurrentBackupJobs          int
+	LogGatewayHost                   string
+	LogGatewayPort                   int
 }
 
 type contextKey string
@@ -150,6 +152,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		PolicyFetchIntervalSec:           900,
 		BackupWindowGraceSec:             3600,
 		MaxConcurrentBackupJobs:          2,
+		LogGatewayPort:                   9400,
 	}
 	foundFields := make(map[string]bool)
 
@@ -329,6 +332,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.PolicyServerPort = port
 			foundFields["policy_server_port"] = true
+		case "log_gateway_host":
+			config.LogGatewayHost = value
+			foundFields["log_gateway_host"] = true
+		case "log_gateway_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid log_gateway_port value at line %d: %s", lineNum, value)
+			}
+			config.LogGatewayPort = port
+			foundFields["log_gateway_port"] = true
 		case "PolicyFetchIntervalSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {

@@ -526,3 +526,36 @@ func TestParseConfig_MaxConcurrentBackupJobsParsesCorrectly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, conf.MaxConcurrentBackupJobs)
 }
+
+func TestParseConfig_LogGatewayHostParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nlog_gateway_host=log-gateway.backup.internal\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "log-gateway.backup.internal", conf.LogGatewayHost)
+}
+
+func TestParseConfig_LogGatewayPortDefaultsTo9400(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 9400, conf.LogGatewayPort)
+}
+
+func TestParseConfig_LogGatewayPortParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nlog_gateway_port=9500\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 9500, conf.LogGatewayPort)
+}
