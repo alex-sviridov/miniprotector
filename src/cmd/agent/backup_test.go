@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -229,6 +230,31 @@ func TestBackupTasks_CorruptCacheFileReturnsOkFalseWithNoTasks(t *testing.T) {
 	tasks, ok := backupTasks(path, conf)
 	assert.False(t, ok)
 	assert.Empty(t, tasks)
+}
+
+func TestBackupTasks_JobIDFieldMatchesArgsFlag(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "policies-cache.json")
+	cached := []cachedPolicy{{
+		Name:          "web-policy",
+		ObjectFilters: []string{"/srv/web"},
+		RPO:           "1h",
+		BackupWindow:  []string{"* * * * *"},
+		Destination:   "bwfs:9000",
+	}}
+	data, err := json.Marshal(cached)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cachePath, data, 0o644))
+
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	tasks, ok := backupTasks(cachePath, conf)
+	require.True(t, ok)
+	require.Len(t, tasks, 1)
+
+	task := tasks[0]
+	assert.NotEmpty(t, task.JobID)
+	assert.Contains(t, task.Args, "--job-id")
+	assert.Contains(t, task.Args, task.JobID)
 }
 
 func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -19,6 +20,7 @@ type Policy struct {
 	ID         string
 	Binary     string
 	Args       []string
+	JobID      string
 	Interval   time.Duration
 	Due        func(PolicyState, time.Time) bool
 	NextRun    func(PolicyState, time.Time) time.Time
@@ -29,15 +31,33 @@ type Policy struct {
 // from conf rather than compiled in -- bootstrap-refresh (long-lived
 // credential, infrequent), operating-refresh (short-lived credential,
 // frequent), and policy-update (fetches this node's applicable backup
-// policies from policy-server into a local cache; nothing yet acts on that
-// cache -- see docs/superpowers/specs/2026-07-10-agent-policy-update-job-design.md).
+// policies from policy-server into a local cache). Each gets a fresh
+// per-invocation JobID (also embedded in Args as --job-id) every time this
+// function is called -- policiesFunc calls it fresh every reconcile tick,
+// the same way backupTasks already does for backup jobs, so an unused
+// policy's JobID (one not actually due this tick) is simply discarded.
 func policies(conf *config.Config) []Policy {
+	now := time.Now()
+	bootstrapJobID := policyJobID("bootstrap-refresh", now)
+	operatingJobID := policyJobID("operating-refresh", now)
+	policyUpdateJobID := policyJobID("policy-update", now)
+
 	return []Policy{
-		{ID: "bootstrap-refresh", Binary: "certclient", Args: []string{"renew"},
+		{ID: "bootstrap-refresh", Binary: "certclient", JobID: bootstrapJobID,
+			Args:     []string{"renew", "--job-id", bootstrapJobID},
 			Interval: time.Duration(conf.BootstrapCertRefreshIntervalSec) * time.Second},
-		{ID: "operating-refresh", Binary: "certclient", Args: []string{"operating-refresh"},
+		{ID: "operating-refresh", Binary: "certclient", JobID: operatingJobID,
+			Args:     []string{"operating-refresh", "--job-id", operatingJobID},
 			Interval: time.Duration(conf.OperatingCertFetchIntervalSec) * time.Second},
-		{ID: "policy-update", Binary: "policyclient", Args: []string{"fetch"},
+		{ID: "policy-update", Binary: "policyclient", JobID: policyUpdateJobID,
+			Args:     []string{"fetch", "--job-id", policyUpdateJobID},
 			Interval: time.Duration(conf.PolicyFetchIntervalSec) * time.Second},
 	}
+}
+
+// policyJobID builds a per-invocation correlation ID for a static policy's
+// exec, shaped like backup.go's backupJobID (<id>:<unix-timestamp>) so
+// static and dynamic (backup) job-ids follow one convention.
+func policyJobID(policyID string, now time.Time) string {
+	return fmt.Sprintf("%s:%d", policyID, now.Unix())
 }

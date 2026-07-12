@@ -165,10 +165,12 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 
 		policyName, destination := p.Name, p.Destination
 		for _, path := range p.ObjectFilters {
+			jobID := backupJobID(policyName, path, time.Now())
 			tasks = append(tasks, Policy{
 				ID:         backupTaskID(policyName, path),
 				Binary:     "brfs",
-				Args:       []string{path, "--destination", destination, "--job-id", backupJobID(policyName, path, time.Now())},
+				JobID:      jobID,
+				Args:       []string{path, "--destination", destination, "--job-id", jobID},
 				Background: true,
 				Due: func(s PolicyState, now time.Time) bool {
 					return windowOpen(schedules, now, grace) && rpoElapsed(s, now, rpo)
