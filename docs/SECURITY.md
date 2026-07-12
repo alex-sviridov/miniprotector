@@ -13,6 +13,12 @@ Every gRPC connection between components in this project — backup traffic (`br
 signed by the same root CA and verify the other's chain; there is no unauthenticated RPC surface
 anywhere in the mesh.
 
+One exception to "gRPC": `log-gateway`'s push endpoint is plain HTTP, since it proxies to Loki's
+own HTTP push API. The transport is still genuine mTLS (`common/mtls.ServerTLSConfig`, the same
+operating-tier verification `LoadServerCredentials` gives every gRPC server, just not wrapped for
+gRPC), and the same rule holds: caller identity is always the verified peer certificate
+(`mtls.PeerHostnameFromConnState`), never a request field.
+
 Whenever a server-side handler needs to know which node is calling it, that identity is **always**
 derived from the verified mTLS peer certificate — never from a field the caller supplies on the
 request. `common/mtls.PeerHostname` is the single implementation of this: it reads the first SAN
@@ -37,7 +43,7 @@ Every enrolled node holds **two** distinct certificates in the same certs direct
 | Files | `bootstrap.crt` / `bootstrap.key` | `client.crt` / `client.key` |
 | Lifetime | Long, governed entirely by the CA provisioner's own claims today — `BootstrapCertTTLSec` (~90 days by default) is parsed and defaulted but not yet consumed by any request path (tracked follow-up) | Short (`OperatingCertTTLSec`, 1 hour by default) |
 | Obtained via | `certclient bootstrap` (redeems a one-time enrollment token from `client-manager`), refreshed by `certclient renew` (step-ca's stock `/renew`) | `certclient operating-refresh`, authenticated *with* the bootstrap credential, talking to `issuer` |
-| Consumed by | Only `certclient operating-refresh`'s connection to `issuer` | Every other component's mTLS transport (`common/mtls`'s hardcoded `client.crt`/`client.key`) — `bwfs`, `brfs`, `rwfs`, `catalogsync`, `catalog` |
+| Consumed by | Only `certclient operating-refresh`'s connection to `issuer` | Every other component's mTLS transport (`common/mtls`'s hardcoded `client.crt`/`client.key`) — `bwfs`, `brfs`, `rwfs`, `catalogsync`, `catalog`, `log-gateway` |
 | Scheduled by | `agent`'s `bootstrap-refresh` policy (`BootstrapCertRefreshIntervalSec`, daily by default) | `agent`'s `operating-refresh` policy (`OperatingCertFetchIntervalSec`, every 15 minutes by default) |
 
 This split exists because of three constraints in step-ca itself (confirmed against the pinned
