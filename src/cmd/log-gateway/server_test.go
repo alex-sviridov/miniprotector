@@ -154,6 +154,28 @@ func TestHandlePush_LokiUnreachablePropagatesBadGateway(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, w.Result().StatusCode)
 }
 
+func TestHandlePush_OversizedBodyRejected(t *testing.T) {
+	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("loki must not be contacted when the inbound body exceeds the size cap")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer lokiStub.Close()
+
+	srv := newLogGatewayServer(lokiStub.URL, testLogger())
+
+	// One byte over the cap is enough to prove MaxBytesReader is wired in;
+	// no need to actually allocate/send a multi-MB body for this to be a
+	// meaningful assertion.
+	oversized := strings.NewReader(strings.Repeat("a", maxPushBodyBytes+1))
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", oversized)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "node-1")}}
+	w := httptest.NewRecorder()
+
+	srv.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Result().StatusCode)
+}
+
 func TestHandlePush_LokiErrorStatusPropagated(t *testing.T) {
 	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)

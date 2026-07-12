@@ -7,13 +7,35 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 )
+
+// maxPushBodyBytes bounds how much of an inbound push body log-gateway will
+// buffer in memory. Every request runs through io.ReadAll, so without a cap
+// a single misbehaving (or compromised) mTLS-authenticated node could send
+// an arbitrarily large body and OOM the gateway -- which, since log-gateway
+// is the sole path to Loki for the whole fleet, would take down ingestion
+// fleet-wide. 10MB is generous for a batched log push (Loki's own default
+// push body limit, distributor.max-recv-msg-size-in-bytes, is in the same
+// ballpark) while still bounding worst-case memory use per request.
+const maxPushBodyBytes = 10 << 20 // 10MB
+
+// lokiForwardTimeout bounds how long log-gateway will wait on a single
+// outbound push to Loki. Without a timeout, a degraded (not down) Loki --
+// GC pause, disk pressure, backpressure -- leaves the outbound
+// httpClient.Post call blocked indefinitely, and every inbound push
+// goroutine piles up behind it until the gateway itself wedges or OOMs.
+// 10s is generous for a single push under normal conditions but short
+// enough to shed load and free the goroutine when Loki is unhealthy.
+const lokiForwardTimeout = 10 * time.Second
 
 // pushRequest and stream mirror the subset of Loki's push API JSON body
 // (POST /loki/api/v1/push) log-gateway needs to touch: the per-stream
@@ -58,8 +80,14 @@ func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxPushBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "read request body: "+err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -83,7 +111,17 @@ func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.httpClient.Post(s.lokiPushURL, "application/json", bytes.NewReader(rewritten))
+	ctx, cancel := context.WithTimeout(r.Context(), lokiForwardTimeout)
+	defer cancel()
+
+	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.lokiPushURL, bytes.NewReader(rewritten))
+	if err != nil {
+		http.Error(w, "build loki request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	lokiReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient.Do(lokiReq)
 	if err != nil {
 		s.logger.Error("forward to loki failed", "hostname", hostname, "error", err)
 		http.Error(w, "forward to loki: "+err.Error(), http.StatusBadGateway)
