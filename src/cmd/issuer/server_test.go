@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -35,11 +36,12 @@ func newTestIssuerStore(t *testing.T) *clientmanagerstore.Store {
 	return store
 }
 
-// fakeAuthContext mirrors cmd/catalog/server_test.go's and cmd/certrequest/
-// broker_server_test.go's helper of the same name: a self-signed cert with
-// the given hostname as its SAN, simulating a verified mTLS peer identity
-// without a real handshake.
-func fakeAuthContext(t *testing.T, hostname string) context.Context {
+// peerCertContext builds a context carrying only a verified mTLS peer
+// certificate for hostname, with no gRPC metadata attached. fakeAuthContext
+// (below) layers job-id metadata on top for the common case; this is used
+// directly by TestRequestOperatingCert_MissingJobIDRejectedWithoutMinting
+// to exercise the "no job-id metadata at all" path.
+func peerCertContext(t *testing.T, hostname string) context.Context {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -61,6 +63,16 @@ func fakeAuthContext(t *testing.T, hostname string) context.Context {
 			State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}},
 		},
 	})
+}
+
+// fakeAuthContext mirrors cmd/catalog/server_test.go's helper of the same
+// name: a self-signed cert with the given hostname as its SAN, plus job-id
+// metadata every RequestOperatingCert test needs by default now that it's
+// required -- simulating a verified mTLS peer identity and an already-
+// job-id-tagged call, without a real handshake.
+func fakeAuthContext(t *testing.T, hostname string) context.Context {
+	t.Helper()
+	return metadata.NewIncomingContext(peerCertContext(t, hostname), metadata.Pairs("job-id", "test-job-id"))
 }
 
 // testCSR builds a minimal, validly-signed CSR for use as request payload
@@ -159,6 +171,24 @@ func TestRequestOperatingCert_NoPeerIdentityRejected(t *testing.T) {
 		CsrDer: testCSR(t).Raw,
 	})
 	assert.Error(t, err)
+}
+
+func TestRequestOperatingCert_MissingJobIDRejectedWithoutMinting(t *testing.T) {
+	store := newTestIssuerStore(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+
+	called := false
+	mintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
+		called = true
+		return nil, nil
+	}
+
+	srv := newIssuerServer(store, mintSign, testLogger())
+	_, err := srv.RequestOperatingCert(peerCertContext(t, "node-1"), &pb.RequestOperatingCertRequest{
+		CsrDer: testCSR(t).Raw,
+	})
+	assert.Error(t, err)
+	assert.False(t, called, "mintSign must not be called when job-id metadata is missing")
 }
 
 func TestRequestOperatingCert_MalformedCSRRejected(t *testing.T) {

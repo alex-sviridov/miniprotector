@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	clientmanagerstore "github.com/alex-sviridov/miniprotector/storage/clientmanager"
 )
@@ -42,6 +43,11 @@ func (s *issuerServer) RequestOperatingCert(ctx context.Context, req *pb.Request
 		return nil, fmt.Errorf("determine caller identity: %w", err)
 	}
 
+	jobID, err := jobid.FromIncoming(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("job-id metadata required: %w", err)
+	}
+
 	client, err := s.store.GetClient(hostname)
 	if err != nil {
 		return nil, fmt.Errorf("hostname %s not tracked: %w", hostname, err)
@@ -70,9 +76,10 @@ func (s *issuerServer) RequestOperatingCert(ctx context.Context, req *pb.Request
 	}
 
 	if err := s.store.UpdateLastSeen(hostname, time.Now()); err != nil {
-		s.logger.Error("failed to update last_seen", "hostname", hostname, "error", err)
+		s.logger.Error("failed to update last_seen", "hostname", hostname, "job_id", jobID, "error", err)
 	}
 
+	s.logger.Info("operating certificate issued", "hostname", hostname, "job_id", jobID)
 	return &pb.RequestOperatingCertResponse{CertChainPem: chainPEM}, nil
 }
 
