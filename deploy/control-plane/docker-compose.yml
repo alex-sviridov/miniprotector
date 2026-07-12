@@ -62,3 +62,30 @@ services:
     ports:
       - "9300:9300"
     restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.7.3
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - ./loki/data:/loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    restart: unless-stopped
+
+  log-gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/log-gateway/Dockerfile
+    depends_on:
+      - step-ca
+      - issuer
+      - loki
+    volumes:
+      - ./log-gateway/data:/data
+      - ./log-gateway/local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+      - LOKI_URL=http://loki:3100
+    ports:
+      - "9400:9400"
+    restart: unless-stopped
