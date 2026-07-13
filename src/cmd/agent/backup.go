@@ -16,16 +16,26 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// ObjectFilter mirrors the subset of policyclient's on-disk ObjectFilter
+// schema (cmd/policyclient/fetch.go) that agent needs. agent can't import
+// cmd/policyclient directly -- Go forbids importing another command's
+// main package -- so these fields are duplicated here rather than shared.
+type ObjectFilter struct {
+	Path    string   `json:"path"`
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
 // cachedPolicy mirrors the subset of policyclient's on-disk CachedPolicy
 // schema (cmd/policyclient/fetch.go) that agent needs. agent can't import
 // cmd/policyclient directly -- Go forbids importing another command's
 // main package -- so these fields are duplicated here rather than shared.
 type cachedPolicy struct {
-	Name          string   `json:"name"`
-	ObjectFilters []string `json:"object_filters"`
-	RPO           string   `json:"rpo"`
-	BackupWindow  []string `json:"backup_window"`
-	Destination   string   `json:"destination"`
+	Name          string         `json:"name"`
+	ObjectFilters []ObjectFilter `json:"object_filters"`
+	RPO           string         `json:"rpo"`
+	BackupWindow  []string       `json:"backup_window"`
+	Destination   string         `json:"destination"`
 }
 
 // readCachedPolicies reads policiesCachePath, returning ok=false if the
@@ -164,13 +174,20 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 		}
 
 		policyName, destination := p.Name, p.Destination
-		for _, path := range p.ObjectFilters {
-			jobID := backupJobID(policyName, path, time.Now())
+		for _, filter := range p.ObjectFilters {
+			jobID := backupJobID(policyName, filter.Path, time.Now())
+			args := []string{filter.Path, "--destination", destination, "--job-id", jobID}
+			if len(filter.Include) > 0 {
+				args = append(args, "--include", strings.Join(filter.Include, ","))
+			}
+			if len(filter.Exclude) > 0 {
+				args = append(args, "--exclude", strings.Join(filter.Exclude, ","))
+			}
 			tasks = append(tasks, Policy{
-				ID:         backupTaskID(policyName, path),
+				ID:         backupTaskID(policyName, filter.Path),
 				Binary:     "brfs",
 				JobID:      jobID,
-				Args:       []string{path, "--destination", destination, "--job-id", jobID},
+				Args:       args,
 				Background: true,
 				Due: func(s PolicyState, now time.Time) bool {
 					return windowOpen(schedules, now, grace) && rpoElapsed(s, now, rpo)

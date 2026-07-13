@@ -86,7 +86,7 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "daily-db-backup",
-		"object_filters": ["/var/lib/postgres", "/etc/postgres"],
+		"object_filters": [{"path": "/var/lib/postgres"}, {"path": "/etc/postgres"}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs-east:8080"
@@ -107,7 +107,7 @@ func TestBackupTasks_TaskArgsMatchBrfsShape(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "daily-db-backup",
-		"object_filters": ["/var/lib/postgres"],
+		"object_filters": [{"path": "/var/lib/postgres"}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs-east:8080"
@@ -133,7 +133,7 @@ func TestBackupTasks_DueRequiresBothWindowOpenAndRpoElapsed(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
-		"object_filters": ["/data"],
+		"object_filters": [{"path": "/data"}],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs:8080"
@@ -159,7 +159,7 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
-		"object_filters": ["/a", "/b"],
+		"object_filters": [{"path": "/a"}, {"path": "/b"}],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs:8080"
@@ -190,7 +190,7 @@ func TestBackupTasks_UnparseableRpoSkipsPolicyEntirely(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
-		"object_filters": ["/data"],
+		"object_filters": [{"path": "/data"}],
 		"rpo": "not-a-duration",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs:8080"
@@ -205,7 +205,7 @@ func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
-		"object_filters": ["/data"],
+		"object_filters": [{"path": "/data"}],
 		"rpo": "1h",
 		"backup_window": ["not a cron expression"],
 		"destination": "bwfs:8080"
@@ -237,7 +237,7 @@ func TestBackupTasks_JobIDFieldMatchesArgsFlag(t *testing.T) {
 	cachePath := filepath.Join(dir, "policies-cache.json")
 	cached := []cachedPolicy{{
 		Name:          "web-policy",
-		ObjectFilters: []string{"/srv/web"},
+		ObjectFilters: []ObjectFilter{{Path: "/srv/web"}},
 		RPO:           "1h",
 		BackupWindow:  []string{"* * * * *"},
 		Destination:   "bwfs:9000",
@@ -263,7 +263,7 @@ func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 
 	require.NoError(t, os.WriteFile(cachePath, []byte(`[{
-		"name": "p", "object_filters": ["/data"], "rpo": "1h",
+		"name": "p", "object_filters": [{"path": "/data"}], "rpo": "1h",
 		"backup_window": ["0 2 * * *"], "destination": "bwfs:8080"
 	}]`), 0o644))
 	tasks, ok := backupTasks(cachePath, conf)
@@ -274,4 +274,31 @@ func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
 	tasks, ok = backupTasks(cachePath, conf)
 	assert.True(t, ok, "an empty-but-valid file is still a confirmed-good read")
 	assert.Empty(t, tasks)
+}
+
+func TestBackupTasks_TaskArgsIncludeIncludeExcludeFlagsWhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[{
+		"name": "web-policy",
+		"object_filters": [{"path": "/var/www", "include": ["*.html", "*.css"], "exclude": ["*.tmp"]}],
+		"rpo": "1h",
+		"backup_window": ["0 2 * * *"],
+		"destination": "bwfs:8080"
+	}]`)
+
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	tasks, ok := backupTasks(path, conf)
+
+	require.True(t, ok)
+	require.Len(t, tasks, 1)
+	task := tasks[0]
+	require.Len(t, task.Args, 9)
+	assert.Equal(t, "/var/www", task.Args[0])
+	assert.Equal(t, "--destination", task.Args[1])
+	assert.Equal(t, "bwfs:8080", task.Args[2])
+	assert.Equal(t, "--job-id", task.Args[3])
+	assert.Equal(t, "--include", task.Args[5])
+	assert.Equal(t, "*.html,*.css", task.Args[6])
+	assert.Equal(t, "--exclude", task.Args[7])
+	assert.Equal(t, "*.tmp", task.Args[8])
 }
