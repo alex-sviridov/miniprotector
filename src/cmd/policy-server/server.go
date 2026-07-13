@@ -59,9 +59,10 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 func toProtoPolicy(p Policy) *pb.Policy {
 	objectFilters := make([]*pb.ObjectFilter, len(p.ObjectFilters))
 	for i, f := range p.ObjectFilters {
-		objectFilters[i] = &pb.ObjectFilter{Path: f.Path, Include: f.Include, Exclude: f.Exclude}
+		objectFilters[i] = &pb.ObjectFilter{Id: f.ID, Path: f.Path, Include: f.Include, Exclude: f.Exclude}
 	}
 	return &pb.Policy{
+		Id:            p.Metadata.ID,
 		Name:          p.Metadata.Name,
 		CreatedAt:     timestamppb.New(p.Metadata.CreatedAt),
 		UpdatedAt:     timestamppb.New(p.Metadata.UpdatedAt),

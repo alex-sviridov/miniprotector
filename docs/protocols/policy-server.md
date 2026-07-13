@@ -21,6 +21,7 @@ message ObjectFilter {
   string path = 1;
   repeated string include = 2;
   repeated string exclude = 3;
+  string id = 4;
 }
 
 message Policy {
@@ -31,6 +32,7 @@ message Policy {
   string rpo = 5;
   repeated string backup_window = 6;
   string destination = 7;
+  string id = 8;
 }
 ```
 
@@ -55,6 +57,14 @@ certificate — the same requirement every server except `issuer`'s own listener
 - `rpo` and `backup_window` are opaque, pass-through strings — `policy-server` never parses or
   evaluates either. `destination` is likewise opaque, pass-through data — `policy-server` never
   validates or connects to it.
+- `Policy.id` and `ObjectFilter.id` are `policy-server`-computed, deterministic UUIDs (`uuid.NewSHA1`),
+  derived from the policy file's name and each object filter's position within that file,
+  respectively — not read from the on-disk policy JSON. They are additive: the existing
+  human-readable `name`/`path` fields are unchanged. `Policy.id` is stable across reloads unless the
+  policy file is renamed; `ObjectFilter.id` disambiguates filters that share a `path` within the same
+  policy (e.g. one `include`-only and one `exclude`-only filter on the same root directory), which
+  otherwise collide in downstream per-filter tracking (see
+  [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)).
 
 ## See Also
 

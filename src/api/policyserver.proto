@@ -26,6 +26,9 @@ message ObjectFilter {
   string path = 1;
   repeated string include = 2;
   repeated string exclude = 3;
+  // policy-server-computed, deterministic (see Policy.id). Not present in
+  // the on-disk policy JSON schema.
+  string id = 4;
 }
 
 message Policy {
@@ -40,4 +43,8 @@ message Policy {
   // evaluates these -- opaque pass-through data.
   repeated string backup_window = 6;
   string destination = 7;
+  // policy-server-computed, deterministic from the policy file's name --
+  // stable across reloads, changes only if the file is renamed. Not
+  // present in the on-disk policy JSON schema.
+  string id = 8;
 }

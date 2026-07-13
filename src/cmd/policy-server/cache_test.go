@@ -108,4 +108,5 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	assert.Equal(t, "*.sql", got2[0].ObjectFilters[0].Include[0], "mutating ObjectFilters[].Include in returned snapshot must not affect cache")
 	assert.Equal(t, "*.tmp", got2[0].ObjectFilters[0].Exclude[0], "mutating ObjectFilters[].Exclude in returned snapshot must not affect cache")
 	assert.Equal(t, "08:00", got2[0].BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
+	assert.NotEmpty(t, got2[0].ObjectFilters[0].ID, "ObjectFilter.ID must survive the snapshot copy")
 }

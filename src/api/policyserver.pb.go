@@ -103,10 +103,13 @@ func (x *GetPoliciesResponse) GetPolicies() []*Policy {
 }
 
 type ObjectFilter struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Include       []string               `protobuf:"bytes,2,rep,name=include,proto3" json:"include,omitempty"`
-	Exclude       []string               `protobuf:"bytes,3,rep,name=exclude,proto3" json:"exclude,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Path    string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Include []string               `protobuf:"bytes,2,rep,name=include,proto3" json:"include,omitempty"`
+	Exclude []string               `protobuf:"bytes,3,rep,name=exclude,proto3" json:"exclude,omitempty"`
+	// policy-server-computed, deterministic (see Policy.id). Not present in
+	// the on-disk policy JSON schema.
+	Id            string `protobuf:"bytes,4,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -162,6 +165,13 @@ func (x *ObjectFilter) GetExclude() []string {
 	return nil
 }
 
+func (x *ObjectFilter) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
 type Policy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -173,8 +183,12 @@ type Policy struct {
 	Rpo string `protobuf:"bytes,5,opt,name=rpo,proto3" json:"rpo,omitempty"`
 	// List of cron expressions (5-field). policy-server never parses or
 	// evaluates these -- opaque pass-through data.
-	BackupWindow  []string `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
-	Destination   string   `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
+	BackupWindow []string `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
+	Destination  string   `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
+	// policy-server-computed, deterministic from the policy file's name --
+	// stable across reloads, changes only if the file is renamed. Not
+	// present in the on-disk policy JSON schema.
+	Id            string `protobuf:"bytes,8,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -258,6 +272,13 @@ func (x *Policy) GetDestination() string {
 	return ""
 }
 
+func (x *Policy) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
 var File_api_policyserver_proto protoreflect.FileDescriptor
 
 const file_api_policyserver_proto_rawDesc = "" +
@@ -265,11 +286,12 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x16api/policyserver.proto\x12\x13policyserverservice\x1a\x1fgoogle/protobuf/timestamp.proto\"\x14\n" +
 	"\x12GetPoliciesRequest\"N\n" +
 	"\x13GetPoliciesResponse\x127\n" +
-	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\"V\n" +
+	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\"f\n" +
 	"\fObjectFilter\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\ainclude\x18\x02 \x03(\tR\ainclude\x12\x18\n" +
-	"\aexclude\x18\x03 \x03(\tR\aexclude\"\xb5\x02\n" +
+	"\aexclude\x18\x03 \x03(\tR\aexclude\x12\x0e\n" +
+	"\x02id\x18\x04 \x01(\tR\x02id\"\xc5\x02\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -279,7 +301,8 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x0eobject_filters\x18\x04 \x03(\v2!.policyserverservice.ObjectFilterR\robjectFilters\x12\x10\n" +
 	"\x03rpo\x18\x05 \x01(\tR\x03rpo\x12#\n" +
 	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12 \n" +
-	"\vdestination\x18\a \x01(\tR\vdestination2q\n" +
+	"\vdestination\x18\a \x01(\tR\vdestination\x12\x0e\n" +
+	"\x02id\x18\b \x01(\tR\x02id2q\n" +
 	"\rPolicyService\x12`\n" +
 	"\vGetPolicies\x12'.policyserverservice.GetPoliciesRequest\x1a(.policyserverservice.GetPoliciesResponseB\tZ\a./protob\x06proto3"
 
