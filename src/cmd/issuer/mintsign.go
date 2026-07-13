@@ -51,8 +51,13 @@ func mintAndSign(hostname string, sans []string, attributes map[string]string, c
 		return nil, fmt.Errorf("sign certificate: %w", err)
 	}
 
+	// signResp.CertChainPEM already starts with the leaf (it's literally
+	// signResp.ServerPEM, see smallstep/certificates api.SignResponse) --
+	// prepending ServerPEM separately would duplicate the leaf as the
+	// chain's second entry, which grpc-go's TLS stack silently tolerates
+	// but a strict net/http.Server client-cert verifier (log-gateway)
+	// rejects outright with "certificate signed by unknown authority".
 	var chainPEM []byte
-	chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: signResp.ServerPEM.Raw})...)
 	for _, c := range signResp.CertChainPEM {
 		chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})...)
 	}
