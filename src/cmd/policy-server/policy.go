@@ -8,10 +8,21 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
+	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
 
+// policyIDNamespace scopes this project's deterministic policy/object-filter
+// IDs into their own UUID namespace (RFC 4122 §4.3) -- an arbitrary fixed
+// UUID whose only job is separating this ID-space from unrelated uuid.New
+// uses elsewhere in the codebase (e.g. common/jobid's random job-ids).
+var policyIDNamespace = uuid.MustParse("6f1c3a2e-8b4d-4e11-9a7c-2d5f8e0b1c34")
+
 type Metadata struct {
+	ID        string    `json:"-"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -23,6 +34,7 @@ type ClientFilters struct {
 }
 
 type ObjectFilter struct {
+	ID      string   `json:"-"`
 	Path    string   `json:"path"`
 	Include []string `json:"include,omitempty"`
 	Exclude []string `json:"exclude,omitempty"`
@@ -54,6 +66,13 @@ func parsePolicyFile(filePath string) (Policy, error) {
 	if p.Metadata.Name == "" {
 		return Policy{}, fmt.Errorf("%s: metadata.name is required", filePath)
 	}
+
+	policyUUID := uuid.NewSHA1(policyIDNamespace, []byte(filepath.Base(filePath)))
+	p.Metadata.ID = policyUUID.String()
+	for i := range p.ObjectFilters {
+		p.ObjectFilters[i].ID = uuid.NewSHA1(policyUUID, []byte(strconv.Itoa(i))).String()
+	}
+
 	for _, pattern := range p.ClientFilters.Hostnames {
 		if _, err := path.Match(pattern, ""); err != nil {
 			return Policy{}, fmt.Errorf("%s: invalid hostname pattern %q: %w", filePath, pattern, err)

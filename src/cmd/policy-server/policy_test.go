@@ -31,13 +31,78 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 	p, err := parsePolicyFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, "nightly-web-backup", p.Metadata.Name)
+	assert.NotEmpty(t, p.Metadata.ID)
 	assert.Equal(t, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC), p.Metadata.CreatedAt)
 	assert.Equal(t, []string{"web-*"}, p.ClientFilters.Hostnames)
 	assert.Equal(t, map[string]string{"env": "prod"}, p.ClientFilters.Labels)
-	assert.Equal(t, []ObjectFilter{{Path: "/var/www", Include: []string{"*.html", "*.css"}, Exclude: []string{"*.tmp"}}}, p.ObjectFilters)
+	require.Len(t, p.ObjectFilters, 1)
+	assert.Equal(t, "/var/www", p.ObjectFilters[0].Path)
+	assert.Equal(t, []string{"*.html", "*.css"}, p.ObjectFilters[0].Include)
+	assert.Equal(t, []string{"*.tmp"}, p.ObjectFilters[0].Exclude)
+	assert.NotEmpty(t, p.ObjectFilters[0].ID)
 	assert.Equal(t, "24h", p.RPO)
 	assert.Equal(t, []string{"0 2 * * *", "0 20 * * *"}, p.BackupWindow)
 	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
+}
+
+func TestParsePolicyFile_ComputesDeterministicPolicyID(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "nightly.json", `{
+		"metadata": {"name": "nightly-web-backup"},
+		"object_filters": [{"path": "/var/www"}]
+	}`)
+
+	p1, err := parsePolicyFile(path)
+	require.NoError(t, err)
+	p2, err := parsePolicyFile(path)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, p1.Metadata.ID)
+	assert.Equal(t, p1.Metadata.ID, p2.Metadata.ID, "same filename must yield the same policy ID every parse")
+}
+
+func TestParsePolicyFile_DifferentFilenamesYieldDifferentPolicyIDs(t *testing.T) {
+	dir := t.TempDir()
+	pathA := writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "same-name"}}`)
+	pathB := writePolicyFile(t, dir, "b.json", `{"metadata": {"name": "same-name"}}`)
+
+	pa, err := parsePolicyFile(pathA)
+	require.NoError(t, err)
+	pb, err := parsePolicyFile(pathB)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, pa.Metadata.ID, pb.Metadata.ID, "identical metadata.name in different files must not collide")
+}
+
+func TestParsePolicyFile_ObjectFiltersAtDifferentIndicesGetDifferentIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "multi.json", `{
+		"metadata": {"name": "multi"},
+		"object_filters": [{"path": "/a"}, {"path": "/b"}]
+	}`)
+
+	p, err := parsePolicyFile(path)
+	require.NoError(t, err)
+	require.Len(t, p.ObjectFilters, 2)
+	assert.NotEmpty(t, p.ObjectFilters[0].ID)
+	assert.NotEmpty(t, p.ObjectFilters[1].ID)
+	assert.NotEqual(t, p.ObjectFilters[0].ID, p.ObjectFilters[1].ID)
+}
+
+func TestParsePolicyFile_ObjectFiltersWithIdenticalPathGetDistinctIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "duplicate-path.json", `{
+		"metadata": {"name": "duplicate-path"},
+		"object_filters": [
+			{"path": "/var/www", "include": ["*.html"]},
+			{"path": "/var/www", "exclude": ["*.log"]}
+		]
+	}`)
+
+	p, err := parsePolicyFile(path)
+	require.NoError(t, err)
+	require.Len(t, p.ObjectFilters, 2)
+	assert.NotEqual(t, p.ObjectFilters[0].ID, p.ObjectFilters[1].ID, "two object filters sharing a path must still get distinct IDs")
 }
 
 func TestParsePolicyFile_ObjectFilterOmitsIncludeExclude(t *testing.T) {

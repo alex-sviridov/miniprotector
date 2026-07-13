@@ -20,6 +20,18 @@ func writeCachedPolicies(t *testing.T, dir, json string) string {
 	return path
 }
 
+func TestShortID_TruncatesToEightHexCharsAfterStrippingDashes(t *testing.T) {
+	assert.Equal(t, "aaaaaaaa", shortID("aaaaaaaa-1111-1111-1111-111111111111"))
+}
+
+func TestShortID_EmptyInputReturnsEmpty(t *testing.T) {
+	assert.Equal(t, "", shortID(""))
+}
+
+func TestShortID_ShorterThanEightCharsReturnedUnchanged(t *testing.T) {
+	assert.Equal(t, "abcd", shortID("ab-cd"))
+}
+
 func TestWindowOpen_TriggerJustInsideGraceReportsOpen(t *testing.T) {
 	sched, err := cron.ParseStandard("0 2 * * *") // fires 02:00 daily
 	require.NoError(t, err)
@@ -86,7 +98,10 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "daily-db-backup",
-		"object_filters": [{"path": "/var/lib/postgres"}, {"path": "/etc/postgres"}],
+		"object_filters": [
+			{"id": "aaaaaaaa-1111-1111-1111-111111111111", "path": "/var/lib/postgres"},
+			{"id": "bbbbbbbb-2222-2222-2222-222222222222", "path": "/etc/postgres"}
+		],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs-east:8080"
@@ -98,9 +113,33 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 	require.True(t, ok)
 	require.Len(t, tasks, 2)
 	ids := []string{tasks[0].ID, tasks[1].ID}
-	assert.Contains(t, ids, "backup:daily-db-backup:/var/lib/postgres")
-	assert.Contains(t, ids, "backup:daily-db-backup:/etc/postgres")
+	assert.Contains(t, ids, "backup:daily-db-backup:/var/lib/postgres:aaaaaaaa")
+	assert.Contains(t, ids, "backup:daily-db-backup:/etc/postgres:bbbbbbbb")
 	assert.NotEqual(t, tasks[0].ID, tasks[1].ID)
+}
+
+func TestBackupTasks_ObjectFiltersSharingPathGetDistinctTaskIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[{
+		"name": "web-policy",
+		"object_filters": [
+			{"id": "aaaaaaaa-1111-1111-1111-111111111111", "path": "/var/www", "include": ["*.html"]},
+			{"id": "bbbbbbbb-2222-2222-2222-222222222222", "path": "/var/www", "exclude": ["*.log"]}
+		],
+		"rpo": "1h",
+		"backup_window": ["0 2 * * *"],
+		"destination": "bwfs:8080"
+	}]`)
+
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	tasks, ok := backupTasks(path, conf)
+
+	require.True(t, ok)
+	require.Len(t, tasks, 2)
+	assert.NotEqual(t, tasks[0].ID, tasks[1].ID, "two object filters sharing a path must get distinct task IDs")
+	ids := []string{tasks[0].ID, tasks[1].ID}
+	assert.Contains(t, ids, "backup:web-policy:/var/www:aaaaaaaa")
+	assert.Contains(t, ids, "backup:web-policy:/var/www:bbbbbbbb")
 }
 
 func TestBackupTasks_TaskArgsMatchBrfsShape(t *testing.T) {
@@ -159,7 +198,10 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
-		"object_filters": [{"path": "/a"}, {"path": "/b"}],
+		"object_filters": [
+			{"id": "aaaaaaaa-1111-1111-1111-111111111111", "path": "/a"},
+			{"id": "bbbbbbbb-2222-2222-2222-222222222222", "path": "/b"}
+		],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs:8080"
@@ -174,7 +216,7 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 
 	var taskA, taskB Policy
 	for _, task := range tasks {
-		if task.ID == "backup:p:/a" {
+		if task.ID == "backup:p:/a:aaaaaaaa" {
 			taskA = task
 		} else {
 			taskB = task

@@ -171,4 +171,8 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	assert.Empty(t, p.ObjectFilters[1].Exclude)
 	assert.Equal(t, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC), p.CreatedAt.AsTime())
 	assert.Equal(t, time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC), p.UpdatedAt.AsTime())
+	assert.NotEmpty(t, p.Id)
+	assert.NotEmpty(t, p.ObjectFilters[0].Id)
+	assert.NotEmpty(t, p.ObjectFilters[1].Id)
+	assert.NotEqual(t, p.ObjectFilters[0].Id, p.ObjectFilters[1].Id)
 }

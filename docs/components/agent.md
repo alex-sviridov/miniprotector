@@ -59,8 +59,12 @@ on the next tick, the same fail-safe direction used everywhere else in this comp
 Every reconcile tick, `agent` re-reads `policies-cache.json` fresh (so it notices `policy-update`
 refreshing the cache without needing a restart) and derives one backup task per
 `(policy, object_filters path)` pair. Each task is tracked independently in `agent-state.json`
-(ID: `backup:<policy-name>:<path>`) — one path's failures and backoff never affect any other path,
-including a sibling path in the same policy.
+(ID: `backup:<policy-name>:<path>:<short-filter-id>`, where `<short-filter-id>` is the first 8
+characters of that object filter's `policy-server`-computed ID with dashes stripped) — one path's
+failures and backoff never affect any other path, including a sibling path in the same policy. The
+suffix exists so two object filters sharing the same `path` within one policy (e.g. one filtering
+with `include`, one with `exclude`, both scoped to the same root) still get distinct task-tracking
+entries instead of silently sharing one.
 
 A backup task is due when **both**:
 - a `backup_window` cron slot is currently open (a trigger fired within the last
@@ -68,10 +72,11 @@ A backup task is due when **both**:
 - the path's last successful backup is older than the policy's `rpo` (or it has never succeeded).
 
 When due, `agent` execs `brfs <path> --destination <destination> --job-id
-backup:<policy>:<slug(path)>:<timestamp>`, appending `--include <patterns>` and/or `--exclude
-<patterns>` (comma-joined) only when the object filter that produced this task actually carries
-them — the explicit job-id lets an operator correlate a `bwfs` job record back to the policy and
-path that produced it. Unlike the three static policies,
+backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>`, appending `--include <patterns>`
+and/or `--exclude <patterns>` (comma-joined) only when the object filter that produced this task
+actually carries them — the explicit job-id lets an operator correlate a `bwfs` job record back to
+the exact policy and object filter that produced it, even when two filters share a path.
+Unlike the three static policies,
 backup task execs run in a background goroutine rather than the synchronous reconcile loop, so a
 long-running backup never delays `bootstrap-refresh`/`operating-refresh`. Concurrency is bounded by
 `MaxConcurrentBackupJobs`; a due task that can't acquire a slot this tick simply stays due and is
@@ -92,7 +97,7 @@ tick's read of the cache file succeeded; a momentarily missing or corrupt cache 
 pruning, so a transient read glitch can never be mistaken for "every policy was removed" and wipe a
 live task's backoff/RPO history.
 
-`agent list-policies` shows backup tasks as additional rows (`backup:<policy>:<path>`) alongside
+`agent list-policies` shows backup tasks as additional rows (`backup:<policy>:<path>:<short-filter-id>`) alongside
 the three static policies; a task's "NEXT RUN" reflects its next `backup_window` occurrence rather
 than a fixed interval. Each row's `ERROR` column shows the most recent failure's message (truncated
 to 60 characters, `-` if there isn't one), cleared automatically on that policy/task's next success.
@@ -102,8 +107,8 @@ to 60 characters, `-` if there isn't one), cleared automatically on that policy/
 Every binary `agent` execs writes structured JSON logs to `<log_dir>/<binary-name>.log` (one
 stable, rotated file per binary — not one file per invocation), and every exec `agent` dispatches
 now carries a `--job-id` (auto-generated per invocation if not explicitly set): `<policy-id>:
-<unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<timestamp>` for
-backup tasks (unchanged). That same job-id rides as outgoing gRPC metadata to whatever server the
+<unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>`
+for backup tasks. That same job-id rides as outgoing gRPC metadata to whatever server the
 exec calls (`issuer` for `certclient operating-refresh`, `policy-server` for `policyclient`, `bwfs`
 for `brfs`), and each of those servers tags its own log lines with the identical value — so one
 job-id correlates `agent`'s own start/completion log line, the exec's local log file, and the

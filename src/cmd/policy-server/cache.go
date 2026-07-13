@@ -47,6 +47,7 @@ func (c *Cache) Policies() []Policy {
 		}
 		for j, f := range p.ObjectFilters {
 			out[i].ObjectFilters[j] = ObjectFilter{
+				ID:      f.ID,
 				Path:    f.Path,
 				Include: append([]string(nil), f.Include...),
 				Exclude: append([]string(nil), f.Exclude...),

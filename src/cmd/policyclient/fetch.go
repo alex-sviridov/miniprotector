@@ -21,8 +21,10 @@ import (
 
 // ObjectFilter is the on-disk representation of one policy-server
 // ObjectFilter: a backup root path plus its optional include/exclude glob
-// patterns, carried through verbatim from the RPC response.
+// patterns and its policy-server-computed ID, carried through verbatim
+// from the RPC response.
 type ObjectFilter struct {
+	ID      string   `json:"id"`
 	Path    string   `json:"path"`
 	Include []string `json:"include,omitempty"`
 	Exclude []string `json:"exclude,omitempty"`
@@ -32,6 +34,7 @@ type ObjectFilter struct {
 // the same fields the GetPolicies RPC response already defines, converted
 // directly from the protobuf message.
 type CachedPolicy struct {
+	ID            string         `json:"id"`
 	Name          string         `json:"name"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
@@ -103,12 +106,14 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 		filters := make([]ObjectFilter, 0, len(p.GetObjectFilters()))
 		for _, of := range p.GetObjectFilters() {
 			filters = append(filters, ObjectFilter{
+				ID:      of.GetId(),
 				Path:    of.GetPath(),
 				Include: of.GetInclude(),
 				Exclude: of.GetExclude(),
 			})
 		}
 		out = append(out, CachedPolicy{
+			ID:            p.GetId(),
 			Name:          p.GetName(),
 			CreatedAt:     p.GetCreatedAt().AsTime(),
 			UpdatedAt:     p.GetUpdatedAt().AsTime(),
