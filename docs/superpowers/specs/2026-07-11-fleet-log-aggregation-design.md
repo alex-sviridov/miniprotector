@@ -101,11 +101,13 @@ pipeline reads from continuously.
      `net/http.Server` (`common/mtls` already returns a bare `*tls.Config`; this needs no gRPC-
      specific machinery, just an HTTP-flavored constructor next to the existing one).
    - Derives `hostname` from the verified peer certificate's SAN, the same field
-     `mtls.PeerHostname` already reads for every gRPC call.
+     `mtls.PeerHostname` already reads for every gRPC call. **Not built this way — see the
+     Implementation Note at the top of this document.**
    - Force-overwrites (never trusts) the `hostname` label on every proxied push request before
      forwarding it to Loki — a node cannot claim to be a different hostname than the one in its own
-     certificate, in logs any more than anywhere else in this project.
-   - Forwards the corrected request to Loki's real push endpoint.
+     certificate, in logs any more than anywhere else in this project. **Not built this way — see
+     the Implementation Note at the top of this document.**
+   - Forwards the request to Loki's real push endpoint.
 
 3. **Vector, bundled and supervised directly by `agent`** — chosen over the initially-considered
    Grafana Alloy specifically because Vector's own HTTP API/health server is disabled by default
@@ -278,9 +280,9 @@ left false) tails <log_dir>
 log-gateway
   -> verifies the peer cert is operating-tier (rejects a bootstrap/issuer-caller credential,
      same rule bwfs/catalog already enforce)
-  -> derives `hostname` from the verified peer cert's SAN
-  -> force-overwrites the `hostname` label on the request (never trusts a client-supplied value)
-  -> forwards to Loki's push endpoint
+  -> forwards the request, unexamined, to Loki's push endpoint
+  (the hostname-derivation/force-overwrite steps originally planned here were not built --
+  see the Implementation Note at the top of this document)
 
 Loki
   -> stores/indexes by label (hostname, binary); job_id/pid/timestamp stay in line content,
@@ -365,8 +367,11 @@ way it already is today): Loki's retention period.
   `log_gateway_port`/certs path, and that Vector's API/listener config is never emitted.
 - Integration: a real, throwaway Loki instance (own `docker-compose.yml` service, same pattern as
   `issuer`'s existing e2e test against a throwaway `step-ca`) — confirms a push through
-  `log-gateway` round-trips with the gateway-enforced `hostname` label, and that a request
-  attempting to spoof a different `hostname` label is overwritten, not honored.
+  `log-gateway` round-trips and that an unauthenticated caller (no valid operating certificate) is
+  rejected at the TLS layer. (The gateway-enforced-hostname/spoof-rejection property originally
+  planned for this test was not built — see the Implementation Note at the top of this document;
+  the actual e2e test, `TestE2E_AuthenticatedPushReachesLokiUnderClientDeclaredHostname` plus
+  `TestE2E_UnauthenticatedPushRejected`, verifies what's actually built instead.)
 - Demo: extend `demo/` to add `loki`, `log-gateway`, and per-node Vector processes (supervised by
   each node's own `agent`), confirming the demo's existing `database`/`webserver` nodes' logs are
   queryable centrally by hostname.
