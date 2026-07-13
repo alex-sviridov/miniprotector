@@ -56,7 +56,8 @@ transforms:
     type: remap
     inputs: ["local_logs"]
     source: |
-      .binary = replace!(path.strip_dir!(.file), ".log", "")
+      parts = split!(.file, "/")
+      .binary = replace!(parts[-1], ".log", "")
 
 sinks:
   loki_gateway:
