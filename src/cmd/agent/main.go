@@ -82,7 +82,12 @@ func main() {
 			logger.Error("vector binary resolution failed", "error", err)
 			os.Exit(1)
 		}
-		vectorConfig, err := renderVectorConfig(conf.LogDir, varDir, certsDir, conf.LogGatewayHost, conf.LogGatewayPort)
+		hostname, err := hostnameFromBootstrapCert(certsDir)
+		if err != nil {
+			logger.Error("hostname resolution from bootstrap credential failed", "error", err)
+			os.Exit(1)
+		}
+		vectorConfig, err := renderVectorConfig(conf.LogDir, varDir, certsDir, conf.LogGatewayHost, conf.LogGatewayPort, hostname)
 		if err != nil {
 			logger.Error("vector config render failed", "error", err)
 			os.Exit(1)

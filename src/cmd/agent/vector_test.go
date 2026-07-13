@@ -2,6 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -11,6 +18,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// writeFakeBootstrapCert writes a self-signed bootstrap.crt/bootstrap.key
+// pair with the given CommonName into certsDir. Mirrors
+// cmd/certclient/operatingrefresh_test.go's writeTestBootstrapCred exactly
+// -- hostnameFromBootstrapCert only ever reads the CommonName back out, so
+// a self-signed fixture never needs to chain to a real CA.
+func writeFakeBootstrapCert(t *testing.T, certsDir, hostname string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: hostname},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	require.NoError(t, os.WriteFile(filepath.Join(certsDir, "bootstrap.crt"), certPEM, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(certsDir, "bootstrap.key"), keyPEM, 0o600))
+}
 
 // TestResolveVectorBinary_FindsColocatedBinary writes a fake vector binary
 // into a temp directory and confirms resolveVectorBinaryIn finds it --
@@ -36,19 +71,19 @@ func TestResolveVectorBinary_MissingBinaryFailsLoudly(t *testing.T) {
 }
 
 func TestRenderVectorConfig_IncludesLogDirGlob(t *testing.T) {
-	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
 	require.NoError(t, err)
 	assert.Contains(t, got, `"/var/log/mp/*.log"`)
 }
 
 func TestRenderVectorConfig_PointsAtLogGatewayEndpoint(t *testing.T) {
-	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
 	require.NoError(t, err)
 	assert.Contains(t, got, "https://log-gateway.internal:9400")
 }
 
 func TestRenderVectorConfig_UsesCertsDirForTLS(t *testing.T) {
-	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
 	require.NoError(t, err)
 	assert.Contains(t, got, "/var/lib/mp/certs/client.crt")
 	assert.Contains(t, got, "/var/lib/mp/certs/client.key")
@@ -56,15 +91,40 @@ func TestRenderVectorConfig_UsesCertsDirForTLS(t *testing.T) {
 }
 
 func TestRenderVectorConfig_UsesVarDirForDataAndBuffer(t *testing.T) {
-	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
 	require.NoError(t, err)
 	assert.Contains(t, got, "/var/lib/mp/vector-data")
 }
 
 func TestRenderVectorConfig_NeverEnablesTheHTTPAPI(t *testing.T) {
-	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400)
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
 	require.NoError(t, err)
 	assert.NotContains(t, got, "api:", "must never enable Vector's own HTTP API/listener -- agent's own network footprint stays outbound-only")
+}
+
+func TestRenderVectorConfig_SetsHostnameLabelFromArgument(t *testing.T) {
+	// log-gateway authenticates the push but never inspects or rewrites
+	// the body (see docs/SECURITY.md), so Vector itself is the only
+	// place the hostname label can come from.
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "node-real-hostname")
+	require.NoError(t, err)
+	assert.Contains(t, got, `hostname: "node-real-hostname"`)
+}
+
+func TestHostnameFromBootstrapCert_ReadsCommonName(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeBootstrapCert(t, dir, "node-under-test")
+
+	got, err := hostnameFromBootstrapCert(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "node-under-test", got)
+}
+
+func TestHostnameFromBootstrapCert_MissingCredentialErrors(t *testing.T) {
+	dir := t.TempDir() // no bootstrap.crt/key written
+
+	_, err := hostnameFromBootstrapCert(dir)
+	assert.Error(t, err)
 }
 
 func TestVectorSupervisor_StartsAndStopsCleanlyOnContextCancel(t *testing.T) {

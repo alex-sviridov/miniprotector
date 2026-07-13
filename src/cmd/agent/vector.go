@@ -6,6 +6,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"os"
@@ -68,6 +70,7 @@ sinks:
       codec: json
     labels:
       binary: "{{"{{ binary }}"}}"
+      hostname: "{{ .Hostname }}"
     tls:
       ca_file: "{{ .CertsDir }}/ca.crt"
       crt_file: "{{ .CertsDir }}/client.crt"
@@ -84,13 +87,17 @@ type vectorConfigData struct {
 	CertsDir       string
 	LogGatewayHost string
 	LogGatewayPort int
+	Hostname       string
 }
 
 // renderVectorConfig builds Vector's config from this node's own resolved
 // paths and local.conf values -- never a static file, since all of these
 // are deployment-specific and only known after agent has parsed its own
-// config.
-func renderVectorConfig(logDir, varDir, certsDir, logGatewayHost string, logGatewayPort int) (string, error) {
+// config. hostname becomes every shipped stream's "hostname" label:
+// log-gateway authenticates the push (a valid operating certificate is
+// required) but never inspects or rewrites the body, so Vector itself must
+// be the one to set this label -- see docs/SECURITY.md.
+func renderVectorConfig(logDir, varDir, certsDir, logGatewayHost string, logGatewayPort int, hostname string) (string, error) {
 	tmpl, err := template.New("vector-config").Parse(vectorConfigTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parse vector config template: %w", err)
@@ -102,10 +109,36 @@ func renderVectorConfig(logDir, varDir, certsDir, logGatewayHost string, logGate
 		CertsDir:       certsDir,
 		LogGatewayHost: logGatewayHost,
 		LogGatewayPort: logGatewayPort,
+		Hostname:       hostname,
 	}); err != nil {
 		return "", fmt.Errorf("render vector config: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// hostnameFromBootstrapCert parses this node's own hostname from its
+// bootstrap credential's Subject.CommonName -- mirrors
+// cmd/certclient/operatingrefresh.go's helper of the same name exactly;
+// duplicated rather than shared since agent and certclient are separate
+// binaries with no existing common package for this one-line lookup (this
+// codebase's established convention for small per-binary helpers, e.g.
+// cmd/log-gateway/e2e_test.go's comment on the same trade-off).
+func hostnameFromBootstrapCert(certsDir string) (string, error) {
+	cert, err := tls.LoadX509KeyPair(
+		filepath.Join(certsDir, "bootstrap.crt"),
+		filepath.Join(certsDir, "bootstrap.key"),
+	)
+	if err != nil {
+		return "", fmt.Errorf("load bootstrap credential: %w", err)
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return "", fmt.Errorf("parse bootstrap certificate: %w", err)
+	}
+	if leaf.Subject.CommonName == "" {
+		return "", fmt.Errorf("bootstrap certificate has no CommonName")
+	}
+	return leaf.Subject.CommonName, nil
 }
 
 // vectorSupervisor owns the lifecycle of agent's bundled Vector process: a
@@ -239,6 +272,24 @@ func (v *vectorSupervisor) spawnAndWait(ctx context.Context) error {
 		args = []string{"--config", v.configPath}
 	}
 	cmd := exec.Command(v.binary, args...)
+
+	// Vector's own stdout/stderr are otherwise silently discarded -- the
+	// only signal this supervisor previously surfaced on a failure was
+	// its own "exit status N", with no way to see Vector's own error
+	// message (e.g. a config problem, a sink healthcheck failure, a
+	// buffer error) without manually re-running the binary by hand.
+	// Best-effort: a failure to open the log file degrades
+	// observability, never supervision itself.
+	if v.configPath != "" {
+		logPath := filepath.Join(filepath.Dir(v.configPath), "vector-output.log")
+		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			defer f.Close()
+			cmd.Stdout = f
+			cmd.Stderr = f
+		} else {
+			v.logger.Warn("could not open vector output log, its stdout/stderr will be discarded", "path", logPath, "error", err)
+		}
+	}
 
 	v.mu.Lock()
 	err := cmd.Start()
