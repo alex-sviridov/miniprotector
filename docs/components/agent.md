@@ -97,7 +97,7 @@ tick's read of the cache file succeeded; a momentarily missing or corrupt cache 
 pruning, so a transient read glitch can never be mistaken for "every policy was removed" and wipe a
 live task's backoff/RPO history.
 
-`agent list-policies` shows backup tasks as additional rows (`backup:<policy>:<path>`) alongside
+`agent list-policies` shows backup tasks as additional rows (`backup:<policy>:<path>:<short-filter-id>`) alongside
 the three static policies; a task's "NEXT RUN" reflects its next `backup_window` occurrence rather
 than a fixed interval. Each row's `ERROR` column shows the most recent failure's message (truncated
 to 60 characters, `-` if there isn't one), cleared automatically on that policy/task's next success.
@@ -107,8 +107,8 @@ to 60 characters, `-` if there isn't one), cleared automatically on that policy/
 Every binary `agent` execs writes structured JSON logs to `<log_dir>/<binary-name>.log` (one
 stable, rotated file per binary — not one file per invocation), and every exec `agent` dispatches
 now carries a `--job-id` (auto-generated per invocation if not explicitly set): `<policy-id>:
-<unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<timestamp>` for
-backup tasks (unchanged). That same job-id rides as outgoing gRPC metadata to whatever server the
+<unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>`
+for backup tasks. That same job-id rides as outgoing gRPC metadata to whatever server the
 exec calls (`issuer` for `certclient operating-refresh`, `policy-server` for `policyclient`, `bwfs`
 for `brfs`), and each of those servers tags its own log lines with the identical value — so one
 job-id correlates `agent`'s own start/completion log line, the exec's local log file, and the
