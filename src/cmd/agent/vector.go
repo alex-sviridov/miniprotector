@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"text/template"
 	"time"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // resolveVectorBinary finds the Vector binary colocated with agent's own
@@ -278,17 +280,23 @@ func (v *vectorSupervisor) spawnAndWait(ctx context.Context) error {
 	// its own "exit status N", with no way to see Vector's own error
 	// message (e.g. a config problem, a sink healthcheck failure, a
 	// buffer error) without manually re-running the binary by hand.
-	// Best-effort: a failure to open the log file degrades
-	// observability, never supervision itself.
+	// Rotated the same way common/logging rotates every other binary's
+	// own log (lumberjack, same size/backup/age/compress values) --
+	// unbounded growth here would otherwise be a real disk-fill risk on
+	// a long-running node that's crash-looping or repeatedly failing its
+	// sink healthcheck, both of which write continuously. Best-effort:
+	// nothing about this affects Vector supervision itself.
 	if v.configPath != "" {
-		logPath := filepath.Join(filepath.Dir(v.configPath), "vector-output.log")
-		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			defer f.Close()
-			cmd.Stdout = f
-			cmd.Stderr = f
-		} else {
-			v.logger.Warn("could not open vector output log, its stdout/stderr will be discarded", "path", logPath, "error", err)
+		ljLogger := &lumberjack.Logger{
+			Filename:   filepath.Join(filepath.Dir(v.configPath), "vector-output.log"),
+			MaxSize:    50, // megabytes
+			MaxBackups: 5,
+			MaxAge:     14, // days
+			Compress:   true,
 		}
+		defer ljLogger.Close()
+		cmd.Stdout = ljLogger
+		cmd.Stderr = ljLogger
 	}
 
 	v.mu.Lock()
