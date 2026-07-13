@@ -47,7 +47,7 @@ brfs /var/log --destination localhost:8080 --debug --streams 5
 ```
 
 `agent`'s policy-driven backup tasks (see [agent](./agent.md#policy-driven-backup-execution)) use
-the job-id convention `backup:<policy-name>:<slug-of-path>:<unix-timestamp>` — useful when grepping
+the job-id convention `backup:<policy-name>:<slug-of-path>:<short-filter-id>:<unix-timestamp>` — useful when grepping
 `bwfs`'s job history for which policy produced a given run.
 
 ## Filtering
