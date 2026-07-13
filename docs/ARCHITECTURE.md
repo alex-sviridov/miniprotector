@@ -14,7 +14,7 @@ A backup system with intelligent deduplication and integrity verification.
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
 | policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (`agent` fetches, caches, and now acts on its policies — deriving and running scheduled `brfs` backups via `policyclient`) |
-| log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; enforces the hostname label from the verified peer cert | Implemented (agent/Vector integration is separate, later work) |
+| log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; gates on a valid operating certificate, forwards the push body unmodified | Implemented (agent/Vector integration is separate, later work) |
 
 ## Control Plane vs. Agents
 

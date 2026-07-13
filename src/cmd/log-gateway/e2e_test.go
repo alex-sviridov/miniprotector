@@ -27,21 +27,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 )
 
-// TestE2E_PushedLogIsQueryableUnderGatewayEnforcedHostname proves the full
-// real pipeline this plan builds: a client presents a real (self-signed
-// test CA, operating-tier-shaped) mTLS certificate for "node-real-hostname"
-// but declares a spoofed hostname label in its push body; log-gateway,
-// running its real TLS server construction (mtls.ServerTLSConfig) and real
-// handler, forwards it to a genuine, throwaway Loki container; the pushed
-// line is then queryable back out of Loki under the cert-derived hostname,
-// never the spoofed one.
-func TestE2E_PushedLogIsQueryableUnderGatewayEnforcedHostname(t *testing.T) {
+// TestE2E_AuthenticatedPushReachesLokiUnderClientDeclaredHostname proves the
+// full real pipeline: a client presents a real (self-signed test CA,
+// operating-tier-shaped) mTLS certificate and pushes a log line labeled
+// with whatever hostname it declares; log-gateway, running its real TLS
+// server construction (mtls.ServerTLSConfig) and real handler, forwards
+// the body unmodified to a genuine, throwaway Loki container. log-gateway's
+// security boundary is mTLS authentication, not body inspection -- the
+// pushed line becomes queryable under the label the client itself set.
+func TestE2E_AuthenticatedPushReachesLokiUnderClientDeclaredHostname(t *testing.T) {
 	requireDocker(t)
 
 	lokiURL, cleanup := startTestLoki(t)
@@ -81,7 +80,7 @@ func TestE2E_PushedLogIsQueryableUnderGatewayEnforcedHostname(t *testing.T) {
 	}
 
 	nowNS := time.Now().UnixNano()
-	pushBody := fmt.Sprintf(`{"streams":[{"stream":{"hostname":"spoofed-hostname","binary":"e2e-test"},"values":[["%d","this is the e2e test log line"]]}]}`, nowNS)
+	pushBody := fmt.Sprintf(`{"streams":[{"stream":{"hostname":"node-real-hostname","binary":"e2e-test"},"values":[["%d","this is the e2e test log line"]]}]}`, nowNS)
 	resp, err := httpClient.Post(fmt.Sprintf("https://%s/loki/api/v1/push", gatewayAddr), "application/json", strings.NewReader(pushBody))
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -94,11 +93,53 @@ func TestE2E_PushedLogIsQueryableUnderGatewayEnforcedHostname(t *testing.T) {
 			return false
 		}
 		return strings.Contains(result, "this is the e2e test log line")
-	}, 15*time.Second, 500*time.Millisecond, "pushed line never became queryable under the gateway-enforced hostname")
+	}, 15*time.Second, 500*time.Millisecond, "pushed line never became queryable in Loki")
+}
 
-	result, err := queryLoki(lokiURL, `{hostname="spoofed-hostname"}`)
+// TestE2E_UnauthenticatedPushRejected proves mTLS authentication is still
+// the real gate: a caller with no client certificate at all must never
+// reach Loki, regardless of what its push body claims.
+func TestE2E_UnauthenticatedPushRejected(t *testing.T) {
+	requireDocker(t)
+
+	lokiURL, cleanup := startTestLoki(t)
+	defer cleanup()
+
+	ca, caKey := generateTestCA(t)
+	serverIdentity := generateTestLeaf(t, ca, caKey, "log-gateway-e2e", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, nil)
+	certsDir := writeTestCertsDir(t, ca, serverIdentity)
+
+	tlsConfig, err := mtls.ServerTLSConfig(certsDir)
 	require.NoError(t, err)
-	assert.NotContains(t, result, "this is the e2e test log line", "the spoofed hostname label must never have been honored")
+
+	srv := newLogGatewayServer(lokiURL, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/loki/api/v1/push", srv.ServeHTTP)
+	httpServer := &http.Server{Handler: mux, TLSConfig: tlsConfig}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	tlsListener := tls.NewListener(listener, tlsConfig)
+	gatewayAddr := listener.Addr().String()
+
+	go func() { _ = httpServer.Serve(tlsListener) }()
+	defer httpServer.Close()
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+	// No client certificate presented -- TLS handshake itself must fail,
+	// since the server requires and verifies one.
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:    caPool,
+				ServerName: "log-gateway-e2e",
+			},
+		},
+	}
+
+	_, err = httpClient.Post(fmt.Sprintf("https://%s/loki/api/v1/push", gatewayAddr), "application/json", strings.NewReader(`{"streams":[]}`))
+	require.Error(t, err, "a push with no client certificate must be rejected at the TLS layer")
 }
 
 func queryLoki(lokiURL, query string) (string, error) {

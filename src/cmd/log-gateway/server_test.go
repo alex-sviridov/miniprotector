@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"math/big"
@@ -51,7 +50,13 @@ func fakePeerCert(t *testing.T, hostname string) *x509.Certificate {
 	return cert
 }
 
-func TestHandlePush_RewritesHostnameLabelFromVerifiedPeerCert(t *testing.T) {
+func TestHandlePush_BodyForwardedUnmodifiedToLoki(t *testing.T) {
+	// log-gateway never parses the push body -- JSON, snappy-compressed
+	// protobuf (Vector's own default wire format), or anything else --
+	// it only gates on mTLS identity. A caller-set hostname label is
+	// trusted as sent, not rewritten; the security boundary here is
+	// "must present a valid, non-revoked operating certificate," not
+	// body inspection.
 	var capturedBody []byte
 	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
@@ -63,7 +68,7 @@ func TestHandlePush_RewritesHostnameLabelFromVerifiedPeerCert(t *testing.T) {
 
 	srv := newLogGatewayServer(lokiStub.URL, testLogger())
 
-	reqBody := `{"streams":[{"stream":{"hostname":"spoofed-by-client","binary":"brfs"},"values":[["1699999999000000000","line1"]]}]}`
+	reqBody := `{"streams":[{"stream":{"hostname":"whatever-the-client-says","binary":"brfs"},"values":[["1699999999000000000","line1",{"trace_id":"abc123"}]]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", strings.NewReader(reqBody))
 	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "node-1")}}
 	w := httptest.NewRecorder()
@@ -71,41 +76,35 @@ func TestHandlePush_RewritesHostnameLabelFromVerifiedPeerCert(t *testing.T) {
 	srv.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNoContent, w.Result().StatusCode)
-	var got pushRequest
-	require.NoError(t, json.Unmarshal(capturedBody, &got))
-	require.Len(t, got.Streams, 1)
-	assert.Equal(t, "node-1", got.Streams[0].Stream["hostname"], "hostname label must be overwritten from the verified peer cert, not trusted from the client")
-	assert.Equal(t, "brfs", got.Streams[0].Stream["binary"], "other labels must pass through unchanged")
+	assert.Equal(t, reqBody, string(capturedBody), "body must reach Loki byte-for-byte unmodified")
 }
 
-func TestHandlePush_MultipleStreamsAllGetHostnameRewritten(t *testing.T) {
-	var capturedBody []byte
+func TestHandlePush_ContentTypeAndEncodingHeadersForwarded(t *testing.T) {
+	// Vector's loki sink sends application/x-protobuf with
+	// Content-Encoding: snappy by default -- log-gateway must preserve
+	// both headers verbatim (it never decodes the body, so Loki has to
+	// see the same encoding the caller used) rather than assuming JSON.
+	var gotContentType, gotContentEncoding string
 	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		capturedBody, err = io.ReadAll(r.Body)
-		require.NoError(t, err)
+		gotContentType = r.Header.Get("Content-Type")
+		gotContentEncoding = r.Header.Get("Content-Encoding")
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer lokiStub.Close()
 
 	srv := newLogGatewayServer(lokiStub.URL, testLogger())
 
-	reqBody := `{"streams":[
-		{"stream":{"binary":"brfs"},"values":[["1699999999000000000","line1"]]},
-		{"stream":{"binary":"certclient"},"values":[["1699999999000000001","line2"]]}
-	]}`
-	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", strings.NewReader(reqBody))
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "node-2")}}
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", strings.NewReader("opaque-protobuf-bytes"))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+	req.Header.Set("Content-Encoding", "snappy")
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "node-1")}}
 	w := httptest.NewRecorder()
 
 	srv.ServeHTTP(w, req)
 
-	var got pushRequest
-	require.NoError(t, json.Unmarshal(capturedBody, &got))
-	require.Len(t, got.Streams, 2)
-	for _, s := range got.Streams {
-		assert.Equal(t, "node-2", s.Stream["hostname"])
-	}
+	assert.Equal(t, http.StatusNoContent, w.Result().StatusCode)
+	assert.Equal(t, "application/x-protobuf", gotContentType)
+	assert.Equal(t, "snappy", gotContentEncoding)
 }
 
 func TestHandlePush_NoPeerCertificateRejected(t *testing.T) {
@@ -117,18 +116,6 @@ func TestHandlePush_NoPeerCertificateRejected(t *testing.T) {
 	srv.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
-}
-
-func TestHandlePush_MalformedJSONRejected(t *testing.T) {
-	srv := newLogGatewayServer("http://unused.invalid", testLogger())
-
-	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", strings.NewReader("not json"))
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "node-1")}}
-	w := httptest.NewRecorder()
-
-	srv.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
 }
 
 func TestHandlePush_NonPostMethodRejected(t *testing.T) {

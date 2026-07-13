@@ -16,8 +16,12 @@ anywhere in the mesh.
 One exception to "gRPC": `log-gateway`'s push endpoint is plain HTTP, since it proxies to Loki's
 own HTTP push API. The transport is still genuine mTLS (`common/mtls.ServerTLSConfig`, the same
 operating-tier verification `LoadServerCredentials` gives every gRPC server, just not wrapped for
-gRPC), and the same rule holds: caller identity is always the verified peer certificate
-(`mtls.PeerHostnameFromConnState`), never a request field.
+gRPC): only a caller with a valid, non-revoked operating certificate can push anything at all.
+Unlike every other server in this project, `log-gateway` does not additionally re-derive an
+identity field from that certificate — it never parses the push body (which may be JSON or, e.g.
+Vector's own default, snappy-compressed protobuf), so a stream's `hostname` label is whatever the
+shipper itself set. The security boundary here is deliberately "must authenticate to push at all,"
+not "must not mislabel its own logs."
 
 Whenever a server-side handler needs to know which node is calling it, that identity is **always**
 derived from the verified mTLS peer certificate — never from a field the caller supplies on the

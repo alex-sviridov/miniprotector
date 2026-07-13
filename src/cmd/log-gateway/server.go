@@ -1,14 +1,18 @@
 // log-gateway is an mTLS-terminating HTTP reverse proxy in front of Loki.
-// Loki's push API has no concept of mTLS peer identity, and this project
-// never trusts a caller-asserted identity field (see docs/SECURITY.md) --
-// so every proxied push has its hostname label force-overwritten from the
-// verified peer certificate before being forwarded.
+// It authenticates every caller via a verified operating-tier mTLS
+// certificate (common/mtls) and forwards the request body to Loki's push
+// API completely unexamined and unmodified -- log-gateway never parses
+// Loki's push format (JSON or, e.g. Vector's default, snappy-compressed
+// protobuf), it only decides whether the caller is allowed to push at
+// all. The hostname label a shipper puts on its own streams is trusted as
+// sent: log-gateway's security boundary is "must present a valid,
+// non-revoked operating certificate to push anything," not "must not
+// mislabel its own logs" -- see docs/SECURITY.md.
 package main
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -37,23 +41,17 @@ const maxPushBodyBytes = 10 << 20 // 10MB
 // enough to shed load and free the goroutine when Loki is unhealthy.
 const lokiForwardTimeout = 10 * time.Second
 
-// pushRequest and stream mirror the subset of Loki's push API JSON body
-// (POST /loki/api/v1/push) log-gateway needs to touch: the per-stream
-// label set. Values (timestamp/line pairs) pass through completely
-// unexamined and unmodified.
-type pushRequest struct {
-	Streams []stream `json:"streams"`
-}
-
-type stream struct {
-	Stream map[string]string `json:"stream"`
-	Values [][2]string       `json:"values"`
-}
+// passthroughHeaders lists the request headers forwarded to Loki as-is.
+// Loki's push body can be JSON or snappy-compressed protobuf (Vector's
+// default) -- log-gateway doesn't decode either, so it must preserve
+// whatever Content-Type/Content-Encoding the caller used or Loki will
+// fail to decode a body it never actually altered.
+var passthroughHeaders = []string{"Content-Type", "Content-Encoding"}
 
 // logGatewayServer implements the sole HTTP handler an already-bootstrapped
-// node's log shipper calls to push its logs toward Loki. The caller's
-// identity is always the verified mTLS peer hostname -- never a field in
-// the request body.
+// node's log shipper calls to push its logs toward Loki. Every caller must
+// present a verified, non-revoked operating-tier mTLS certificate; nothing
+// about the request body is required to identify itself.
 type logGatewayServer struct {
 	lokiPushURL string
 	httpClient  *http.Client
@@ -92,34 +90,19 @@ func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req pushRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "parse push request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	for i := range req.Streams {
-		if req.Streams[i].Stream == nil {
-			req.Streams[i].Stream = make(map[string]string)
-		}
-		req.Streams[i].Stream["hostname"] = hostname
-	}
-
-	rewritten, err := json.Marshal(req)
-	if err != nil {
-		http.Error(w, "re-marshal push request: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), lokiForwardTimeout)
 	defer cancel()
 
-	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.lokiPushURL, bytes.NewReader(rewritten))
+	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.lokiPushURL, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "build loki request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	lokiReq.Header.Set("Content-Type", "application/json")
+	for _, h := range passthroughHeaders {
+		if v := r.Header.Get(h); v != "" {
+			lokiReq.Header.Set(h, v)
+		}
+	}
 
 	resp, err := s.httpClient.Do(lokiReq)
 	if err != nil {

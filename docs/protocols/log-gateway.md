@@ -7,8 +7,8 @@ not gRPC).
 
 ## Request
 
-Loki's own push API shape (a strict subset `log-gateway` cares about — everything else passes
-through untouched):
+Whatever Loki's own push endpoint accepts, forwarded byte-for-byte unmodified — `log-gateway`
+never parses the body. In practice this is either Loki's JSON push shape:
 
 ```json
 {
@@ -21,21 +21,27 @@ through untouched):
 }
 ```
 
+or Loki's native protobuf push format (`logproto.PushRequest`), snappy-compressed — Vector's own
+`loki` sink sends this by default (`Content-Type: application/x-protobuf`,
+`Content-Encoding: snappy`), regardless of the sink's `encoding.codec` setting, which only governs
+per-line encoding within that format, not the outer wire format. `log-gateway` forwards both
+`Content-Type` and `Content-Encoding` headers unchanged, so Loki decodes exactly what the caller
+sent.
+
 ## Authorization
 
-The caller's hostname is always derived from its verified mTLS peer identity
-(`mtls.PeerHostnameFromConnState`) — never a field on the request. `log-gateway` overwrites the
-`hostname` label on every stream in the body with that verified value before forwarding — a caller
-cannot claim to be a different hostname than the one in its own certificate, in logs any more than
-anywhere else in this project (see [Security Model](../SECURITY.md)).
+A caller must present a verified, non-revoked operating-tier mTLS certificate to push at all
+(`common/mtls`'s standard peer verification) — that is the entire authorization check. Unlike
+every other server in this project, `log-gateway` does not additionally derive an identity field
+from that certificate: since it never parses the body, a stream's `hostname` label is whatever the
+shipper itself set (see [Security Model](../SECURITY.md)).
 
 ## Response
 
 Whatever Loki's own push endpoint returns, proxied through unchanged (`204 No Content` on success,
 per Loki's own convention). `502 Bad Gateway` if Loki itself is unreachable. `401 Unauthorized` if
-no verified peer certificate was presented. `400 Bad Request` for a malformed body. `405 Method Not
-Allowed` for anything other than `POST`. `500 Internal Server Error` in the (expected-never)
-case where re-marshaling the rewritten body itself fails.
+no verified peer certificate was presented. `413 Request Entity Too Large` if the body exceeds
+`log-gateway`'s 10MB cap. `405 Method Not Allowed` for anything other than `POST`.
 
 ## See Also
 
