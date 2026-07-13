@@ -43,13 +43,16 @@ func TestRunFetch_Success_WritesCacheFile(t *testing.T) {
 	fake := &fakePolicyServiceClient{resp: &pb.GetPoliciesResponse{
 		Policies: []*pb.Policy{
 			{
-				Name:          "daily-db-backup",
-				CreatedAt:     created,
-				UpdatedAt:     updated,
-				ObjectFilters: []*pb.ObjectFilter{{Path: "/var/lib/postgres"}, {Path: "/etc/postgres"}},
-				Rpo:           "24h",
-				BackupWindow:  []string{"0 2 * * *"},
-				Destination:   "bwfs-east.internal:8080",
+				Name:      "daily-db-backup",
+				CreatedAt: created,
+				UpdatedAt: updated,
+				ObjectFilters: []*pb.ObjectFilter{
+					{Path: "/var/lib/postgres", Include: []string{"*.sql"}},
+					{Path: "/etc/postgres", Exclude: []string{"*.bak"}},
+				},
+				Rpo:          "24h",
+				BackupWindow: []string{"0 2 * * *"},
+				Destination:  "bwfs-east.internal:8080",
 			},
 		},
 	}}
@@ -66,7 +69,10 @@ func TestRunFetch_Success_WritesCacheFile(t *testing.T) {
 	assert.Equal(t, "daily-db-backup", got[0].Name)
 	assert.True(t, created.AsTime().Equal(got[0].CreatedAt))
 	assert.True(t, updated.AsTime().Equal(got[0].UpdatedAt))
-	assert.Equal(t, []string{"/var/lib/postgres", "/etc/postgres"}, got[0].ObjectFilters)
+	assert.Equal(t, []ObjectFilter{
+		{Path: "/var/lib/postgres", Include: []string{"*.sql"}},
+		{Path: "/etc/postgres", Exclude: []string{"*.bak"}},
+	}, got[0].ObjectFilters)
 	assert.Equal(t, "24h", got[0].RPO)
 	assert.Equal(t, []string{"0 2 * * *"}, got[0].BackupWindow)
 	assert.Equal(t, "bwfs-east.internal:8080", got[0].Destination)

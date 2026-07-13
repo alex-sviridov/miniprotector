@@ -19,20 +19,26 @@ import (
 	"google.golang.org/grpc"
 )
 
+// ObjectFilter is the on-disk representation of one policy-server
+// ObjectFilter: a backup root path plus its optional include/exclude glob
+// patterns, carried through verbatim from the RPC response.
+type ObjectFilter struct {
+	Path    string   `json:"path"`
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
 // CachedPolicy is the on-disk representation of one policy-server Policy --
 // the same fields the GetPolicies RPC response already defines, converted
-// directly from the protobuf message. ObjectFilters flattens
-// []*pb.ObjectFilter (a list of single-field {path} messages) to a plain
-// []string: a lossless simplification since Path is ObjectFilter's only
-// field.
+// directly from the protobuf message.
 type CachedPolicy struct {
-	Name          string    `json:"name"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	ObjectFilters []string  `json:"object_filters"`
-	RPO           string    `json:"rpo"`
-	BackupWindow  []string  `json:"backup_window"`
-	Destination   string    `json:"destination"`
+	Name          string         `json:"name"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	ObjectFilters []ObjectFilter `json:"object_filters"`
+	RPO           string         `json:"rpo"`
+	BackupWindow  []string       `json:"backup_window"`
+	Destination   string         `json:"destination"`
 }
 
 // policyServiceClient is the subset of pb.PolicyServiceClient runFetch
@@ -94,9 +100,13 @@ func runFetch(ctx context.Context, client policyServiceClient, cachePath string,
 func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 	out := make([]CachedPolicy, 0, len(policies))
 	for _, p := range policies {
-		filters := make([]string, 0, len(p.GetObjectFilters()))
+		filters := make([]ObjectFilter, 0, len(p.GetObjectFilters()))
 		for _, of := range p.GetObjectFilters() {
-			filters = append(filters, of.GetPath())
+			filters = append(filters, ObjectFilter{
+				Path:    of.GetPath(),
+				Include: of.GetInclude(),
+				Exclude: of.GetExclude(),
+			})
 		}
 		out = append(out, CachedPolicy{
 			Name:          p.GetName(),
