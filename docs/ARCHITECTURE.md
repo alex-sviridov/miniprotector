@@ -62,7 +62,8 @@ config-driven policies: `bootstrap-refresh` (`certclient renew`, daily) and `ope
 (`certclient operating-refresh`, every 15 minutes by default) keep this node's mTLS credentials
 fresh; `policy-update` (`policyclient fetch`, every 15 minutes by default) fetches this node's
 applicable backup policies from `policy-server` into a local cache. `agent` also derives a dynamic
-backup task per cached policy's object path and executes `brfs` for each one on a schedule gated by
+backup task per cached policy's object filter (a path plus optional include/exclude glob patterns,
+passed straight through to `brfs`) and executes `brfs` for each one on a schedule gated by
 that policy's `backup_window` and `rpo` — see [agent](components/agent.md#policy-driven-backup-execution).
 Each policy's (and backup task's) outcome is tracked in the same local cache (`agent list-policies`
 inspects it). See [agent](components/agent.md).

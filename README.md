@@ -70,6 +70,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
+- **[Filesystem Backup Flow](docs/process/filesystem-backup.md)** - End-to-end walk-through of policy → agent → brfs → bwfs, including include/exclude filtering
 - **[Security Model](docs/SECURITY.md)** - mTLS, the two-tier bootstrap/operating credential model, and the revocation trust model
 - **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol

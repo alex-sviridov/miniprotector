@@ -20,6 +20,8 @@ brfs <source_folder> --destination <host:port>
 - `--destination <host:port>` - Writer destination address **(required)**
 - `--streams <number>` - Number of concurrent streams *(default: config->default_streams)*
 - `--job-id <id>` - Backup job ID *(default: auto-generated UUID)*
+- `--include <patterns>` - Comma-separated glob patterns; only matching files are backed up *(default: `*`)*
+- `--exclude <patterns>` - Comma-separated glob patterns; matching files and directories are skipped *(default: none)*
 - `--debug` - Enable debug logging
 - `--quiet` - Suppress stdout logging
 
@@ -47,6 +49,20 @@ brfs /var/log --destination localhost:8080 --debug --streams 5
 `agent`'s policy-driven backup tasks (see [agent](./agent.md#policy-driven-backup-execution)) use
 the job-id convention `backup:<policy-name>:<slug-of-path>:<unix-timestamp>` — useful when grepping
 `bwfs`'s job history for which policy produced a given run.
+
+## Filtering
+
+A pattern with no `/` matches a file's basename at any depth (`*.tmp` excludes every `.tmp` file
+anywhere under the source folder); a pattern containing `/` matches the path relative to the
+source folder exactly. `--exclude` is checked first: a directory that matches is pruned along with
+everything beneath it; a file that matches is skipped. `--include` is then checked for files only
+— directories are never filtered by it, so traversal always continues into non-excluded
+directories.
+
+```bash
+# Back up only .sql files, skipping anything under a "tmp" directory
+brfs /var/lib/postgres --destination localhost:8080 --include "*.sql" --exclude "tmp"
+```
 
 ## Protocol
 

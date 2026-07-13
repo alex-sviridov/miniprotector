@@ -68,8 +68,10 @@ A backup task is due when **both**:
 - the path's last successful backup is older than the policy's `rpo` (or it has never succeeded).
 
 When due, `agent` execs `brfs <path> --destination <destination> --job-id
-backup:<policy>:<slug(path)>:<timestamp>` — the explicit job-id lets an operator correlate a
-`bwfs` job record back to the policy and path that produced it. Unlike the three static policies,
+backup:<policy>:<slug(path)>:<timestamp>`, appending `--include <patterns>` and/or `--exclude
+<patterns>` (comma-joined) only when the object filter that produced this task actually carries
+them — the explicit job-id lets an operator correlate a `bwfs` job record back to the policy and
+path that produced it. Unlike the three static policies,
 backup task execs run in a background goroutine rather than the synchronous reconcile loop, so a
 long-running backup never delays `bootstrap-refresh`/`operating-refresh`. Concurrency is bounded by
 `MaxConcurrentBackupJobs`; a due task that can't acquire a slot this tick simply stays due and is

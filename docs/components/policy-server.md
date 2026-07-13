@@ -42,7 +42,10 @@ are opaque strings, stored and returned verbatim for a future consumer to interp
 
 Each `$MP_CONFIG_PATH/policies/*.json` file is one policy: `metadata` (`name` plus operator-set
 `created_at`/`updated_at`), `client_filters` (`hostnames` glob list, `labels` map), `object_filters`
-(a list of `{"path": "..."}` entries), `rpo` (a duration string, e.g. `"24h"`), `backup_window`
+(a list of `{"path": "...", "include": [...], "exclude": [...]}` entries — `include`/`exclude` are
+optional glob-pattern lists, validated as syntactically-valid patterns at load time but otherwise
+opaque to `policy-server`; see [Filesystem Backup Flow](../process/filesystem-backup.md) for how
+`brfs` applies them), `rpo` (a duration string, e.g. `"24h"`), `backup_window`
 (a list of cron expressions, e.g. `["0 2 * * *", "0 20 * * *"]`), and `destination` (a `host:port`
 string, the target `bwfs` for this policy's backups).
 

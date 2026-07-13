@@ -19,6 +19,8 @@ message GetPoliciesResponse {
 
 message ObjectFilter {
   string path = 1;
+  repeated string include = 2;
+  repeated string exclude = 3;
 }
 
 message Policy {
@@ -47,6 +49,9 @@ certificate — the same requirement every server except `issuer`'s own listener
 - `GetPoliciesResponse.policies` contains every policy whose `client_filters` match the caller:
   hostname glob match (or no hostname restriction) **and** every required label present — both
   conditions must hold. `client_filters` itself is never echoed back.
+- Each `object_filters` entry's `include`/`exclude` are opaque, pass-through glob-pattern lists —
+  `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
+  applies them, during its own directory walk.
 - `rpo` and `backup_window` are opaque, pass-through strings — `policy-server` never parses or
   evaluates either. `destination` is likewise opaque, pass-through data — `policy-server` never
   validates or connects to it.

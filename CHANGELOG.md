@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-13 — Include/exclude glob patterns on object filters
+
+Backup policies' `object_filters` entries (and `brfs` itself) can now carry `include`/`exclude`
+glob-pattern lists alongside `path`, letting a policy narrow what gets backed up instead of always
+sweeping a path recursively. `brfs` gained `--include`/`--exclude` flags and applies them during
+its own directory walk — excludes prune whole matched subtrees, includes act as a files-only
+whitelist. `policy-server`, `policyclient`, and `agent` all carry the new fields through
+end-to-end; see `docs/process/filesystem-backup.md` for the full flow.
+
 ## 2026-07-11 — Policy server consumer wiring and demo content
 
 `policy_server_host` — missing from every `local.conf` since `policy-update` shipped, silently

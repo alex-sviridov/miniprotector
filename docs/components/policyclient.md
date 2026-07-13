@@ -44,7 +44,10 @@ directly:
     "name": "daily-db-backup",
     "created_at": "2026-07-01T00:00:00Z",
     "updated_at": "2026-07-05T00:00:00Z",
-    "object_filters": ["/var/lib/postgres", "/etc/postgres"],
+    "object_filters": [
+      {"path": "/var/lib/postgres", "include": ["*.sql"]},
+      {"path": "/etc/postgres"}
+    ],
     "rpo": "24h",
     "backup_window": ["0 2 * * *"],
     "destination": "bwfs-east.internal:8080"
