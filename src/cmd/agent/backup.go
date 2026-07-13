@@ -21,6 +21,7 @@ import (
 // cmd/policyclient directly -- Go forbids importing another command's
 // main package -- so these fields are duplicated here rather than shared.
 type ObjectFilter struct {
+	ID      string   `json:"id"`
 	Path    string   `json:"path"`
 	Include []string `json:"include,omitempty"`
 	Exclude []string `json:"exclude,omitempty"`
@@ -123,19 +124,36 @@ func slug(path string) string {
 	return s
 }
 
-// backupTaskID is the stable identifier for one (policy, path) pair's
+// shortID returns id (a UUID) with its dashes stripped, truncated to 8
+// hex characters -- git-short-hash-style, just long enough to disambiguate
+// in practice without making task/job IDs unreadable. Safe for any input
+// length: shorter-than-8 (including empty) is returned unchanged rather
+// than panicking on a slice out of range.
+func shortID(id string) string {
+	stripped := strings.ReplaceAll(id, "-", "")
+	if len(stripped) > 8 {
+		return stripped[:8]
+	}
+	return stripped
+}
+
+// backupTaskID is the stable identifier for one object filter's
 // PolicyState entry in agent-state.json -- stable across ticks, so its
-// backoff/success history persists as long as the pair keeps appearing in
-// policies-cache.json.
-func backupTaskID(policyName, path string) string {
-	return fmt.Sprintf("backup:%s:%s", policyName, path)
+// backoff/success history persists as long as the filter keeps appearing
+// in policies-cache.json. filterID's short suffix guarantees uniqueness
+// even when two object filters in the same policy share a path (e.g. one
+// with include, one with exclude, both scoped to the same root) -- policy
+// name and path stay in the string for readability, but the suffix is
+// what actually disambiguates.
+func backupTaskID(policyName, path, filterID string) string {
+	return fmt.Sprintf("backup:%s:%s:%s", policyName, path, shortID(filterID))
 }
 
 // backupJobID is the --job-id passed to brfs for one run -- unlike
 // backupTaskID, it includes a timestamp so every run gets a distinct ID,
 // and it slugs the path so bwfs's job records stay easy to grep.
-func backupJobID(policyName, path string, now time.Time) string {
-	return fmt.Sprintf("backup:%s:%s:%d", policyName, slug(path), now.Unix())
+func backupJobID(policyName, path, filterID string, now time.Time) string {
+	return fmt.Sprintf("backup:%s:%s:%s:%d", policyName, slug(path), shortID(filterID), now.Unix())
 }
 
 // backupTasks derives one Policy per (cached policy, object_filters path)
@@ -175,7 +193,7 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 
 		policyName, destination := p.Name, p.Destination
 		for _, filter := range p.ObjectFilters {
-			jobID := backupJobID(policyName, filter.Path, time.Now())
+			jobID := backupJobID(policyName, filter.Path, filter.ID, time.Now())
 			args := []string{filter.Path, "--destination", destination, "--job-id", jobID}
 			if len(filter.Include) > 0 {
 				args = append(args, "--include", strings.Join(filter.Include, ","))
@@ -184,7 +202,7 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 				args = append(args, "--exclude", strings.Join(filter.Exclude, ","))
 			}
 			tasks = append(tasks, Policy{
-				ID:         backupTaskID(policyName, filter.Path),
+				ID:         backupTaskID(policyName, filter.Path, filter.ID),
 				Binary:     "brfs",
 				JobID:      jobID,
 				Args:       args,
