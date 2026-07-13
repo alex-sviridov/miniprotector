@@ -41,13 +41,12 @@ directly:
 ```json
 [
   {
-    "id": "b1f2c3d4-...",
     "name": "daily-db-backup",
     "created_at": "2026-07-01T00:00:00Z",
     "updated_at": "2026-07-05T00:00:00Z",
     "object_filters": [
-      {"id": "a9e8d7c6-...", "path": "/var/lib/postgres", "include": ["*.sql"]},
-      {"id": "f0e1d2c3-...", "path": "/etc/postgres"}
+      {"path": "/var/lib/postgres", "include": ["*.sql"]},
+      {"path": "/etc/postgres"}
     ],
     "rpo": "24h",
     "backup_window": ["0 2 * * *"],

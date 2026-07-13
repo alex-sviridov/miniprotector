@@ -21,7 +21,6 @@ message ObjectFilter {
   string path = 1;
   repeated string include = 2;
   repeated string exclude = 3;
-  string id = 4;
 }
 
 message Policy {
@@ -32,7 +31,6 @@ message Policy {
   string rpo = 5;
   repeated string backup_window = 6;
   string destination = 7;
-  string id = 8;
 }
 ```
 
@@ -51,11 +49,6 @@ certificate — the same requirement every server except `issuer`'s own listener
 - `GetPoliciesResponse.policies` contains every policy whose `client_filters` match the caller:
   hostname glob match (or no hostname restriction) **and** every required label present — both
   conditions must hold. `client_filters` itself is never echoed back.
-- Both `Policy.id` and each `ObjectFilter.id` are computed by `policy-server` itself --
-  deterministically, from the policy file's name (and each object filter's position within it) --
-  never read from or written to the on-disk policy JSON. They exist so two policies, or two object
-  filters within one policy, can never be confused with each other downstream even when their
-  human-facing `name`/`path` happen to collide.
 - Each `object_filters` entry's `include`/`exclude` are opaque, pass-through glob-pattern lists —
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
   applies them, during its own directory walk.

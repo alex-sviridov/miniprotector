@@ -2,17 +2,6 @@
 
 All notable changes to this project are documented here, most recent first.
 
-## 2026-07-13 — Deterministic IDs for policies and object filters
-
-`policy-server` now computes a deterministic ID for every policy and every object filter within
-it, derived from the policy file's name and each filter's position — never read from or written to
-the policy JSON files themselves. `agent` uses the object-filter ID to make its backup task/job IDs
-collision-proof: two object filters sharing a `path` within one policy (e.g. one with `include`,
-one with `exclude`, both scoped to the same root) previously shared one `agent-state.json` entry
-and one in-flight-run slot; each now gets its own. Upgrading resets every existing backup task's
-history once (last-success/backoff tracking), since the task-ID format changed — a one-time,
-low-cost consequence of fixing the underlying collision.
-
 ## 2026-07-13 — Include/exclude glob patterns on object filters
 
 Backup policies' `object_filters` entries (and `brfs` itself) can now carry `include`/`exclude`

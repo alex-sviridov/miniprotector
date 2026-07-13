@@ -47,10 +47,7 @@ optional glob-pattern lists, validated as syntactically-valid patterns at load t
 opaque to `policy-server`; see [Filesystem Backup Flow](../process/filesystem-backup.md) for how
 `brfs` applies them), `rpo` (a duration string, e.g. `"24h"`), `backup_window`
 (a list of cron expressions, e.g. `["0 2 * * *", "0 20 * * *"]`), and `destination` (a `host:port`
-string, the target `bwfs` for this policy's backups). `policy-server` also computes (never reads)
-a deterministic ID for the policy itself and for each object filter, derived from the file's name
-and each filter's position — stable across reloads, and changes only if the file is renamed or its
-`object_filters` are reordered/have entries inserted before an existing one.
+string, the target `bwfs` for this policy's backups).
 
 All policies are loaded into memory at startup. To pick up edits, touch
 `$MP_CONFIG_PATH/policies/.changed` after finishing your edit(s) — `policy-server` watches that one
