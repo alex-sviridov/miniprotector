@@ -80,8 +80,17 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 		return fmt.Errorf("write bootstrap.crt: %w", err)
 	}
 
-	rootPEM := pemCert(root)
-	if err := os.WriteFile(filepath.Join(certsDir, "ca.crt"), rootPEM, 0o644); err != nil {
+	// ca.crt must include the intermediate, not just the root: it's loaded
+	// as every server's ClientCAs trust pool (see common/mtls.loadCAPool),
+	// and a peer whose TLS library sends only its leaf certificate (no
+	// self-assembled chain -- true of at least Vector's loki sink) can only
+	// be verified if the pool contains an entry the leaf chains to
+	// directly. Root-only left every such peer unverifiable with "x509:
+	// certificate signed by unknown authority", never caught before
+	// because every other component here happens to present its full
+	// leaf+intermediate chain itself.
+	caPEM := append(pemCert(intermediate), pemCert(root)...)
+	if err := os.WriteFile(filepath.Join(certsDir, "ca.crt"), caPEM, 0o644); err != nil {
 		return fmt.Errorf("write ca.crt: %w", err)
 	}
 
