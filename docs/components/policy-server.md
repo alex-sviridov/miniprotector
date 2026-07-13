@@ -49,14 +49,6 @@ opaque to `policy-server`; see [Filesystem Backup Flow](../process/filesystem-ba
 (a list of cron expressions, e.g. `["0 2 * * *", "0 20 * * *"]`), and `destination` (a `host:port`
 string, the target `bwfs` for this policy's backups).
 
-On load, `policy-server` also computes a deterministic ID (`uuid.NewSHA1`) for the policy itself,
-from its filename, and for each of its `object_filters`, from the policy ID and the filter's
-position in the list. These IDs are not part of the on-disk JSON schema and are additive to the
-existing `name`/`path` fields — their purpose is giving every object filter a stable identity even
-when two filters in the same policy share a `path` (e.g. one `include`-only, one `exclude`-only,
-both scoped to the same root directory), which would otherwise collide in a downstream consumer's
-per-filter tracking. `Policy.id` is stable across reloads unless the file is renamed.
-
 All policies are loaded into memory at startup. To pick up edits, touch
 `$MP_CONFIG_PATH/policies/.changed` after finishing your edit(s) — `policy-server` watches that one
 sentinel file via `fsnotify` and reloads the entire directory as a single atomic swap on each
