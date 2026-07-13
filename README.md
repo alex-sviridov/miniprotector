@@ -65,6 +65,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
 - **[policy-server](docs/components/policy-server.md)** - Serves backup policies filtered by a requesting client's hostname and attribute labels (control-plane component)
+- **[log-gateway](docs/components/log-gateway.md)** - mTLS-authenticating reverse proxy in front of Loki; `agent`'s bundled Vector process ships every node's logs through it (control-plane component)
 
 ## Documentation
 
@@ -76,6 +77,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol
 - **[Issuer Protocol](docs/protocols/issuer.md)** - issuer operating-certificate minting protocol
 - **[Policy Server Protocol](docs/protocols/policy-server.md)** - policy-server's GetPolicies protocol
+- **[Log Gateway Protocol](docs/protocols/log-gateway.md)** - log-gateway's mTLS-authenticated push-proxy protocol
 - **[Components](docs/components/)** - Individual component documentation
 
 ## Building
