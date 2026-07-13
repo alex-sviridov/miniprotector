@@ -48,3 +48,39 @@ func TestParseArguments_JobIDFlag_DefaultsEmpty(t *testing.T) {
 		assert.Empty(t, args.JobID)
 	})
 }
+
+func TestParseArguments_IncludeFlag_DefaultsToAsterisk(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"*"}, args.Include)
+	})
+}
+
+func TestParseArguments_ExcludeFlag_DefaultsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Empty(t, args.Exclude)
+	})
+}
+
+func TestParseArguments_IncludeFlag_SplitsOnComma(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir, "--include", "*.log,*.txt"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"*.log", "*.txt"}, args.Include)
+	})
+}
+
+func TestParseArguments_ExcludeFlag_SplitsOnComma(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir, "--exclude", "node_modules,*.tmp"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"node_modules", "*.tmp"}, args.Exclude)
+	})
+}

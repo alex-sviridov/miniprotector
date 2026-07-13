@@ -21,12 +21,6 @@ type Unlocker interface {
 	Unlock() error
 }
 
-// BackupObjectsList represents a filterable array of Backup Objects
-type BackupObjectsList interface {
-	WithIncludes(patterns ...string) BackupObjectsList
-	WithExcludes(patterns ...string) BackupObjectsList
-}
-
 type Chunk interface {
 	Hash() []byte
 	Checksum() uint32

@@ -76,7 +76,7 @@ func main() {
 	)
 
 	// Get files list
-	filesList, err := filesystem.Discover(arguments.SourceFolder)
+	filesList, err := filesystem.Discover(arguments.SourceFolder, arguments.Include, arguments.Exclude)
 	if err != nil {
 		logger.Error("Error traversing the directory", "error", err)
 		return

@@ -3,7 +3,6 @@ package filesystem
 import (
 	"fmt"
 	"io/fs"
-	"path/filepath"
 	"time"
 
 	"github.com/alex-sviridov/miniprotector/workload"
@@ -98,12 +97,6 @@ func (fi FileInfo) String() string {
 		fi.name,
 	)
 }
-
-func (fi FileInfo) match(pattern string) bool {
-	matched, _ := filepath.Match(pattern, fi.path)
-	return matched
-}
-
 
 // Ensure FileInfo implements BackupObject interface
 var _ workload.BackupObject = (*FileInfo)(nil)

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/alex-sviridov/miniprotector/common"
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -13,6 +14,15 @@ import (
 // -h/--help; the caller should exit cleanly instead of reporting an error.
 var errHelpRequested = errors.New("help requested")
 
+// splitPatterns splits a comma-separated flag value into a pattern list;
+// an empty string produces a nil (empty) slice rather than []string{""}.
+func splitPatterns(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}
+
 // Command line flags
 var (
 	destination string
@@ -20,6 +30,8 @@ var (
 	debug       bool
 	quiet       bool
 	jobIDFlag   string
+	includeFlag string
+	excludeFlag string
 )
 
 // Arguments holds parsed command line arguments
@@ -31,6 +43,8 @@ type Arguments struct {
 	Debug        bool
 	Quiet        bool
 	JobID        string
+	Include      []string
+	Exclude      []string
 }
 
 // parseArguments uses Cobra to parse command line arguments
@@ -48,6 +62,8 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress stdout logging")
 	cmd.Flags().StringVar(&jobIDFlag, "job-id", "", "Backup job ID (auto-generated if omitted)")
+	cmd.Flags().StringVar(&includeFlag, "include", "*", "Comma-separated glob patterns; only matching files are backed up")
+	cmd.Flags().StringVar(&excludeFlag, "exclude", "", "Comma-separated glob patterns; matching files/directories are skipped")
 
 	// Parse arguments and flags
 	if err := cmd.Execute(); err != nil {
@@ -89,5 +105,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		Debug:        debug,
 		Quiet:        quiet,
 		JobID:        jobIDFlag,
+		Include:      splitPatterns(includeFlag),
+		Exclude:      splitPatterns(excludeFlag),
 	}, nil
 }

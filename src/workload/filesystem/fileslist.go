@@ -5,24 +5,54 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alex-sviridov/miniprotector/common"
-	"github.com/alex-sviridov/miniprotector/workload"
 )
 
 type FilesList []FileInfo
 
-func Discover(path string) (FilesList, error) {
+// Discover walks root, returning one FileInfo per surviving file and
+// directory. exclude is checked first: a directory matching any exclude
+// pattern is pruned entirely (skipped, along with everything beneath it);
+// a file matching any exclude pattern is omitted. include is then checked
+// for files only -- a file is kept only if it matches at least one include
+// pattern; directories are never filtered by include, so traversal always
+// continues into non-excluded directories, and a directory entry that
+// survives the exclude check is always emitted.
+//
+// A pattern with no "/" matches an entry's basename at any depth; a
+// pattern containing "/" matches the entry's path relative to root. An
+// empty include list matches no files -- callers that want "match
+// everything" must pass a pattern (e.g. []string{"*"}) explicitly; this
+// function applies no default of its own.
+func Discover(root string, include, exclude []string) (FilesList, error) {
 	result := FilesList{}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("source path does not exist: %s", path)
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return nil, fmt.Errorf("source path does not exist: %s", root)
 	}
 
 	hostname := common.GetHostname()
 
-	err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("failed to walk dir %s: %w", path, err)
+		}
+
+		relPath, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return fmt.Errorf("failed to compute relative path for %s: %w", path, relErr)
+		}
+
+		if matchesAny(exclude, relPath) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if !d.IsDir() && !matchesAny(include, relPath) {
+			return nil
 		}
 
 		fileInfo, err := getFileInfo(path)
@@ -38,35 +68,19 @@ func Discover(path string) (FilesList, error) {
 	return result, err
 }
 
-func (fl FilesList) WithIncludes(patterns ...string) workload.BackupObjectsList {
-	if len(patterns) == 0 {
-		return fl
-	}
-	result := FilesList{}
-	for _, file := range fl {
-		for _, pattern := range patterns {
-			if file.match(pattern) {
-				result = append(result, file)
-				break
-			}
+// matchesAny reports whether relPath matches any pattern: a pattern with
+// no "/" is matched against relPath's basename (so it matches at any
+// depth); a pattern containing "/" is matched against relPath itself.
+func matchesAny(patterns []string, relPath string) bool {
+	base := filepath.Base(relPath)
+	for _, pattern := range patterns {
+		target := base
+		if strings.Contains(pattern, "/") {
+			target = relPath
+		}
+		if matched, _ := filepath.Match(pattern, target); matched {
+			return true
 		}
 	}
-	return result
-}
-
-func (fl FilesList) WithExcludes(patterns ...string) workload.BackupObjectsList {
-	if len(patterns) == 0 {
-		return fl
-	}
-	result := FilesList{}
-fileLoop:
-	for _, file := range fl {
-		for _, pattern := range patterns {
-			if file.match(pattern) {
-				continue fileLoop
-			}
-		}
-		result = append(result, file)
-	}
-	return result
+	return false
 }
