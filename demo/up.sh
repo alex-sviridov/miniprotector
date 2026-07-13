@@ -38,13 +38,28 @@ docker compose up -d issuer
 # below that runs `add` at all), so the attribute is already in
 # client-manager's database before the node's first operating-refresh
 # mints a certificate embedding it.
+#
+# The final `up -d` deliberately passes --no-deps: every service enrolled
+# here depends (directly or transitively, e.g. log-gateway) only on ca/
+# issuer/loki/catalog, all of which are already running by the time any
+# enroll() call reaches this line, given the call order below. Without
+# --no-deps, compose would also (re)create any not-yet-started dependency
+# as a side effect of this command, handing it THIS service's freshly
+# minted, single-use MP_CERT_TOKEN -- which it would then redeem for
+# itself, permanently starving the intended node of its own token (it
+# would spend the rest of its life retrying the now-already-used token).
+# This is exactly what happened to database before log-gateway got its
+# own enroll() call below: `enroll database` implicitly started database's
+# then-unenrolled log-gateway dependency in the same `up -d`, log-gateway
+# won the race to redeem database's token, and log-gateway ran ever after
+# under a bootstrap credential identifying it as "database".
 enroll() {
     name="$1"
     attrs="$2"
     if docker compose run --rm --no-deps --entrypoint sh "$name" \
         -c 'test -f /data/certs/bootstrap.crt' >/dev/null 2>&1; then
         echo "$name already enrolled, starting..."
-        docker compose up -d "$name"
+        docker compose up -d --no-deps "$name"
         return
     fi
     echo "Enrolling $name..."
@@ -56,9 +71,13 @@ enroll() {
     if [ -n "$attrs" ]; then
         docker compose exec -T ca clientmanager attribute set "$name" $attrs
     fi
-    MP_CERT_TOKEN="$token" docker compose up -d "$name"
+    MP_CERT_TOKEN="$token" docker compose up -d --no-deps "$name"
 }
 
+echo "Starting loki..."
+docker compose up -d loki
+
+enroll log-gateway
 enroll catalog
 enroll policy-server
 enroll database
