@@ -113,6 +113,17 @@ own log
 (`<log_dir>/agent.log`) records a start and a completion line (success or failure, with exit code
 when available) for every dispatched exec, not just failures.
 
+`agent` also bundles, configures, and directly supervises a Vector process that tails `log_dir`
+and ships every line to `log-gateway` over mTLS, using this node's own operating certificate --
+restarted immediately after every successful `operating-refresh` (so a rotated cert is always
+picked up promptly) and crash-restarted with backoff otherwise, the same `backoff()` failing
+policies already use. Vector's own HTTP API is never enabled, so this adds no listening socket to
+`agent`'s footprint, which stays outbound-only. `log-gateway` authenticates the push but never
+inspects its body (see [Security Model](../SECURITY.md)), so `agent` is the one that sets each
+shipped stream's `hostname` label -- read from this node's own `bootstrap.crt` `CommonName`, the
+same source `certclient`'s `operating-refresh` already uses to know its own hostname. See
+[Design: Fleet Log Aggregation](../superpowers/specs/2026-07-11-fleet-log-aggregation-design.md).
+
 ## Configuration Keys
 
 | Key | Default | Description |
@@ -125,6 +136,7 @@ when available) for every dispatched exec, not just failures.
 | `BackupWindowGraceSec` | 3600 (1 hour) | How long after a `backup_window` cron trigger a backup task's window stays "open" |
 | `MaxConcurrentBackupJobs` | 2 | Upper bound on simultaneously in-flight `brfs` execs launched by backup tasks |
 | `BootstrapCertTTLSec` | 7776000 (90 days) | Intended requested validity for the bootstrap credential. Parsed and defaulted by `common/config`, but not yet consumed by any request path — `certclient bootstrap`/`renew` don't currently pass a requested TTL to the CA, so actual bootstrap credential lifetime is governed entirely by the CA provisioner's own claims today |
+| `log_gateway_host` / `log_gateway_port` | none / 9400 | Where agent's supervised Vector process pushes logs, via `log-gateway` |
 
 ## Building
 
@@ -139,6 +151,7 @@ make agent
 - [issuer](./issuer.md) — what `operating-refresh` ultimately talks to
 - [policyclient](./policyclient.md) — the binary `agent`'s `policy-update` policy execs
 - [policy-server](./policy-server.md) — what `policyclient fetch` ultimately talks to
+- [log-gateway](./log-gateway.md) — receives this node's shipped logs
 - [Security Model](../SECURITY.md) — the two-tier credential model these policies maintain
 - [Architecture](../ARCHITECTURE.md)
 - [Design: Agent v1](../superpowers/specs/2026-07-03-agent-v1-cert-refresh-design.md)

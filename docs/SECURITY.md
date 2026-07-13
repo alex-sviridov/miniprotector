@@ -97,6 +97,13 @@ every operating-refresh is a fresh `Sign` with a fresh CSR.
 extension; it exists so a future authorization check can, without another round of
 certificate-issuance changes.
 
+The same mechanism now also gates log shipping: `agent`'s supervised Vector process authenticates
+to `log-gateway` with the node's operating credential, restarted immediately after every successful
+`operating-refresh`. A revoked node's operating cert simply stops renewing (the existing mechanism,
+above) — once it expires, Vector can no longer authenticate, and that node's log-shipping ability
+lapses within the same bound `OperatingCertFetchIntervalSec`/`OperatingCertTTLSec` already give
+every other operating-cert-gated capability. No separate revocation path was built for logging.
+
 Stated plainly, this design has real costs, not just benefits:
 
 - **`issuer` becomes a hard dependency for the entire fleet's mesh access.** This is not an

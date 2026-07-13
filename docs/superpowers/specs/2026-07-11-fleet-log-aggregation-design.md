@@ -4,6 +4,17 @@
 > described in `docs/superpowers/specs/2026-07-04-client-manager-phase2-design.md` — this spec adds
 > no new credential type, reusing the existing operating certificate end to end.
 
+> **Implementation note (Phase 3):** this document's server-side `hostname`-label
+> derivation/force-overwrite (below, and in the Testing Strategy section) was **not** built as
+> written. Real testing against Vector's actual traffic found that Vector's `loki` sink sends
+> snappy-compressed protobuf by default, not JSON — hand-decoding Loki's wire format inside
+> `log-gateway` just to re-derive a label already reachable through mTLS auth was judged not worth
+> the complexity it would add. `log-gateway` instead only authenticates (a valid, non-revoked
+> operating certificate is required to push at all) and forwards the body completely unexamined;
+> `agent`'s own Vector config sets the `hostname` label directly, read from the node's own
+> `bootstrap.crt`. See `docs/SECURITY.md`'s log-gateway paragraph and
+> `docs/protocols/log-gateway.md` for what's actually built.
+
 ## Problem
 
 `agent` execs `certclient`, `policyclient`, and `brfs` on a schedule (see
