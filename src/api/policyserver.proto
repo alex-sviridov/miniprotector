@@ -24,6 +24,8 @@ message GetPoliciesResponse {
 
 message ObjectFilter {
   string path = 1;
+  repeated string include = 2;
+  repeated string exclude = 3;
 }
 
 message Policy {

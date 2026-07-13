@@ -148,7 +148,7 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, dir, "full.json", `{
 		"metadata": {"name": "full-policy", "created_at": "2026-07-10T00:00:00Z", "updated_at": "2026-07-11T00:00:00Z"},
-		"object_filters": [{"path": "/var/www"}, {"path": "/etc"}],
+		"object_filters": [{"path": "/var/www", "include": ["*.html"], "exclude": ["*.tmp"]}, {"path": "/etc"}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
 		"destination": "bwfs-east.internal:8080"
@@ -165,6 +165,10 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
 	require.Len(t, p.ObjectFilters, 2)
 	assert.Equal(t, "/var/www", p.ObjectFilters[0].Path)
+	assert.Equal(t, []string{"*.html"}, p.ObjectFilters[0].Include)
+	assert.Equal(t, []string{"*.tmp"}, p.ObjectFilters[0].Exclude)
+	assert.Empty(t, p.ObjectFilters[1].Include)
+	assert.Empty(t, p.ObjectFilters[1].Exclude)
 	assert.Equal(t, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC), p.CreatedAt.AsTime())
 	assert.Equal(t, time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC), p.UpdatedAt.AsTime())
 }

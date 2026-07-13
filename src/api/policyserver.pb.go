@@ -105,6 +105,8 @@ func (x *GetPoliciesResponse) GetPolicies() []*Policy {
 type ObjectFilter struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Include       []string               `protobuf:"bytes,2,rep,name=include,proto3" json:"include,omitempty"`
+	Exclude       []string               `protobuf:"bytes,3,rep,name=exclude,proto3" json:"exclude,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -144,6 +146,20 @@ func (x *ObjectFilter) GetPath() string {
 		return x.Path
 	}
 	return ""
+}
+
+func (x *ObjectFilter) GetInclude() []string {
+	if x != nil {
+		return x.Include
+	}
+	return nil
+}
+
+func (x *ObjectFilter) GetExclude() []string {
+	if x != nil {
+		return x.Exclude
+	}
+	return nil
 }
 
 type Policy struct {
@@ -249,9 +265,11 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x16api/policyserver.proto\x12\x13policyserverservice\x1a\x1fgoogle/protobuf/timestamp.proto\"\x14\n" +
 	"\x12GetPoliciesRequest\"N\n" +
 	"\x13GetPoliciesResponse\x127\n" +
-	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\"\"\n" +
+	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\"V\n" +
 	"\fObjectFilter\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"\xb5\x02\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
+	"\ainclude\x18\x02 \x03(\tR\ainclude\x12\x18\n" +
+	"\aexclude\x18\x03 \x03(\tR\aexclude\"\xb5\x02\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +

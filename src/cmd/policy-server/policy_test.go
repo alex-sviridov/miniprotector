@@ -22,7 +22,7 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 	path := writePolicyFile(t, dir, "nightly.json", `{
 		"metadata": {"name": "nightly-web-backup", "created_at": "2026-07-10T00:00:00Z", "updated_at": "2026-07-10T00:00:00Z"},
 		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
-		"object_filters": [{"path": "/var/www"}],
+		"object_filters": [{"path": "/var/www", "include": ["*.html", "*.css"], "exclude": ["*.tmp"]}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *", "0 20 * * *"],
 		"destination": "bwfs-east.internal:8080"
@@ -34,10 +34,47 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC), p.Metadata.CreatedAt)
 	assert.Equal(t, []string{"web-*"}, p.ClientFilters.Hostnames)
 	assert.Equal(t, map[string]string{"env": "prod"}, p.ClientFilters.Labels)
-	assert.Equal(t, []ObjectFilter{{Path: "/var/www"}}, p.ObjectFilters)
+	assert.Equal(t, []ObjectFilter{{Path: "/var/www", Include: []string{"*.html", "*.css"}, Exclude: []string{"*.tmp"}}}, p.ObjectFilters)
 	assert.Equal(t, "24h", p.RPO)
 	assert.Equal(t, []string{"0 2 * * *", "0 20 * * *"}, p.BackupWindow)
 	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
+}
+
+func TestParsePolicyFile_ObjectFilterOmitsIncludeExclude(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "minimal.json", `{
+		"metadata": {"name": "minimal"},
+		"object_filters": [{"path": "/data"}]
+	}`)
+
+	p, err := parsePolicyFile(path)
+	require.NoError(t, err)
+	require.Len(t, p.ObjectFilters, 1)
+	assert.Equal(t, "/data", p.ObjectFilters[0].Path)
+	assert.Empty(t, p.ObjectFilters[0].Include)
+	assert.Empty(t, p.ObjectFilters[0].Exclude)
+}
+
+func TestParsePolicyFile_InvalidIncludePatternFails(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "bad.json", `{
+		"metadata": {"name": "broken"},
+		"object_filters": [{"path": "/data", "include": ["["]}]
+	}`)
+
+	_, err := parsePolicyFile(path)
+	assert.Error(t, err)
+}
+
+func TestParsePolicyFile_InvalidExcludePatternFails(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "bad.json", `{
+		"metadata": {"name": "broken"},
+		"object_filters": [{"path": "/data", "exclude": ["["]}]
+	}`)
+
+	_, err := parsePolicyFile(path)
+	assert.Error(t, err)
 }
 
 func TestParsePolicyFile_MissingNameFails(t *testing.T) {

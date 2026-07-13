@@ -23,7 +23,9 @@ type ClientFilters struct {
 }
 
 type ObjectFilter struct {
-	Path string `json:"path"`
+	Path    string   `json:"path"`
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 type Policy struct {
@@ -55,6 +57,18 @@ func parsePolicyFile(filePath string) (Policy, error) {
 	for _, pattern := range p.ClientFilters.Hostnames {
 		if _, err := path.Match(pattern, ""); err != nil {
 			return Policy{}, fmt.Errorf("%s: invalid hostname pattern %q: %w", filePath, pattern, err)
+		}
+	}
+	for _, of := range p.ObjectFilters {
+		for _, pattern := range of.Include {
+			if _, err := path.Match(pattern, ""); err != nil {
+				return Policy{}, fmt.Errorf("%s: invalid include pattern %q: %w", filePath, pattern, err)
+			}
+		}
+		for _, pattern := range of.Exclude {
+			if _, err := path.Match(pattern, ""); err != nil {
+				return Policy{}, fmt.Errorf("%s: invalid exclude pattern %q: %w", filePath, pattern, err)
+			}
 		}
 	}
 	return p, nil

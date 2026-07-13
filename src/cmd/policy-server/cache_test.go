@@ -73,7 +73,7 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 			"hostnames": ["host1", "host2"],
 			"labels": {"env": "prod", "team": "platform"}
 		},
-		"object_filters": [{"path": "/data/*"}],
+		"object_filters": [{"path": "/data/*", "include": ["*.sql"], "exclude": ["*.tmp"]}],
 		"rpo": "1h",
 		"backup_window": ["08:00", "12:00"]
 	}`)
@@ -93,6 +93,8 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 
 	// Test mutation of ObjectFilters slice
 	got[0].ObjectFilters[0].Path = "/mutated/*"
+	got[0].ObjectFilters[0].Include[0] = "mutated"
+	got[0].ObjectFilters[0].Exclude[0] = "mutated"
 
 	// Test mutation of BackupWindow slice
 	got[0].BackupWindow[0] = "23:00"
@@ -103,5 +105,7 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	assert.Equal(t, "host1", got2[0].ClientFilters.Hostnames[0], "mutating Hostnames in returned snapshot must not affect cache")
 	assert.Equal(t, "prod", got2[0].ClientFilters.Labels["env"], "mutating Labels in returned snapshot must not affect cache")
 	assert.Equal(t, "/data/*", got2[0].ObjectFilters[0].Path, "mutating ObjectFilters in returned snapshot must not affect cache")
+	assert.Equal(t, "*.sql", got2[0].ObjectFilters[0].Include[0], "mutating ObjectFilters[].Include in returned snapshot must not affect cache")
+	assert.Equal(t, "*.tmp", got2[0].ObjectFilters[0].Exclude[0], "mutating ObjectFilters[].Exclude in returned snapshot must not affect cache")
 	assert.Equal(t, "08:00", got2[0].BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
 }

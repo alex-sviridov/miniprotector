@@ -45,7 +45,13 @@ func (c *Cache) Policies() []Policy {
 		for k, v := range p.ClientFilters.Labels {
 			out[i].ClientFilters.Labels[k] = v
 		}
-		copy(out[i].ObjectFilters, p.ObjectFilters)
+		for j, f := range p.ObjectFilters {
+			out[i].ObjectFilters[j] = ObjectFilter{
+				Path:    f.Path,
+				Include: append([]string(nil), f.Include...),
+				Exclude: append([]string(nil), f.Exclude...),
+			}
+		}
 		copy(out[i].BackupWindow, p.BackupWindow)
 	}
 	return out
