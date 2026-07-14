@@ -143,7 +143,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogPort:                      15723,
 		ReconcileIntervalSec:             30,
 		IssuerPort:                       9200,
-		ClientManagerAPIPort:             9100,
+		ClientManagerAPIPort:             9500,
 		OperatingCertTTLSec:              3600,
 		BootstrapCertRefreshIntervalSec:  86400,
 		BootstrapCertTTLSec:              7776000,
