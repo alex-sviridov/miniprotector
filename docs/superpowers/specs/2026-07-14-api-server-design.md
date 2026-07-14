@@ -18,7 +18,8 @@ groups: clients and catalog entries.
 - New standalone `api-server` binary, REST/JSON over HTTP(S)
 - Read-only `GET /api/v1/clients`, `GET /api/v1/clients/{hostname}`
 - Read-only `GET /api/v1/catalog` with filtering and pagination
-- New gRPC read RPCs on `client-manager` (which also needs a first-ever daemon mode) and `catalog`
+- A new `clientmanager-api` daemon (reads `client-manager`'s store directly, exposes it over gRPC)
+  and a new gRPC read RPC on `catalog`
 
 **Out of scope (v1):**
 - RBAC / authorization beyond a single shared bearer token
@@ -31,7 +32,7 @@ groups: clients and catalog entries.
 
 `api-server` is a new standalone binary (`src/cmd/api-server`) and a new control-plane mesh member:
 it enrolls the same way any other node does (bootstrap credential → `certclient` → `issuer`
-operating cert) and then acts purely as a **gRPC client** to `client-manager` and `catalog` over
+operating cert) and then acts purely as a **gRPC client** to `clientmanager-api` and `catalog` over
 mTLS, translating their responses into REST/JSON. It introduces the system's first REST surface;
 everything else stays gRPC-over-mTLS, including api-server's own outbound calls.
 
@@ -46,20 +47,27 @@ business logic beyond param validation, gRPC-error-to-HTTP-status mapping, and (
 decoding an opaque metadata blob into JSON fields.
 
 ```
- browser/curl --Bearer token--> [api-server] --mTLS gRPC--> client-manager (new server mode)
+ browser/curl --Bearer token--> [api-server] --mTLS gRPC--> clientmanager-api (new daemon)
                                             \-mTLS gRPC--> catalog (existing daemon, new RPC)
 ```
 
-## client-manager changes
+## client-manager changes: `clientmanager-api`, a new dedicated daemon
 
-`client-manager` is pure CLI today (`add`, `list`, `mint`, `label`, `san` — each opens the SQLite
-store, does one thing, exits). It gains a new **`clientmanager server`** subcommand that opens the
-same store and starts a long-running gRPC listener via the existing `connection.StartServer` helper
-(the same pattern `policy-server` uses), bound with mTLS. Existing CLI subcommands are unchanged and
-continue to operate directly against the store; there's no write path added to the new RPCs, so
-there's no new concurrent-write concern between CLI admin commands and the daemon.
+`client-manager`'s phase-2 design (`docs/superpowers/specs/2026-07-04-client-manager-phase2-design.md`)
+deliberately made it "no network surface at all" — it holds the CA's provisioner password directly
+and is meant to stay a CLI-only tool an admin runs by hand, never a standing daemon. The existing
+precedent for "a daemon needs client-manager's data" is `issuer`: a wholly separate binary
+(`src/cmd/issuer`) that opens the *same* `clientmanager.sqlite` file directly via the
+`storage/clientmanager` package (same `var_path`, not synced — the same file), rather than dialing
+`client-manager` over the network. This design follows that precedent instead of turning
+`client-manager` itself into a daemon: a new binary, `clientmanager-api`
+(`src/cmd/clientmanager-api`), opens `storage/clientmanager`'s store directly (read-only usage —
+only the existing `ListClients`/`GetClient`/`KV` store methods are called, no new store methods) and
+exposes it over a new gRPC service, bound with mTLS via `connection.StartServer` exactly like
+`catalog`/`policy-server`/`issuer` already do. `client-manager` itself is completely untouched by
+this design — no new subcommand, no network surface added to the CLI binary.
 
-New `ClientManagerService` (`src/api/clientmanager.proto`):
+New `ClientManagerService` (`src/api/clientmanager.proto`), implemented by `clientmanager-api`:
 
 ```protobuf
 service ClientManagerService {
@@ -119,12 +127,17 @@ message Entry {
   // decoded from the stored Metadata blob:
   string path = 8;
   int64 size = 9;
-  string mode = 10;
-  string owner = 11;
-  string group = 12;
+  string mode = 10;   // e.g. "-rw-r--r--", from fs.FileMode.String()
+  uint32 owner = 11;  // Unix UID (or Windows SID hash) — numeric, no name resolution
+  uint32 group = 12;  // Unix GID (or Windows SID hash) — numeric, no name resolution
   int64 mod_time = 13;
 }
 ```
+
+`workload/filesystem.FileInfo`'s fields (`path`, `owner`, `group`, `mode`) are unexported with no
+existing getters beyond `Size()`/`Source()`/`Mtime()`/`Ctime()`/`GetType()` — this design adds the
+missing exported getters (`Path()`, `Owner()`, `Group()`, `Mode() fs.FileMode`) needed to read them
+from another package.
 
 Filtering: `source_host` matches `EntryRecord.SourceNode` exactly. `pattern` is a plain SQL
 `LIKE '%pattern%'` against the existing `object_id` column — `ObjectID` already embeds
@@ -156,11 +169,15 @@ continuation of the existing trust model, not a new gap introduced by this desig
 
 **Binary:** `src/cmd/api-server`, a new control-plane component with its own `local.conf` (via the
 existing `config` package), deployed in `deploy/control-plane/api-server/` and wired into `demo/`
-so the full path is exercisable end-to-end (`make demo-up` + `curl`).
+so the full path is exercisable end-to-end (`make demo-up` + `curl`). `clientmanager-api` is deployed
+similarly, but — like `client-manager` and `issuer` — must run on the CA host, since it needs
+filesystem access to `clientmanager.sqlite`.
 
 **Startup:** standard node enrollment (bootstrap credential → `certclient` → `issuer` operating
-cert), then dials `client-manager` and `catalog` as gRPC clients over mTLS, same as any other mesh
-component. Config supplies both backend addresses plus the REST listener's port and bearer token.
+cert, via a bundled `agent serve` for continuous refresh — the same entrypoint.sh pattern every
+control-plane component uses), then dials `clientmanager-api` and `catalog` as gRPC clients over
+mTLS, same as any other mesh component. Config supplies both backend addresses plus the REST
+listener's port and bearer token.
 
 **Transport:** plain `net/http` with Go 1.22+ `ServeMux` pattern routing — no third-party router,
 matching `log-gateway`'s existing precedent of not pulling in a framework.
@@ -186,9 +203,9 @@ before any gRPC call is made.
 
 ## Testing plan
 
-- **`client-manager`**: unit tests for `ListClients`/`GetClient` gRPC handlers against the existing
-  store (table-driven, following existing `store_test.go` conventions); a smoke test that `server`
-  subcommand wiring starts and serves.
+- **`clientmanager-api`**: unit tests for `ListClients`/`GetClient` gRPC handlers against the
+  existing `storage/clientmanager` store (table-driven, following existing `store_test.go`
+  conventions, reusing its existing `ListClients`/`GetClient`/`KV` methods — no new store code).
 - **`catalog`**: unit tests for `ListEntries` — `source_host` filter, `pattern` substring filter,
   pagination boundaries (`has_more` correctness at the last page, `starting_after` continuation),
   `Metadata` decode-to-fields correctness.
@@ -206,13 +223,16 @@ before any gRPC call is made.
 - New `docs/api/rest-v1.md` — the REST API itself: endpoints, auth, filtering/pagination
   conventions, JSON shapes. (Distinct from `docs/protocols/`, which documents internal gRPC
   protocols, not this external-facing REST surface.)
-- `docs/components/client-manager.md` — document the new `server` subcommand and daemon mode.
+- New `docs/components/clientmanager-api.md` — role, config, how it fits the mesh; note it shares
+  `client-manager`'s SQLite file the same way `issuer` does.
+- `docs/components/client-manager.md` — add a "See Also" link to `clientmanager-api`; no behavioral
+  changes to document since `client-manager` itself is untouched.
 - `docs/components/catalog.md` — document `ListEntries`, replacing the current "no query/report API
   yet" note.
 - `docs/protocols/catalog-sync.md` or a new `docs/protocols/catalog-server.md` — the new
   `CatalogService.ListEntries` RPC shape, alongside the existing `SyncFileVersions` documentation.
-- `docs/ARCHITECTURE.md` — add api-server to the component list/diagram as the system's first REST
-  entry point.
+- `docs/ARCHITECTURE.md` — add `api-server` and `clientmanager-api` to the component list/diagram;
+  `api-server` as the system's first REST entry point.
 - `CHANGELOG.md` — one dated entry.
 
 ## Out of scope
