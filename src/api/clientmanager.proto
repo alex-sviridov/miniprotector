@@ -1,0 +1,36 @@
+// src/api/clientmanager.proto
+syntax = "proto3";
+
+package clientmanagerapiservice;
+
+option go_package = "./proto";
+
+// ClientManagerService is clientmanager-api's sole RPC surface: read-only
+// access to the same clientmanager.sqlite file client-manager's CLI and
+// issuer already share (see docs/superpowers/specs/2026-07-04-client-manager-phase2-design.md
+// and docs/superpowers/specs/2026-07-14-api-server-design.md). clientmanager-api
+// never writes -- client-manager (the CLI) and issuer remain the only writers.
+service ClientManagerService {
+  rpc ListClients(ListClientsRequest) returns (ListClientsResponse);
+  rpc GetClient(GetClientRequest) returns (Client);
+}
+
+message Client {
+  string hostname               = 1;
+  bool   revoked                 = 2;
+  int64  revoked_at              = 3; // unix seconds, 0 if never revoked
+  int64  last_seen_at            = 4; // unix seconds, 0 if never seen
+  repeated string sans           = 5;
+  map<string, string> attributes    = 6;
+  map<string, string> descriptions  = 7;
+}
+
+message ListClientsRequest {}
+
+message ListClientsResponse {
+  repeated Client clients = 1;
+}
+
+message GetClientRequest {
+  string hostname = 1;
+}
