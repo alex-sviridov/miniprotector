@@ -559,3 +559,31 @@ func TestParseConfig_LogGatewayPortParsesCorrectly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 9500, conf.LogGatewayPort)
 }
+
+func TestParseConfig_ParsesAPIServerAndClientManagerAPIKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte(
+		"default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"+
+			"clientmanager_api_host=clientmanager-api\nclientmanager_api_port=9501\n"+
+			"api_server_port=8091\napi_server_token=test-token\n",
+	), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, "clientmanager-api", conf.ClientManagerAPIHost)
+	require.Equal(t, 9501, conf.ClientManagerAPIPort)
+	require.Equal(t, 8091, conf.APIServerPort)
+	require.Equal(t, "test-token", conf.APIServerToken)
+}
+
+func TestParseConfig_ClientManagerAPIPortAndAPIServerPortDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, 9500, conf.ClientManagerAPIPort)
+	require.Equal(t, 8090, conf.APIServerPort)
+}
