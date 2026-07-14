@@ -84,6 +84,27 @@ func (fi FileInfo) Ctime() int64 {
 	return fi.cTime.Unix()
 }
 
+// Path returns the object's original filesystem path.
+func (fi FileInfo) Path() string {
+	return fi.path
+}
+
+// Owner returns the file's owning UID (Unix) or SID hash (Windows).
+func (fi FileInfo) Owner() uint32 {
+	return fi.owner
+}
+
+// Group returns the file's owning GID (Unix) or primary group SID hash
+// (Windows).
+func (fi FileInfo) Group() uint32 {
+	return fi.group
+}
+
+// Mode returns the full file mode (type + permissions).
+func (fi FileInfo) Mode() fs.FileMode {
+	return fi.mode
+}
+
 // String returns a string containing basic file attributes in unix-like style
 // Format: drwxr-xr-x uid gid size mtime name
 func (fi FileInfo) String() string {
