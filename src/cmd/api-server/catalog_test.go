@@ -15,9 +15,9 @@ import (
 )
 
 type fakeCatalogQueryClient struct {
-	resp     *pb.ListEntriesResponse
-	err      error
-	lastReq  *pb.ListEntriesRequest
+	resp    *pb.ListEntriesResponse
+	err     error
+	lastReq *pb.ListEntriesRequest
 }
 
 func (f *fakeCatalogQueryClient) ListEntries(ctx context.Context, in *pb.ListEntriesRequest, opts ...grpc.CallOption) (*pb.ListEntriesResponse, error) {
