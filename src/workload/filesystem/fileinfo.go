@@ -105,6 +105,16 @@ func (fi FileInfo) Mode() fs.FileMode {
 	return fi.mode
 }
 
+// NewFileInfoForTest builds a FileInfo directly from field values, for
+// tests outside this package that need a specific FileInfo without a real
+// filesystem walk (e.g. catalog's ListEntries decode test).
+func NewFileInfoForTest(host, path string, size int64, mode fs.FileMode, owner, group uint32, modTime time.Time) FileInfo {
+	return FileInfo{
+		host: host, path: path, name: path, size: size, mode: mode,
+		owner: owner, group: group, modTime: modTime,
+	}
+}
+
 // String returns a string containing basic file attributes in unix-like style
 // Format: drwxr-xr-x uid gid size mtime name
 func (fi FileInfo) String() string {

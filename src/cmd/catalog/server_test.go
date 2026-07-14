@@ -27,6 +27,7 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	catalogstore "github.com/alex-sviridov/miniprotector/storage/catalog"
+	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
 
 const fixtureCertsDir = "../../common/testdata/certs"
@@ -188,4 +189,64 @@ func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 	count, err := store.Count()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
+}
+
+func TestListEntries_ReturnsPersistedEntriesNewestFirst(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
+		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 2)
+	assert.Equal(t, "obj-2", resp.GetEntries()[0].GetObjectId())
+	assert.False(t, resp.GetHasMore())
+}
+
+func TestListEntries_FiltersBySourceHost(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
+		{SourceNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-2", SourceCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{SourceHost: "bwfs-a"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "bwfs-a", resp.GetEntries()[0].GetSourceHost())
+}
+
+func TestListEntries_DecodesMetadataIntoEntryFields(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+
+	fi := filesystem.NewFileInfoForTest("bwfs-a", "/var/log/syslog", 4096, 0o644, 1000, 1000, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: fi.ID(), Metadata: metadata, SourceCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	entry := resp.GetEntries()[0]
+	assert.Equal(t, "/var/log/syslog", entry.GetPath())
+	assert.Equal(t, int64(4096), entry.GetSize())
+	assert.Equal(t, uint32(1000), entry.GetOwner())
+	assert.Equal(t, uint32(1000), entry.GetGroup())
+}
+
+func TestListEntries_MalformedMetadataStillReturnsEntryWithEmptyDecodedFields(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", Metadata: []byte("not-gob-encoded"), SourceCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "", resp.GetEntries()[0].GetPath())
 }
