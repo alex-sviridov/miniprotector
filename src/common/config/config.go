@@ -98,6 +98,7 @@ type Config struct {
 	ReconcileIntervalSec             int
 	IssuerHost                       string
 	IssuerPort                       int
+	ClientManagerAPIPort             int
 	OperatingCertTTLSec              int
 	BootstrapCertRefreshIntervalSec  int
 	BootstrapCertTTLSec              int
@@ -142,6 +143,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogPort:                      15723,
 		ReconcileIntervalSec:             30,
 		IssuerPort:                       9200,
+		ClientManagerAPIPort:             9100,
 		OperatingCertTTLSec:              3600,
 		BootstrapCertRefreshIntervalSec:  86400,
 		BootstrapCertTTLSec:              7776000,
@@ -280,6 +282,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.IssuerPort = port
 			foundFields["issuer_port"] = true
+		case "clientmanager_api_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid clientmanager_api_port value at line %d: %s", lineNum, value)
+			}
+			config.ClientManagerAPIPort = port
+			foundFields["clientmanager_api_port"] = true
 		case "OperatingCertTTLSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {
