@@ -28,6 +28,24 @@ services:
       - "9200:9200"
     restart: unless-stopped
 
+  clientmanager-api:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/clientmanager-api/Dockerfile
+    depends_on:
+      - step-ca
+      - issuer
+    volumes:
+      - ./clientmanager-api/data:/data
+      - ./clientmanager-api/local.conf:/data/local.conf:ro
+      - ./client-manager/data:/data/client-manager:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    ports:
+      - "9500:9500"
+    restart: unless-stopped
+
   catalog:
     build:
       context: ../..

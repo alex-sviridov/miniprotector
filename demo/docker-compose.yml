@@ -26,6 +26,23 @@ services:
       - MP_CONFIG_PATH=/data
     restart: unless-stopped
 
+  clientmanager-api:
+    build:
+      context: ..
+      dockerfile: deploy/control-plane/clientmanager-api/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+    volumes:
+      - clientmanager-api-data:/data
+      - ./local.conf:/data/local.conf:ro
+      - client-manager-data:/data/client-manager:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+    ports:
+      - "9500:9500"
+    restart: unless-stopped
+
   catalog:
     build:
       context: ..
@@ -141,6 +158,7 @@ volumes:
   ca-data:
   client-manager-data:
   issuer-data:
+  clientmanager-api-data:
   catalog-data:
   policy-server-data:
   loki-data:
