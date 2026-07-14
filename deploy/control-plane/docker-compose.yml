@@ -38,7 +38,7 @@ services:
     volumes:
       - ./clientmanager-api/data:/data
       - ./clientmanager-api/local.conf:/data/local.conf:ro
-      - ./client-manager/data:/data/client-manager:ro
+      - ./client-manager/data:/data/client-manager
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
