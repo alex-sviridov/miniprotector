@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	CatalogService_SyncFileVersions_FullMethodName = "/catalogservice.CatalogService/SyncFileVersions"
+	CatalogService_ListEntries_FullMethodName      = "/catalogservice.CatalogService/ListEntries"
 )
 
 // CatalogServiceClient is the client API for CatalogService service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type CatalogServiceClient interface {
 	SyncFileVersions(ctx context.Context, in *SyncRequest, opts ...grpc.CallOption) (*SyncResponse, error)
+	ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error)
 }
 
 type catalogServiceClient struct {
@@ -47,11 +49,22 @@ func (c *catalogServiceClient) SyncFileVersions(ctx context.Context, in *SyncReq
 	return out, nil
 }
 
+func (c *catalogServiceClient) ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListEntriesResponse)
+	err := c.cc.Invoke(ctx, CatalogService_ListEntries_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CatalogServiceServer is the server API for CatalogService service.
 // All implementations must embed UnimplementedCatalogServiceServer
 // for forward compatibility.
 type CatalogServiceServer interface {
 	SyncFileVersions(context.Context, *SyncRequest) (*SyncResponse, error)
+	ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error)
 	mustEmbedUnimplementedCatalogServiceServer()
 }
 
@@ -64,6 +77,9 @@ type UnimplementedCatalogServiceServer struct{}
 
 func (UnimplementedCatalogServiceServer) SyncFileVersions(context.Context, *SyncRequest) (*SyncResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SyncFileVersions not implemented")
+}
+func (UnimplementedCatalogServiceServer) ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListEntries not implemented")
 }
 func (UnimplementedCatalogServiceServer) mustEmbedUnimplementedCatalogServiceServer() {}
 func (UnimplementedCatalogServiceServer) testEmbeddedByValue()                        {}
@@ -104,6 +120,24 @@ func _CatalogService_SyncFileVersions_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CatalogService_ListEntries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListEntriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).ListEntries(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_ListEntries_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).ListEntries(ctx, req.(*ListEntriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CatalogService_ServiceDesc is the grpc.ServiceDesc for CatalogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +148,10 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SyncFileVersions",
 			Handler:    _CatalogService_SyncFileVersions_Handler,
+		},
+		{
+			MethodName: "ListEntries",
+			Handler:    _CatalogService_ListEntries_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

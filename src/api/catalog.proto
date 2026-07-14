@@ -6,6 +6,7 @@ option go_package = "./proto";
 
 service CatalogService {
   rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
+  rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
 }
 
 message FileVersionEntry {
@@ -22,3 +23,32 @@ message SyncRequest {
 }
 
 message SyncResponse {} // empty ack — GrpcSender only checks error/nil
+
+message ListEntriesRequest {
+  string source_host    = 1; // exact match; empty = all hosts
+  string pattern        = 2; // substring match against object_id; empty = no filter
+  int32  limit           = 3; // 1..500, default 100
+  int64  starting_after  = 4; // last-seen entry ID from a previous page; 0 = first page
+}
+
+message ListEntriesResponse {
+  repeated Entry entries = 1;
+  bool has_more = 2;
+}
+
+message Entry {
+  int64  id                = 1;
+  string source_host       = 2;
+  string job_id            = 3;
+  string object_id         = 4;
+  int64  ctime             = 5;
+  int64  source_created_at = 6;
+  int64  received_at       = 7;
+  // decoded server-side from the stored Metadata blob:
+  string path      = 8;
+  int64  size       = 9;
+  string mode      = 10; // e.g. "-rw-r--r--", from fs.FileMode.String()
+  uint32 owner     = 11; // Unix UID (or Windows SID hash) — numeric, no name resolution
+  uint32 group     = 12; // Unix GID (or Windows SID hash) — numeric, no name resolution
+  int64  mod_time   = 13;
+}
