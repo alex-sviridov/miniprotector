@@ -77,6 +77,8 @@ make clientmanager
 
 - [issuer](./issuer.md) — enforces revoke/attribute, shares this binary's database
 - [certclient](./certclient.md) — `operating-refresh` is how a node picks up revoke/attribute/san changes
+- [clientmanager-api](./clientmanager-api.md) — a separate daemon sharing this component's database
+  for read-only access, the same way `issuer` already does; `client-manager` itself is unaffected
 - [agent](./agent.md) — schedules that refresh via its `operating-refresh` policy
 - [Security Model](../SECURITY.md)
 - [Design: Client Manager Phase 2](../superpowers/specs/2026-07-04-client-manager-phase2-design.md)

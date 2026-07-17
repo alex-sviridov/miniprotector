@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-14 — api-server: unified read-only REST API for clients and catalog
+
+`api-server` exposes a REST API in front of the control plane's client and catalog data — the first
+REST surface in a system that's otherwise entirely gRPC-over-mTLS. `GET /api/v1/clients[/{hostname}]`
+and `GET /api/v1/catalog` (filterable by source host and a path-pattern substring, cursor-paginated)
+are backed by two gRPC additions: a new `clientmanager-api` daemon (mirroring `issuer`'s existing
+pattern of opening `client-manager`'s SQLite file directly, rather than adding a network surface to
+`client-manager` itself, which was a deliberate security property) and a new `ListEntries` RPC on
+`catalog` (previously write-only). REST access is guarded by a single shared bearer token — no RBAC
+yet, matching this phase's scope.
+
 ## 2026-07-13 — Deterministic IDs for policies and object filters
 
 `policy-server` now computes a deterministic ID for every policy and every object filter within
