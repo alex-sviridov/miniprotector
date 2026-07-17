@@ -64,6 +64,25 @@ services:
       - "15723:15723"
     restart: unless-stopped
 
+  api-server:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/api-server/Dockerfile
+    depends_on:
+      - step-ca
+      - issuer
+      - clientmanager-api
+      - catalog
+    volumes:
+      - ./api-server/data:/data
+      - ./api-server/local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+
   policy-server:
     build:
       context: ../..

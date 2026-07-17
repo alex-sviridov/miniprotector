@@ -78,7 +78,9 @@ echo "Starting loki..."
 docker compose up -d loki
 
 enroll log-gateway
+enroll clientmanager-api
 enroll catalog
+enroll api-server
 enroll policy-server
 enroll database
 enroll webserver "role=web"

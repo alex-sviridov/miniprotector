@@ -60,6 +60,25 @@ services:
       - STORAGE_PATH=/data/storage
     restart: unless-stopped
 
+  api-server:
+    build:
+      context: ..
+      dockerfile: deploy/control-plane/api-server/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+      - clientmanager-api
+      - catalog
+    volumes:
+      - api-server-data:/data
+      - ./local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+
   policy-server:
     build:
       context: ..
@@ -161,6 +180,7 @@ volumes:
   issuer-data:
   clientmanager-api-data:
   catalog-data:
+  api-server-data:
   policy-server-data:
   loki-data:
   log-gateway-data:
