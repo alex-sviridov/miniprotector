@@ -53,4 +53,6 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/clients", s.handleListClients)
 	mux.HandleFunc("GET /api/v1/clients/{hostname}", s.handleGetClient)
 	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
+	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
+	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)
 }
