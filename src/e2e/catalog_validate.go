@@ -15,7 +15,8 @@ import (
 )
 
 type catalogEntryRow struct {
-	SourceNode string
+	StoreNode  string
+	SourceHost string
 	JobID      string
 	ObjectID   string
 }
@@ -69,7 +70,7 @@ func waitForCatalogEntryCount(t testingT, catalogStorageDir string, wantCount in
 			if gormErr == nil {
 				var got []catalogEntryRow
 				if err := db.Table("entry_records").
-					Select("source_node, job_id, object_id").
+					Select("store_node, source_host, job_id, object_id").
 					Find(&got).Error; err == nil && len(got) >= wantCount {
 					sqlDB.Close()
 					return got
