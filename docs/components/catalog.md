@@ -2,7 +2,9 @@
 
 Receives `catalogsync`'s replicated `bwfs` file-version batches over gRPC and persists them
 idempotently to its own SQLite database. **Control-plane component** — runs centrally, not
-colocated with any single `bwfs` node. Receive-and-store only today; no query/report API yet.
+colocated with any single `bwfs` node. Also serves `ListEntries`, a read-only query RPC (filter by
+source host and a substring match against the underlying object ID, keyset-paginated) — see
+[api-server](./api-server.md), the only intended caller today.
 
 ## Usage
 
@@ -20,7 +22,7 @@ catalog <storage_path> [--port N] [--debug]
 
 ## How It Works
 
-`SyncFileVersions` is the sole RPC: one call per batch `catalogsync` sends. Each entry is
+`SyncFileVersions` is the write path: one call per batch `catalogsync` sends. Each entry is
 persisted keyed by `(source_node, job_id, object_id)`:
 
 - `source_node` is the CA-verified hostname from the caller's mTLS client certificate
@@ -56,6 +58,7 @@ make catalog
 ## See Also
 
 - [catalogsync](./catalogsync.md) — the component that sends batches here
+- [api-server](./api-server.md) — exposes `ListEntries` over REST
 - [Catalog Sync Protocol](../protocols/catalog-sync.md)
 - [certclient](./certclient.md)
 - [Architecture](../ARCHITECTURE.md)

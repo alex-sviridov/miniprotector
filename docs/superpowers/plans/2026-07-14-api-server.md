@@ -2295,6 +2295,7 @@ Add after the `catalog` service block:
       - ./local.conf:/data/local.conf:ro
     environment:
       - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
     ports:
       - "8090:8090"
     restart: unless-stopped

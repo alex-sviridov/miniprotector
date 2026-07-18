@@ -26,6 +26,24 @@ services:
       - MP_CONFIG_PATH=/data
     restart: unless-stopped
 
+  clientmanager-api:
+    build:
+      context: ..
+      dockerfile: deploy/control-plane/clientmanager-api/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+    volumes:
+      - clientmanager-api-data:/data
+      - ./local.conf:/data/local.conf:ro
+      - client-manager-data:/data/client-manager
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    ports:
+      - "9500:9500"
+    restart: unless-stopped
+
   catalog:
     build:
       context: ..
@@ -40,6 +58,25 @@ services:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
       - STORAGE_PATH=/data/storage
+    restart: unless-stopped
+
+  api-server:
+    build:
+      context: ..
+      dockerfile: deploy/control-plane/api-server/Dockerfile
+    depends_on:
+      - ca
+      - issuer
+      - clientmanager-api
+      - catalog
+    volumes:
+      - api-server-data:/data
+      - ./local.conf:/data/local.conf:ro
+    environment:
+      - MP_CONFIG_PATH=/data
+      - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
+    ports:
+      - "8090:8090"
     restart: unless-stopped
 
   policy-server:
@@ -141,7 +178,9 @@ volumes:
   ca-data:
   client-manager-data:
   issuer-data:
+  clientmanager-api-data:
   catalog-data:
+  api-server-data:
   policy-server-data:
   loki-data:
   log-gateway-data:

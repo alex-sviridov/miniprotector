@@ -98,6 +98,7 @@ type Config struct {
 	ReconcileIntervalSec             int
 	IssuerHost                       string
 	IssuerPort                       int
+	ClientManagerAPIPort             int
 	OperatingCertTTLSec              int
 	BootstrapCertRefreshIntervalSec  int
 	BootstrapCertTTLSec              int
@@ -111,6 +112,9 @@ type Config struct {
 	MaxConcurrentBackupJobs          int
 	LogGatewayHost                   string
 	LogGatewayPort                   int
+	ClientManagerAPIHost             string
+	APIServerPort                    int
+	APIServerToken                   string
 }
 
 type contextKey string
@@ -142,6 +146,8 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogPort:                      15723,
 		ReconcileIntervalSec:             30,
 		IssuerPort:                       9200,
+		ClientManagerAPIPort:             9500,
+		APIServerPort:                    8090,
 		OperatingCertTTLSec:              3600,
 		BootstrapCertRefreshIntervalSec:  86400,
 		BootstrapCertTTLSec:              7776000,
@@ -153,6 +159,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		BackupWindowGraceSec:             3600,
 		MaxConcurrentBackupJobs:          2,
 		LogGatewayPort:                   9400,
+		ConnectionTimeOutSec:             30,
 	}
 	foundFields := make(map[string]bool)
 
@@ -280,6 +287,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.IssuerPort = port
 			foundFields["issuer_port"] = true
+		case "clientmanager_api_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid clientmanager_api_port value at line %d: %s", lineNum, value)
+			}
+			config.ClientManagerAPIPort = port
+			foundFields["clientmanager_api_port"] = true
 		case "OperatingCertTTLSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {
@@ -342,6 +356,19 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.LogGatewayPort = port
 			foundFields["log_gateway_port"] = true
+		case "clientmanager_api_host":
+			config.ClientManagerAPIHost = value
+			foundFields["clientmanager_api_host"] = true
+		case "api_server_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid api_server_port value at line %d: %s", lineNum, value)
+			}
+			config.APIServerPort = port
+			foundFields["api_server_port"] = true
+		case "api_server_token":
+			config.APIServerToken = value
+			foundFields["api_server_token"] = true
 		case "PolicyFetchIntervalSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {

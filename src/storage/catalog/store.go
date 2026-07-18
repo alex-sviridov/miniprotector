@@ -67,6 +67,58 @@ func (s *Store) Count() (int64, error) {
 	return n, err
 }
 
+// ListEntriesFilter narrows and paginates a ListEntries query. A
+// zero-valued filter matches every entry, newest first, first page.
+type ListEntriesFilter struct {
+	SourceNode    string // exact match; "" = all source nodes
+	Pattern       string // substring match against object_id; "" = no filter
+	Limit         int    // clamped to [1, 500]; 0 or negative defaults to 100
+	StartingAfter int64  // last-seen entry ID from a previous page; 0 = first page
+}
+
+const (
+	defaultListEntriesLimit = 100
+	maxListEntriesLimit     = 500
+)
+
+// ListEntries returns entries newest-first (highest ID first), matching
+// filter, plus whether more entries exist beyond the returned page.
+// pattern is an unindexed SQL LIKE '%pattern%' scan against object_id
+// (which already embeds the original path -- see
+// workload/filesystem.FileInfo.ID) rather than decoding Metadata per row.
+func (s *Store) ListEntries(filter ListEntriesFilter) ([]EntryRecord, bool, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultListEntriesLimit
+	}
+	if limit > maxListEntriesLimit {
+		limit = maxListEntriesLimit
+	}
+
+	q := s.db.Model(&EntryRecord{}).Order("id DESC")
+	if filter.SourceNode != "" {
+		q = q.Where("source_node = ?", filter.SourceNode)
+	}
+	if filter.Pattern != "" {
+		q = q.Where("object_id LIKE ?", "%"+filter.Pattern+"%")
+	}
+	if filter.StartingAfter > 0 {
+		q = q.Where("id < ?", filter.StartingAfter)
+	}
+
+	var entries []EntryRecord
+	// Fetch one extra row to detect hasMore without a separate COUNT query.
+	if err := q.Limit(limit + 1).Find(&entries).Error; err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(entries) > limit
+	if hasMore {
+		entries = entries[:limit]
+	}
+	return entries, hasMore, nil
+}
+
 func (s *Store) Close() error {
 	sqlDB, err := s.db.DB()
 	if err != nil {
