@@ -73,3 +73,33 @@ func toProtoPolicy(p Policy) *pb.Policy {
 		Destination:   p.Destination,
 	}
 }
+
+func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
+	return &pb.ClientFilters{Hostnames: cf.Hostnames, Labels: cf.Labels}
+}
+
+// toProtoPolicyAdmin is toProtoPolicy plus client_filters -- used by every
+// RPC except GetPolicies (ListPolicies, CreatePolicy, UpdatePolicy), where
+// an operator editing the full policy set needs to see and change
+// client_filters. GetPolicies keeps using toProtoPolicy so a matched node
+// never learns another node's targeting rules from a policy that already
+// matched its own identity.
+func toProtoPolicyAdmin(p Policy) *pb.Policy {
+	pp := toProtoPolicy(p)
+	pp.ClientFilters = toProtoClientFilters(p.ClientFilters)
+	return pp
+}
+
+// ListPolicies returns every currently-loaded policy, unfiltered by any
+// caller identity -- the admin surface api-server proxies for browsing and
+// editing the full policy set. Unlike GetPolicies, it is never called by a
+// mesh node itself.
+func (s *policyServerServer) ListPolicies(ctx context.Context, _ *pb.ListPoliciesRequest) (*pb.ListPoliciesResponse, error) {
+	policies := s.cache.Policies()
+	out := make([]*pb.Policy, len(policies))
+	for i, p := range policies {
+		out[i] = toProtoPolicyAdmin(p)
+	}
+	s.logger.Info("ListPolicies", "count", len(out))
+	return &pb.ListPoliciesResponse{Policies: out}, nil
+}

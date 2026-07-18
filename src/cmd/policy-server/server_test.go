@@ -176,3 +176,49 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	assert.NotEmpty(t, p.ObjectFilters[1].Id)
 	assert.NotEqual(t, p.ObjectFilters[0].Id, p.ObjectFilters[1].Id)
 }
+
+func TestListPolicies_ReturnsAllPoliciesRegardlessOfIdentity(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]}
+	}`)
+	writePolicyFile(t, dir, "db.json", `{
+		"metadata": {"name": "db-policy"},
+		"client_filters": {"labels": {"role": "db"}}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+	require.NoError(t, err)
+	assert.Len(t, resp.Policies, 2)
+}
+
+func TestListPolicies_IncludesClientFilters(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, []string{"web-*"}, resp.Policies[0].ClientFilters.Hostnames)
+	assert.Equal(t, map[string]string{"env": "prod"}, resp.Policies[0].ClientFilters.Labels)
+}
+
+func TestGetPolicies_StillOmitsClientFilters(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Nil(t, resp.Policies[0].ClientFilters)
+}
