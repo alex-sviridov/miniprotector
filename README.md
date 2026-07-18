@@ -66,6 +66,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
 - **[policy-server](docs/components/policy-server.md)** - Serves backup policies filtered by a requesting client's hostname and attribute labels (control-plane component)
 - **[log-gateway](docs/components/log-gateway.md)** - mTLS-authenticating reverse proxy in front of Loki; `agent`'s bundled Vector process ships every node's logs through it (control-plane component)
+- **[web](docs/components/web.md)** - a small browser UI over `api-server`'s read-only REST API — browse enrolled clients and catalog entries
 
 ## Documentation
 

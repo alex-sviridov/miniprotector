@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-18 — web: a small Vue/Pinia frontend for api-server
+
+`web` is a new static single-page app (Vite + Vue 3 + Pinia + Vue Router + Tailwind CSS) providing
+a browser UI over `api-server`'s two read-only resources: an enrolled-clients list/detail view and
+a filterable, cursor-paginated catalog browser. It's served by nginx, which reverse-proxies `/api/*`
+to `api-server` so the browser's requests stay same-origin — no CORS changes were needed on
+`api-server` itself. A one-time bearer-token prompt (stored in `localStorage`) is the only auth,
+matching `api-server`'s existing model. Wired into `demo/docker-compose.yml` as a new `web` service
+on `localhost:8091`; not yet added to `deploy/control-plane/`.
+
 ## 2026-07-14 — api-server: unified read-only REST API for clients and catalog
 
 `api-server` exposes a REST API in front of the control plane's client and catalog data — the first
