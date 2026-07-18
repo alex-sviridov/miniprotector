@@ -2,6 +2,7 @@
 import { onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useClientsStore } from '../stores/clients'
+import { formatTimestamp } from '../utils/format'
 
 const route = useRoute()
 const clients = useClientsStore()
@@ -25,9 +26,9 @@ onMounted(async () => {
       <dt class="font-medium">Revoked</dt>
       <dd>{{ clients.byHostname[hostname].revoked ? 'Yes' : 'No' }}</dd>
       <dt class="font-medium">Revoked At</dt>
-      <dd>{{ clients.byHostname[hostname].revoked_at || '—' }}</dd>
+      <dd>{{ formatTimestamp(clients.byHostname[hostname].revoked_at) || '—' }}</dd>
       <dt class="font-medium">Last Seen</dt>
-      <dd>{{ clients.byHostname[hostname].last_seen_at || 'Never' }}</dd>
+      <dd>{{ formatTimestamp(clients.byHostname[hostname].last_seen_at) || 'Never' }}</dd>
       <dt class="font-medium">SANs</dt>
       <dd>{{ (clients.byHostname[hostname].sans || []).join(', ') || '—' }}</dd>
       <dt class="font-medium">Attributes</dt>

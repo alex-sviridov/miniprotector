@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useClientsStore } from '../stores/clients'
+import { formatTimestamp } from '../utils/format'
 
 const clients = useClientsStore()
 
@@ -31,7 +32,7 @@ onMounted(() => {
           </td>
           <td class="py-2 pr-4">{{ client.revoked ? 'Yes' : 'No' }}</td>
           <td class="py-2 pr-4">
-            {{ client.last_seen_at ? new Date(client.last_seen_at * 1000).toLocaleString() : 'Never' }}
+            {{ formatTimestamp(client.last_seen_at) || 'Never' }}
           </td>
         </tr>
       </tbody>

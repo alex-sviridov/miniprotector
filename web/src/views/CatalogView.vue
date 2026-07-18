@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive } from 'vue'
 import { useCatalogStore } from '../stores/catalog'
+import { formatTimestamp } from '../utils/format'
 
 const catalog = useCatalogStore()
 const form = reactive({ sourceHost: '', pattern: '' })
@@ -40,7 +41,7 @@ onMounted(() => {
           <td class="py-2 pr-4">{{ entry.source_host }}</td>
           <td class="py-2 pr-4">{{ entry.size }}</td>
           <td class="py-2 pr-4">{{ entry.mode }}</td>
-          <td class="py-2 pr-4">{{ new Date(entry.mod_time * 1000).toLocaleString() }}</td>
+          <td class="py-2 pr-4">{{ formatTimestamp(entry.mod_time) }}</td>
         </tr>
       </tbody>
     </table>
