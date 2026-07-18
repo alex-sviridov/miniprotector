@@ -1,7 +1,8 @@
 # REST API v1
 
-`api-server`'s REST surface: read-only, v1, no RBAC. See [api-server](../components/api-server.md)
-for auth and deployment.
+`api-server`'s REST surface: v1, no RBAC. Client and catalog endpoints are read-only; policy
+endpoints support create/update/delete. See [api-server](../components/api-server.md) for auth and
+deployment.
 
 ## Conventions
 
@@ -81,6 +82,68 @@ Query parameters (all optional):
 ```
 
 `400` if `limit` isn't an integer in `[1, 500]`, or `starting_after` isn't a non-negative integer.
+
+## `GET /api/v1/policies`
+
+Returns every policy, unfiltered by any client identity (unlike `policy-server`'s own `GetPolicies`
+RPC, which every mesh node calls and which is scoped to its own matching policies). Not paginated.
+
+```json
+{
+  "data": [
+    {
+      "id": "b1f2c3d4-...",
+      "name": "nightly-web-backup",
+      "created_at": 1752400000,
+      "updated_at": 1752400010,
+      "client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
+      "object_filters": [
+        {"id": "a9e8d7c6-...", "path": "/var/www", "include": ["*.html", "*.css"], "exclude": ["*.tmp"]}
+      ],
+      "rpo": "24h",
+      "backup_window": ["0 2 * * *", "0 20 * * *"],
+      "destination": "bwfs-east.internal:8080"
+    }
+  ]
+}
+```
+
+`created_at`/`updated_at` are Unix seconds, matching every other timestamp field in this API.
+
+## `GET /api/v1/policies/{id}`
+
+Returns one policy (same shape as one entry above). `404` if `id` doesn't match any policy.
+
+## `POST /api/v1/policies`
+
+Creates a new policy. Body:
+
+```json
+{
+  "name": "nightly-web-backup",
+  "client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
+  "object_filters": [{"path": "/var/www", "include": ["*.html"], "exclude": ["*.tmp"]}],
+  "rpo": "24h",
+  "backup_window": ["0 2 * * *"],
+  "destination": "bwfs-east.internal:8080"
+}
+```
+
+`201` with the created policy (including its server-assigned `id` and each object filter's `id`) on
+success. `400` if `name` is empty, or any `include`/`exclude`/hostname entry isn't a syntactically
+valid glob pattern — no file is written when validation fails.
+
+## `PUT /api/v1/policies/{id}`
+
+Replaces an existing policy's editable fields — same body shape as `POST`, full replacement rather
+than a partial patch. `200` with the updated policy; the `id` and `created_at` never change.
+Reordering or inserting `object_filters` entries changes the affected filters' `id`s. `400` on the
+same validation failures as `POST` (the existing file is left untouched). `404` if `id` doesn't
+match any policy.
+
+## `DELETE /api/v1/policies/{id}`
+
+Deletes a policy. `204` on success, `404` if `id` doesn't match any policy.
 
 ## See Also
 

@@ -1,9 +1,12 @@
 # policy-server
 
-Serves backup policies — static, operator-authored JSON files under `$MP_CONFIG_PATH/policies/` —
-filtered to exactly the policies whose `client_filters` match a requesting client's verified
-hostname and certificate-embedded attribute labels. See
-[Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md).
+Serves backup policies — JSON files under `$MP_CONFIG_PATH/policies/`, one per policy — filtered to
+exactly the policies whose `client_filters` match a requesting client's verified hostname and
+certificate-embedded attribute labels. Also exposes an admin write API
+(`ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy`) that `api-server` proxies as REST, so
+policies no longer have to be hand-edited on this host. See
+[Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md) and
+[Design: Policy Management API](../superpowers/specs/2026-07-18-policy-management-api-design.md).
 
 `policy-server` is bootstrapped and certificate-managed exactly like any other node in the mesh
 (`client-manager add`, `agent` + `issuer` refresh) — it holds no database and calls no other
@@ -61,6 +64,12 @@ than reloading (potentially mid-edit) on every individual file write.
 A single malformed policy file is skipped, logged loudly, and does not block the rest of the
 directory from loading. If every file in a reload attempt fails to parse, the previous good
 in-memory cache is kept rather than replaced with an empty list.
+
+Writes made through `CreatePolicy`/`UpdatePolicy`/`DeletePolicy` bypass this sentinel-and-fsnotify
+path entirely: each validates its input, atomically writes (or removes) the affected file, then
+calls the same `Reload` directly, in-process, before the RPC responds. An operator hand-editing
+files on disk and the write RPCs can coexist — both funnel through the same `Reload`/validation
+logic — but there's no locking between them beyond the atomic-rename write itself.
 
 ## Configuration Keys
 

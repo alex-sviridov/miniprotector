@@ -9,12 +9,27 @@ this project uses).
 ```proto
 service PolicyService {
   rpc GetPolicies(GetPoliciesRequest) returns (GetPoliciesResponse);
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc CreatePolicy(CreatePolicyRequest) returns (Policy);
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
+  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
 }
 
 message GetPoliciesRequest {}
 
 message GetPoliciesResponse {
   repeated Policy policies = 1;
+}
+
+message ListPoliciesRequest {}
+
+message ListPoliciesResponse {
+  repeated Policy policies = 1;
+}
+
+message ClientFilters {
+  repeated string hostnames = 1;
+  map<string, string> labels = 2;
 }
 
 message ObjectFilter {
@@ -33,7 +48,33 @@ message Policy {
   repeated string backup_window = 6;
   string destination = 7;
   string id = 8;
+  ClientFilters client_filters = 9;
 }
+
+message CreatePolicyRequest {
+  string name = 1;
+  ClientFilters client_filters = 2;
+  repeated ObjectFilter object_filters = 3;
+  string rpo = 4;
+  repeated string backup_window = 5;
+  string destination = 6;
+}
+
+message UpdatePolicyRequest {
+  string id = 1;
+  string name = 2;
+  ClientFilters client_filters = 3;
+  repeated ObjectFilter object_filters = 4;
+  string rpo = 5;
+  repeated string backup_window = 6;
+  string destination = 7;
+}
+
+message DeletePolicyRequest {
+  string id = 1;
+}
+
+message DeletePolicyResponse {}
 ```
 
 ## Authorization
@@ -62,6 +103,16 @@ certificate — the same requirement every server except `issuer`'s own listener
 - `rpo` and `backup_window` are opaque, pass-through strings — `policy-server` never parses or
   evaluates either. `destination` is likewise opaque, pass-through data — `policy-server` never
   validates or connects to it.
+- `ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy` are the admin surface `api-server`
+  proxies for browsing and editing the full policy set — never called by a mesh node. Unlike
+  `GetPolicies`, `ListPolicies`'s response (and `Create`/`UpdatePolicy`'s echoed-back result)
+  includes `client_filters`. `Create`/`UpdatePolicy` validate the same way `parsePolicyFile` does
+  (non-empty `metadata.name`, syntactically valid glob patterns) before writing anything; a write
+  that fails validation returns `INVALID_ARGUMENT` and touches no file. `Update`/`Delete` address a
+  policy by its `id`; `Update` keeps the on-disk filename (and therefore the `id`) unchanged,
+  overwriting only the file's content. Every write reloads `policy-server`'s own in-memory cache
+  synchronously before responding, bypassing the `.changed` sentinel entirely — that remains solely
+  the mechanism for an operator's own manual, possibly multi-file, batch edits.
 
 ## See Also
 

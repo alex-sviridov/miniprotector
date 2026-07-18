@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-18 — policy-server: an admin write API for policies, proxied through api-server
+
+`policy-server` gains `ListPolicies` (an unfiltered admin view, distinct from the existing
+identity-scoped `GetPolicies`) and `CreatePolicy`/`UpdatePolicy`/`DeletePolicy` — each validates its
+input the same way `parsePolicyFile` already does, atomically writes or removes the policy file, and
+synchronously reloads its own in-memory cache before responding. `api-server` proxies all five as
+`GET/POST/PUT/DELETE /api/v1/policies[/{id}]`, so backup policies can be listed and edited from a
+browser instead of hand-editing JSON files on `policy-server`'s host. Policies remain flat files on
+disk — no new database, no new persistent actor.
+
 ## 2026-07-18 — web: a small Vue/Pinia frontend for api-server
 
 `web` is a new static single-page app (Vite + Vue 3 + Pinia + Vue Router + Tailwind CSS) providing

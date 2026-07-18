@@ -1,7 +1,8 @@
 # api-server
 
-Unified, read-only REST API in front of the control plane's client and catalog data — for browsers
-and admin tools that don't hold a mesh mTLS client certificate. **Control-plane component.**
+Unified REST API in front of the control plane's client, catalog, and policy data — for browsers
+and admin tools that don't hold a mesh mTLS client certificate. Client and catalog access are
+read-only; policies additionally support create/update/delete. **Control-plane component.**
 
 `api-server` is the system's first REST surface; every other inter-component call in this project
 is gRPC over mTLS, including api-server's own outbound calls to
@@ -28,11 +29,13 @@ See [REST API v1](../api/rest-v1.md) for the full endpoint reference.
 
 Every request must present `Authorization: Bearer <token>`, checked against the single
 config-supplied token; missing or mismatched returns `401`. This is the only auth layer today — no
-RBAC, no per-user identity (see
-[Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)). Any node holding a
-valid mesh operating credential can still call `clientmanager-api`/`catalog`'s RPCs directly,
-bypassing this token — an accepted continuation of this project's existing "any operating-tier cert
-may call any RPC it can reach" convention, not a new gap.
+RBAC, no per-user identity, including for the policy write endpoints (see
+[Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md) and
+[Design: Policy Management API](../superpowers/specs/2026-07-18-policy-management-api-design.md)).
+Any node holding a valid mesh operating credential can still call
+`clientmanager-api`/`catalog`/`policy-server`'s RPCs directly, bypassing this token — an accepted
+continuation of this project's existing "any operating-tier cert may call any RPC it can reach"
+convention, not a new gap.
 
 ## Configuration Keys
 
@@ -40,6 +43,8 @@ may call any RPC it can reach" convention, not a new gap.
 - `api_server_token` — bearer token required on every REST request
 - `clientmanager_api_host` / `clientmanager_api_port` — where to dial `clientmanager-api`
 - `catalog_host` / `catalog_port` — where to dial `catalog`
+- `policy_server_host` / `policy_server_port` — where to dial `policy-server` *(default port:
+  9300)*
 
 ## Certificates
 
