@@ -68,7 +68,7 @@ func TestGrpcSender_Send_ConvertsBatchToSingleRequest(t *testing.T) {
 	require.Len(t, fake.lastReq.Entries, 2)
 	assert.Equal(t, "obj-1", fake.lastReq.Entries[0].ObjectId)
 	assert.Equal(t, "job-1", fake.lastReq.Entries[0].JobId)
-	assert.Equal(t, int64(1), fake.lastReq.Entries[0].SourceSeq)
+	assert.Equal(t, int64(1), fake.lastReq.Entries[0].StoreSeq)
 	assert.Equal(t, now.Unix(), fake.lastReq.Entries[0].CreatedAt)
 }
 
