@@ -61,4 +61,18 @@ describe('apiFetch', () => {
     expect(auth.error).toEqual(expect.any(String))
     expect(auth.error.length).toBeGreaterThan(0)
   })
+
+  it('returns null on a 204 No Content response without parsing a body', async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: async () => {
+        throw new Error('should not be called')
+      },
+    })
+
+    const body = await apiFetch('/policies/abc', { method: 'DELETE' })
+
+    expect(body).toBeNull()
+  })
 })

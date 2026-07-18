@@ -33,5 +33,9 @@ export async function apiFetch(path, options = {}) {
     throw new ApiError(response.status, message)
   }
 
+  if (response.status === 204) {
+    return null
+  }
+
   return response.json()
 }
