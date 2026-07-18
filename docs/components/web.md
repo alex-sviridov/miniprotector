@@ -18,9 +18,9 @@ no data — there's no read-only "guest" mode.
 - `/` — placeholder landing page
 - `/clients` — every enrolled client (hostname, revoked, last seen), linking to:
 - `/clients/:hostname` — one client's full record (SANs, attributes, descriptions)
-- `/catalog` — catalog entries, filterable by source host and a path-pattern substring,
-  paginated with Prev/Next (the catalog API only supports cursor pagination — no total count, so
-  there's no page-number jump)
+- `/catalog` — catalog entries, filterable by real source host, store host (the `bwfs` node that
+  replicated the entry), and a path-pattern substring, paginated with Prev/Next (the catalog API
+  only supports cursor pagination — no total count, so there's no page-number jump)
 - `/policies` — every policy (name, RPO, destination), linking to:
 - `/policies/:id` — one policy's full record (client filters, object filters, backup window)
 - `/policies/new` — create a new policy

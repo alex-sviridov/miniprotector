@@ -53,7 +53,8 @@ Query parameters (all optional):
 
 | Param | Type | Description |
 |-------|------|--------------|
-| `source_host` | string | Exact match on the backing-up node's hostname |
+| `source_host` | string | Exact match on the real originating (backed-up) host |
+| `store_host` | string | Exact match on the `bwfs` node that replicated the entry |
 | `pattern` | string | Substring match against the entry's underlying object ID (which embeds the original file path) |
 | `limit` | int, 1–500 | Page size, default 100 |
 | `starting_after` | int | Continue from this entry `id` (from a previous page's last entry) |
@@ -64,10 +65,11 @@ Query parameters (all optional):
     {
       "id": 42,
       "source_host": "database",
+      "store_host": "bwfs-east",
       "job_id": "backup:daily-db-backup:...",
       "object_id": "fs://database:f:/var/lib/dbdata/data.db:1752400000",
       "ctime": 1752400000,
-      "source_created_at": 1752400000,
+      "store_created_at": 1752400000,
       "received_at": 1752400010,
       "path": "/var/lib/dbdata/data.db",
       "size": 8192,
