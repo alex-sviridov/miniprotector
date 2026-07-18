@@ -24,14 +24,25 @@ type catalogQueryClient interface {
 	ListEntries(ctx context.Context, in *pb.ListEntriesRequest, opts ...grpc.CallOption) (*pb.ListEntriesResponse, error)
 }
 
+// policyServiceClient is the subset of pb.PolicyServiceClient the policies
+// handlers (Tasks 8-11) need -- api-server never calls GetPolicies, the
+// identity-scoped RPC mesh nodes use.
+type policyServiceClient interface {
+	ListPolicies(ctx context.Context, in *pb.ListPoliciesRequest, opts ...grpc.CallOption) (*pb.ListPoliciesResponse, error)
+	CreatePolicy(ctx context.Context, in *pb.CreatePolicyRequest, opts ...grpc.CallOption) (*pb.Policy, error)
+	UpdatePolicy(ctx context.Context, in *pb.UpdatePolicyRequest, opts ...grpc.CallOption) (*pb.Policy, error)
+	DeletePolicy(ctx context.Context, in *pb.DeletePolicyRequest, opts ...grpc.CallOption) (*pb.DeletePolicyResponse, error)
+}
+
 type server struct {
 	clientManager clientManagerClient
 	catalog       catalogQueryClient
+	policy        policyServiceClient
 	logger        *slog.Logger
 }
 
-func newServer(cm clientManagerClient, catalog catalogQueryClient, logger *slog.Logger) *server {
-	return &server{clientManager: cm, catalog: catalog, logger: logger}
+func newServer(cm clientManagerClient, catalog catalogQueryClient, policy policyServiceClient, logger *slog.Logger) *server {
+	return &server{clientManager: cm, catalog: catalog, policy: policy, logger: logger}
 }
 
 // registerRoutes wires up every REST endpoint. handleListClients,

@@ -69,7 +69,14 @@ func main() {
 	}
 	defer catalogConn.Close()
 
-	srv := newServer(pb.NewClientManagerServiceClient(cmConn), pb.NewCatalogServiceClient(catalogConn), logger)
+	policyConn, err := connection.Connect(conf.PolicyServerHost, conf.PolicyServerPort, conf.ConnectionTimeOutSec, certsDir)
+	if err != nil {
+		logger.Error("connect to policy-server failed", "error", err)
+		os.Exit(1)
+	}
+	defer policyConn.Close()
+
+	srv := newServer(pb.NewClientManagerServiceClient(cmConn), pb.NewCatalogServiceClient(catalogConn), pb.NewPolicyServiceClient(policyConn), logger)
 
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)

@@ -30,7 +30,7 @@ func TestHandleListCatalog_ReturnsDataAndHasMore(t *testing.T) {
 		Entries: []*pb.Entry{{Id: 1, SourceHost: "bwfs-a", Path: "/var/log/syslog"}},
 		HasMore: true,
 	}}
-	srv := newServer(nil, fake, testLogger())
+	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
@@ -49,7 +49,7 @@ func TestHandleListCatalog_ReturnsDataAndHasMore(t *testing.T) {
 
 func TestHandleListCatalog_PassesFilterQueryParamsThrough(t *testing.T) {
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
-	srv := newServer(nil, fake, testLogger())
+	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
@@ -67,7 +67,7 @@ func TestHandleListCatalog_PassesFilterQueryParamsThrough(t *testing.T) {
 
 func TestHandleListCatalog_InvalidLimitReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
-	srv := newServer(nil, fake, testLogger())
+	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
@@ -80,7 +80,7 @@ func TestHandleListCatalog_InvalidLimitReturns400(t *testing.T) {
 
 func TestHandleListCatalog_LimitOutOfRangeReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
-	srv := newServer(nil, fake, testLogger())
+	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 

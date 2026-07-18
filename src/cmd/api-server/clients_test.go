@@ -41,7 +41,7 @@ func TestHandleListClients_ReturnsDataEnvelope(t *testing.T) {
 	fake := &fakeClientManagerClient{listResp: &pb.ListClientsResponse{
 		Clients: []*pb.Client{{Hostname: "node-1", Sans: []string{"a.internal"}}},
 	}}
-	srv := newServer(fake, nil, testLogger())
+	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
@@ -59,7 +59,7 @@ func TestHandleListClients_ReturnsDataEnvelope(t *testing.T) {
 
 func TestHandleListClients_BackendErrorTranslated(t *testing.T) {
 	fake := &fakeClientManagerClient{listErr: status.Error(codes.Unavailable, "down")}
-	srv := newServer(fake, nil, testLogger())
+	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
@@ -72,7 +72,7 @@ func TestHandleListClients_BackendErrorTranslated(t *testing.T) {
 
 func TestHandleGetClient_UnknownHostnameReturns404(t *testing.T) {
 	fake := &fakeClientManagerClient{getErr: status.Error(codes.NotFound, "client ghost not found")}
-	srv := newServer(fake, nil, testLogger())
+	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
@@ -85,7 +85,7 @@ func TestHandleGetClient_UnknownHostnameReturns404(t *testing.T) {
 
 func TestHandleGetClient_ReturnsClientObject(t *testing.T) {
 	fake := &fakeClientManagerClient{getResp: &pb.Client{Hostname: "node-1", Revoked: true}}
-	srv := newServer(fake, nil, testLogger())
+	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
