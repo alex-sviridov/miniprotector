@@ -22,6 +22,16 @@ to `api-server` so the browser's requests stay same-origin — no CORS changes w
 matching `api-server`'s existing model. Wired into `demo/docker-compose.yml` as a new `web` service
 on `localhost:8091`; not yet added to `deploy/control-plane/`.
 
+## 2026-07-18 — web: add policy management UI (list, create, edit, delete)
+
+The `web` frontend gains a policy management interface: a browseable list of all policies, detail
+views for each policy's configuration (client filters, object filters, backup window), and forms
+to create new policies or edit existing ones. All operations flow through `api-server`'s proxied
+`/api/v1/policies[/{id}]` endpoints (POST, GET, PUT, DELETE), backed by `policy-server`'s in-memory
+cache and atomic file writes. The Pinia `policies` store handles CRUD state, three new view
+components (`PoliciesListView`, `PolicyDetailView`, `PolicyFormView`) render each page, and
+Vue Router wires `/policies`, `/policies/:id`, `/policies/new`, and `/policies/:id/edit` routes.
+
 ## 2026-07-14 — api-server: unified read-only REST API for clients and catalog
 
 `api-server` exposes a REST API in front of the control plane's client and catalog data — the first
