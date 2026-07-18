@@ -23,6 +23,7 @@ export const useClientsStore = defineStore('clients', {
     },
     async fetchOne(hostname) {
       if (this.byHostname[hostname]) {
+        this.error = null
         return this.byHostname[hostname]
       }
       this.loading = true

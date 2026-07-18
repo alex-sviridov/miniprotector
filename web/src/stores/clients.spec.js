@@ -55,4 +55,18 @@ describe('clients store', () => {
     await expect(clients.fetchOne('missing')).rejects.toThrow('client not found')
     expect(clients.error).toBe('client not found')
   })
+
+  it('fetchOne clears a stale error on a cache hit', async () => {
+    apiFetch.mockResolvedValue({ hostname: 'webserver', revoked: false })
+    const clients = useClientsStore()
+
+    await clients.fetchOne('webserver')
+    clients.error = 'stale error from an unrelated earlier action'
+
+    const result = await clients.fetchOne('webserver')
+
+    expect(apiFetch).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ hostname: 'webserver', revoked: false })
+    expect(clients.error).toBeNull()
+  })
 })
