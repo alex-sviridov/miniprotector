@@ -6,20 +6,34 @@ option go_package = "./proto";
 
 import "google/protobuf/timestamp.proto";
 
-// PolicyService is policy-server's sole RPC surface: a running node asks
-// "which policies apply to me?" and gets back exactly the policies whose
-// client_filters match its own verified identity. The caller's hostname and
-// attribute labels are never fields on this message -- both are derived
-// entirely from the mTLS peer certificate presented on the connection, the
-// same trust model every other authenticated RPC in this project uses.
+// PolicyService is policy-server's RPC surface. GetPolicies answers "which
+// policies apply to me?" for a mesh node, derived entirely from its verified
+// mTLS identity. ListPolicies/CreatePolicy/UpdatePolicy/DeletePolicy are the
+// admin surface api-server proxies for browsing and editing the full policy
+// set -- unlike GetPolicies, these are never called by a mesh node itself.
 service PolicyService {
   rpc GetPolicies(GetPoliciesRequest) returns (GetPoliciesResponse);
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc CreatePolicy(CreatePolicyRequest) returns (Policy);
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
+  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
 }
 
 message GetPoliciesRequest {}
 
 message GetPoliciesResponse {
   repeated Policy policies = 1;
+}
+
+message ListPoliciesRequest {}
+
+message ListPoliciesResponse {
+  repeated Policy policies = 1;
+}
+
+message ClientFilters {
+  repeated string hostnames = 1;
+  map<string, string> labels = 2;
 }
 
 message ObjectFilter {
@@ -47,4 +61,37 @@ message Policy {
   // stable across reloads, changes only if the file is renamed. Not
   // present in the on-disk policy JSON schema.
   string id = 8;
+  // Only ever populated by ListPolicies/CreatePolicy/UpdatePolicy -- omitted
+  // by GetPolicies so a node never learns another node's targeting rules
+  // from a policy that already matched its own identity.
+  ClientFilters client_filters = 9;
 }
+
+message CreatePolicyRequest {
+  string name = 1;
+  ClientFilters client_filters = 2;
+  // Any id set on an entry here is ignored -- object filter IDs are always
+  // server-computed from their position in this list.
+  repeated ObjectFilter object_filters = 3;
+  string rpo = 4;
+  repeated string backup_window = 5;
+  string destination = 6;
+}
+
+message UpdatePolicyRequest {
+  string id = 1;
+  string name = 2;
+  ClientFilters client_filters = 3;
+  // Full replacement of object_filters, not a patch -- reordering or
+  // inserting entries changes the affected filters' ids.
+  repeated ObjectFilter object_filters = 4;
+  string rpo = 5;
+  repeated string backup_window = 6;
+  string destination = 7;
+}
+
+message DeletePolicyRequest {
+  string id = 1;
+}
+
+message DeletePolicyResponse {}

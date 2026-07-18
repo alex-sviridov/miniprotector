@@ -19,21 +19,28 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PolicyService_GetPolicies_FullMethodName = "/policyserverservice.PolicyService/GetPolicies"
+	PolicyService_GetPolicies_FullMethodName  = "/policyserverservice.PolicyService/GetPolicies"
+	PolicyService_ListPolicies_FullMethodName = "/policyserverservice.PolicyService/ListPolicies"
+	PolicyService_CreatePolicy_FullMethodName = "/policyserverservice.PolicyService/CreatePolicy"
+	PolicyService_UpdatePolicy_FullMethodName = "/policyserverservice.PolicyService/UpdatePolicy"
+	PolicyService_DeletePolicy_FullMethodName = "/policyserverservice.PolicyService/DeletePolicy"
 )
 
 // PolicyServiceClient is the client API for PolicyService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// PolicyService is policy-server's sole RPC surface: a running node asks
-// "which policies apply to me?" and gets back exactly the policies whose
-// client_filters match its own verified identity. The caller's hostname and
-// attribute labels are never fields on this message -- both are derived
-// entirely from the mTLS peer certificate presented on the connection, the
-// same trust model every other authenticated RPC in this project uses.
+// PolicyService is policy-server's RPC surface. GetPolicies answers "which
+// policies apply to me?" for a mesh node, derived entirely from its verified
+// mTLS identity. ListPolicies/CreatePolicy/UpdatePolicy/DeletePolicy are the
+// admin surface api-server proxies for browsing and editing the full policy
+// set -- unlike GetPolicies, these are never called by a mesh node itself.
 type PolicyServiceClient interface {
 	GetPolicies(ctx context.Context, in *GetPoliciesRequest, opts ...grpc.CallOption) (*GetPoliciesResponse, error)
+	ListPolicies(ctx context.Context, in *ListPoliciesRequest, opts ...grpc.CallOption) (*ListPoliciesResponse, error)
+	CreatePolicy(ctx context.Context, in *CreatePolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	UpdatePolicy(ctx context.Context, in *UpdatePolicyRequest, opts ...grpc.CallOption) (*Policy, error)
+	DeletePolicy(ctx context.Context, in *DeletePolicyRequest, opts ...grpc.CallOption) (*DeletePolicyResponse, error)
 }
 
 type policyServiceClient struct {
@@ -54,18 +61,61 @@ func (c *policyServiceClient) GetPolicies(ctx context.Context, in *GetPoliciesRe
 	return out, nil
 }
 
+func (c *policyServiceClient) ListPolicies(ctx context.Context, in *ListPoliciesRequest, opts ...grpc.CallOption) (*ListPoliciesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPoliciesResponse)
+	err := c.cc.Invoke(ctx, PolicyService_ListPolicies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *policyServiceClient) CreatePolicy(ctx context.Context, in *CreatePolicyRequest, opts ...grpc.CallOption) (*Policy, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Policy)
+	err := c.cc.Invoke(ctx, PolicyService_CreatePolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *policyServiceClient) UpdatePolicy(ctx context.Context, in *UpdatePolicyRequest, opts ...grpc.CallOption) (*Policy, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Policy)
+	err := c.cc.Invoke(ctx, PolicyService_UpdatePolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *policyServiceClient) DeletePolicy(ctx context.Context, in *DeletePolicyRequest, opts ...grpc.CallOption) (*DeletePolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeletePolicyResponse)
+	err := c.cc.Invoke(ctx, PolicyService_DeletePolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PolicyServiceServer is the server API for PolicyService service.
 // All implementations must embed UnimplementedPolicyServiceServer
 // for forward compatibility.
 //
-// PolicyService is policy-server's sole RPC surface: a running node asks
-// "which policies apply to me?" and gets back exactly the policies whose
-// client_filters match its own verified identity. The caller's hostname and
-// attribute labels are never fields on this message -- both are derived
-// entirely from the mTLS peer certificate presented on the connection, the
-// same trust model every other authenticated RPC in this project uses.
+// PolicyService is policy-server's RPC surface. GetPolicies answers "which
+// policies apply to me?" for a mesh node, derived entirely from its verified
+// mTLS identity. ListPolicies/CreatePolicy/UpdatePolicy/DeletePolicy are the
+// admin surface api-server proxies for browsing and editing the full policy
+// set -- unlike GetPolicies, these are never called by a mesh node itself.
 type PolicyServiceServer interface {
 	GetPolicies(context.Context, *GetPoliciesRequest) (*GetPoliciesResponse, error)
+	ListPolicies(context.Context, *ListPoliciesRequest) (*ListPoliciesResponse, error)
+	CreatePolicy(context.Context, *CreatePolicyRequest) (*Policy, error)
+	UpdatePolicy(context.Context, *UpdatePolicyRequest) (*Policy, error)
+	DeletePolicy(context.Context, *DeletePolicyRequest) (*DeletePolicyResponse, error)
 	mustEmbedUnimplementedPolicyServiceServer()
 }
 
@@ -78,6 +128,18 @@ type UnimplementedPolicyServiceServer struct{}
 
 func (UnimplementedPolicyServiceServer) GetPolicies(context.Context, *GetPoliciesRequest) (*GetPoliciesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPolicies not implemented")
+}
+func (UnimplementedPolicyServiceServer) ListPolicies(context.Context, *ListPoliciesRequest) (*ListPoliciesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPolicies not implemented")
+}
+func (UnimplementedPolicyServiceServer) CreatePolicy(context.Context, *CreatePolicyRequest) (*Policy, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePolicy not implemented")
+}
+func (UnimplementedPolicyServiceServer) UpdatePolicy(context.Context, *UpdatePolicyRequest) (*Policy, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdatePolicy not implemented")
+}
+func (UnimplementedPolicyServiceServer) DeletePolicy(context.Context, *DeletePolicyRequest) (*DeletePolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeletePolicy not implemented")
 }
 func (UnimplementedPolicyServiceServer) mustEmbedUnimplementedPolicyServiceServer() {}
 func (UnimplementedPolicyServiceServer) testEmbeddedByValue()                       {}
@@ -118,6 +180,78 @@ func _PolicyService_GetPolicies_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PolicyService_ListPolicies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPoliciesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PolicyServiceServer).ListPolicies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PolicyService_ListPolicies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PolicyServiceServer).ListPolicies(ctx, req.(*ListPoliciesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PolicyService_CreatePolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PolicyServiceServer).CreatePolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PolicyService_CreatePolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PolicyServiceServer).CreatePolicy(ctx, req.(*CreatePolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PolicyService_UpdatePolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdatePolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PolicyServiceServer).UpdatePolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PolicyService_UpdatePolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PolicyServiceServer).UpdatePolicy(ctx, req.(*UpdatePolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PolicyService_DeletePolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PolicyServiceServer).DeletePolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PolicyService_DeletePolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PolicyServiceServer).DeletePolicy(ctx, req.(*DeletePolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PolicyService_ServiceDesc is the grpc.ServiceDesc for PolicyService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -128,6 +262,22 @@ var PolicyService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPolicies",
 			Handler:    _PolicyService_GetPolicies_Handler,
+		},
+		{
+			MethodName: "ListPolicies",
+			Handler:    _PolicyService_ListPolicies_Handler,
+		},
+		{
+			MethodName: "CreatePolicy",
+			Handler:    _PolicyService_CreatePolicy_Handler,
+		},
+		{
+			MethodName: "UpdatePolicy",
+			Handler:    _PolicyService_UpdatePolicy_Handler,
+		},
+		{
+			MethodName: "DeletePolicy",
+			Handler:    _PolicyService_DeletePolicy_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
