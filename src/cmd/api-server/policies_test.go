@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,4 +144,70 @@ func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.
 	require.Len(t, dto.ObjectFilters, 1)
 	assert.Equal(t, "f1", dto.ObjectFilters[0].ID)
 	assert.Equal(t, "/data", dto.ObjectFilters[0].Path)
+}
+
+func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1", Name: "nightly", Destination: "bwfs:8080"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "nightly", fake.lastCreateReq.GetName())
+	assert.Equal(t, "bwfs:8080", fake.lastCreateReq.GetDestination())
+}
+
+func TestHandleCreatePolicy_PassesClientAndObjectFiltersThrough(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web",
+		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
+		"object_filters": [{"path": "/var/www", "include": ["*.html"]}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, []string{"web-*"}, fake.lastCreateReq.GetClientFilters().GetHostnames())
+	require.Len(t, fake.lastCreateReq.GetObjectFilters(), 1)
+	assert.Equal(t, "/var/www", fake.lastCreateReq.GetObjectFilters()[0].GetPath())
+}
+
+func TestHandleCreatePolicy_MalformedJSONReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", strings.NewReader("not json"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastCreateReq, "backend must not be called on malformed input")
+}
+
+func TestHandleCreatePolicy_BackendValidationErrorReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "metadata.name is required")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }

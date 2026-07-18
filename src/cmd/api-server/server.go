@@ -55,4 +55,5 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)
+	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
 }

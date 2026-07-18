@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -81,4 +82,61 @@ func (s *server) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSONError(w, http.StatusNotFound, fmt.Sprintf("policy %q not found", id))
+}
+
+type objectFilterInput struct {
+	Path    string   `json:"path"`
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+type policyInput struct {
+	Name          string              `json:"name"`
+	ClientFilters clientFiltersDTO    `json:"client_filters"`
+	ObjectFilters []objectFilterInput `json:"object_filters"`
+	RPO           string              `json:"rpo"`
+	BackupWindow  []string            `json:"backup_window"`
+	Destination   string              `json:"destination"`
+}
+
+func decodePolicyInput(r *http.Request) (policyInput, error) {
+	var in policyInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		return policyInput{}, err
+	}
+	return in, nil
+}
+
+func toProtoClientFiltersInput(cf clientFiltersDTO) *pb.ClientFilters {
+	return &pb.ClientFilters{Hostnames: cf.Hostnames, Labels: cf.Labels}
+}
+
+func toProtoObjectFiltersInput(filters []objectFilterInput) []*pb.ObjectFilter {
+	out := make([]*pb.ObjectFilter, len(filters))
+	for i, f := range filters {
+		out[i] = &pb.ObjectFilter{Path: f.Path, Include: f.Include, Exclude: f.Exclude}
+	}
+	return out
+}
+
+func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
+	in, err := decodePolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
+		Name:          in.Name,
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		ObjectFilters: toProtoObjectFiltersInput(in.ObjectFilters),
+		Rpo:           in.RPO,
+		BackupWindow:  in.BackupWindow,
+		Destination:   in.Destination,
+	})
+	if err != nil {
+		s.logger.Error("handleCreatePolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
 }
