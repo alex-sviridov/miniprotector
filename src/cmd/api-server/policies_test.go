@@ -256,3 +256,31 @@ func TestHandleUpdatePolicy_UnknownIDReturns404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+func TestHandleDeletePolicy_ReturnsNoContent(t *testing.T) {
+	fake := &fakePolicyServiceClient{deleteResp: &pb.DeletePolicyResponse{}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/policies/p1", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	require.NotNil(t, fake.lastDeleteReq)
+	assert.Equal(t, "p1", fake.lastDeleteReq.GetId())
+}
+
+func TestHandleDeletePolicy_UnknownIDReturns404(t *testing.T) {
+	fake := &fakePolicyServiceClient{deleteErr: status.Error(codes.NotFound, "policy \"p1\" not found")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/policies/p1", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}

@@ -164,3 +164,14 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, toPolicyDTO(resp))
 }
+
+func (s *server) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, err := s.policy.DeletePolicy(r.Context(), &pb.DeletePolicyRequest{Id: id})
+	if err != nil {
+		s.logger.Error("handleDeletePolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
