@@ -1,0 +1,138 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	pb "github.com/alex-sviridov/miniprotector/api"
+)
+
+func TestSlugify(t *testing.T) {
+	assert.Equal(t, "nightly-db-backup", slugify("Nightly DB Backup!"))
+	assert.Equal(t, "a-b-c", slugify("  a__b--c  "))
+	assert.Equal(t, "", slugify("!!!"))
+}
+
+func TestUniqueFilename_ReturnsBaseWhenFree(t *testing.T) {
+	dir := t.TempDir()
+	got, err := uniqueFilename(dir, "nightly-db-backup")
+	require.NoError(t, err)
+	assert.Equal(t, "nightly-db-backup.json", got)
+}
+
+func TestUniqueFilename_AppendsSuffixOnCollision(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "nightly-db-backup.json", `{}`)
+	got, err := uniqueFilename(dir, "nightly-db-backup")
+	require.NoError(t, err)
+	assert.Equal(t, "nightly-db-backup-2.json", got)
+}
+
+func TestUniqueFilename_SkipsMultipleCollisions(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "x.json", `{}`)
+	writePolicyFile(t, dir, "x-2.json", `{}`)
+	got, err := uniqueFilename(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, "x-3.json", got)
+}
+
+func newTestWriteServer(t *testing.T, dir string) *policyServerServer {
+	t.Helper()
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	return NewPolicyServerServer(c, dir, testLogger())
+}
+
+func TestCreatePolicy_WritesFileAndReturnsPolicyWithID(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:          "Nightly DB Backup",
+		ObjectFilters: []*pb.ObjectFilter{{Path: "/var/lib/postgres"}},
+		Rpo:           "24h",
+		BackupWindow:  []string{"0 2 * * *"},
+		Destination:   "bwfs:8080",
+	})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.Id)
+	assert.Equal(t, "Nightly DB Backup", resp.Name)
+	require.Len(t, resp.ObjectFilters, 1)
+	assert.NotEmpty(t, resp.ObjectFilters[0].Id)
+
+	data, err := os.ReadFile(filepath.Join(dir, "nightly-db-backup.json"))
+	require.NoError(t, err)
+	var onDisk map[string]any
+	require.NoError(t, json.Unmarshal(data, &onDisk))
+	assert.Equal(t, "Nightly DB Backup", onDisk["metadata"].(map[string]any)["name"])
+}
+
+func TestCreatePolicy_SecondCallWithSameNameGetsDistinctFile(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	req := &pb.CreatePolicyRequest{Name: "dup", Destination: "bwfs:8080"}
+	first, err := srv.CreatePolicy(context.Background(), req)
+	require.NoError(t, err)
+	second, err := srv.CreatePolicy(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first.Id, second.Id)
+	_, err = os.Stat(filepath.Join(dir, "dup.json"))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(dir, "dup-2.json"))
+	require.NoError(t, err)
+}
+
+func TestCreatePolicy_MissingNameReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_InvalidGlobPatternReturnsInvalidArgumentAndWritesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:          "broken",
+		ObjectFilters: []*pb.ObjectFilter{{Path: "/data", Include: []string{"["}}},
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "no file should be written when validation fails")
+}
+
+func TestCreatePolicy_ClientFiltersRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:          "web",
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-*"}, Labels: map[string]string{"env": "prod"}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.ClientFilters)
+	assert.Equal(t, []string{"web-*"}, resp.ClientFilters.Hostnames)
+	assert.Equal(t, map[string]string{"env": "prod"}, resp.ClientFilters.Labels)
+}
