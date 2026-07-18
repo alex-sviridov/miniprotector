@@ -6,5 +6,8 @@
     <router-link to="/catalog" class="block px-2 py-1 rounded hover:bg-gray-200" active-class="bg-gray-200 font-semibold">
       Catalog
     </router-link>
+    <router-link to="/policies" class="block px-2 py-1 rounded hover:bg-gray-200" active-class="bg-gray-200 font-semibold">
+      Policies
+    </router-link>
   </nav>
 </template>
