@@ -587,3 +587,13 @@ func TestParseConfig_ClientManagerAPIPortAndAPIServerPortDefaults(t *testing.T) 
 	require.Equal(t, 9500, conf.ClientManagerAPIPort)
 	require.Equal(t, 8090, conf.APIServerPort)
 }
+
+func TestParseConfig_ConnectionTimeOutSecDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, 30, conf.ConnectionTimeOutSec)
+}

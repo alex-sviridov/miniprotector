@@ -159,6 +159,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		BackupWindowGraceSec:             3600,
 		MaxConcurrentBackupJobs:          2,
 		LogGatewayPort:                   9400,
+		ConnectionTimeOutSec:             30,
 	}
 	foundFields := make(map[string]bool)
 

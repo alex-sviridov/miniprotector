@@ -47,6 +47,7 @@ func (s *server) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	hostname := r.PathValue("hostname")
 	client, err := s.clientManager.GetClient(r.Context(), &pb.GetClientRequest{Hostname: hostname})
 	if err != nil {
+		s.logger.Error("handleGetClient: backend call failed", "error", err)
 		writeGRPCError(w, err)
 		return
 	}

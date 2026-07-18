@@ -76,6 +76,7 @@ func (s *server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
 		StartingAfter: startingAfter,
 	})
 	if err != nil {
+		s.logger.Error("handleListCatalog: backend call failed", "error", err)
 		writeGRPCError(w, err)
 		return
 	}
