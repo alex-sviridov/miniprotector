@@ -130,8 +130,9 @@ Creates a new policy. Body:
 ```
 
 `201` with the created policy (including its server-assigned `id` and each object filter's `id`) on
-success. `400` if `name` is empty, or any `include`/`exclude`/hostname entry isn't a syntactically
-valid glob pattern — no file is written when validation fails.
+success. `400` if `name` is empty or slugifies to nothing (no alphanumeric characters), or any
+`include`/`exclude`/hostname entry isn't a syntactically valid glob pattern — no file is written
+when validation fails.
 
 ## `PUT /api/v1/policies/{id}`
 

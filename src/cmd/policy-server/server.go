@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
@@ -20,6 +21,18 @@ type policyServerServer struct {
 	cache       *Cache
 	policiesDir string
 	logger      *slog.Logger
+
+	// writeMu serializes CreatePolicy/UpdatePolicy/DeletePolicy against each
+	// other. gRPC dispatches each unary RPC to its own goroutine, so without
+	// this, two concurrent writes could race: one RPC's Reload can glob+parse
+	// a stale snapshot of the directory before another RPC's write lands on
+	// disk, then overwrite the cache with that stale snapshot after the other
+	// RPC's own (fresher) Reload already ran -- silently reverting the other
+	// write from the in-memory cache even though its file is correctly on
+	// disk. Readers (GetPolicies/ListPolicies) only ever call Cache.Policies(),
+	// never Reload, so they're unaffected and stay fully concurrent via
+	// Cache's own sync.RWMutex.
+	writeMu sync.Mutex
 }
 
 func NewPolicyServerServer(cache *Cache, policiesDir string, logger *slog.Logger) *policyServerServer {

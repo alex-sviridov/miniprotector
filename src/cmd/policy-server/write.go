@@ -96,6 +96,9 @@ func fromProtoObjectFilters(filters []*pb.ObjectFilter) []ObjectFilter {
 // picks is permanent for that policy's lifetime -- it's what the policy's
 // id derives from.
 func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest) (*pb.Policy, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	now := time.Now().UTC()
 	p := Policy{
 		Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
@@ -143,6 +146,9 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 // which derives from it -- never changes; only the file's content does.
 // CreatedAt is preserved from the existing record; UpdatedAt is set to now.
 func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest) (*pb.Policy, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	existing, ok := s.cache.FindByID(req.GetId())
 	if !ok {
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))
@@ -180,6 +186,9 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 
 // DeletePolicy removes the policy file backing id and reloads the cache.
 func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePolicyRequest) (*pb.DeletePolicyResponse, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	existing, ok := s.cache.FindByID(req.GetId())
 	if !ok {
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))

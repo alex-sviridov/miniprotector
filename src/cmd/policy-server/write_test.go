@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,6 +122,52 @@ func TestCreatePolicy_InvalidGlobPatternReturnsInvalidArgumentAndWritesNoFile(t 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "no file should be written when validation fails")
+}
+
+// TestCreatePolicy_ConcurrentCreatesForDifferentNamesBothSurvive guards
+// against a stale-reload race: gRPC dispatches each unary RPC to its own
+// goroutine, so two CreatePolicy calls for two different policies can run
+// concurrently against the same server. Without serializing the write RPCs
+// against each other, one RPC's Reload could glob+parse a stale snapshot of
+// the directory before the other RPC's write lands on disk, then win the
+// lock-and-swap race and silently overwrite the cache with that stale
+// snapshot -- reverting the other RPC's just-created policy from the
+// in-memory cache even though its file is correctly on disk. This doesn't
+// reliably reproduce the race mid-flight (that's inherently
+// timing-dependent); it proves that with writeMu in place, two concurrent
+// creates can no longer both succeed without both being visible in the
+// final cache state.
+func TestCreatePolicy_ConcurrentCreatesForDifferentNamesBothSurvive(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	names := []string{"policy-one", "policy-two"}
+	var wg sync.WaitGroup
+	errs := make([]error, len(names))
+	for i, name := range names {
+		wg.Add(1)
+		go func(i int, name string) {
+			defer wg.Done()
+			_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+				Name:        name,
+				Destination: "bwfs:8080",
+			})
+			errs[i] = err
+		}(i, name)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "CreatePolicy for %q should succeed", names[i])
+	}
+
+	got := map[string]bool{}
+	for _, p := range srv.cache.Policies() {
+		got[p.Metadata.Name] = true
+	}
+	for _, name := range names {
+		assert.True(t, got[name], "policy %q must be visible in cache after both concurrent creates complete", name)
+	}
 }
 
 func TestCreatePolicy_ClientFiltersRoundTrip(t *testing.T) {
