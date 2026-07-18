@@ -4,6 +4,7 @@ import { apiFetch } from '../api/client'
 function buildQuery(filters, startingAfter) {
   const params = new URLSearchParams()
   if (filters.sourceHost) params.set('source_host', filters.sourceHost)
+  if (filters.storeHost) params.set('store_host', filters.storeHost)
   if (filters.pattern) params.set('pattern', filters.pattern)
   if (startingAfter !== undefined) params.set('starting_after', String(startingAfter))
   return params.toString()
@@ -11,7 +12,7 @@ function buildQuery(filters, startingAfter) {
 
 export const useCatalogStore = defineStore('catalog', {
   state: () => ({
-    filters: { sourceHost: '', pattern: '' },
+    filters: { sourceHost: '', storeHost: '', pattern: '' },
     cursorStack: [],
     entries: [],
     hasMore: false,

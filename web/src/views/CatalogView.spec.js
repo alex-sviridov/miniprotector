@@ -16,21 +16,22 @@ function mountView(state) {
 describe('CatalogView', () => {
   it('calls search with empty filters on mount', () => {
     const { catalog } = mountView({ entries: [], hasMore: false, loading: false, error: null })
-    expect(catalog.search).toHaveBeenCalledWith({ sourceHost: '', pattern: '' })
+    expect(catalog.search).toHaveBeenCalledWith({ sourceHost: '', storeHost: '', pattern: '' })
   })
 
   it('submits the filter form via search', async () => {
     const { wrapper, catalog } = mountView({ entries: [], hasMore: false, loading: false, error: null })
     const inputs = wrapper.findAll('input')
     await inputs[0].setValue('database')
-    await inputs[1].setValue('dbdata')
+    await inputs[1].setValue('bwfs-a')
+    await inputs[2].setValue('dbdata')
     await wrapper.find('form').trigger('submit.prevent')
-    expect(catalog.search).toHaveBeenLastCalledWith({ sourceHost: 'database', pattern: 'dbdata' })
+    expect(catalog.search).toHaveBeenLastCalledWith({ sourceHost: 'database', storeHost: 'bwfs-a', pattern: 'dbdata' })
   })
 
   it('disables Next when hasMore is false and Prev when canGoPrev is false', () => {
     const { wrapper } = mountView({
-      entries: [{ id: 1, path: '/x', source_host: 'h', size: 1, mode: '-rw', mod_time: 0 }],
+      entries: [{ id: 1, path: '/x', source_host: 'h', store_host: 's', size: 1, mode: '-rw', mod_time: 0 }],
       hasMore: false,
       loading: false,
       error: null,
@@ -44,7 +45,7 @@ describe('CatalogView', () => {
 
   it('clicking Next calls catalog.nextPage', async () => {
     const { wrapper, catalog } = mountView({
-      entries: [{ id: 1, path: '/x', source_host: 'h', size: 1, mode: '-rw', mod_time: 0 }],
+      entries: [{ id: 1, path: '/x', source_host: 'h', store_host: 's', size: 1, mode: '-rw', mod_time: 0 }],
       hasMore: true,
       loading: false,
       error: null,

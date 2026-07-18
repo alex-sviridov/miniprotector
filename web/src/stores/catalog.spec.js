@@ -17,9 +17,9 @@ describe('catalog store', () => {
     apiFetch.mockResolvedValue({ data: [{ id: 1 }, { id: 2 }], has_more: true })
     const catalog = useCatalogStore()
 
-    await catalog.search({ sourceHost: 'database', pattern: 'dbdata' })
+    await catalog.search({ sourceHost: 'database', storeHost: 'bwfs-a', pattern: 'dbdata' })
 
-    expect(apiFetch).toHaveBeenCalledWith('/catalog?source_host=database&pattern=dbdata')
+    expect(apiFetch).toHaveBeenCalledWith('/catalog?source_host=database&store_host=bwfs-a&pattern=dbdata')
     expect(catalog.entries).toEqual([{ id: 1 }, { id: 2 }])
     expect(catalog.hasMore).toBe(true)
     expect(catalog.canGoPrev).toBe(false)
@@ -28,7 +28,7 @@ describe('catalog store', () => {
   it('nextPage requests starting_after the last entry id and pushes the cursor stack', async () => {
     apiFetch.mockResolvedValue({ data: [{ id: 1 }, { id: 2 }], has_more: true })
     const catalog = useCatalogStore()
-    await catalog.search({ sourceHost: '', pattern: '' })
+    await catalog.search({ sourceHost: '', storeHost: '', pattern: '' })
 
     apiFetch.mockResolvedValue({ data: [{ id: 3 }, { id: 4 }], has_more: false })
     await catalog.nextPage()
@@ -41,7 +41,7 @@ describe('catalog store', () => {
   it('prevPage pops the cursor stack and refetches the prior page', async () => {
     apiFetch.mockResolvedValue({ data: [{ id: 1 }, { id: 2 }], has_more: true })
     const catalog = useCatalogStore()
-    await catalog.search({ sourceHost: '', pattern: '' })
+    await catalog.search({ sourceHost: '', storeHost: '', pattern: '' })
     apiFetch.mockResolvedValue({ data: [{ id: 3 }, { id: 4 }], has_more: false })
     await catalog.nextPage()
 
@@ -55,7 +55,7 @@ describe('catalog store', () => {
   it('nextPage does nothing when has_more is false', async () => {
     apiFetch.mockResolvedValue({ data: [{ id: 1 }], has_more: false })
     const catalog = useCatalogStore()
-    await catalog.search({ sourceHost: '', pattern: '' })
+    await catalog.search({ sourceHost: '', storeHost: '', pattern: '' })
 
     apiFetch.mockClear()
     await catalog.nextPage()
