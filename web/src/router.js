@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from './views/HomeView.vue'
 import ClientsListView from './views/ClientsListView.vue'
 import ClientDetailView from './views/ClientDetailView.vue'
+import CatalogView from './views/CatalogView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -9,5 +10,6 @@ export const router = createRouter({
     { path: '/', component: HomeView },
     { path: '/clients', component: ClientsListView },
     { path: '/clients/:hostname', component: ClientDetailView },
+    { path: '/catalog', component: CatalogView },
   ],
 })
