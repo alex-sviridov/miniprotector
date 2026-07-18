@@ -27,7 +27,7 @@ func (f *fakeCatalogQueryClient) ListEntries(ctx context.Context, in *pb.ListEnt
 
 func TestHandleListCatalog_ReturnsDataAndHasMore(t *testing.T) {
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{
-		Entries: []*pb.Entry{{Id: 1, SourceHost: "bwfs-a", Path: "/var/log/syslog"}},
+		Entries: []*pb.Entry{{Id: 1, StoreHost: "bwfs-a", SourceHost: "database", Path: "/var/log/syslog"}},
 		HasMore: true,
 	}}
 	srv := newServer(nil, fake, nil, testLogger())
@@ -44,7 +44,10 @@ func TestHandleListCatalog_ReturnsDataAndHasMore(t *testing.T) {
 	assert.Equal(t, true, body["has_more"])
 	data := body["data"].([]any)
 	require.Len(t, data, 1)
-	assert.Equal(t, "/var/log/syslog", data[0].(map[string]any)["path"])
+	entry := data[0].(map[string]any)
+	assert.Equal(t, "/var/log/syslog", entry["path"])
+	assert.Equal(t, "bwfs-a", entry["store_host"])
+	assert.Equal(t, "database", entry["source_host"])
 }
 
 func TestHandleListCatalog_PassesFilterQueryParamsThrough(t *testing.T) {
@@ -53,13 +56,14 @@ func TestHandleListCatalog_PassesFilterQueryParamsThrough(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?source_host=bwfs-a&pattern=/var/log&limit=10&starting_after=42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?source_host=database&store_host=bwfs-a&pattern=/var/log&limit=10&starting_after=42", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotNil(t, fake.lastReq)
-	assert.Equal(t, "bwfs-a", fake.lastReq.GetSourceHost())
+	assert.Equal(t, "database", fake.lastReq.GetSourceHost())
+	assert.Equal(t, "bwfs-a", fake.lastReq.GetStoreHost())
 	assert.Equal(t, "/var/log", fake.lastReq.GetPattern())
 	assert.Equal(t, int32(10), fake.lastReq.GetLimit())
 	assert.Equal(t, int64(42), fake.lastReq.GetStartingAfter())

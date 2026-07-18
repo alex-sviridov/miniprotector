@@ -13,36 +13,38 @@ const (
 )
 
 type entryDTO struct {
-	ID              int64  `json:"id"`
-	SourceHost      string `json:"source_host"`
-	JobID           string `json:"job_id"`
-	ObjectID        string `json:"object_id"`
-	Ctime           int64  `json:"ctime"`
-	SourceCreatedAt int64  `json:"source_created_at"`
-	ReceivedAt      int64  `json:"received_at"`
-	Path            string `json:"path"`
-	Size            int64  `json:"size"`
-	Mode            string `json:"mode"`
-	Owner           uint32 `json:"owner"`
-	Group           uint32 `json:"group"`
-	ModTime         int64  `json:"mod_time"`
+	ID             int64  `json:"id"`
+	SourceHost     string `json:"source_host"`
+	StoreHost      string `json:"store_host"`
+	JobID          string `json:"job_id"`
+	ObjectID       string `json:"object_id"`
+	Ctime          int64  `json:"ctime"`
+	StoreCreatedAt int64  `json:"store_created_at"`
+	ReceivedAt     int64  `json:"received_at"`
+	Path           string `json:"path"`
+	Size           int64  `json:"size"`
+	Mode           string `json:"mode"`
+	Owner          uint32 `json:"owner"`
+	Group          uint32 `json:"group"`
+	ModTime        int64  `json:"mod_time"`
 }
 
 func toEntryDTO(e *pb.Entry) entryDTO {
 	return entryDTO{
-		ID:              e.GetId(),
-		SourceHost:      e.GetSourceHost(),
-		JobID:           e.GetJobId(),
-		ObjectID:        e.GetObjectId(),
-		Ctime:           e.GetCtime(),
-		SourceCreatedAt: e.GetSourceCreatedAt(),
-		ReceivedAt:      e.GetReceivedAt(),
-		Path:            e.GetPath(),
-		Size:            e.GetSize(),
-		Mode:            e.GetMode(),
-		Owner:           e.GetOwner(),
-		Group:           e.GetGroup(),
-		ModTime:         e.GetModTime(),
+		ID:             e.GetId(),
+		SourceHost:     e.GetSourceHost(),
+		StoreHost:      e.GetStoreHost(),
+		JobID:          e.GetJobId(),
+		ObjectID:       e.GetObjectId(),
+		Ctime:          e.GetCtime(),
+		StoreCreatedAt: e.GetStoreCreatedAt(),
+		ReceivedAt:     e.GetReceivedAt(),
+		Path:           e.GetPath(),
+		Size:           e.GetSize(),
+		Mode:           e.GetMode(),
+		Owner:          e.GetOwner(),
+		Group:          e.GetGroup(),
+		ModTime:        e.GetModTime(),
 	}
 }
 
@@ -71,6 +73,7 @@ func (s *server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.catalog.ListEntries(r.Context(), &pb.ListEntriesRequest{
 		SourceHost:    q.Get("source_host"),
+		StoreHost:     q.Get("store_host"),
 		Pattern:       q.Get("pattern"),
 		Limit:         int32(limit),
 		StartingAfter: startingAfter,
