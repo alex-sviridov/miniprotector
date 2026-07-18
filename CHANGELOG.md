@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-18 — catalog: rename source_* to store_*, add a real source_host
+
+The catalog's `source_node`/`source_seq`/`source_created_at`/`source_host` fields all actually
+identified the `bwfs` node that replicated a batch, not the machine whose files were backed up —
+confusing given "source" means the backup source everywhere else in the system. They're renamed to
+`store_node`/`store_seq`/`store_created_at`/`store_host`. A new `source_host` is added in their
+place: the real originating host, decoded once from each entry's metadata at sync time and
+persisted as an indexed column, so it's independently filterable from `store_host`. Both are now
+exposed through `ListEntries`, `GET /api/v1/catalog`, and the web frontend's Catalog view. No data
+migration — existing `catalog.db` files should be deleted before running the updated binary.
+
 ## 2026-07-18 — policy-server: an admin write API for policies, proxied through api-server
 
 `policy-server` gains `ListPolicies` (an unfiltered admin view, distinct from the existing
