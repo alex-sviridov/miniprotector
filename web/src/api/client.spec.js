@@ -58,5 +58,7 @@ describe('apiFetch', () => {
 
     await expect(apiFetch('/clients')).rejects.toBeInstanceOf(ApiError)
     expect(auth.token).toBeNull()
+    expect(auth.error).toEqual(expect.any(String))
+    expect(auth.error.length).toBeGreaterThan(0)
   })
 })

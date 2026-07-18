@@ -17,6 +17,7 @@ function submit() {
   <div v-if="!auth.isAuthenticated" class="fixed inset-0 flex items-center justify-center bg-gray-900/80">
     <form @submit.prevent="submit" class="bg-white p-6 rounded shadow w-80 space-y-3">
       <h2 class="text-lg font-semibold">Enter API token</h2>
+      <p v-if="auth.error" class="text-red-600 text-sm">{{ auth.error }}</p>
       <input
         v-model="input"
         type="password"

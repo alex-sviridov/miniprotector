@@ -35,4 +35,19 @@ describe('auth store', () => {
     expect(auth.token).toBeNull()
     expect(localStorage.getItem('mp_api_token')).toBeNull()
   })
+
+  it('clearToken sets error to the given reason', () => {
+    const auth = useAuthStore()
+    auth.setToken('new-token')
+    auth.clearToken('some reason')
+    expect(auth.error).toBe('some reason')
+  })
+
+  it('setToken clears a previously-set error', () => {
+    const auth = useAuthStore()
+    auth.clearToken('some reason')
+    expect(auth.error).toBe('some reason')
+    auth.setToken('new-token')
+    expect(auth.error).toBeNull()
+  })
 })

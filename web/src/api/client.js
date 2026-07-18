@@ -19,7 +19,7 @@ export async function apiFetch(path, options = {}) {
   const response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
 
   if (response.status === 401) {
-    auth.clearToken()
+    auth.clearToken('Invalid or expired token — please re-enter it.')
   }
 
   if (!response.ok) {

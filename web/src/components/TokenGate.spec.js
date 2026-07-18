@@ -29,4 +29,11 @@ describe('TokenGate', () => {
     await wrapper.find('form').trigger('submit.prevent')
     expect(auth.token).toBe('typed-token')
   })
+
+  it('shows an inline message when auth.error is set', () => {
+    const auth = useAuthStore()
+    auth.clearToken('Invalid or expired token — please re-enter it.')
+    const wrapper = mount(TokenGate)
+    expect(wrapper.text()).toContain('Invalid or expired token — please re-enter it.')
+  })
 })
