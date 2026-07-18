@@ -177,3 +177,23 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 	s.logger.Info("UpdatePolicy", "id", updated.Metadata.ID, "name", updated.Metadata.Name, "path", existing.SourcePath)
 	return toProtoPolicyAdmin(updated), nil
 }
+
+// DeletePolicy removes the policy file backing id and reloads the cache.
+func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePolicyRequest) (*pb.DeletePolicyResponse, error) {
+	existing, ok := s.cache.FindByID(req.GetId())
+	if !ok {
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))
+	}
+
+	if err := os.Remove(existing.SourcePath); err != nil {
+		s.logger.Error("DeletePolicy: remove failed", "path", existing.SourcePath, "error", err)
+		return nil, status.Error(codes.Internal, "failed to remove policy file")
+	}
+	if err := s.cache.Reload(s.policiesDir, s.logger); err != nil {
+		s.logger.Error("DeletePolicy: reload failed", "error", err)
+		return nil, status.Error(codes.Internal, "failed to reload policies after delete")
+	}
+
+	s.logger.Info("DeletePolicy", "id", req.GetId(), "path", existing.SourcePath)
+	return &pb.DeletePolicyResponse{}, nil
+}
