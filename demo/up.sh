@@ -4,7 +4,10 @@ set -e
 cd "$(dirname "$0")"
 
 echo "Building images..."
-docker compose build
+for svc in $(docker compose config --services); do
+    echo "Building $svc..."
+    docker compose build "$svc"
+done
 
 echo "Starting ca..."
 docker compose up -d ca
