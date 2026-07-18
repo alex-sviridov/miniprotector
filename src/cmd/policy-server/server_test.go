@@ -78,7 +78,7 @@ func newTestServerWithPolicies(t *testing.T, dir string) *policyServerServer {
 	t.Helper()
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
-	return NewPolicyServerServer(c, testLogger())
+	return NewPolicyServerServer(c, dir, testLogger())
 }
 
 func TestGetPolicies_ReturnsOnlyMatchingPolicies(t *testing.T) {

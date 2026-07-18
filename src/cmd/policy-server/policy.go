@@ -47,13 +47,40 @@ type Policy struct {
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
 	Destination   string         `json:"destination"`
+	SourcePath    string         `json:"-"`
 }
 
-// parsePolicyFile reads and validates a single policy JSON file. A policy
-// must have a non-empty metadata.name, and every client_filters.hostnames
-// entry must be a syntactically valid glob pattern (path.Match's syntax) --
-// both are treated as load errors, causing the caller to skip this file
-// rather than serve a policy no client could ever legitimately match.
+// validatePolicy checks the fields an operator can set on a policy,
+// independent of where it came from (a file on disk, via parsePolicyFile,
+// or a CreatePolicy/UpdatePolicy RPC request): metadata.name must be
+// non-empty, and every client_filters.hostnames/object_filters include/
+// exclude glob pattern must be syntactically valid (path.Match's syntax).
+func validatePolicy(p Policy) error {
+	if p.Metadata.Name == "" {
+		return fmt.Errorf("metadata.name is required")
+	}
+	for _, pattern := range p.ClientFilters.Hostnames {
+		if _, err := path.Match(pattern, ""); err != nil {
+			return fmt.Errorf("invalid hostname pattern %q: %w", pattern, err)
+		}
+	}
+	for _, of := range p.ObjectFilters {
+		for _, pattern := range of.Include {
+			if _, err := path.Match(pattern, ""); err != nil {
+				return fmt.Errorf("invalid include pattern %q: %w", pattern, err)
+			}
+		}
+		for _, pattern := range of.Exclude {
+			if _, err := path.Match(pattern, ""); err != nil {
+				return fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
+			}
+		}
+	}
+	return nil
+}
+
+// parsePolicyFile reads and validates a single policy JSON file -- see
+// validatePolicy for the validation rules applied.
 func parsePolicyFile(filePath string) (Policy, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -63,32 +90,16 @@ func parsePolicyFile(filePath string) (Policy, error) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		return Policy{}, fmt.Errorf("parse %s: %w", filePath, err)
 	}
-	if p.Metadata.Name == "" {
-		return Policy{}, fmt.Errorf("%s: metadata.name is required", filePath)
+	if err := validatePolicy(p); err != nil {
+		return Policy{}, fmt.Errorf("%s: %w", filePath, err)
 	}
 
 	policyUUID := uuid.NewSHA1(policyIDNamespace, []byte(filepath.Base(filePath)))
 	p.Metadata.ID = policyUUID.String()
+	p.SourcePath = filePath
 	for i := range p.ObjectFilters {
 		p.ObjectFilters[i].ID = uuid.NewSHA1(policyUUID, []byte(strconv.Itoa(i))).String()
 	}
 
-	for _, pattern := range p.ClientFilters.Hostnames {
-		if _, err := path.Match(pattern, ""); err != nil {
-			return Policy{}, fmt.Errorf("%s: invalid hostname pattern %q: %w", filePath, pattern, err)
-		}
-	}
-	for _, of := range p.ObjectFilters {
-		for _, pattern := range of.Include {
-			if _, err := path.Match(pattern, ""); err != nil {
-				return Policy{}, fmt.Errorf("%s: invalid include pattern %q: %w", filePath, pattern, err)
-			}
-		}
-		for _, pattern := range of.Exclude {
-			if _, err := path.Match(pattern, ""); err != nil {
-				return Policy{}, fmt.Errorf("%s: invalid exclude pattern %q: %w", filePath, pattern, err)
-			}
-		}
-	}
 	return p, nil
 }

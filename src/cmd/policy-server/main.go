@@ -72,7 +72,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := NewPolicyServerServer(cache, logger)
+	srv := NewPolicyServerServer(cache, policiesDir, logger)
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()

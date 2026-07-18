@@ -38,6 +38,7 @@ func (c *Cache) Policies() []Policy {
 			RPO:           p.RPO, // plain string
 			BackupWindow:  make([]string, len(p.BackupWindow)),
 			Destination:   p.Destination, // plain string
+			SourcePath:    p.SourcePath,  // plain string
 		}
 
 		// Copy the slice and map contents
@@ -91,4 +92,28 @@ func (c *Cache) Reload(dir string, logger *slog.Logger) error {
 	c.policies = loaded
 	c.mu.Unlock()
 	return nil
+}
+
+// FindByID returns the currently-loaded policy with the given Metadata.ID.
+// Used by UpdatePolicy/DeletePolicy, which address a policy by its
+// caller-facing ID rather than its on-disk filename.
+func (c *Cache) FindByID(id string) (Policy, bool) {
+	for _, p := range c.Policies() {
+		if p.Metadata.ID == id {
+			return p, true
+		}
+	}
+	return Policy{}, false
+}
+
+// FindBySourcePath returns the currently-loaded policy parsed from exactly
+// this file path. Used by CreatePolicy to look up the policy it just wrote,
+// once Reload has re-parsed it and computed its ID.
+func (c *Cache) FindBySourcePath(path string) (Policy, bool) {
+	for _, p := range c.Policies() {
+		if p.SourcePath == path {
+			return p, true
+		}
+	}
+	return Policy{}, false
 }

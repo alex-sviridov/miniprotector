@@ -110,3 +110,41 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	assert.Equal(t, "08:00", got2[0].BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
 	assert.NotEmpty(t, got2[0].ObjectFilters[0].ID, "ObjectFilter.ID must survive the snapshot copy")
 }
+
+func TestCache_FindByIDReturnsMatchingPolicy(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+
+	want := c.Policies()[0]
+	got, ok := c.FindByID(want.Metadata.ID)
+	require.True(t, ok)
+	assert.Equal(t, "policy-a", got.Metadata.Name)
+	assert.Equal(t, filepath.Join(dir, "a.json"), got.SourcePath)
+}
+
+func TestCache_FindByIDUnknownIDReturnsFalse(t *testing.T) {
+	c := NewCache()
+	_, ok := c.FindByID("does-not-exist")
+	assert.False(t, ok)
+}
+
+func TestCache_FindBySourcePathReturnsMatchingPolicy(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+
+	got, ok := c.FindBySourcePath(filepath.Join(dir, "a.json"))
+	require.True(t, ok)
+	assert.Equal(t, "policy-a", got.Metadata.Name)
+}
+
+func TestCache_FindBySourcePathUnknownPathReturnsFalse(t *testing.T) {
+	c := NewCache()
+	_, ok := c.FindBySourcePath("/does/not/exist.json")
+	assert.False(t, ok)
+}

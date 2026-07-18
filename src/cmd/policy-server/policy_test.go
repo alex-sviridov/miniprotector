@@ -43,6 +43,7 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 	assert.Equal(t, "24h", p.RPO)
 	assert.Equal(t, []string{"0 2 * * *", "0 20 * * *"}, p.BackupWindow)
 	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
+	assert.Equal(t, path, p.SourcePath)
 }
 
 func TestParsePolicyFile_ComputesDeterministicPolicyID(t *testing.T) {
@@ -172,4 +173,32 @@ func TestParsePolicyFile_InvalidHostnamePatternFails(t *testing.T) {
 func TestParsePolicyFile_MissingFileFails(t *testing.T) {
 	_, err := parsePolicyFile(filepath.Join(t.TempDir(), "does-not-exist.json"))
 	assert.Error(t, err)
+}
+
+func TestValidatePolicy_ValidPolicyReturnsNil(t *testing.T) {
+	p := Policy{
+		Metadata:      Metadata{Name: "ok"},
+		ClientFilters: ClientFilters{Hostnames: []string{"web-*"}},
+		ObjectFilters: []ObjectFilter{{Path: "/data", Include: []string{"*.sql"}, Exclude: []string{"*.tmp"}}},
+	}
+	assert.NoError(t, validatePolicy(p))
+}
+
+func TestValidatePolicy_MissingNameFails(t *testing.T) {
+	assert.Error(t, validatePolicy(Policy{}))
+}
+
+func TestValidatePolicy_InvalidHostnamePatternFails(t *testing.T) {
+	p := Policy{Metadata: Metadata{Name: "x"}, ClientFilters: ClientFilters{Hostnames: []string{"["}}}
+	assert.Error(t, validatePolicy(p))
+}
+
+func TestValidatePolicy_InvalidIncludePatternFails(t *testing.T) {
+	p := Policy{Metadata: Metadata{Name: "x"}, ObjectFilters: []ObjectFilter{{Path: "/data", Include: []string{"["}}}}
+	assert.Error(t, validatePolicy(p))
+}
+
+func TestValidatePolicy_InvalidExcludePatternFails(t *testing.T) {
+	p := Policy{Metadata: Metadata{Name: "x"}, ObjectFilters: []ObjectFilter{{Path: "/data", Exclude: []string{"["}}}}
+	assert.Error(t, validatePolicy(p))
 }

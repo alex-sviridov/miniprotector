@@ -17,12 +17,13 @@ import (
 // in-memory policy cache. No database, no other service is consulted.
 type policyServerServer struct {
 	pb.UnimplementedPolicyServiceServer
-	cache  *Cache
-	logger *slog.Logger
+	cache       *Cache
+	policiesDir string
+	logger      *slog.Logger
 }
 
-func NewPolicyServerServer(cache *Cache, logger *slog.Logger) *policyServerServer {
-	return &policyServerServer{cache: cache, logger: logger}
+func NewPolicyServerServer(cache *Cache, policiesDir string, logger *slog.Logger) *policyServerServer {
+	return &policyServerServer{cache: cache, policiesDir: policiesDir, logger: logger}
 }
 
 func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesRequest) (*pb.GetPoliciesResponse, error) {
