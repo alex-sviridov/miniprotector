@@ -79,6 +79,16 @@ services:
       - "8090:8090"
     restart: unless-stopped
 
+  web:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+    depends_on:
+      - api-server
+    ports:
+      - "8091:80"
+    restart: unless-stopped
+
   policy-server:
     build:
       context: ..

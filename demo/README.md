@@ -14,7 +14,7 @@ Docker-managed named volumes, and no port is published to the host. Everything i
 make demo-up
 ```
 
-Equivalent to `./demo/up.sh` directly. Builds all seven images, brings up `ca` and `issuer` first,
+Equivalent to `./demo/up.sh` directly. Builds all eight images, brings up `ca` and `issuer` first,
 then mints and redeems an enrollment token for `catalog`, `policy-server`, `database`, `webserver`,
 and `store` in turn (skipping re-minting on a re-run against an already-enrolled node). `webserver`
 is additionally tagged with the attribute `role=web`, used by one of the example backup policies
@@ -29,6 +29,13 @@ docker compose -f demo/docker-compose.yml exec database ./rwfs verify store:8080
 docker compose -f demo/docker-compose.yml logs -f store          # watch bwfs receive + catalogsync replicate
 docker compose -f demo/docker-compose.yml exec catalog sqlite3 /data/storage/catalog.db "select * from entry_records;"
 ```
+
+## Browser UI
+
+`web` serves a small Vue frontend over `api-server`'s read-only REST API, published at
+`http://localhost:8091`. On first load it prompts for a bearer token — use the demo lab's
+placeholder token, `dev-placeholder-token-change-me` (see `demo/local.conf`). From there, browse
+`/clients` and `/catalog`.
 
 ## Backup policies
 

@@ -86,6 +86,9 @@ enroll database
 enroll webserver "role=web"
 enroll store
 
+echo "Starting web..."
+docker compose up -d --no-deps web
+
 cat <<'MSG'
 
 Demo stack is up. Try:
