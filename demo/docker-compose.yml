@@ -69,6 +69,7 @@ services:
       - issuer
       - clientmanager-api
       - catalog
+      - policy-server
     volumes:
       - api-server-data:/data
       - ./local.conf:/data/local.conf:ro
