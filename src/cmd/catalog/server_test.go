@@ -75,7 +75,7 @@ func TestSyncFileVersions_PersistsBatchUnderPeerHostname(t *testing.T) {
 	ctx := fakeAuthContext(t, "bwfs-a.internal")
 
 	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
-		{JobId: "job-1", ObjectId: "obj-1", Ctime: 100, SourceSeq: 1, CreatedAt: time.Now().Unix()},
+		{JobId: "job-1", ObjectId: "obj-1", Ctime: 100, StoreSeq: 1, CreatedAt: time.Now().Unix()},
 	}}
 	_, err := srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err)
@@ -106,6 +106,42 @@ func TestSyncFileVersions_DuplicateBatchIsIdempotent(t *testing.T) {
 	count, err := store.Count()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
+}
+
+func TestSyncFileVersions_DerivesSourceHostFromMetadata(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi.ID(), Metadata: metadata, CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "origin-host", entries[0].SourceHost)
+}
+
+func TestSyncFileVersions_MalformedMetadataLeavesSourceHostEmpty(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", Metadata: []byte("not-gob-encoded"), CreatedAt: time.Now().Unix()},
+	}}
+	_, err := srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
+
+	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "", entries[0].SourceHost)
 }
 
 func TestSyncFileVersions_GRPCRoundTripWithoutTLSIsRejected(t *testing.T) {
@@ -144,7 +180,7 @@ func TestSyncFileVersions_GRPCRoundTripWithoutTLSIsRejected(t *testing.T) {
 // TestSyncFileVersions_RealMTLSRoundTrip uses the actual connection.StartServer/
 // connection.Connect helpers production code uses, and the project's real
 // testdata certs (whose client.crt SAN is "bwfs.internal" — see
-// common/mtls/peer_test.go), to prove SourceNode extraction works against a
+// common/mtls/peer_test.go), to prove StoreNode extraction works against a
 // genuine mTLS handshake, not just a fabricated context.
 func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
@@ -194,8 +230,8 @@ func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 func TestListEntries_ReturnsPersistedEntriesNewestFirst(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
 	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
 	}))
 
 	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})
@@ -205,17 +241,30 @@ func TestListEntries_ReturnsPersistedEntriesNewestFirst(t *testing.T) {
 	assert.False(t, resp.GetHasMore())
 }
 
+func TestListEntries_FiltersByStoreHost(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{StoreHost: "bwfs-a"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "bwfs-a", resp.GetEntries()[0].GetStoreHost())
+}
+
 func TestListEntries_FiltersBySourceHost(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
 	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
-		{SourceNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-2", SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
 	}))
 
-	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{SourceHost: "bwfs-a"})
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{SourceHost: "database"})
 	require.NoError(t, err)
 	require.Len(t, resp.GetEntries(), 1)
-	assert.Equal(t, "bwfs-a", resp.GetEntries()[0].GetSourceHost())
+	assert.Equal(t, "database", resp.GetEntries()[0].GetSourceHost())
 }
 
 func TestListEntries_DecodesMetadataIntoEntryFields(t *testing.T) {
@@ -226,7 +275,7 @@ func TestListEntries_DecodesMetadataIntoEntryFields(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: fi.ID(), Metadata: metadata, SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: fi.ID(), Metadata: metadata, StoreCreatedAt: time.Now()},
 	}))
 
 	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})
@@ -242,7 +291,7 @@ func TestListEntries_DecodesMetadataIntoEntryFields(t *testing.T) {
 func TestListEntries_MalformedMetadataStillReturnsEntryWithEmptyDecodedFields(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
 	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", Metadata: []byte("not-gob-encoded"), SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", Metadata: []byte("not-gob-encoded"), StoreCreatedAt: time.Now()},
 	}))
 
 	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})

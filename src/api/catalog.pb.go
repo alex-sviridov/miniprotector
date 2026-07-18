@@ -27,7 +27,7 @@ type FileVersionEntry struct {
 	ObjectId      string                 `protobuf:"bytes,2,opt,name=object_id,json=objectId,proto3" json:"object_id,omitempty"`
 	Metadata      []byte                 `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	Ctime         int64                  `protobuf:"varint,4,opt,name=ctime,proto3" json:"ctime,omitempty"`
-	SourceSeq     int64                  `protobuf:"varint,5,opt,name=source_seq,json=sourceSeq,proto3" json:"source_seq,omitempty"` // bwfs's local file_versions.seq — informational only
+	StoreSeq      int64                  `protobuf:"varint,5,opt,name=store_seq,json=storeSeq,proto3" json:"store_seq,omitempty"`    // bwfs's local file_versions.seq — informational only
 	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // unix seconds; bwfs's original recording time
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -91,9 +91,9 @@ func (x *FileVersionEntry) GetCtime() int64 {
 	return 0
 }
 
-func (x *FileVersionEntry) GetSourceSeq() int64 {
+func (x *FileVersionEntry) GetStoreSeq() int64 {
 	if x != nil {
-		return x.SourceSeq
+		return x.StoreSeq
 	}
 	return 0
 }
@@ -187,10 +187,11 @@ func (*SyncResponse) Descriptor() ([]byte, []int) {
 
 type ListEntriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	SourceHost    string                 `protobuf:"bytes,1,opt,name=source_host,json=sourceHost,proto3" json:"source_host,omitempty"`           // exact match; empty = all hosts
+	StoreHost     string                 `protobuf:"bytes,1,opt,name=store_host,json=storeHost,proto3" json:"store_host,omitempty"`              // exact match against the sending bwfs node's identity; empty = all
 	Pattern       string                 `protobuf:"bytes,2,opt,name=pattern,proto3" json:"pattern,omitempty"`                                   // substring match against object_id; empty = no filter
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                                      // 1..500, default 100
 	StartingAfter int64                  `protobuf:"varint,4,opt,name=starting_after,json=startingAfter,proto3" json:"starting_after,omitempty"` // last-seen entry ID from a previous page; 0 = first page
+	SourceHost    string                 `protobuf:"bytes,5,opt,name=source_host,json=sourceHost,proto3" json:"source_host,omitempty"`           // exact match against the real originating (backed-up) host; empty = all
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -225,9 +226,9 @@ func (*ListEntriesRequest) Descriptor() ([]byte, []int) {
 	return file_api_catalog_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *ListEntriesRequest) GetSourceHost() string {
+func (x *ListEntriesRequest) GetStoreHost() string {
 	if x != nil {
-		return x.SourceHost
+		return x.StoreHost
 	}
 	return ""
 }
@@ -251,6 +252,13 @@ func (x *ListEntriesRequest) GetStartingAfter() int64 {
 		return x.StartingAfter
 	}
 	return 0
+}
+
+func (x *ListEntriesRequest) GetSourceHost() string {
+	if x != nil {
+		return x.SourceHost
+	}
+	return ""
 }
 
 type ListEntriesResponse struct {
@@ -306,14 +314,14 @@ func (x *ListEntriesResponse) GetHasMore() bool {
 }
 
 type Entry struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Id              int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	SourceHost      string                 `protobuf:"bytes,2,opt,name=source_host,json=sourceHost,proto3" json:"source_host,omitempty"`
-	JobId           string                 `protobuf:"bytes,3,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	ObjectId        string                 `protobuf:"bytes,4,opt,name=object_id,json=objectId,proto3" json:"object_id,omitempty"`
-	Ctime           int64                  `protobuf:"varint,5,opt,name=ctime,proto3" json:"ctime,omitempty"`
-	SourceCreatedAt int64                  `protobuf:"varint,6,opt,name=source_created_at,json=sourceCreatedAt,proto3" json:"source_created_at,omitempty"`
-	ReceivedAt      int64                  `protobuf:"varint,7,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	StoreHost      string                 `protobuf:"bytes,2,opt,name=store_host,json=storeHost,proto3" json:"store_host,omitempty"`
+	JobId          string                 `protobuf:"bytes,3,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	ObjectId       string                 `protobuf:"bytes,4,opt,name=object_id,json=objectId,proto3" json:"object_id,omitempty"`
+	Ctime          int64                  `protobuf:"varint,5,opt,name=ctime,proto3" json:"ctime,omitempty"`
+	StoreCreatedAt int64                  `protobuf:"varint,6,opt,name=store_created_at,json=storeCreatedAt,proto3" json:"store_created_at,omitempty"`
+	ReceivedAt     int64                  `protobuf:"varint,7,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
 	// decoded server-side from the stored Metadata blob:
 	Path          string `protobuf:"bytes,8,opt,name=path,proto3" json:"path,omitempty"`
 	Size          int64  `protobuf:"varint,9,opt,name=size,proto3" json:"size,omitempty"`
@@ -321,6 +329,7 @@ type Entry struct {
 	Owner         uint32 `protobuf:"varint,11,opt,name=owner,proto3" json:"owner,omitempty"` // Unix UID (or Windows SID hash) — numeric, no name resolution
 	Group         uint32 `protobuf:"varint,12,opt,name=group,proto3" json:"group,omitempty"` // Unix GID (or Windows SID hash) — numeric, no name resolution
 	ModTime       int64  `protobuf:"varint,13,opt,name=mod_time,json=modTime,proto3" json:"mod_time,omitempty"`
+	SourceHost    string `protobuf:"bytes,14,opt,name=source_host,json=sourceHost,proto3" json:"source_host,omitempty"` // the real originating (backed-up) host, derived from Metadata at sync time
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -362,9 +371,9 @@ func (x *Entry) GetId() int64 {
 	return 0
 }
 
-func (x *Entry) GetSourceHost() string {
+func (x *Entry) GetStoreHost() string {
 	if x != nil {
-		return x.SourceHost
+		return x.StoreHost
 	}
 	return ""
 }
@@ -390,9 +399,9 @@ func (x *Entry) GetCtime() int64 {
 	return 0
 }
 
-func (x *Entry) GetSourceCreatedAt() int64 {
+func (x *Entry) GetStoreCreatedAt() int64 {
 	if x != nil {
-		return x.SourceCreatedAt
+		return x.StoreCreatedAt
 	}
 	return 0
 }
@@ -446,40 +455,48 @@ func (x *Entry) GetModTime() int64 {
 	return 0
 }
 
+func (x *Entry) GetSourceHost() string {
+	if x != nil {
+		return x.SourceHost
+	}
+	return ""
+}
+
 var File_api_catalog_proto protoreflect.FileDescriptor
 
 const file_api_catalog_proto_rawDesc = "" +
 	"\n" +
-	"\x11api/catalog.proto\x12\x0ecatalogservice\"\xb6\x01\n" +
+	"\x11api/catalog.proto\x12\x0ecatalogservice\"\xb4\x01\n" +
 	"\x10FileVersionEntry\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1b\n" +
 	"\tobject_id\x18\x02 \x01(\tR\bobjectId\x12\x1a\n" +
 	"\bmetadata\x18\x03 \x01(\fR\bmetadata\x12\x14\n" +
-	"\x05ctime\x18\x04 \x01(\x03R\x05ctime\x12\x1d\n" +
-	"\n" +
-	"source_seq\x18\x05 \x01(\x03R\tsourceSeq\x12\x1d\n" +
+	"\x05ctime\x18\x04 \x01(\x03R\x05ctime\x12\x1b\n" +
+	"\tstore_seq\x18\x05 \x01(\x03R\bstoreSeq\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"I\n" +
 	"\vSyncRequest\x12:\n" +
 	"\aentries\x18\x01 \x03(\v2 .catalogservice.FileVersionEntryR\aentries\"\x0e\n" +
-	"\fSyncResponse\"\x8c\x01\n" +
-	"\x12ListEntriesRequest\x12\x1f\n" +
-	"\vsource_host\x18\x01 \x01(\tR\n" +
-	"sourceHost\x12\x18\n" +
+	"\fSyncResponse\"\xab\x01\n" +
+	"\x12ListEntriesRequest\x12\x1d\n" +
+	"\n" +
+	"store_host\x18\x01 \x01(\tR\tstoreHost\x12\x18\n" +
 	"\apattern\x18\x02 \x01(\tR\apattern\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12%\n" +
-	"\x0estarting_after\x18\x04 \x01(\x03R\rstartingAfter\"a\n" +
+	"\x0estarting_after\x18\x04 \x01(\x03R\rstartingAfter\x12\x1f\n" +
+	"\vsource_host\x18\x05 \x01(\tR\n" +
+	"sourceHost\"a\n" +
 	"\x13ListEntriesResponse\x12/\n" +
 	"\aentries\x18\x01 \x03(\v2\x15.catalogservice.EntryR\aentries\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xd2\x02\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xef\x02\n" +
 	"\x05Entry\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
-	"\vsource_host\x18\x02 \x01(\tR\n" +
-	"sourceHost\x12\x15\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
+	"\n" +
+	"store_host\x18\x02 \x01(\tR\tstoreHost\x12\x15\n" +
 	"\x06job_id\x18\x03 \x01(\tR\x05jobId\x12\x1b\n" +
 	"\tobject_id\x18\x04 \x01(\tR\bobjectId\x12\x14\n" +
-	"\x05ctime\x18\x05 \x01(\x03R\x05ctime\x12*\n" +
-	"\x11source_created_at\x18\x06 \x01(\x03R\x0fsourceCreatedAt\x12\x1f\n" +
+	"\x05ctime\x18\x05 \x01(\x03R\x05ctime\x12(\n" +
+	"\x10store_created_at\x18\x06 \x01(\x03R\x0estoreCreatedAt\x12\x1f\n" +
 	"\vreceived_at\x18\a \x01(\x03R\n" +
 	"receivedAt\x12\x12\n" +
 	"\x04path\x18\b \x01(\tR\x04path\x12\x12\n" +
@@ -488,7 +505,9 @@ const file_api_catalog_proto_rawDesc = "" +
 	" \x01(\tR\x04mode\x12\x14\n" +
 	"\x05owner\x18\v \x01(\rR\x05owner\x12\x14\n" +
 	"\x05group\x18\f \x01(\rR\x05group\x12\x19\n" +
-	"\bmod_time\x18\r \x01(\x03R\amodTime2\xb7\x01\n" +
+	"\bmod_time\x18\r \x01(\x03R\amodTime\x12\x1f\n" +
+	"\vsource_host\x18\x0e \x01(\tR\n" +
+	"sourceHost2\xb7\x01\n" +
 	"\x0eCatalogService\x12M\n" +
 	"\x10SyncFileVersions\x12\x1b.catalogservice.SyncRequest\x1a\x1c.catalogservice.SyncResponse\x12V\n" +
 	"\vListEntries\x12\".catalogservice.ListEntriesRequest\x1a#.catalogservice.ListEntriesResponseB\tZ\a./protob\x06proto3"
