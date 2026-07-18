@@ -211,3 +211,48 @@ func TestHandleCreatePolicy_BackendValidationErrorReturns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestHandleUpdatePolicy_ReturnsUpdatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1", Name: "nightly-renamed"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly-renamed", "destination": "bwfs:9090"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	assert.Equal(t, "p1", fake.lastUpdateReq.GetId())
+	assert.Equal(t, "nightly-renamed", fake.lastUpdateReq.GetName())
+	assert.Equal(t, "bwfs:9090", fake.lastUpdateReq.GetDestination())
+}
+
+func TestHandleUpdatePolicy_MalformedJSONReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", strings.NewReader("not json"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastUpdateReq)
+}
+
+func TestHandleUpdatePolicy_UnknownIDReturns404(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.NotFound, "policy \"ghost\" not found")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/ghost", strings.NewReader(`{"name": "x"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}

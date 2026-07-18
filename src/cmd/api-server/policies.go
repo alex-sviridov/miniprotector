@@ -140,3 +140,27 @@ func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
 }
+
+func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	in, err := decodePolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.UpdatePolicy(r.Context(), &pb.UpdatePolicyRequest{
+		Id:            id,
+		Name:          in.Name,
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		ObjectFilters: toProtoObjectFiltersInput(in.ObjectFilters),
+		Rpo:           in.RPO,
+		BackupWindow:  in.BackupWindow,
+		Destination:   in.Destination,
+	})
+	if err != nil {
+		s.logger.Error("handleUpdatePolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toPolicyDTO(resp))
+}
