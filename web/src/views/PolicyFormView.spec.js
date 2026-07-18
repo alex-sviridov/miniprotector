@@ -111,6 +111,117 @@ describe('PolicyFormView', () => {
     })
   })
 
+  describe('dynamic list fields', () => {
+    it('adds and removes hostname rows, sending only non-empty trimmed values', async () => {
+      routeParams = {}
+      const { wrapper, policies } = mountView({ error: null })
+      policies.create.mockResolvedValue({ id: 'p9' })
+
+      await wrapper.find('[data-test="add-hostname"]').trigger('click')
+      await wrapper.find('[data-test="add-hostname"]').trigger('click')
+      const hostnameInputs = wrapper.findAll('[data-test="hostname-input"]')
+      await hostnameInputs[0].setValue('database')
+      await hostnameInputs[1].setValue('  ')
+      await wrapper.find('form').trigger('submit')
+      await Promise.resolve()
+
+      expect(policies.create).toHaveBeenCalledWith(
+        expect.objectContaining({ client_filters: { hostnames: ['database'], labels: {} } })
+      )
+    })
+
+    it('adds a label row and sends it as a key/value map', async () => {
+      routeParams = {}
+      const { wrapper, policies } = mountView({ error: null })
+      policies.create.mockResolvedValue({ id: 'p9' })
+
+      await wrapper.find('[data-test="add-label"]').trigger('click')
+      await wrapper.find('[data-test="label-key-input"]').setValue('env')
+      await wrapper.find('[data-test="label-value-input"]').setValue('prod')
+      await wrapper.find('form').trigger('submit')
+      await Promise.resolve()
+
+      expect(policies.create).toHaveBeenCalledWith(
+        expect.objectContaining({ client_filters: { hostnames: [], labels: { env: 'prod' } } })
+      )
+    })
+
+    it('adds a backup window row', async () => {
+      routeParams = {}
+      const { wrapper, policies } = mountView({ error: null })
+      policies.create.mockResolvedValue({ id: 'p9' })
+
+      await wrapper.find('[data-test="add-window"]').trigger('click')
+      await wrapper.find('[data-test="window-input"]').setValue('0 2 * * *')
+      await wrapper.find('form').trigger('submit')
+      await Promise.resolve()
+
+      expect(policies.create).toHaveBeenCalledWith(
+        expect.objectContaining({ backup_window: ['0 2 * * *'] })
+      )
+    })
+
+    it('adds an object filter and splits comma-separated include/exclude into arrays', async () => {
+      routeParams = {}
+      const { wrapper, policies } = mountView({ error: null })
+      policies.create.mockResolvedValue({ id: 'p9' })
+
+      await wrapper.find('[data-test="add-filter"]').trigger('click')
+      await wrapper.find('[data-test="filter-path-input"]').setValue('/var/lib/dbdata')
+      await wrapper.find('[data-test="filter-include-input"]').setValue('*.sql, *.dump')
+      await wrapper.find('[data-test="filter-exclude-input"]').setValue('*.tmp')
+      await wrapper.find('form').trigger('submit')
+      await Promise.resolve()
+
+      expect(policies.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          object_filters: [{ path: '/var/lib/dbdata', include: ['*.sql', '*.dump'], exclude: ['*.tmp'] }],
+        })
+      )
+    })
+
+    it('removes a row via its remove button', async () => {
+      routeParams = {}
+      const { wrapper, policies } = mountView({ error: null })
+      policies.create.mockResolvedValue({ id: 'p9' })
+
+      await wrapper.find('[data-test="add-hostname"]').trigger('click')
+      await wrapper.find('[data-test="hostname-input"]').setValue('database')
+      await wrapper.find('[data-test="remove-hostname"]').trigger('click')
+      await wrapper.find('form').trigger('submit')
+      await Promise.resolve()
+
+      expect(policies.create).toHaveBeenCalledWith(
+        expect.objectContaining({ client_filters: { hostnames: [], labels: {} } })
+      )
+    })
+
+    it('pre-populates existing object filters and labels in edit mode', async () => {
+      routeParams = { id: 'p1' }
+      const { wrapper, policies } = mountView({ error: null })
+      policies.fetchOne.mockResolvedValue({
+        id: 'p1',
+        name: 'nightly-db-backup',
+        rpo: '1h',
+        destination: 'store:8080',
+        client_filters: { hostnames: ['database'], labels: { env: 'prod' } },
+        object_filters: [{ id: 'f1', path: '/var/lib/dbdata', include: ['*.sql'], exclude: [] }],
+        backup_window: ['0 2 * * *'],
+      })
+
+      await wrapper.vm.$nextTick()
+      await Promise.resolve()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('[data-test="hostname-input"]').element.value).toBe('database')
+      expect(wrapper.find('[data-test="label-key-input"]').element.value).toBe('env')
+      expect(wrapper.find('[data-test="label-value-input"]').element.value).toBe('prod')
+      expect(wrapper.find('[data-test="filter-path-input"]').element.value).toBe('/var/lib/dbdata')
+      expect(wrapper.find('[data-test="filter-include-input"]').element.value).toBe('*.sql')
+      expect(wrapper.find('[data-test="window-input"]').element.value).toBe('0 2 * * *')
+    })
+  })
+
   it('shows the store error message and keeps entered values on submit failure', async () => {
     routeParams = {}
     const { wrapper, policies } = mountView({ error: null })

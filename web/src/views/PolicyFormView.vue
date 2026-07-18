@@ -55,6 +55,31 @@ onMounted(async () => {
   }
 })
 
+function addHostname() {
+  form.client_filters.hostnames.push('')
+}
+function removeHostname(i) {
+  form.client_filters.hostnames.splice(i, 1)
+}
+function addLabel() {
+  form.client_filters.labels.push({ key: '', value: '' })
+}
+function removeLabel(i) {
+  form.client_filters.labels.splice(i, 1)
+}
+function addWindow() {
+  form.backup_window.push('')
+}
+function removeWindow(i) {
+  form.backup_window.splice(i, 1)
+}
+function addFilter() {
+  form.object_filters.push({ path: '', includeText: '', excludeText: '' })
+}
+function removeFilter(i) {
+  form.object_filters.splice(i, 1)
+}
+
 function splitCsv(text) {
   return text.split(',').map((s) => s.trim()).filter(Boolean)
 }
@@ -107,8 +132,97 @@ async function submit() {
       </div>
 
       <div>
+        <label class="block font-medium mb-1">Hostnames (glob patterns)</label>
+        <div v-for="(_, i) in form.client_filters.hostnames" :key="i" class="flex gap-2 mb-1">
+          <input
+            data-test="hostname-input"
+            v-model="form.client_filters.hostnames[i]"
+            class="flex-1 border rounded px-2 py-1"
+          />
+          <button type="button" data-test="remove-hostname" @click="removeHostname(i)" class="border rounded px-2">
+            Remove
+          </button>
+        </div>
+        <button type="button" data-test="add-hostname" @click="addHostname" class="border rounded px-3 py-1">
+          Add Hostname
+        </button>
+      </div>
+
+      <div>
+        <label class="block font-medium mb-1">Labels</label>
+        <div v-for="(_, i) in form.client_filters.labels" :key="i" class="flex gap-2 mb-1">
+          <input
+            data-test="label-key-input"
+            v-model="form.client_filters.labels[i].key"
+            placeholder="key"
+            class="flex-1 border rounded px-2 py-1"
+          />
+          <input
+            data-test="label-value-input"
+            v-model="form.client_filters.labels[i].value"
+            placeholder="value"
+            class="flex-1 border rounded px-2 py-1"
+          />
+          <button type="button" data-test="remove-label" @click="removeLabel(i)" class="border rounded px-2">
+            Remove
+          </button>
+        </div>
+        <button type="button" data-test="add-label" @click="addLabel" class="border rounded px-3 py-1">
+          Add Label
+        </button>
+      </div>
+
+      <div>
+        <label class="block font-medium mb-1">Object Filters</label>
+        <div v-for="(_, i) in form.object_filters" :key="i" class="border rounded p-2 mb-2 space-y-1">
+          <input
+            data-test="filter-path-input"
+            v-model="form.object_filters[i].path"
+            placeholder="path"
+            class="w-full border rounded px-2 py-1"
+          />
+          <input
+            data-test="filter-include-input"
+            v-model="form.object_filters[i].includeText"
+            placeholder="include patterns, comma-separated"
+            class="w-full border rounded px-2 py-1"
+          />
+          <input
+            data-test="filter-exclude-input"
+            v-model="form.object_filters[i].excludeText"
+            placeholder="exclude patterns, comma-separated"
+            class="w-full border rounded px-2 py-1"
+          />
+          <button type="button" data-test="remove-filter" @click="removeFilter(i)" class="border rounded px-2">
+            Remove Filter
+          </button>
+        </div>
+        <button type="button" data-test="add-filter" @click="addFilter" class="border rounded px-3 py-1">
+          Add Object Filter
+        </button>
+      </div>
+
+      <div>
         <label class="block font-medium mb-1">RPO</label>
         <input name="rpo" v-model="form.rpo" placeholder="e.g. 24h" class="w-full border rounded px-2 py-1" />
+      </div>
+
+      <div>
+        <label class="block font-medium mb-1">Backup Window (cron expressions)</label>
+        <div v-for="(_, i) in form.backup_window" :key="i" class="flex gap-2 mb-1">
+          <input
+            data-test="window-input"
+            v-model="form.backup_window[i]"
+            placeholder="0 2 * * *"
+            class="flex-1 border rounded px-2 py-1"
+          />
+          <button type="button" data-test="remove-window" @click="removeWindow(i)" class="border rounded px-2">
+            Remove
+          </button>
+        </div>
+        <button type="button" data-test="add-window" @click="addWindow" class="border rounded px-3 py-1">
+          Add Window
+        </button>
       </div>
 
       <div>
