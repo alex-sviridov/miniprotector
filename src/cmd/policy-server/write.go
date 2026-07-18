@@ -137,3 +137,43 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	s.logger.Info("CreatePolicy", "id", created.Metadata.ID, "name", created.Metadata.Name, "path", filePath)
 	return toProtoPolicyAdmin(created), nil
 }
+
+// UpdatePolicy fully replaces an existing policy's editable fields,
+// identified by id. The on-disk filename -- and therefore the policy's id,
+// which derives from it -- never changes; only the file's content does.
+// CreatedAt is preserved from the existing record; UpdatedAt is set to now.
+func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest) (*pb.Policy, error) {
+	existing, ok := s.cache.FindByID(req.GetId())
+	if !ok {
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))
+	}
+
+	p := Policy{
+		Metadata:      Metadata{Name: req.GetName(), CreatedAt: existing.Metadata.CreatedAt, UpdatedAt: time.Now().UTC()},
+		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+		ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
+		RPO:           req.GetRpo(),
+		BackupWindow:  req.GetBackupWindow(),
+		Destination:   req.GetDestination(),
+	}
+	if err := validatePolicy(p); err != nil {
+		s.logger.Error("UpdatePolicy: validation failed", "id", req.GetId(), "error", err)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	if err := atomicWriteJSON(existing.SourcePath, p); err != nil {
+		s.logger.Error("UpdatePolicy: write failed", "path", existing.SourcePath, "error", err)
+		return nil, status.Error(codes.Internal, "failed to write policy file")
+	}
+	if err := s.cache.Reload(s.policiesDir, s.logger); err != nil {
+		s.logger.Error("UpdatePolicy: reload failed", "error", err)
+		return nil, status.Error(codes.Internal, "failed to reload policies after write")
+	}
+
+	updated, ok := s.cache.FindBySourcePath(existing.SourcePath)
+	if !ok {
+		return nil, status.Error(codes.Internal, "policy not found in cache after update")
+	}
+	s.logger.Info("UpdatePolicy", "id", updated.Metadata.ID, "name", updated.Metadata.Name, "path", existing.SourcePath)
+	return toProtoPolicyAdmin(updated), nil
+}

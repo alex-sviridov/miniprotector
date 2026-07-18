@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -135,4 +136,59 @@ func TestCreatePolicy_ClientFiltersRoundTrip(t *testing.T) {
 	require.NotNil(t, resp.ClientFilters)
 	assert.Equal(t, []string{"web-*"}, resp.ClientFilters.Hostnames)
 	assert.Equal(t, map[string]string{"env": "prod"}, resp.ClientFilters.Labels)
+}
+
+func TestUpdatePolicy_OverwritesFileKeepsIDAndCreatedAt(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "nightly.json", `{
+		"metadata": {"name": "nightly", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:00Z"},
+		"object_filters": [{"path": "/old"}],
+		"destination": "bwfs:8080"
+	}`)
+	srv := newTestWriteServer(t, dir)
+	original := srv.cache.Policies()[0]
+
+	resp, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:            original.Metadata.ID,
+		Name:          "nightly-renamed",
+		ObjectFilters: []*pb.ObjectFilter{{Path: "/new"}},
+		Destination:   "bwfs:9090",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, original.Metadata.ID, resp.Id, "id must stay stable across an update")
+	assert.Equal(t, "nightly-renamed", resp.Name)
+	assert.Equal(t, "bwfs:9090", resp.Destination)
+	assert.Equal(t, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), resp.CreatedAt.AsTime())
+	assert.NotEqual(t, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), resp.UpdatedAt.AsTime())
+}
+
+func TestUpdatePolicy_UnknownIDReturnsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{Id: "does-not-exist", Name: "x"})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
+}
+
+func TestUpdatePolicy_InvalidInputReturnsInvalidArgumentLeavesFileUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "nightly.json", `{"metadata": {"name": "nightly"}}`)
+	srv := newTestWriteServer(t, dir)
+	original := srv.cache.Policies()[0]
+
+	before, err := os.ReadFile(filepath.Join(dir, "nightly.json"))
+	require.NoError(t, err)
+
+	_, err = srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{Id: original.Metadata.ID, Name: ""})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	after, err := os.ReadFile(filepath.Join(dir, "nightly.json"))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "file must be unchanged when validation fails")
 }
