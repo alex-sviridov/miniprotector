@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-19 — api-server: add GET /api/v1/jobs and /api/v1/jobs/{job_id}/logs
+
+Added `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}/logs` to `api-server`, giving a fleet-wide
+view of every job kind (backups, cert-refresh, policy-fetch) with start/end/source/state, plus
+near-real-time per-job log tailing. Both are backed by Loki rather than a new database: `bwfs`,
+`brfs`, and `agent` now tag each job's lifecycle boundary lines with `event`/`status`, and `agent`'s
+bundled Vector lifts `job_id`/`event`/`status` into Loki structured metadata rather than plain
+labels, avoiding the per-job stream-cardinality problem a naive `job_id` label would cause.
+`log-gateway` gained a matching read-only proxy route onto Loki's query API alongside its existing
+push proxy.
+
 ## 2026-07-18 — catalog: rename source_* to store_*, add a real source_host
 
 The catalog's `source_node`/`source_seq`/`source_created_at`/`source_host` fields all actually
