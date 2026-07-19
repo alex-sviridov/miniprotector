@@ -28,6 +28,7 @@ POLICY_SERVER_CMD := cmd/policy-server
 POLICYCLIENT_CMD := cmd/policyclient
 LOG_GATEWAY_CMD := cmd/log-gateway
 CLIENTMANAGER_API_CMD := cmd/clientmanager-api
+CLIENTMANAGER_ADMIN_API_CMD := cmd/clientmanager-admin-api
 API_SERVER_CMD := cmd/api-server
 
 # Deployment
@@ -40,7 +41,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server policyclient log-gateway clientmanager-api api-server test test-e2e lint control-plane-up demo-up demo-down
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server policyclient log-gateway clientmanager-api clientmanager-admin-api api-server test test-e2e lint control-plane-up demo-up demo-down
 
 # Default target
 all: check-deps proto build
@@ -151,6 +152,12 @@ clientmanager-api: $(BINARY_DIR) ## Build clientmanager-api binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/clientmanager-api ./$(CLIENTMANAGER_API_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/clientmanager-api"
+
+clientmanager-admin-api: $(BINARY_DIR) ## Build clientmanager-admin-api binary
+	@printf "$(BLUE)Building clientmanager-admin-api...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/clientmanager-admin-api ./$(CLIENTMANAGER_ADMIN_API_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/clientmanager-admin-api"
 
 api-server: $(BINARY_DIR) ## Build api-server binary
 	@printf "$(BLUE)Building api-server...$(NC) "

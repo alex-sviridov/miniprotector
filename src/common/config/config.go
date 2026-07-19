@@ -115,6 +115,8 @@ type Config struct {
 	ClientManagerAPIHost             string
 	APIServerPort                    int
 	APIServerToken                   string
+	ClientManagerAdminAPIPort        int
+	ClientManagerAdminAPIHost        string
 }
 
 type contextKey string
@@ -159,6 +161,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		BackupWindowGraceSec:             3600,
 		MaxConcurrentBackupJobs:          2,
 		LogGatewayPort:                   9400,
+		ClientManagerAdminAPIPort:        9501,
 		ConnectionTimeOutSec:             30,
 	}
 	foundFields := make(map[string]bool)
@@ -359,6 +362,16 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "clientmanager_api_host":
 			config.ClientManagerAPIHost = value
 			foundFields["clientmanager_api_host"] = true
+		case "clientmanager_admin_api_host":
+			config.ClientManagerAdminAPIHost = value
+			foundFields["clientmanager_admin_api_host"] = true
+		case "clientmanager_admin_api_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid clientmanager_admin_api_port value at line %d: %s", lineNum, value)
+			}
+			config.ClientManagerAdminAPIPort = port
+			foundFields["clientmanager_admin_api_port"] = true
 		case "api_server_port":
 			port, err := strconv.Atoi(value)
 			if err != nil {
