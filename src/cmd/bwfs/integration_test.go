@@ -195,7 +195,7 @@ func TestIntegration_SkipPath_DirectoryAndSymlink(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	ctx := jobContext("job-skip-path")
@@ -218,7 +218,7 @@ func TestIntegration_NewFile_TransferPath(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	ctx := jobContext("job-new-file")
@@ -248,7 +248,7 @@ func TestIntegration_DedupPath_SecondBackupSkipsChunks(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	// Find the regular file
@@ -298,7 +298,7 @@ func TestIntegration_MultipleFiles_OneStream(t *testing.T) {
 		require.NoError(t, os.WriteFile(fmt.Sprintf("%s/file%d.txt", srcDir, i), []byte(content), 0644))
 	}
 
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	ctx := jobContext("job-multi-file")
@@ -345,7 +345,7 @@ func TestIntegration_ConcurrentStreams_SameFileContent(t *testing.T) {
 		go func(srcDir string) {
 			defer wg.Done()
 
-			files, err := wfs.Discover(srcDir)
+			files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 			if err != nil {
 				errs <- err
 				return
@@ -402,7 +402,7 @@ func TestIntegration_BackupJob_RecordedWithSourceHost(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	ctx := jobContext("job-source-host")
@@ -439,7 +439,7 @@ func TestIntegration_BackupJob_StaysInProgressAfterAllStreamsClose(t *testing.T)
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 	var target wfs.FileInfo
 	for _, f := range files {
@@ -486,7 +486,7 @@ func TestIntegration_DuplicateFileWithinJob_OneFileVersionRow(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 	var target wfs.FileInfo
 	for _, f := range files {
@@ -533,7 +533,7 @@ func TestIntegration_BackupCommit_MatchingHashSucceeds(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 	var target wfs.FileInfo
 	for _, f := range files {
@@ -568,7 +568,7 @@ func TestIntegration_BackupCommit_MismatchedHashFailsAndPurges(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 	var target wfs.FileInfo
 	for _, f := range files {
@@ -633,7 +633,7 @@ func TestIntegration_BackupCommit_RetriedCallAfterSuccessIsIdempotent(t *testing
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 	var target wfs.FileInfo
 	for _, f := range files {
@@ -672,7 +672,7 @@ func TestIntegration_LateMessageAfterFinalize_Rejected(t *testing.T) {
 	defer env.cleanup()
 
 	srcDir := makeTestDir(t)
-	files, err := wfs.Discover(srcDir)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 	var first, second wfs.FileInfo
 	for _, f := range files {

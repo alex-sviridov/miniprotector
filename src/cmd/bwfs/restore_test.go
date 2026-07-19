@@ -151,7 +151,7 @@ func TestIntegration_Restore_HappyPath(t *testing.T) {
 	require.NoError(t, os.WriteFile(srcDir+"/data.txt",
 		[]byte("test content for restore happy path — enough bytes to be meaningful"), 0644))
 
-	files, err := workfs.Discover(srcDir)
+	files, err := workfs.Discover(srcDir, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	ctx := jobContext("job-restore-happy-path")
@@ -193,9 +193,9 @@ func TestIntegration_Restore_DedupChunks_ChunkLinksPresent(t *testing.T) {
 	require.NoError(t, os.WriteFile(pathA, content, 0644))
 	require.NoError(t, os.WriteFile(pathB, content, 0644))
 
-	filesA, err := workfs.Discover(srcDirA)
+	filesA, err := workfs.Discover(srcDirA, []string{"*"}, nil)
 	require.NoError(t, err)
-	filesB, err := workfs.Discover(srcDirB)
+	filesB, err := workfs.Discover(srcDirB, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	ctx := jobContext("job-restore-dedup-chunks")
@@ -245,9 +245,9 @@ func TestIntegration_Restore_AllChunksDeduped(t *testing.T) {
 	require.NoError(t, os.WriteFile(srcDirA+"/file.txt", content, 0644))
 	require.NoError(t, os.WriteFile(srcDirB+"/file.txt", content, 0644))
 
-	filesA, err := workfs.Discover(srcDirA)
+	filesA, err := workfs.Discover(srcDirA, []string{"*"}, nil)
 	require.NoError(t, err)
-	filesB, err := workfs.Discover(srcDirB)
+	filesB, err := workfs.Discover(srcDirB, []string{"*"}, nil)
 	require.NoError(t, err)
 
 	ctx := jobContext("job-restore-all-deduped")
