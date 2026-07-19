@@ -106,3 +106,24 @@ func (s *server) handleUpdateKV(w http.ResponseWriter, r *http.Request, call fun
 	}
 	writeJSON(w, http.StatusOK, toClientDTO(client))
 }
+
+type sansUpdateInput struct {
+	Add    []string `json:"add"`
+	Remove []string `json:"remove"`
+}
+
+func (s *server) handleUpdateSANs(w http.ResponseWriter, r *http.Request) {
+	hostname := r.PathValue("hostname")
+	var in sansUpdateInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	client, err := s.clientManagerAdmin.UpdateSANs(r.Context(), &pb.UpdateClientSANsRequest{Hostname: hostname, Add: in.Add, Remove: in.Remove})
+	if err != nil {
+		s.logger.Error("handleUpdateSANs: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toClientDTO(client))
+}

@@ -284,3 +284,43 @@ func TestHandleUpdateAttributes_SendsSetAndUnset(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, map[string]string{"role": "db"}, fake.lastUpdateAttrReq.GetSet())
 }
+
+func TestHandleUpdateSANs_SendsAddAndRemove(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{updateSANsResp: &pb.Client{Hostname: "node-1", Sans: []string{"new.internal"}}}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/sans", strings.NewReader(`{"add":["new.internal"],"remove":["old.internal"]}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"new.internal"}, fake.lastUpdateSANsReq.GetAdd())
+	assert.Equal(t, []string{"old.internal"}, fake.lastUpdateSANsReq.GetRemove())
+}
+
+func TestHandleUpdateSANs_MalformedJSONReturns400(t *testing.T) {
+	srv := newServerWithAdmin(&fakeClientManagerAdminClient{})
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/sans", strings.NewReader(`{bad`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleUpdateSANs_UnknownHostnameReturns404(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{updateSANsErr: status.Error(codes.NotFound, "client ghost not found")}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/ghost/sans", strings.NewReader(`{"add":["x.internal"]}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
