@@ -1,12 +1,26 @@
 <script setup>
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useClientsStore } from '../stores/clients'
 import { formatTimestamp } from '../utils/format'
+import KeyValueEditor from '../components/KeyValueEditor.vue'
+import SanListEditor from '../components/SanListEditor.vue'
 
 const route = useRoute()
 const clients = useClientsStore()
 const hostname = computed(() => route.params.hostname)
+const client = computed(() => clients.byHostname[hostname.value])
+
+const showToken = ref(false)
+const tokenValue = ref('')
+
+function checkPendingToken() {
+  if (clients.pendingToken && clients.pendingToken.hostname === hostname.value) {
+    tokenValue.value = clients.pendingToken.token
+    showToken.value = true
+    clients.pendingToken = null
+  }
+}
 
 onMounted(async () => {
   try {
@@ -14,7 +28,41 @@ onMounted(async () => {
   } catch {
     // error already recorded on clients.error by the store
   }
+  checkPendingToken()
 })
+
+function confirmRevoke() {
+  if (window.confirm(`Revoke ${hostname.value}?`)) {
+    clients.revoke(hostname.value)
+  }
+}
+function confirmUnrevoke() {
+  if (window.confirm(`Unrevoke ${hostname.value}?`)) {
+    clients.unrevoke(hostname.value)
+  }
+}
+async function reenroll() {
+  try {
+    await clients.reenroll(hostname.value)
+    checkPendingToken()
+  } catch {
+    // error already recorded on clients.error by the store
+  }
+}
+
+async function copyToken() {
+  await navigator.clipboard.writeText(tokenValue.value)
+}
+
+function saveDescription({ set, unset }) {
+  clients.updateDescription(hostname.value, set, unset)
+}
+function saveAttributes({ set, unset }) {
+  clients.updateAttributes(hostname.value, set, unset)
+}
+function saveSans({ add, remove }) {
+  clients.updateSans(hostname.value, add, remove)
+}
 </script>
 
 <template>
@@ -22,19 +70,57 @@ onMounted(async () => {
     <h1 class="text-xl font-semibold mb-4">{{ hostname }}</h1>
     <p v-if="clients.loading">Loading...</p>
     <p v-else-if="clients.error" class="text-red-600">{{ clients.error }}</p>
-    <dl v-else-if="clients.byHostname[hostname]" class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-      <dt class="font-medium">Revoked</dt>
-      <dd>{{ clients.byHostname[hostname].revoked ? 'Yes' : 'No' }}</dd>
-      <dt class="font-medium">Revoked At</dt>
-      <dd>{{ formatTimestamp(clients.byHostname[hostname].revoked_at) || '—' }}</dd>
-      <dt class="font-medium">Last Seen</dt>
-      <dd>{{ formatTimestamp(clients.byHostname[hostname].last_seen_at) || 'Never' }}</dd>
-      <dt class="font-medium">SANs</dt>
-      <dd>{{ (clients.byHostname[hostname].sans || []).join(', ') || '—' }}</dd>
-      <dt class="font-medium">Attributes</dt>
-      <dd>{{ JSON.stringify(clients.byHostname[hostname].attributes || {}) }}</dd>
-      <dt class="font-medium">Descriptions</dt>
-      <dd>{{ JSON.stringify(clients.byHostname[hostname].descriptions || {}) }}</dd>
-    </dl>
+    <template v-else-if="client">
+      <div v-if="showToken" data-test="token-banner" class="bg-yellow-50 border border-yellow-400 rounded p-3 mb-4">
+        <p class="font-medium">Enrollment token (shown once):</p>
+        <code data-test="token-value" class="block bg-white border rounded px-2 py-1 my-1 break-all">{{ tokenValue }}</code>
+        <button type="button" @click="copyToken" class="border rounded px-2 py-1 mr-2">Copy</button>
+        <button type="button" @click="showToken = false" class="border rounded px-2 py-1">Dismiss</button>
+        <p class="text-sm text-gray-600 mt-1">This token won't be shown again — relay it to the node now.</p>
+      </div>
+
+      <div class="mb-4 space-x-2">
+        <button
+          v-if="!client.revoked"
+          type="button"
+          data-test="revoke-button"
+          @click="confirmRevoke"
+          class="border rounded px-3 py-1"
+        >
+          Revoke
+        </button>
+        <button v-else type="button" data-test="unrevoke-button" @click="confirmUnrevoke" class="border rounded px-3 py-1">
+          Unrevoke
+        </button>
+        <button type="button" data-test="reenroll-button" @click="reenroll" class="border rounded px-3 py-1">
+          Re-enroll
+        </button>
+      </div>
+
+      <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 mb-6">
+        <dt class="font-medium">Revoked</dt>
+        <dd>{{ client.revoked ? 'Yes' : 'No' }}</dd>
+        <dt class="font-medium">Revoked At</dt>
+        <dd>{{ formatTimestamp(client.revoked_at) || '—' }}</dd>
+        <dt class="font-medium">Last Seen</dt>
+        <dd>{{ formatTimestamp(client.last_seen_at) || 'Never' }}</dd>
+      </dl>
+
+      <KeyValueEditor
+        :model-value="client.descriptions || {}"
+        label="Description"
+        test-prefix="description"
+        class="mb-6"
+        @save="saveDescription"
+      />
+      <KeyValueEditor
+        :model-value="client.attributes || {}"
+        label="Attributes"
+        test-prefix="attribute"
+        class="mb-6"
+        @save="saveAttributes"
+      />
+      <SanListEditor :model-value="client.sans || []" @save="saveSans" />
+    </template>
   </div>
 </template>
