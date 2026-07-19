@@ -53,3 +53,25 @@ func (s *server) handleReEnrollClient(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"hostname": hostname, "token": resp.GetToken()})
 }
+
+func (s *server) handleRevokeClient(w http.ResponseWriter, r *http.Request) {
+	hostname := r.PathValue("hostname")
+	client, err := s.clientManagerAdmin.RevokeClient(r.Context(), &pb.RevokeClientRequest{Hostname: hostname})
+	if err != nil {
+		s.logger.Error("handleRevokeClient: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toClientDTO(client))
+}
+
+func (s *server) handleUnrevokeClient(w http.ResponseWriter, r *http.Request) {
+	hostname := r.PathValue("hostname")
+	client, err := s.clientManagerAdmin.UnrevokeClient(r.Context(), &pb.UnrevokeClientRequest{Hostname: hostname})
+	if err != nil {
+		s.logger.Error("handleUnrevokeClient: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toClientDTO(client))
+}

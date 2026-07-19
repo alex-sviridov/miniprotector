@@ -69,6 +69,8 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/clients/{hostname}", s.handleGetClient)
 	mux.HandleFunc("POST /api/v1/clients", s.handleAddClient)
 	mux.HandleFunc("POST /api/v1/clients/{hostname}/reenroll", s.handleReEnrollClient)
+	mux.HandleFunc("POST /api/v1/clients/{hostname}/revoke", s.handleRevokeClient)
+	mux.HandleFunc("POST /api/v1/clients/{hostname}/unrevoke", s.handleUnrevokeClient)
 	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)

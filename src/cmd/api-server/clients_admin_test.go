@@ -185,3 +185,48 @@ func TestHandleReEnrollClient_UnknownHostnameReturns404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+func TestHandleRevokeClient_ReturnsUpdatedClient(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{revokeResp: &pb.Client{Hostname: "node-1", Revoked: true}}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/node-1/revoke", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, true, body["revoked"])
+}
+
+func TestHandleRevokeClient_UnknownHostnameReturns404(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{revokeErr: status.Error(codes.NotFound, "client ghost not found")}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/ghost/revoke", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleUnrevokeClient_ReturnsUpdatedClient(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{unrevokeResp: &pb.Client{Hostname: "node-1", Revoked: false}}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/node-1/unrevoke", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, false, body["revoked"])
+}
