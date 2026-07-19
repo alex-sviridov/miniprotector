@@ -230,3 +230,57 @@ func TestHandleUnrevokeClient_ReturnsUpdatedClient(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, false, body["revoked"])
 }
+
+func TestHandleUpdateDescription_SendsSetAndUnset(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{updateDescResp: &pb.Client{Hostname: "node-1", Descriptions: map[string]string{"owner": "alice"}}}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/description", strings.NewReader(`{"set":{"owner":"alice"},"unset":["old"]}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, map[string]string{"owner": "alice"}, fake.lastUpdateDescReq.GetSet())
+	assert.Equal(t, []string{"old"}, fake.lastUpdateDescReq.GetUnset())
+}
+
+func TestHandleUpdateDescription_MalformedJSONReturns400(t *testing.T) {
+	srv := newServerWithAdmin(&fakeClientManagerAdminClient{})
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/description", strings.NewReader(`{bad`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleUpdateDescription_UnknownHostnameReturns404(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{updateDescErr: status.Error(codes.NotFound, "client ghost not found")}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/ghost/description", strings.NewReader(`{"set":{"k":"v"}}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleUpdateAttributes_SendsSetAndUnset(t *testing.T) {
+	fake := &fakeClientManagerAdminClient{updateAttrResp: &pb.Client{Hostname: "node-1", Attributes: map[string]string{"role": "db"}}}
+	srv := newServerWithAdmin(fake)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/attributes", strings.NewReader(`{"set":{"role":"db"}}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, map[string]string{"role": "db"}, fake.lastUpdateAttrReq.GetSet())
+}

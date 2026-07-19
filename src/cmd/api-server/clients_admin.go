@@ -2,10 +2,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"google.golang.org/grpc"
 )
 
 type addClientInput struct {
@@ -70,6 +72,35 @@ func (s *server) handleUnrevokeClient(w http.ResponseWriter, r *http.Request) {
 	client, err := s.clientManagerAdmin.UnrevokeClient(r.Context(), &pb.UnrevokeClientRequest{Hostname: hostname})
 	if err != nil {
 		s.logger.Error("handleUnrevokeClient: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toClientDTO(client))
+}
+
+type kvUpdateInput struct {
+	Set   map[string]string `json:"set"`
+	Unset []string          `json:"unset"`
+}
+
+func (s *server) handleUpdateDescription(w http.ResponseWriter, r *http.Request) {
+	s.handleUpdateKV(w, r, s.clientManagerAdmin.UpdateDescription)
+}
+
+func (s *server) handleUpdateAttributes(w http.ResponseWriter, r *http.Request) {
+	s.handleUpdateKV(w, r, s.clientManagerAdmin.UpdateAttributes)
+}
+
+func (s *server) handleUpdateKV(w http.ResponseWriter, r *http.Request, call func(ctx context.Context, in *pb.UpdateClientKVRequest, opts ...grpc.CallOption) (*pb.Client, error)) {
+	hostname := r.PathValue("hostname")
+	var in kvUpdateInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	client, err := call(r.Context(), &pb.UpdateClientKVRequest{Hostname: hostname, Set: in.Set, Unset: in.Unset})
+	if err != nil {
+		s.logger.Error("handleUpdateKV: backend call failed", "error", err)
 		writeGRPCError(w, err)
 		return
 	}
