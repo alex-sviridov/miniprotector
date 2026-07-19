@@ -122,6 +122,38 @@ func TestHandleListJobs_BackupJobUsesFinishLineHostAsStoreHost(t *testing.T) {
 	assert.Equal(t, "bwfs-east", job["store_host"])
 }
 
+func TestHandleListJobs_SourceHostFilterDoesNotExcludeBackupFinishLine(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"brfs|bwfs", hostname="database"} | event="start"`: {
+			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
+				{Timestamp: 1752400000000000000, Metadata: map[string]string{"job_id": "backup:nightly:var-www:abcd1234:1752400000"}},
+			}},
+		},
+		`{binary=~"brfs|bwfs"} | event="finish"`: {
+			{Stream: map[string]string{"hostname": "bwfs-east"}, Values: []lokiValue{
+				{Timestamp: 1752400010000000000, Metadata: map[string]string{"job_id": "backup:nightly:var-www:abcd1234:1752400000", "status": "success"}},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=backup&source_host=database", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 1, "the completed backup job must still appear, not be dropped")
+	job := data[0].(map[string]any)
+	assert.Equal(t, "success", job["state"], "must reflect the real terminal state, not silently show in_progress")
+	assert.NotNil(t, job["finished_at"])
+}
+
 func TestHandleListJobs_InvalidKindReturns400(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}

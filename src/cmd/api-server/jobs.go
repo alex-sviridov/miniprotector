@@ -210,18 +210,29 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	labelSelector := fmt.Sprintf(`{binary=~"%s"}`, binariesForKind(kind))
+	binarySelector := binariesForKind(kind)
+	startLabelSelector := fmt.Sprintf(`{binary=~"%s"}`, binarySelector)
 	if sourceHost != "" {
-		labelSelector = fmt.Sprintf(`{binary=~"%s", hostname="%s"}`, binariesForKind(kind), sourceHost)
+		startLabelSelector = fmt.Sprintf(`{binary=~"%s", hostname="%s"}`, binarySelector, sourceHost)
 	}
+	// The finish query is deliberately never narrowed by hostname, even
+	// when source_host is set: a backup job's finish line is labeled with
+	// the store host (bwfs), not the source host (brfs) that source_host
+	// filters on -- narrowing this query by hostname="<source_host>" would
+	// silently exclude every backup job's finish line, making a completed
+	// job incorrectly render as in_progress. Correctness for source_host
+	// is guaranteed by the post-pairing filter below (line ~238); this
+	// selector is a pure Loki-side performance narrowing, not required for
+	// correctness, so it only applies where it can't cause data loss.
+	finishLabelSelector := fmt.Sprintf(`{binary=~"%s"}`, binarySelector)
 
-	starts, startsTruncated, err := s.queryEvent(r.Context(), labelSelector, "start", since, until)
+	starts, startsTruncated, err := s.queryEvent(r.Context(), startLabelSelector, "start", since, until)
 	if err != nil {
 		s.logger.Error("handleListJobs: query start events failed", "error", err)
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
 		return
 	}
-	finishes, finishesTruncated, err := s.queryEvent(r.Context(), labelSelector, "finish", since, until)
+	finishes, finishesTruncated, err := s.queryEvent(r.Context(), finishLabelSelector, "finish", since, until)
 	if err != nil {
 		s.logger.Error("handleListJobs: query finish events failed", "error", err)
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
