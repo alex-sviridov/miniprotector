@@ -6,6 +6,8 @@ import CatalogView from './views/CatalogView.vue'
 import PoliciesListView from './views/PoliciesListView.vue'
 import PolicyDetailView from './views/PolicyDetailView.vue'
 import PolicyFormView from './views/PolicyFormView.vue'
+import JobsListView from './views/JobsListView.vue'
+import JobDetailView from './views/JobDetailView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -18,5 +20,7 @@ export const router = createRouter({
     { path: '/policies/new', component: PolicyFormView },
     { path: '/policies/:id', component: PolicyDetailView },
     { path: '/policies/:id/edit', component: PolicyFormView },
+    { path: '/jobs', component: JobsListView },
+    { path: '/jobs/:job_id', component: JobDetailView },
   ],
 })
