@@ -19,6 +19,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/common/mtls"
 )
 
 func main() {
@@ -76,7 +77,16 @@ func main() {
 	}
 	defer policyConn.Close()
 
+	lokiTLSConfig, err := mtls.ClientTLSConfig(certsDir, conf.LogGatewayHost)
+	if err != nil {
+		logger.Error("loki client tls config failed", "error", err)
+		os.Exit(1)
+	}
+	lokiHTTPClient := &http.Client{Transport: &http.Transport{TLSClientConfig: lokiTLSConfig}}
+	lokiBaseURL := fmt.Sprintf("https://%s:%d", conf.LogGatewayHost, conf.LogGatewayPort)
+
 	srv := newServer(pb.NewClientManagerServiceClient(cmConn), pb.NewCatalogServiceClient(catalogConn), pb.NewPolicyServiceClient(policyConn), logger)
+	srv.loki = newCachingLokiClient(newHTTPLokiClient(lokiBaseURL, lokiHTTPClient), 10*time.Second)
 
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
