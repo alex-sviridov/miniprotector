@@ -1,21 +1,41 @@
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, onBeforeUnmount, nextTick, ref } from 'vue'
+import { DataTable } from 'simple-datatables'
+import 'simple-datatables/dist/style.css'
 import { useClientsStore } from '../stores/clients'
 import { formatTimestamp } from '../utils/format'
 
 const clients = useClientsStore()
+const tableRef = ref(null)
+let dataTable = null
 
-onMounted(() => {
-  clients.fetchAll()
+onMounted(async () => {
+  await clients.fetchAll()
+  await nextTick()
+  if (tableRef.value) {
+    dataTable = new DataTable(tableRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (dataTable) {
+    dataTable.destroy()
+    dataTable = null
+  }
 })
 </script>
 
 <template>
   <div>
-    <h1 class="text-xl font-semibold mb-4">Clients</h1>
+    <div class="flex items-center justify-between mb-4">
+      <h1 class="text-xl font-semibold">Clients</h1>
+      <router-link to="/clients/new" class="bg-blue-600 text-white rounded px-3 py-1">
+        New Client
+      </router-link>
+    </div>
     <p v-if="clients.loading">Loading...</p>
     <p v-else-if="clients.error" class="text-red-600">{{ clients.error }}</p>
-    <table v-else class="w-full text-left border-collapse">
+    <table v-else ref="tableRef" class="w-full text-left border-collapse">
       <thead>
         <tr class="border-b">
           <th class="py-2 pr-4">Hostname</th>
