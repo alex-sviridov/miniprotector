@@ -23,7 +23,7 @@ log-gateway --loki-url http://localhost:3100
 
 ## Behavior
 
-`POST /loki/api/v1/push` (see [protocol](../protocols/log-gateway.md)) is `log-gateway`'s only
+`POST /loki/api/v1/push` (see [protocol](../protocols/log-gateway.md)) is `log-gateway`'s primary
 endpoint. A caller must present a verified mTLS peer certificate to push at all; given one, the
 request body is forwarded to Loki's own push endpoint completely unexamined and byte-for-byte
 unmodified (`Content-Type`/`Content-Encoding` headers included, so Vector's default

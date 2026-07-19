@@ -7,7 +7,8 @@ read-only; policies additionally support create/update/delete. **Control-plane c
 `api-server` is the system's first REST surface; every other inter-component call in this project
 is gRPC over mTLS, including api-server's own outbound calls to
 [`clientmanager-api`](./clientmanager-api.md) and [`catalog`](./catalog.md). It is a thin translation
-layer — each REST endpoint maps to exactly one backend gRPC call, no cross-service aggregation.
+layer — each REST endpoint maps to exactly one backend gRPC call, no cross-service aggregation,
+with one documented exception (see Endpoints, below).
 
 ## Usage
 
