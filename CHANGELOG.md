@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-19 — web: add a Jobs page
+
+Adds `/jobs` and `/jobs/:job_id` to the `web` frontend, giving a browser view of `api-server`'s
+`GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}/logs` endpoints. The jobs table uses
+`simple-datatables` for client-side search, sort, and pagination over the fetched batch, rather
+than a server-side filter form.
+
 ## 2026-07-19 — api-server: add GET /api/v1/jobs and /api/v1/jobs/{job_id}/logs
 
 Added `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}/logs` to `api-server`, giving a fleet-wide

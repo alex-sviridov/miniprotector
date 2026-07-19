@@ -1,8 +1,8 @@
 # web
 
 A small browser UI over [api-server](./api-server.md)'s REST API — lists enrolled clients,
-browses catalog entries, and manages backup policies (list/create/edit/delete). **Not a mesh
-member:** unlike every other control-plane
+browses catalog entries, manages backup policies (list/create/edit/delete), and browses
+fleet-wide jobs and their logs. **Not a mesh member:** unlike every other control-plane
 component, `web` has no mTLS identity of its own; it's a static Vue single-page app served by
 nginx, which reverse-proxies `/api/*` to `api-server` so the browser's calls stay same-origin (no
 CORS changes were needed on `api-server`).
@@ -25,6 +25,11 @@ no data — there's no read-only "guest" mode.
 - `/policies/:id` — one policy's full record (client filters, object filters, backup window)
 - `/policies/new` — create a new policy
 - `/policies/:id/edit` — edit an existing policy
+- `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
+  started/finished time, state), with client-side search, sort, and pagination via
+  `simple-datatables` (the only page in this app not a plain HTML table), linking to:
+- `/jobs/:job_id` — one job's raw log lines from the last 24h, fetched once on page load (no
+  live-tail/polling)
 
 ## Local development
 
