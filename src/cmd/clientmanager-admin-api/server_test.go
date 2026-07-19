@@ -199,3 +199,24 @@ func TestUpdateAttributes_UnknownHostnameReturnsNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
+
+func TestUpdateSANs_AddsAndRemovesAliases(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+	require.NoError(t, store.AddClient("node-1", []string{"old.internal"}, time.Now()))
+
+	client, err := srv.UpdateSANs(context.Background(), &pb.UpdateClientSANsRequest{
+		Hostname: "node-1",
+		Add:      []string{"new.internal"},
+		Remove:   []string{"old.internal"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"new.internal"}, client.GetSans())
+}
+
+func TestUpdateSANs_UnknownHostnameReturnsNotFound(t *testing.T) {
+	srv, _, _ := newTestAdminServer(t)
+
+	_, err := srv.UpdateSANs(context.Background(), &pb.UpdateClientSANsRequest{Hostname: "ghost", Add: []string{"x.internal"}})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}

@@ -134,6 +134,29 @@ func (s *clientManagerAdminServer) updateKV(req *pb.UpdateClientKVRequest, kind 
 	return s.loadClient(hostname)
 }
 
+func (s *clientManagerAdminServer) UpdateSANs(ctx context.Context, req *pb.UpdateClientSANsRequest) (*pb.Client, error) {
+	hostname := req.GetHostname()
+	for _, alias := range req.GetAdd() {
+		if err := s.store.AddSAN(hostname, alias); err != nil {
+			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
+				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+			}
+			s.logger.Error("UpdateSANs: add failed", "hostname", hostname, "alias", alias, "error", err)
+			return nil, status.Errorf(codes.Internal, "add san: %v", err)
+		}
+	}
+	for _, alias := range req.GetRemove() {
+		if err := s.store.RemoveSAN(hostname, alias); err != nil {
+			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
+				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+			}
+			s.logger.Error("UpdateSANs: remove failed", "hostname", hostname, "alias", alias, "error", err)
+			return nil, status.Errorf(codes.Internal, "remove san: %v", err)
+		}
+	}
+	return s.loadClient(hostname)
+}
+
 // loadClient loads hostname's full record for a response, used by every
 // RPC below AddClient/ReEnrollClient that returns the updated Client.
 func (s *clientManagerAdminServer) loadClient(hostname string) (*pb.Client, error) {
