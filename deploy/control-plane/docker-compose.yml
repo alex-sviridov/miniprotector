@@ -39,11 +39,14 @@ services:
       - ./clientmanager-api/data:/data
       - ./clientmanager-api/local.conf:/data/local.conf:ro
       - ./client-manager/data:/data/client-manager
+      - ./ca/data/certs/root_ca.crt:/data/root_ca.crt:ro
+      - ./ca/data/secrets/password:/data/secrets/password:ro
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
     ports:
       - "9500:9500"
+      - "9501:9501"
     restart: unless-stopped
 
   catalog:

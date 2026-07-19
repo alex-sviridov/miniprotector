@@ -25,4 +25,10 @@ if [ ! -f /data/certs/client.crt ]; then
 	exit 1
 fi
 
-exec ./clientmanager-api --debug="${DEBUG:-false}"
+./clientmanager-api --debug="${DEBUG:-false}" &
+./clientmanager-admin-api --debug="${DEBUG:-false}" \
+	--ca-url https://step-ca:9000 \
+	--root /data/root_ca.crt \
+	--provisioner admin@backup.internal \
+	--password-file /data/secrets/password &
+wait
