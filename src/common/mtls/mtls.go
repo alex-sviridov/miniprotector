@@ -257,6 +257,17 @@ func ServerTLSConfig(certsDir string) (*tls.Config, error) {
 	return serverTLSConfigForTier(certsDir, requireOperatingTier)
 }
 
+// ClientTLSConfig returns the raw operating-tier *tls.Config
+// LoadClientCredentials wraps into gRPC transport credentials -- for an
+// HTTP client built directly on net/http (e.g. api-server dialing
+// log-gateway's query_range proxy route) instead of gRPC. Presents the
+// standard client.crt/client.key identity; same hostname/chain
+// verification rules as LoadClientCredentials, including per-handshake
+// certificate reload via GetClientCertificate.
+func ClientTLSConfig(certsDir, host string) (*tls.Config, error) {
+	return clientTLSConfig(certsDir, host)
+}
+
 // LoadClientCredentialsWithIdentity is LoadClientCredentials, parameterized
 // on which cert/key filenames to load -- used by callers presenting an
 // identity other than the standard client.crt/client.key pair (e.g.

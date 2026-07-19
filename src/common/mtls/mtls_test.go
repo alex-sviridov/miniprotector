@@ -411,3 +411,20 @@ func TestServerTLSConfig_RejectsIssuerCallerPeerCert(t *testing.T) {
 	err = dial(addr, peerConfig(caPool, bootstrapLikeCert))
 	assert.Error(t, err, "a peer cert carrying EKUIssuerCaller must be rejected by ServerTLSConfig, same as LoadServerCredentials")
 }
+
+func TestClientTLSConfig_Success(t *testing.T) {
+	cfg, err := ClientTLSConfig(fixtureCertsDir, "bwfs.internal")
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.NotNil(t, cfg.GetClientCertificate, "must present this node's identity via GetClientCertificate for cert-reload-on-handshake, same as clientTLSConfig")
+}
+
+func TestClientTLSConfig_MissingCAFile(t *testing.T) {
+	dir := t.TempDir()
+	copyFile(t, fixtureCertsDir+"/client.crt", dir+"/client.crt")
+	copyFile(t, fixtureCertsDir+"/client.key", dir+"/client.key")
+	// ca.crt intentionally omitted
+
+	_, err := ClientTLSConfig(dir, "bwfs.internal")
+	assert.Error(t, err)
+}
