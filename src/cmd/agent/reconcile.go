@@ -131,12 +131,28 @@ func (rs *reconcileState) get(id string) PolicyState {
 	return rs.cache[id]
 }
 
+// isBackupPolicy reports whether p is a scheduled backup dispatch (see
+// backup.go's backupTaskID) rather than one of agent's three static
+// policies. Backup jobs' event/status lifecycle markers come solely from
+// brfs (start) and bwfs (finish) -- see logExecStart/logExecCompletion.
+func isBackupPolicy(p Policy) bool {
+	return strings.HasPrefix(p.ID, "backup:")
+}
+
 // logExecStart logs that agent is about to dispatch p's exec. Called
 // immediately before execute for both the synchronous and background
 // dispatch paths in run(), so agent's own log always shows an exec
 // starting even if it never finishes (e.g. agent is killed mid-exec).
+// event=start is added for every policy except scheduled backups --
+// brfs's own "Backup reader started" line is that job kind's sole
+// event=start source, so this line staying untagged for backups is
+// deliberate, not an oversight (see isBackupPolicy).
 func logExecStart(logger *slog.Logger, p Policy) {
-	logger.Info("policy execution started", "policy", p.ID, "binary", p.Binary, "job_id", p.JobID)
+	if isBackupPolicy(p) {
+		logger.Info("policy execution started", "policy", p.ID, "binary", p.Binary, "job_id", p.JobID)
+		return
+	}
+	logger.Info("policy execution started", "policy", p.ID, "binary", p.Binary, "job_id", p.JobID, "event", "start")
 }
 
 // logExecCompletion logs the outcome of one exec attempt at Info level, on
@@ -145,18 +161,38 @@ func logExecStart(logger *slog.Logger, p Policy) {
 // for errors), this gives agent's own log a complete start/end timeline
 // for every dispatched exec. exit_code is included only when attemptErr is
 // a real *exec.ExitError -- fabricating one for any other error type would
-// be misleading.
+// be misleading. event/status are omitted for scheduled backups, same
+// reasoning as logExecStart.
 func logExecCompletion(logger *slog.Logger, p Policy, attemptErr error, duration time.Duration) {
+	backup := isBackupPolicy(p)
+	status := "success"
+	if attemptErr != nil {
+		status = "failure"
+	}
+
 	if attemptErr == nil {
-		logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration)
+		if backup {
+			logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration)
+			return
+		}
+		logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "event", "finish", "status", status)
 		return
 	}
+
 	var exitErr *exec.ExitError
 	if errors.As(attemptErr, &exitErr) {
-		logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "exit_code", exitErr.ExitCode(), "error", attemptErr)
+		if backup {
+			logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "exit_code", exitErr.ExitCode(), "error", attemptErr)
+			return
+		}
+		logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "exit_code", exitErr.ExitCode(), "error", attemptErr, "event", "finish", "status", status)
 		return
 	}
-	logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "error", attemptErr)
+	if backup {
+		logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "error", attemptErr)
+		return
+	}
+	logger.Info("policy execution completed", "policy", p.ID, "job_id", p.JobID, "duration", duration, "error", attemptErr, "event", "finish", "status", status)
 }
 
 // recordOutcome updates and immediately persists id's state given the

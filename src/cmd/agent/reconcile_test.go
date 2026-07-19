@@ -569,6 +569,37 @@ func TestLogExecOutcome_SuccessLogsStartAndCompletionWithJobID(t *testing.T) {
 	assert.Contains(t, out, "policy execution started")
 	assert.Contains(t, out, "policy execution completed")
 	assert.Contains(t, out, "test-policy:123")
+	assert.Contains(t, out, `"event":"start"`)
+	assert.Contains(t, out, `"event":"finish"`)
+	assert.Contains(t, out, `"status":"success"`)
+}
+
+func TestLogExecOutcome_FailureLogsStatusFailure(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "test-policy", JobID: "test-policy:123"}
+
+	logExecCompletion(logger, p, errors.New("simulated failure"), time.Second)
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &entry))
+	assert.Equal(t, "failure", entry["status"])
+	assert.Equal(t, "finish", entry["event"])
+}
+
+func TestLogExecOutcome_BackupPolicyOmitsEventAndStatus(t *testing.T) {
+	// agent must never tag a scheduled backup dispatch with event/status --
+	// brfs (start) and bwfs (finish) are the sole lifecycle sources for
+	// kind=backup, otherwise GET /api/v1/jobs' unfiltered query would see
+	// two competing event=start/event=finish lines for the same job_id.
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "backup:nightly:var-www:abcd1234", JobID: "backup:nightly:var-www:abcd1234:1752400000"}
+
+	logExecStart(logger, p)
+	logExecCompletion(logger, p, nil, 250*time.Millisecond)
+
+	out := buf.String()
+	assert.NotContains(t, out, `"event"`)
+	assert.NotContains(t, out, `"status"`)
 }
 
 func TestLogExecOutcome_FailureLogsExitCodeWhenAvailable(t *testing.T) {
