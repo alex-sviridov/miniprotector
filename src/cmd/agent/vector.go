@@ -62,6 +62,12 @@ transforms:
     source: |
       parts = split!(.file, "/")
       .binary = replace!(parts[-1], ".log", "")
+      parsed, err = parse_json(.message)
+      if err == null {
+        .job_id = parsed.job_id
+        .event = parsed.event
+        .status = parsed.status
+      }
 
 sinks:
   loki_gateway:
@@ -73,6 +79,10 @@ sinks:
     labels:
       binary: "{{"{{ binary }}"}}"
       hostname: "{{ .Hostname }}"
+    structured_metadata:
+      job_id: "{{"{{ job_id }}"}}"
+      event: "{{"{{ event }}"}}"
+      status: "{{"{{ status }}"}}"
     tls:
       ca_file: "{{ .CertsDir }}/ca.crt"
       crt_file: "{{ .CertsDir }}/client.crt"

@@ -111,6 +111,16 @@ func TestRenderVectorConfig_SetsHostnameLabelFromArgument(t *testing.T) {
 	assert.Contains(t, got, `hostname: "node-real-hostname"`)
 }
 
+func TestRenderVectorConfig_LiftsJobLifecycleFieldsIntoStructuredMetadata(t *testing.T) {
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
+	require.NoError(t, err)
+	assert.Contains(t, got, "parse_json(.message)")
+	assert.Contains(t, got, "structured_metadata:")
+	assert.Contains(t, got, `job_id: "{{ job_id }}"`)
+	assert.Contains(t, got, `event: "{{ event }}"`)
+	assert.Contains(t, got, `status: "{{ status }}"`)
+}
+
 func TestHostnameFromBootstrapCert_ReadsCommonName(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeBootstrapCert(t, dir, "node-under-test")
