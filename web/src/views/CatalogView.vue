@@ -80,39 +80,42 @@ onBeforeUnmount(() => {
     </form>
     <p v-if="catalog.loading">Loading...</p>
     <p v-else-if="catalog.error" class="text-red-600">{{ catalog.error }}</p>
-    <table v-else ref="tableRef" class="w-full text-left border-collapse">
-      <thead>
-        <tr class="border-b">
-          <th class="py-2 pr-4">Path</th>
-          <th class="py-2 pr-4">Source Host</th>
-          <th class="py-2 pr-4">Store Host</th>
-          <th class="py-2 pr-4">Size</th>
-          <th class="py-2 pr-4">Mode</th>
-          <th class="py-2 pr-4">Modified</th>
-          <th class="py-2 pr-4">Versions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="group in groups" :key="`${group.sourceHost}|${group.path}`" class="border-b">
-          <td class="py-2 pr-4">{{ group.path }}</td>
-          <td class="py-2 pr-4">{{ group.sourceHost }}</td>
-          <td class="py-2 pr-4">{{ group.representative.store_host }}</td>
-          <td class="py-2 pr-4">{{ group.representative.size }}</td>
-          <td class="py-2 pr-4">{{ group.representative.mode }}</td>
-          <td class="py-2 pr-4">{{ formatTimestamp(group.representative.mod_time) }}</td>
-          <td class="py-2 pr-4">
-            <button
-              v-if="group.versions.length > 1"
-              type="button"
-              class="text-blue-600 hover:underline"
-              @click="openVersions(group)"
-            >
-              {{ group.versions.length }}
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <!-- simple-datatables replaces this subtree's DOM internally; wrapping it in its own div ensures Vue's v-if/v-else unmount removes the whole thing cleanly on every re-fetch, instead of leaving the library's injected wrapper orphaned as a sibling of the form/buttons above. -->
+    <div v-else>
+      <table ref="tableRef" class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b">
+            <th class="py-2 pr-4">Path</th>
+            <th class="py-2 pr-4">Source Host</th>
+            <th class="py-2 pr-4">Store Host</th>
+            <th class="py-2 pr-4">Size</th>
+            <th class="py-2 pr-4">Mode</th>
+            <th class="py-2 pr-4">Modified</th>
+            <th class="py-2 pr-4">Versions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="group in groups" :key="`${group.sourceHost}|${group.path}`" class="border-b">
+            <td class="py-2 pr-4">{{ group.path }}</td>
+            <td class="py-2 pr-4">{{ group.sourceHost }}</td>
+            <td class="py-2 pr-4">{{ group.representative.store_host }}</td>
+            <td class="py-2 pr-4">{{ group.representative.size }}</td>
+            <td class="py-2 pr-4">{{ group.representative.mode }}</td>
+            <td class="py-2 pr-4">{{ formatTimestamp(group.representative.mod_time) }}</td>
+            <td class="py-2 pr-4">
+              <button
+                v-if="group.versions.length > 1"
+                type="button"
+                class="text-blue-600 hover:underline"
+                @click="openVersions(group)"
+              >
+                {{ group.versions.length }}
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <div class="flex gap-2 mt-4">
       <button :disabled="!catalog.canGoPrev" @click="goPrev" class="border rounded px-3 py-1 disabled:opacity-50">
         Prev
