@@ -199,6 +199,10 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sourceHost := q.Get("source_host")
+	if sourceHost != "" && !jobHostnamePattern.MatchString(sourceHost) {
+		writeJSONError(w, http.StatusBadRequest, "source_host contains invalid characters")
+		return
+	}
 	stateFilter := q.Get("state")
 
 	limit := defaultJobsLimit
@@ -265,6 +269,8 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:_-]+$`)
 
+var jobHostnamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+
 type logLineDTO struct {
 	Timestamp int64  `json:"timestamp"`
 	Hostname  string `json:"hostname"`
@@ -292,7 +298,15 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sourceHost := q.Get("source_host")
+	if sourceHost != "" && !jobHostnamePattern.MatchString(sourceHost) {
+		writeJSONError(w, http.StatusBadRequest, "source_host contains invalid characters")
+		return
+	}
 	storeHost := q.Get("store_host")
+	if storeHost != "" && !jobHostnamePattern.MatchString(storeHost) {
+		writeJSONError(w, http.StatusBadRequest, "store_host contains invalid characters")
+		return
+	}
 	labelSelector := `{binary=~"agent|brfs|bwfs"}`
 	switch {
 	case sourceHost != "" && storeHost != "":

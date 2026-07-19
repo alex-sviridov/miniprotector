@@ -263,3 +263,42 @@ func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Len(t, body["data"].([]any), 1)
 }
+
+func TestHandleListJobs_InvalidSourceHostCharacterReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, `/api/v1/jobs?source_host=x%22%7D+%7C+line_format`, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetJobLogs_InvalidSourceHostCharacterReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, `/api/v1/jobs/operating-refresh:1752400500/logs?source_host=x%22%7D+%7C+line_format`, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetJobLogs_InvalidStoreHostCharacterReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, `/api/v1/jobs/operating-refresh:1752400500/logs?store_host=x%22%7D+%7C+line_format`, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
