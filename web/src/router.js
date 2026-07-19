@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from './views/HomeView.vue'
 import ClientsListView from './views/ClientsListView.vue'
 import ClientDetailView from './views/ClientDetailView.vue'
+import ClientFormView from './views/ClientFormView.vue'
 import CatalogView from './views/CatalogView.vue'
 import PoliciesListView from './views/PoliciesListView.vue'
 import PolicyDetailView from './views/PolicyDetailView.vue'
@@ -14,6 +15,7 @@ export const router = createRouter({
   routes: [
     { path: '/', component: HomeView },
     { path: '/clients', component: ClientsListView },
+    { path: '/clients/new', component: ClientFormView },
     { path: '/clients/:hostname', component: ClientDetailView },
     { path: '/catalog', component: CatalogView },
     { path: '/policies', component: PoliciesListView },
