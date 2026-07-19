@@ -1001,7 +1001,7 @@ function normalize(list) {
   return [...new Set(list.map((s) => s.trim()).filter(Boolean))].sort()
 }
 
-const dirty = computed(() => JSON.stringify(normalize(draft)) !== JSON.stringify(normalize(snapshot)))
+const dirty = computed(() => JSON.stringify(draft) !== JSON.stringify(snapshot))
 
 function submit() {
   const draftSet = new Set(normalize(draft))
