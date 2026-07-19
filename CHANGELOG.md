@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-19 — web: group catalog entries into file versions
+
+`/catalog` now groups entries within each loaded page into one row per distinct file (source host +
+path), using `simple-datatables` for client-side search and sort, matching the Jobs page. A
+"Versions" count on multi-version files opens a modal listing that file's other versions (capture
+time, size, mode, mod time, job ID, store host). Grouping is scoped to the currently loaded page —
+versions split across a Prev/Next page boundary aren't merged.
+
 ## 2026-07-19 — web: add a Jobs page
 
 Adds `/jobs` and `/jobs/:job_id` to the `web` frontend, giving a browser view of `api-server`'s

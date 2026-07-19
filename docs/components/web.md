@@ -20,14 +20,19 @@ no data — there's no read-only "guest" mode.
 - `/clients/:hostname` — one client's full record (SANs, attributes, descriptions)
 - `/catalog` — catalog entries, filterable by real source host, store host (the `bwfs` node that
   replicated the entry), and a path-pattern substring, paginated with Prev/Next (the catalog API
-  only supports cursor pagination — no total count, so there's no page-number jump)
+  only supports cursor pagination — no total count, so there's no page-number jump). Entries within
+  the currently loaded page are grouped into one row per distinct file (source host + path), using
+  `simple-datatables` (as `/jobs` does) for client-side search/sort over that page; a "Versions"
+  count opens a modal listing that file's other versions. Grouping is scoped to the loaded page —
+  versions of the same file split across a Prev/Next page boundary appear as separate
+  single-version rows on their own pages.
 - `/policies` — every policy (name, RPO, destination), linking to:
 - `/policies/:id` — one policy's full record (client filters, object filters, backup window)
 - `/policies/new` — create a new policy
 - `/policies/:id/edit` — edit an existing policy
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
-  `simple-datatables` (the only page in this app not a plain HTML table), linking to:
+  `simple-datatables` (also used on `/catalog`), linking to:
 - `/jobs/:job_id` — one job's raw log lines from the last 24h, fetched once on page load (no
   live-tail/polling)
 
