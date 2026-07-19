@@ -32,6 +32,12 @@ import (
 // ballpark) while still bounding worst-case memory use per request.
 const maxPushBodyBytes = 10 << 20 // 10MB
 
+// maxQueryResponseBytes bounds how much of a query_range response
+// log-gateway will buffer in memory -- the read-path mirror of
+// maxPushBodyBytes: an unusually broad query returning a huge result must
+// not OOM the sole path to Loki for the whole fleet.
+const maxQueryResponseBytes = 10 << 20 // 10MB
+
 // lokiForwardTimeout bounds how long log-gateway will wait on a single
 // outbound push to Loki. Without a timeout, a degraded (not down) Loki --
 // GC pause, disk pressure, backpressure -- leaves the outbound
@@ -53,16 +59,18 @@ var passthroughHeaders = []string{"Content-Type", "Content-Encoding"}
 // present a verified, non-revoked operating-tier mTLS certificate; nothing
 // about the request body is required to identify itself.
 type logGatewayServer struct {
-	lokiPushURL string
-	httpClient  *http.Client
-	logger      *slog.Logger
+	lokiPushURL  string
+	lokiQueryURL string
+	httpClient   *http.Client
+	logger       *slog.Logger
 }
 
 func newLogGatewayServer(lokiBaseURL string, logger *slog.Logger) *logGatewayServer {
 	return &logGatewayServer{
-		lokiPushURL: lokiBaseURL + "/loki/api/v1/push",
-		httpClient:  &http.Client{},
-		logger:      logger,
+		lokiPushURL:  lokiBaseURL + "/loki/api/v1/push",
+		lokiQueryURL: lokiBaseURL + "/loki/api/v1/query_range",
+		httpClient:   &http.Client{},
+		logger:       logger,
 	}
 }
 
@@ -114,4 +122,54 @@ func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// ServeQuery proxies a caller's query_range parameters to Loki's real
+// query_range endpoint unmodified -- the read-path counterpart to
+// ServeHTTP's push forwarding, gated by the same operating-tier mTLS
+// check. Reachable by any operating-tier mesh node, not just api-server --
+// the same "any operating-tier cert may call any RPC it can reach"
+// convention already accepted for clientmanager-api/catalog/policy-server.
+func (s *logGatewayServer) ServeQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if _, err := mtls.PeerHostnameFromConnState(r.TLS); err != nil {
+		http.Error(w, "determine caller identity: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), lokiForwardTimeout)
+	defer cancel()
+
+	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodGet, s.lokiQueryURL, nil)
+	if err != nil {
+		http.Error(w, "build loki request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	lokiReq.URL.RawQuery = r.URL.RawQuery
+
+	resp, err := s.httpClient.Do(lokiReq)
+	if err != nil {
+		s.logger.Error("forward query to loki failed", "error", err)
+		http.Error(w, "forward to loki: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxQueryResponseBytes+1))
+	if err != nil {
+		http.Error(w, "read loki response: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if len(body) > maxQueryResponseBytes {
+		http.Error(w, "loki response exceeds size cap", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
 }

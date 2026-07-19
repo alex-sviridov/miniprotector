@@ -181,3 +181,81 @@ func TestHandlePush_LokiErrorStatusPropagated(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Result().StatusCode)
 	assert.Contains(t, w.Body.String(), "entry too far behind")
 }
+
+func TestHandleQuery_ForwardsToLokiAndReturnsBody(t *testing.T) {
+	var gotQuery string
+	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
+	}))
+	defer lokiStub.Close()
+
+	srv := newLogGatewayServer(lokiStub.URL, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/loki/api/v1/query_range?query=%7B%7D&start=1&end=2", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "api-server-1")}}
+	w := httptest.NewRecorder()
+
+	srv.ServeQuery(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+	assert.Contains(t, gotQuery, "query=%7B%7D")
+	assert.Contains(t, gotQuery, "start=1")
+	assert.Contains(t, gotQuery, "end=2")
+	assert.Contains(t, w.Body.String(), `"status":"success"`)
+}
+
+func TestHandleQuery_NoPeerCertificateRejected(t *testing.T) {
+	srv := newLogGatewayServer("http://unused.invalid", testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/loki/api/v1/query_range", nil)
+	w := httptest.NewRecorder()
+
+	srv.ServeQuery(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
+}
+
+func TestHandleQuery_NonGetMethodRejected(t *testing.T) {
+	srv := newLogGatewayServer("http://unused.invalid", testLogger())
+
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/query_range", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "api-server-1")}}
+	w := httptest.NewRecorder()
+
+	srv.ServeQuery(w, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Result().StatusCode)
+}
+
+func TestHandleQuery_LokiUnreachablePropagatesBadGateway(t *testing.T) {
+	srv := newLogGatewayServer("http://127.0.0.1:1", testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/loki/api/v1/query_range", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "api-server-1")}}
+	w := httptest.NewRecorder()
+
+	srv.ServeQuery(w, req)
+
+	assert.Equal(t, http.StatusBadGateway, w.Result().StatusCode)
+}
+
+func TestHandleQuery_OversizedResponseRejected(t *testing.T) {
+	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(strings.Repeat("a", maxQueryResponseBytes+1)))
+	}))
+	defer lokiStub.Close()
+
+	srv := newLogGatewayServer(lokiStub.URL, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/loki/api/v1/query_range", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "api-server-1")}}
+	w := httptest.NewRecorder()
+
+	srv.ServeQuery(w, req)
+
+	assert.Equal(t, http.StatusBadGateway, w.Result().StatusCode)
+}
