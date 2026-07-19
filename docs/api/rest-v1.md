@@ -1,6 +1,6 @@
 # REST API v1
 
-`api-server`'s REST surface: v1, no RBAC. Client and catalog endpoints are read-only; policy
+`api-server`'s REST surface: v1, no RBAC. Client, catalog, and job endpoints are read-only; policy
 endpoints support create/update/delete. See [api-server](../components/api-server.md) for auth and
 deployment.
 
@@ -147,6 +147,55 @@ match any policy.
 ## `DELETE /api/v1/policies/{id}`
 
 Deletes a policy. `204` on success, `404` if `id` doesn't match any policy.
+
+## `GET /api/v1/jobs`
+
+Returns backup and agent-lifecycle jobs, reconstructed by pairing `event=start`/`event=finish` log
+lines from Loki (via `log-gateway`'s read-proxy) on `job_id`. Not backed by a database — every
+request re-queries Loki over the requested time window.
+
+Query parameters (all optional):
+
+| Param | Type | Description |
+|-------|------|--------------|
+| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update` |
+| `source_host` | string | Exact match on the job's start-line hostname |
+| `state` | string | Exact match on the job's terminal status (e.g. `success`, `failure`); jobs still running never match, since they have no finish line yet |
+| `since` | int, unix seconds | Start of the query window, default `now - 24h` |
+| `until` | int, unix seconds | End of the query window, default `now` |
+| `limit` | int, 1–500 | Page size, default 100 |
+
+```json
+{
+  "data": [
+    {
+      "job_id": "backup:nightly:var-www:abcd1234:1752400000",
+      "kind": "backup",
+      "source_host": "database",
+      "store_host": "bwfs-east",
+      "started_at": 1752400000,
+      "finished_at": 1752400010,
+      "state": "success"
+    }
+  ],
+  "truncated": false
+}
+```
+
+`kind` is derived from the `job_id` prefix (everything before the first `:`), not a separate
+stored field. `store_host` is only ever populated for `kind=backup` (from the `bwfs` finish
+line's hostname); every other kind leaves it `null`. A job with only a start line in the window is
+`"state": "in_progress"` with `finished_at: null`. A job with only a finish line (its start fell
+outside the window) gets `started_at: null` — never guessed. `truncated: true` means one of the
+underlying Loki queries hit its own line cap and the result may be incomplete; narrow `since`/
+`until` and retry.
+
+`400` if `kind` isn't one of the four valid values, `since`/`until` aren't unix-second integers,
+`until` is before `since`, the window exceeds 168h, or `limit` isn't an integer in `[1, 500]`.
+`502` if the underlying Loki query fails.
+
+`GET /api/v1/jobs/{job_id}/logs` (fetching the raw log lines for one job) is registered but not
+yet implemented as of this endpoint's introduction.
 
 ## See Also
 

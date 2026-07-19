@@ -38,6 +38,7 @@ type server struct {
 	clientManager clientManagerClient
 	catalog       catalogQueryClient
 	policy        policyServiceClient
+	loki          lokiQuerier
 	logger        *slog.Logger
 }
 
@@ -58,4 +59,6 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
 	mux.HandleFunc("PUT /api/v1/policies/{id}", s.handleUpdatePolicy)
 	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicy)
+	mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
+	mux.HandleFunc("GET /api/v1/jobs/{job_id}/logs", s.handleGetJobLogs)
 }
