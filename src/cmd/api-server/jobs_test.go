@@ -198,3 +198,68 @@ func TestHandleListJobs_LokiErrorReturns502(t *testing.T) {
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
+
+func TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | job_id="operating-refresh:1752400500"`: {
+			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
+				{Timestamp: 1752400501000000000, Line: "policy execution completed"},
+				{Timestamp: 1752400500000000000, Line: "policy execution started"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 2)
+	assert.Equal(t, "policy execution started", data[0].(map[string]any)["line"])
+	assert.Equal(t, "policy execution completed", data[1].(map[string]any)["line"])
+	assert.Equal(t, "webserver", data[0].(map[string]any)["hostname"])
+	assert.Equal(t, "agent", data[0].(map[string]any)["binary"])
+}
+
+func TestHandleGetJobLogs_InvalidJobIDCharacterReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/not%20valid;job/logs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
+			{Stream: map[string]string{"hostname": "database", "binary": "brfs"}, Values: []lokiValue{
+				{Timestamp: 1752400000000000000, Line: "Backup reader started"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/backup:nightly:var-www:abcd1234:1752400000/logs?source_host=database&store_host=bwfs-east", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Len(t, body["data"].([]any), 1)
+}

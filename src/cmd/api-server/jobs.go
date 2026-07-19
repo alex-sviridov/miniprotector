@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -262,12 +263,66 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": filtered, "truncated": startsTruncated || finishesTruncated})
 }
 
-// handleGetJobLogs is a placeholder: Task 11 registers this route (see
-// server.go's registerRoutes) so the route table lives in one place, but
-// the real implementation lands in Task 12. This stub exists only so the
-// package compiles and the pre-existing test suite keeps passing in the
-// interim -- it is not part of Task 11's brief and Task 12 replaces it
-// wholesale.
+var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:_-]+$`)
+
+type logLineDTO struct {
+	Timestamp int64  `json:"timestamp"`
+	Hostname  string `json:"hostname"`
+	Binary    string `json:"binary"`
+	Line      string `json:"line"`
+}
+
 func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
-	writeJSONError(w, http.StatusNotImplemented, "not implemented")
+	jobID := r.PathValue("job_id")
+	if !jobIDPattern.MatchString(jobID) {
+		writeJSONError(w, http.StatusBadRequest, "job_id contains invalid characters")
+		return
+	}
+
+	q := r.URL.Query()
+	until := time.Now()
+	since := until.Add(-defaultJobsWindow)
+	if raw := q.Get("since"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "since must be a unix-second integer")
+			return
+		}
+		since = time.Unix(parsed, 0)
+	}
+
+	sourceHost := q.Get("source_host")
+	storeHost := q.Get("store_host")
+	labelSelector := `{binary=~"agent|brfs|bwfs"}`
+	switch {
+	case sourceHost != "" && storeHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname=~"%s|%s"}`, sourceHost, storeHost)
+	case sourceHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname="%s"}`, sourceHost)
+	case storeHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname="%s"}`, storeHost)
+	}
+
+	query := fmt.Sprintf(`%s | job_id="%s"`, labelSelector, jobID)
+	streams, err := s.loki.QueryRange(r.Context(), query, since, until, jobsQueryLineLimit)
+	if err != nil {
+		s.logger.Error("handleGetJobLogs: query failed", "error", err)
+		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
+		return
+	}
+
+	var lines []logLineDTO
+	for _, stream := range streams {
+		for _, v := range stream.Values {
+			lines = append(lines, logLineDTO{
+				Timestamp: v.Timestamp,
+				Hostname:  stream.Stream["hostname"],
+				Binary:    stream.Stream["binary"],
+				Line:      v.Line,
+			})
+		}
+	}
+	sort.Slice(lines, func(i, k int) bool { return lines[i].Timestamp < lines[k].Timestamp })
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": lines})
 }
