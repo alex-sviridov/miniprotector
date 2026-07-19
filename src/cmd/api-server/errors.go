@@ -34,6 +34,8 @@ func writeGRPCError(w http.ResponseWriter, err error) {
 		writeJSONError(w, http.StatusNotFound, st.Message())
 	case codes.InvalidArgument:
 		writeJSONError(w, http.StatusBadRequest, st.Message())
+	case codes.AlreadyExists:
+		writeJSONError(w, http.StatusConflict, st.Message())
 	default:
 		writeJSONError(w, http.StatusBadGateway, st.Message())
 	}

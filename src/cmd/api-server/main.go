@@ -63,6 +63,13 @@ func main() {
 	}
 	defer cmConn.Close()
 
+	cmAdminConn, err := connection.Connect(conf.ClientManagerAdminAPIHost, conf.ClientManagerAdminAPIPort, conf.ConnectionTimeOutSec, certsDir)
+	if err != nil {
+		logger.Error("connect to clientmanager-admin-api failed", "error", err)
+		os.Exit(1)
+	}
+	defer cmAdminConn.Close()
+
 	catalogConn, err := connection.Connect(conf.CatalogHost, conf.CatalogPort, conf.ConnectionTimeOutSec, certsDir)
 	if err != nil {
 		logger.Error("connect to catalog failed", "error", err)
@@ -86,6 +93,7 @@ func main() {
 	lokiBaseURL := fmt.Sprintf("https://%s:%d", conf.LogGatewayHost, conf.LogGatewayPort)
 
 	srv := newServer(pb.NewClientManagerServiceClient(cmConn), pb.NewCatalogServiceClient(catalogConn), pb.NewPolicyServiceClient(policyConn), logger)
+	srv.clientManagerAdmin = pb.NewClientManagerAdminServiceClient(cmAdminConn)
 	srv.loki = newCachingLokiClient(newHTTPLokiClient(lokiBaseURL, lokiHTTPClient), 10*time.Second)
 
 	mux := http.NewServeMux()

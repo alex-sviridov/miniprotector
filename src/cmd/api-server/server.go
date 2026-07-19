@@ -18,6 +18,19 @@ type clientManagerClient interface {
 	GetClient(ctx context.Context, in *pb.GetClientRequest, opts ...grpc.CallOption) (*pb.Client, error)
 }
 
+// clientManagerAdminClient is the subset of pb.ClientManagerAdminServiceClient
+// the client-write handlers need -- the full RPC surface, satisfied by the
+// real generated client and by a fake in tests.
+type clientManagerAdminClient interface {
+	AddClient(ctx context.Context, in *pb.AddClientRequest, opts ...grpc.CallOption) (*pb.AddClientResponse, error)
+	ReEnrollClient(ctx context.Context, in *pb.ReEnrollClientRequest, opts ...grpc.CallOption) (*pb.ReEnrollClientResponse, error)
+	RevokeClient(ctx context.Context, in *pb.RevokeClientRequest, opts ...grpc.CallOption) (*pb.Client, error)
+	UnrevokeClient(ctx context.Context, in *pb.UnrevokeClientRequest, opts ...grpc.CallOption) (*pb.Client, error)
+	UpdateDescription(ctx context.Context, in *pb.UpdateClientKVRequest, opts ...grpc.CallOption) (*pb.Client, error)
+	UpdateAttributes(ctx context.Context, in *pb.UpdateClientKVRequest, opts ...grpc.CallOption) (*pb.Client, error)
+	UpdateSANs(ctx context.Context, in *pb.UpdateClientSANsRequest, opts ...grpc.CallOption) (*pb.Client, error)
+}
+
 // catalogQueryClient is the subset of pb.CatalogServiceClient the catalog
 // handler (Task 10) needs.
 type catalogQueryClient interface {
@@ -35,11 +48,12 @@ type policyServiceClient interface {
 }
 
 type server struct {
-	clientManager clientManagerClient
-	catalog       catalogQueryClient
-	policy        policyServiceClient
-	loki          lokiQuerier
-	logger        *slog.Logger
+	clientManager      clientManagerClient
+	clientManagerAdmin clientManagerAdminClient
+	catalog            catalogQueryClient
+	policy             policyServiceClient
+	loki               lokiQuerier
+	logger             *slog.Logger
 }
 
 func newServer(cm clientManagerClient, catalog catalogQueryClient, policy policyServiceClient, logger *slog.Logger) *server {
@@ -53,6 +67,8 @@ func newServer(cm clientManagerClient, catalog catalogQueryClient, policy policy
 func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/clients", s.handleListClients)
 	mux.HandleFunc("GET /api/v1/clients/{hostname}", s.handleGetClient)
+	mux.HandleFunc("POST /api/v1/clients", s.handleAddClient)
+	mux.HandleFunc("POST /api/v1/clients/{hostname}/reenroll", s.handleReEnrollClient)
 	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)

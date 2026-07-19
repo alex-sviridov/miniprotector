@@ -35,3 +35,9 @@ func TestWriteGRPCError_NonGRPCErrorMapsTo502(t *testing.T) {
 	writeGRPCError(rec, errors.New("plain error"))
 	assert.Equal(t, http.StatusBadGateway, rec.Code)
 }
+
+func TestWriteGRPCError_AlreadyExistsMapsTo409(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeGRPCError(rec, status.Error(codes.AlreadyExists, "client node-1 already enrolled"))
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
