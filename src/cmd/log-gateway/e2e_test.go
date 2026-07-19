@@ -96,6 +96,83 @@ func TestE2E_AuthenticatedPushReachesLokiUnderClientDeclaredHostname(t *testing.
 	}, 15*time.Second, 500*time.Millisecond, "pushed line never became queryable in Loki")
 }
 
+// TestE2E_QueryRouteReturnsStructuredMetadataPushedThroughLogGateway proves
+// the read path this design adds: a push carrying Loki structured metadata
+// (job_id/event/status -- see cmd/agent/vector.go) round-trips through
+// log-gateway's new /loki/api/v1/query_range proxy and is queryable by
+// filtering on that metadata, not just on labels or line content.
+func TestE2E_QueryRouteReturnsStructuredMetadataPushedThroughLogGateway(t *testing.T) {
+	requireDocker(t)
+
+	lokiURL, cleanup := startTestLoki(t)
+	defer cleanup()
+
+	ca, caKey := generateTestCA(t)
+	serverIdentity := generateTestLeaf(t, ca, caKey, "log-gateway-e2e", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, nil)
+	certsDir := writeTestCertsDir(t, ca, serverIdentity)
+
+	tlsConfig, err := mtls.ServerTLSConfig(certsDir)
+	require.NoError(t, err)
+
+	srv := newLogGatewayServer(lokiURL, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/loki/api/v1/push", srv.ServeHTTP)
+	mux.HandleFunc("/loki/api/v1/query_range", srv.ServeQuery)
+	httpServer := &http.Server{Handler: mux, TLSConfig: tlsConfig}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	tlsListener := tls.NewListener(listener, tlsConfig)
+	gatewayAddr := listener.Addr().String()
+
+	go func() { _ = httpServer.Serve(tlsListener) }()
+	defer httpServer.Close()
+
+	clientCert := generateTestLeaf(t, ca, caKey, "node-e2e-metadata", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil)
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates: []tls.Certificate{clientCert},
+				RootCAs:      caPool,
+				ServerName:   "log-gateway-e2e",
+			},
+		},
+	}
+
+	nowNS := time.Now().UnixNano()
+	pushBody := fmt.Sprintf(`{"streams":[{"stream":{"hostname":"node-e2e-metadata","binary":"agent"},"values":[["%d","policy execution completed",{"job_id":"operating-refresh:1752400500","event":"finish","status":"success"}]]}]}`, nowNS)
+	resp, err := httpClient.Post(fmt.Sprintf("https://%s/loki/api/v1/push", gatewayAddr), "application/json", strings.NewReader(pushBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, "push failed: %s", body)
+
+	require.Eventually(t, func() bool {
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("https://%s/loki/api/v1/query_range", gatewayAddr), nil)
+		if err != nil {
+			return false
+		}
+		q := req.URL.Query()
+		q.Set("query", `{hostname="node-e2e-metadata"} | job_id="operating-refresh:1752400500"`)
+		q.Set("start", strconv.FormatInt(time.Now().Add(-time.Hour).UnixNano(), 10))
+		q.Set("end", strconv.FormatInt(time.Now().Add(time.Hour).UnixNano(), 10))
+		req.URL.RawQuery = q.Encode()
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		result, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			return false
+		}
+		return strings.Contains(string(result), `"event":"finish"`) || strings.Contains(string(result), "policy execution completed")
+	}, 15*time.Second, 500*time.Millisecond, "pushed structured-metadata line never became queryable through the new query route")
+}
+
 // TestE2E_UnauthenticatedPushRejected proves mTLS authentication is still
 // the real gate: a caller with no client certificate at all must never
 // reach Loki, regardless of what its push body claims.
