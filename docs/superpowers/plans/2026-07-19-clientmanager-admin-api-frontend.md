@@ -1066,7 +1066,7 @@ Replace `web/src/views/ClientDetailView.spec.js` entirely with:
 
 ```js
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import ClientDetailView from './ClientDetailView.vue'
 import { useClientsStore } from '../stores/clients'
@@ -1182,37 +1182,40 @@ describe('ClientDetailView', () => {
     expect(clients.reenroll).toHaveBeenCalledWith('webserver')
   })
 
-  it('shows the token banner when pendingToken matches the route hostname on mount, and clears it', () => {
+  it('shows the token banner when pendingToken matches the route hostname on mount, and clears it', async () => {
     const { wrapper, clients } = mountView({
       byHostname: { webserver: baseClient() },
       loading: false,
       error: null,
       pendingToken: { hostname: 'webserver', token: 'tok-abc' },
     })
+    await flushPromises()
 
     expect(wrapper.find('[data-test="token-banner"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="token-value"]').text()).toBe('tok-abc')
     expect(clients.pendingToken).toBeNull()
   })
 
-  it('does not show the token banner when pendingToken is for a different hostname', () => {
+  it('does not show the token banner when pendingToken is for a different hostname', async () => {
     const { wrapper } = mountView({
       byHostname: { webserver: baseClient() },
       loading: false,
       error: null,
       pendingToken: { hostname: 'other-host', token: 'tok-abc' },
     })
+    await flushPromises()
 
     expect(wrapper.find('[data-test="token-banner"]').exists()).toBe(false)
   })
 
-  it('does not show the token banner when pendingToken is null', () => {
+  it('does not show the token banner when pendingToken is null', async () => {
     const { wrapper } = mountView({
       byHostname: { webserver: baseClient() },
       loading: false,
       error: null,
       pendingToken: null,
     })
+    await flushPromises()
 
     expect(wrapper.find('[data-test="token-banner"]').exists()).toBe(false)
   })
