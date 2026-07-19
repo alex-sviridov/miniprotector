@@ -12,6 +12,20 @@ const tableRef = ref(null)
 const groups = ref([])
 let dataTable = null
 
+const selectedGroup = ref(null)
+
+function openVersions(group) {
+  selectedGroup.value = group
+}
+
+function closeVersions() {
+  selectedGroup.value = null
+}
+
+function onKeydown(event) {
+  if (event.key === 'Escape') closeVersions()
+}
+
 function destroyTable() {
   if (dataTable) {
     dataTable.destroy()
@@ -44,11 +58,13 @@ async function goPrev() {
 }
 
 onMounted(async () => {
+  document.addEventListener('keydown', onKeydown)
   await catalog.search({ ...form })
   await renderTable()
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeydown)
   destroyTable()
 })
 </script>
@@ -84,7 +100,16 @@ onBeforeUnmount(() => {
           <td class="py-2 pr-4">{{ group.representative.size }}</td>
           <td class="py-2 pr-4">{{ group.representative.mode }}</td>
           <td class="py-2 pr-4">{{ formatTimestamp(group.representative.mod_time) }}</td>
-          <td class="py-2 pr-4">{{ group.versions.length > 1 ? group.versions.length : '' }}</td>
+          <td class="py-2 pr-4">
+            <button
+              v-if="group.versions.length > 1"
+              type="button"
+              class="text-blue-600 hover:underline"
+              @click="openVersions(group)"
+            >
+              {{ group.versions.length }}
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -95,6 +120,42 @@ onBeforeUnmount(() => {
       <button :disabled="!catalog.hasMore" @click="goNext" class="border rounded px-3 py-1 disabled:opacity-50">
         Next
       </button>
+    </div>
+    <div
+      v-if="selectedGroup"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center"
+      @click.self="closeVersions"
+    >
+      <div class="bg-white rounded p-4 max-w-2xl w-full max-h-[80vh] overflow-auto">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-lg font-semibold">
+            Versions of {{ selectedGroup.path }} on {{ selectedGroup.sourceHost }}
+          </h2>
+          <button type="button" class="text-gray-500 hover:text-gray-800" @click="closeVersions">Close</button>
+        </div>
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b">
+              <th class="py-2 pr-4">Captured</th>
+              <th class="py-2 pr-4">Size</th>
+              <th class="py-2 pr-4">Mode</th>
+              <th class="py-2 pr-4">Modified</th>
+              <th class="py-2 pr-4">Job ID</th>
+              <th class="py-2 pr-4">Store Host</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="version in selectedGroup.versions" :key="version.id" class="border-b">
+              <td class="py-2 pr-4">{{ formatTimestamp(version.store_created_at) }}</td>
+              <td class="py-2 pr-4">{{ version.size }}</td>
+              <td class="py-2 pr-4">{{ version.mode }}</td>
+              <td class="py-2 pr-4">{{ formatTimestamp(version.mod_time) }}</td>
+              <td class="py-2 pr-4">{{ version.job_id }}</td>
+              <td class="py-2 pr-4">{{ version.store_host }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </template>

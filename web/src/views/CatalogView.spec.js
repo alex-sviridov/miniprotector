@@ -165,4 +165,79 @@ describe('CatalogView', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('boom')
   })
+
+  it('opens a modal listing versions newest-first when the version count is clicked', async () => {
+    const { wrapper } = mountView({
+      entries: [
+        entry({ id: 1, store_created_at: 1752300000, size: 8004, job_id: 'backup:daily-db-backup:1' }),
+        entry({ id: 2, store_created_at: 1752400000, size: 8192, job_id: 'backup:daily-db-backup:2' }),
+      ],
+      hasMore: false,
+      loading: false,
+      error: null,
+    })
+    await flushPromises()
+
+    await wrapper.find('tbody button').trigger('click')
+
+    expect(wrapper.text()).toContain('Versions of /var/lib/dbdata/data.db on database')
+    const versionRows = wrapper.findAll('.fixed tbody tr')
+    expect(versionRows).toHaveLength(2)
+    expect(versionRows[0].text()).toContain('8192')
+    expect(versionRows[0].text()).toContain('backup:daily-db-backup:2')
+    expect(versionRows[1].text()).toContain('8004')
+  })
+
+  it('closes the modal via the Close button', async () => {
+    const { wrapper } = mountView({
+      entries: [
+        entry({ id: 1, store_created_at: 1752300000 }),
+        entry({ id: 2, store_created_at: 1752400000 }),
+      ],
+      hasMore: false,
+      loading: false,
+      error: null,
+    })
+    await flushPromises()
+    await wrapper.find('tbody button').trigger('click')
+    expect(wrapper.find('.fixed').exists()).toBe(true)
+
+    await wrapper.findAll('button').find((b) => b.text() === 'Close').trigger('click')
+    expect(wrapper.find('.fixed').exists()).toBe(false)
+  })
+
+  it('closes the modal via backdrop click', async () => {
+    const { wrapper } = mountView({
+      entries: [
+        entry({ id: 1, store_created_at: 1752300000 }),
+        entry({ id: 2, store_created_at: 1752400000 }),
+      ],
+      hasMore: false,
+      loading: false,
+      error: null,
+    })
+    await flushPromises()
+    await wrapper.find('tbody button').trigger('click')
+
+    await wrapper.find('.fixed').trigger('click')
+    expect(wrapper.find('.fixed').exists()).toBe(false)
+  })
+
+  it('closes the modal on Escape', async () => {
+    const { wrapper } = mountView({
+      entries: [
+        entry({ id: 1, store_created_at: 1752300000 }),
+        entry({ id: 2, store_created_at: 1752400000 }),
+      ],
+      hasMore: false,
+      loading: false,
+      error: null,
+    })
+    await flushPromises()
+    await wrapper.find('tbody button').trigger('click')
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.find('.fixed').exists()).toBe(false)
+  })
 })
