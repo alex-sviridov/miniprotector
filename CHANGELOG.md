@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-19 — web: add client enrollment/revocation/metadata management
+
+`web`'s `/clients` pages gain the write surface `clientmanager-admin-api` added: a `/clients/new`
+enroll form, Revoke/Unrevoke and Re-enroll actions and a one-time token banner on the client detail
+page, and inline add/remove editing for description, attributes, and SANs, each with its own
+"Update" button enabled only while that section has an unsaved change. The clients list now uses
+`simple-datatables` for client-side search/sort, matching `/jobs` and `/catalog`.
+
 ## 2026-07-19 — clientmanager-admin-api: network-reachable client enrollment/revocation/metadata writes
 
 Added `clientmanager-admin-api`, a new gRPC daemon holding the CA provisioner password directly and

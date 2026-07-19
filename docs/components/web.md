@@ -16,8 +16,14 @@ no data — there's no read-only "guest" mode.
 ## Pages
 
 - `/` — placeholder landing page
-- `/clients` — every enrolled client (hostname, revoked, last seen), linking to:
-- `/clients/:hostname` — one client's full record (SANs, attributes, descriptions)
+- `/clients` — every enrolled client (hostname, revoked, last seen), with client-side search/sort
+  via `simple-datatables`, linking to:
+- `/clients/new` — enroll a new client (hostname + optional SANs); shows the resulting one-time
+  enrollment token on the new client's detail page after redirecting
+- `/clients/:hostname` — one client's full record (SANs, attributes, descriptions), with actions to
+  revoke/unrevoke, re-enroll (shows a fresh one-time token), and inline add/remove editing of
+  description, attributes, and SANs, each gated by its own "Update" button that enables only once
+  that section has a pending change
 - `/catalog` — catalog entries, filterable by real source host, store host (the `bwfs` node that
   replicated the entry), and a path-pattern substring, paginated with Prev/Next (the catalog API
   only supports cursor pagination — no total count, so there's no page-number jump). Entries within
