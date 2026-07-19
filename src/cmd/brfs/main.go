@@ -72,7 +72,7 @@ func main() {
 		"writerHost", arguments.WriterHost,
 		"writerPort", arguments.WriterPort,
 		"streamsCount", arguments.Streams,
-		"jobId", jobID,
+		"event", "start",
 	)
 
 	// Get files list
