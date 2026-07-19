@@ -44,7 +44,7 @@ func (server *backupServer) BackupCommit(ctx context.Context, req *pb.BackupComm
 		// Already decided — by a prior commit call whose response was lost,
 		// or by the stall watchdog racing ahead. Return the ground truth
 		// instead of re-hashing or erroring, so retries are idempotent.
-		server.logger.Info("BackupCommit for already-finalized job", "job_id", jobID, "status", job.Status)
+		server.logger.Info("BackupCommit for already-finalized job", "job_id", jobID, "event", "finish", "status", job.Status)
 		return &pb.BackupCommitResponse{Success: job.Status == storage.JobStatusSuccess}, nil
 	}
 
@@ -55,12 +55,16 @@ func (server *backupServer) BackupCommit(ctx context.Context, req *pb.BackupComm
 	sort.Strings(objectIDs)
 	computed := sha256.Sum256([]byte(strings.Join(objectIDs, "\n")))
 	matched := bytes.Equal(computed[:], req.FileListHash)
+	commitStatus := storage.JobStatusFailure
+	if matched {
+		commitStatus = storage.JobStatusSuccess
+	}
 
 	if _, err := server.store.FinalizeBackupJob(jobID, matched); err != nil {
 		return nil, status.Errorf(codes.Internal, "finalize backup job: %v", err)
 	}
 	server.liveness.Complete(jobID)
 
-	server.logger.Info("Backup job committed", "job_id", jobID, "matched", matched)
+	server.logger.Info("Backup job committed", "job_id", jobID, "event", "finish", "status", commitStatus, "matched", matched)
 	return &pb.BackupCommitResponse{Success: matched}, nil
 }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -43,7 +44,7 @@ type testEnv struct {
 	cleanup func()
 }
 
-func newTestEnv(t *testing.T) *testEnv {
+func newTestEnvWithLogger(t *testing.T, logger *slog.Logger) *testEnv {
 	t.Helper()
 
 	storageDir := t.TempDir()
@@ -55,8 +56,6 @@ func newTestEnv(t *testing.T) *testEnv {
 		FileLockTimeoutSec:   5,
 	}
 	srvCtx := context.WithValue(ctx, config.ContextKey, conf)
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	srv, err := NewBackupServer(srvCtx, logger, storageDir)
 	require.NoError(t, err)
@@ -92,6 +91,11 @@ func newTestEnv(t *testing.T) *testEnv {
 			cancel()
 		},
 	}
+}
+
+func newTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	return newTestEnvWithLogger(t, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 }
 
 // jobContext attaches job-id gRPC metadata, as brfs does when opening a
@@ -526,6 +530,115 @@ func commitHash(ids ...string) []byte {
 	sort.Strings(sorted)
 	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
 	return sum[:]
+}
+
+func TestIntegration_BackupCommit_LogsEventFinishAndStatusSuccessOnMatch(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	env := newTestEnvWithLogger(t, logger)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-commit-log-success")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	_, err = env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash(target.ID())})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, `"msg":"Backup job committed"`)
+	assert.Contains(t, out, `"event":"finish"`)
+	assert.Contains(t, out, `"status":"success"`)
+}
+
+func TestIntegration_BackupCommit_LogsStatusFailureOnMismatch(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	env := newTestEnvWithLogger(t, logger)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-commit-log-mismatch")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	_, err = env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash("never-sent")})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, `"status":"failure"`)
+}
+
+func TestIntegration_BackupCommit_AlreadyFinalizedLogsEventFinish(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	env := newTestEnvWithLogger(t, logger)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	ctx := jobContext("job-commit-log-retry")
+	stream, err := env.client.ProcessBackupStream(ctx)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx, t, stream, target)
+	require.NoError(t, err)
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	_, err = env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash(target.ID())})
+	require.NoError(t, err)
+	buf.Reset() // only care about the log line from the retried call below
+
+	_, err = env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash(target.ID())})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, `"msg":"BackupCommit for already-finalized job"`)
+	assert.Contains(t, out, `"event":"finish"`)
 }
 
 func TestIntegration_BackupCommit_MatchingHashSucceeds(t *testing.T) {
