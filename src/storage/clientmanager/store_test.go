@@ -287,3 +287,24 @@ func TestGetClient_NewClientHasNilLastSeenAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got.LastSeenAt)
 }
+
+func TestLoadClientView_ReturnsFullRecordWithKVAndSANs(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient("node-1", []string{"alias.internal"}, time.Now()))
+	require.NoError(t, store.SetKV("node-1", KindAttribute, "role", "db"))
+	require.NoError(t, store.SetKV("node-1", KindDescription, "owner", "alice"))
+
+	view, err := store.LoadClientView("node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "node-1", view.Hostname)
+	assert.False(t, view.Revoked)
+	assert.Equal(t, []string{"alias.internal"}, view.SANs)
+	assert.Equal(t, "db", view.Attributes["role"])
+	assert.Equal(t, "alice", view.Descriptions["owner"])
+}
+
+func TestLoadClientView_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
+	store := newTestStore(t)
+	_, err := store.LoadClientView("ghost")
+	assert.ErrorIs(t, err, ErrClientNotFound)
+}

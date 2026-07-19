@@ -48,3 +48,16 @@ type ClientKVRecord struct {
 	Key      string `gorm:"primaryKey"`
 	Value    string
 }
+
+// ClientView is a client record plus its resolved description/attribute
+// key/value pairs -- the full shape both clientmanager-api and
+// clientmanager-admin-api expose over gRPC.
+type ClientView struct {
+	Hostname     string
+	Revoked      bool
+	RevokedAt    *time.Time
+	LastSeenAt   *time.Time
+	SANs         []string
+	Descriptions map[string]string
+	Attributes   map[string]string
+}

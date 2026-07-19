@@ -60,6 +60,44 @@ func (s *Store) GetClient(hostname string) (*ClientRecord, error) {
 	return &rec, nil
 }
 
+// LoadClientView returns hostname's full record: base fields plus resolved
+// description and attribute key/value pairs. Returns ErrClientNotFound if
+// hostname isn't tracked.
+func (s *Store) LoadClientView(hostname string) (*ClientView, error) {
+	rec, err := s.GetClient(hostname)
+	if err != nil {
+		return nil, err
+	}
+
+	view := &ClientView{
+		Hostname:   rec.Hostname,
+		Revoked:    rec.Revoked,
+		RevokedAt:  rec.RevokedAt,
+		LastSeenAt: rec.LastSeenAt,
+		SANs:       rec.SANsList(),
+	}
+
+	descs, err := s.KV(hostname, KindDescription)
+	if err != nil {
+		return nil, err
+	}
+	view.Descriptions = make(map[string]string, len(descs))
+	for _, d := range descs {
+		view.Descriptions[d.Key] = d.Value
+	}
+
+	attrs, err := s.KV(hostname, KindAttribute)
+	if err != nil {
+		return nil, err
+	}
+	view.Attributes = make(map[string]string, len(attrs))
+	for _, a := range attrs {
+		view.Attributes[a.Key] = a.Value
+	}
+
+	return view, nil
+}
+
 // ListClients returns every tracked client, ordered by hostname.
 func (s *Store) ListClients() ([]ClientRecord, error) {
 	var recs []ClientRecord

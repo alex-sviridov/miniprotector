@@ -34,18 +34,18 @@ func (s *clientManagerAPIServer) ListClients(ctx context.Context, _ *pb.ListClie
 
 	clients := make([]*pb.Client, len(recs))
 	for i, rec := range recs {
-		client, err := s.toProtoClient(rec)
+		view, err := s.store.LoadClientView(rec.Hostname)
 		if err != nil {
-			s.logger.Error("ListClients: load kv failed", "hostname", rec.Hostname, "error", err)
+			s.logger.Error("ListClients: load view failed", "hostname", rec.Hostname, "error", err)
 			return nil, status.Errorf(codes.Internal, "list clients: %v", err)
 		}
-		clients[i] = client
+		clients[i] = toProtoClient(view)
 	}
 	return &pb.ListClientsResponse{Clients: clients}, nil
 }
 
 func (s *clientManagerAPIServer) GetClient(ctx context.Context, req *pb.GetClientRequest) (*pb.Client, error) {
-	rec, err := s.store.GetClient(req.GetHostname())
+	view, err := s.store.LoadClientView(req.GetHostname())
 	if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		return nil, status.Errorf(codes.NotFound, "client %s not found", req.GetHostname())
 	}
@@ -53,39 +53,27 @@ func (s *clientManagerAPIServer) GetClient(ctx context.Context, req *pb.GetClien
 		s.logger.Error("GetClient: query failed", "hostname", req.GetHostname(), "error", err)
 		return nil, status.Errorf(codes.Internal, "get client: %v", err)
 	}
-	return s.toProtoClient(*rec)
+	return toProtoClient(view), nil
 }
 
-func (s *clientManagerAPIServer) toProtoClient(rec clientmanagerstore.ClientRecord) (*pb.Client, error) {
+// toProtoClient converts a resolved client view into its wire
+// representation. clientmanager-admin-api has its own local copy of this
+// same conversion -- storage/clientmanager can't import the generated pb
+// package without an import cycle, so each gRPC-facing binary does its
+// own trivial field mapping from the shared ClientView.
+func toProtoClient(v *clientmanagerstore.ClientView) *pb.Client {
 	client := &pb.Client{
-		Hostname: rec.Hostname,
-		Revoked:  rec.Revoked,
-		Sans:     rec.SANsList(),
+		Hostname:     v.Hostname,
+		Revoked:      v.Revoked,
+		Sans:         v.SANs,
+		Descriptions: v.Descriptions,
+		Attributes:   v.Attributes,
 	}
-	if rec.RevokedAt != nil {
-		client.RevokedAt = rec.RevokedAt.Unix()
+	if v.RevokedAt != nil {
+		client.RevokedAt = v.RevokedAt.Unix()
 	}
-	if rec.LastSeenAt != nil {
-		client.LastSeenAt = rec.LastSeenAt.Unix()
+	if v.LastSeenAt != nil {
+		client.LastSeenAt = v.LastSeenAt.Unix()
 	}
-
-	descs, err := s.store.KV(rec.Hostname, clientmanagerstore.KindDescription)
-	if err != nil {
-		return nil, err
-	}
-	client.Descriptions = make(map[string]string, len(descs))
-	for _, d := range descs {
-		client.Descriptions[d.Key] = d.Value
-	}
-
-	attrs, err := s.store.KV(rec.Hostname, clientmanagerstore.KindAttribute)
-	if err != nil {
-		return nil, err
-	}
-	client.Attributes = make(map[string]string, len(attrs))
-	for _, a := range attrs {
-		client.Attributes[a.Key] = a.Value
-	}
-
-	return client, nil
+	return client
 }
