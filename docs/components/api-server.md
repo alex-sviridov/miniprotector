@@ -1,8 +1,11 @@
 # api-server
 
 Unified REST API in front of the control plane's client, catalog, and policy data — for browsers
-and admin tools that don't hold a mesh mTLS client certificate. Client and catalog access are
-read-only; policies additionally support create/update/delete. **Control-plane component.**
+and admin tools that don't hold a mesh mTLS client certificate. Catalog access is read-only; policies
+support create/update/delete; client data supports both read (via `clientmanager-api`) and writes —
+enroll/re-enroll, revoke/unrevoke, description/attribute/SAN management (via
+`clientmanager-admin-api`, see [Design: clientmanager-admin-api](../superpowers/specs/2026-07-19-clientmanager-admin-api-design.md)).
+**Control-plane component.**
 
 `api-server` is the system's first REST surface; every other inter-component call in this project
 is gRPC over mTLS, including api-server's own outbound calls to
@@ -47,6 +50,7 @@ convention, not a new gap.
 - `api_server_port` — port the REST listener binds to *(default: 8090)*
 - `api_server_token` — bearer token required on every REST request
 - `clientmanager_api_host` / `clientmanager_api_port` — where to dial `clientmanager-api`
+- `clientmanager_admin_api_host` / `clientmanager_admin_api_port` — where to dial `clientmanager-admin-api` *(default port: 9501)*
 - `catalog_host` / `catalog_port` — where to dial `catalog`
 - `policy_server_host` / `policy_server_port` — where to dial `policy-server` *(default port:
   9300)*
@@ -72,6 +76,7 @@ make api-server
 ## See Also
 
 - [clientmanager-api](./clientmanager-api.md) — one of the two backends this component reads from
+- [clientmanager-admin-api](./clientmanager-admin-api.md) — the write-capable backend behind this component's client-write endpoints
 - [catalog](./catalog.md) — the other backend
 - [REST API v1](../api/rest-v1.md)
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-19 — clientmanager-admin-api: network-reachable client enrollment/revocation/metadata writes
+
+Added `clientmanager-admin-api`, a new gRPC daemon holding the CA provisioner password directly and
+exposing the write operations `client-manager`'s CLI already had (issue/re-enroll enrollment tokens,
+revoke/unrevoke, description/attribute/SAN management) over the network for the first time, via seven
+new `api-server` REST endpoints under `/api/v1/clients`. Packaged in the same container as the
+existing (unchanged, still read-only) `clientmanager-api` to avoid a second mesh enrollment, keeping
+the two as separate processes for isolation. `client-manager`'s CLI remains available unchanged for
+direct, on-host admin access.
+
 ## 2026-07-19 — web: group catalog entries into file versions
 
 `/catalog` now groups entries within each loaded page into one row per distinct file (source host +

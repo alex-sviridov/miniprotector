@@ -61,6 +61,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 - **[agent](docs/components/agent.md)** - Node agent — reconciles local state against embedded policies (credential renewal via `certclient`, policy fetch via `policyclient`, and policy-driven backup execution via `brfs`)
 - **[policyclient](docs/components/policyclient.md)** - Fetches backup policies from `policy-server` into a local cache (consumed by `agent` for policy-driven backup execution)
 - **[client-manager](docs/components/client-manager.md)** - Owns the enrolled-client list and mints enrollment tokens directly: descriptions, RBAC-bound attributes, SAN aliases, revoked status (control-plane component, runs on the CA host)
+- **[clientmanager-admin-api](docs/components/clientmanager-admin-api.md)** - CA-admin-equivalent gRPC writes (issue/revoke/description/attribute/SAN) onto client-manager's enrolled-client data, reachable via `api-server`
 - **[issuer](docs/components/issuer.md)** - Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares `client-manager`'s database (control-plane component, runs on the CA host)
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component

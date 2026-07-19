@@ -16,6 +16,7 @@ A backup system with intelligent deduplication and integrity verification.
 | policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (`agent` fetches, caches, and now acts on its policies — deriving and running scheduled `brfs` backups via `policyclient`) |
 | log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; gates on a valid operating certificate, forwards the push body unmodified | Implemented (agent bundles, configures, and supervises the Vector process that ships to it) |
 | clientmanager-api | Read-only gRPC daemon exposing `client-manager`'s enrolled-client data (`ListClients`/`GetClient`), sharing its SQLite file the same way `issuer` already does | Implemented |
+| clientmanager-admin-api | CA-admin-equivalent gRPC writes (issue/re-enroll/revoke/unrevoke/description/attribute/SAN) onto the same database, packaged in clientmanager-api's container | Implemented |
 | api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate | Implemented |
 | web | Static Vue frontend over `api-server`'s REST API — this system's first browser UI; served by nginx, no mTLS identity of its own | Implemented |
 
@@ -26,9 +27,9 @@ exercising this whole topology end to end.
 
 |  | Control plane | Agents |
 |---|---|---|
-| Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `policy-server`, `client-manager`, `issuer`, `clientmanager-api`, `api-server` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
-| Runs where | On the CA host (`client-manager`, `issuer`, `clientmanager-api`); `catalog`/`policy-server`/`api-server` run centrally, wherever each deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh, and `policy_server_host:9300` outbound for policy fetching; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, fetched by `agent` via `policyclient`); `clientmanager-api` serves `ListClients`/`GetClient` on `:9500` (mTLS); `api-server` serves this system's first REST (not gRPC) surface on `:8090` (plain HTTP, bearer-token authenticated), dialing `clientmanager-api` and `catalog` outbound over mTLS on their behalf — none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `policy-server`, `client-manager`, `issuer`, `clientmanager-api`, `clientmanager-admin-api`, `api-server` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
+| Runs where | On the CA host (`client-manager`, `issuer`, `clientmanager-api`, `clientmanager-admin-api`); `catalog`/`policy-server`/`api-server` run centrally, wherever each deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh, and `policy_server_host:9300` outbound for policy fetching; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, fetched by `agent` via `policyclient`); `clientmanager-api` serves `ListClients`/`GetClient` on `:9500` (mTLS); `clientmanager-admin-api` serves `AddClient`/`ReEnrollClient`/`RevokeClient`/`UnrevokeClient`/`UpdateDescription`/`UpdateAttributes`/`UpdateSANs` on `:9501` (mTLS) — a third holder of CA-admin-equivalent access, alongside `client-manager` and `issuer`, stated explicitly rather than left implicit; `api-server` serves this system's first REST (not gRPC) surface on `:8090` (plain HTTP, bearer-token authenticated), dialing `clientmanager-api`, `clientmanager-admin-api`, and `catalog` outbound over mTLS on their behalf — none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` and `agent` — `catalog`'s, `policy-server`'s, `clientmanager-api`'s, and `api-server`'s images are all among them, since each is deployed as an ordinary `agent`-managed enrolled node (see [Control Plane README](../deploy/control-plane/README.md)) |
 
 `issuer` is the one exception to the "obtained via `certclient`" rule below: it mints and signs its
@@ -57,6 +58,14 @@ obtains its mTLS identity the ordinary way, via `certclient`. It is a thin, read
 `GetClient`) gRPC front end onto that database; `client-manager` (the CLI) and `issuer` remain the
 only writers. It listens on its own port (`clientmanager_api_port`, default 9500). See
 [clientmanager-api](components/clientmanager-api.md).
+
+`clientmanager-admin-api` runs alongside `clientmanager-api` in the *same container*, sharing one
+mesh identity/`agent` process rather than enrolling separately — see
+[clientmanager-admin-api](components/clientmanager-admin-api.md) and
+[Design: clientmanager-admin-api](superpowers/specs/2026-07-19-clientmanager-admin-api-design.md)
+for why (avoiding a second one-time enrollment token and a second `agent` process for what would
+otherwise be a purely operational cost, at the price of shared container-filesystem isolation between
+the two binaries).
 
 `api-server` is control plane by role and, like `catalog`/`policy-server`, obtains its own mTLS
 identity as an ordinary `agent`-managed enrolled node — but only for its *outbound* calls to

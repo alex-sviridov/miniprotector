@@ -47,6 +47,64 @@ these fields are never defaulted to empty collections.
 Returns one client's full record (same shape as one entry above). `404` if `hostname` isn't
 enrolled.
 
+## `POST /api/v1/clients`
+
+Enrolls a new client and mints a one-time enrollment token for it. Body:
+
+```json
+{"hostname": "node-east-02", "sans": ["node-east-02.internal"]}
+```
+
+`201` with `{"hostname": "...", "token": "..."}` on success — the token is returned exactly once;
+relay it to the target node out-of-band, the same as `client-manager add` today. `400` if `hostname`
+is empty. `409` if `hostname` is already enrolled.
+
+## `POST /api/v1/clients/{hostname}/reenroll`
+
+Mints a fresh enrollment token for an already-tracked hostname. Body (optional):
+
+```json
+{"sans": ["override.internal"]}
+```
+
+`200` with `{"hostname": "...", "token": "..."}`. `sans`, if given, overrides the stored SAN list for
+this token only — it is not persisted; use `PATCH .../sans` for a persistent change. `404` if
+`hostname` isn't enrolled.
+
+## `POST /api/v1/clients/{hostname}/revoke`
+
+## `POST /api/v1/clients/{hostname}/unrevoke`
+
+No body. `200` with the client's updated record (same shape as `GET /api/v1/clients/{hostname}`).
+`404` if `hostname` isn't enrolled. Enforcement (refusing a revoked node's next operating-certificate
+request) happens on the node's next credential refresh, not synchronously with this call.
+
+## `PATCH /api/v1/clients/{hostname}/description`
+
+## `PATCH /api/v1/clients/{hostname}/attributes`
+
+Partial update — set then unset, per key (not a full-replace `PUT` like policies get). Body:
+
+```json
+{"set": {"owner": "alice"}, "unset": ["old-key"]}
+```
+
+`200` with the client's updated record. `404` if `hostname` isn't enrolled. `attributes` is this
+system's "attribute labels" (the same key/value pairs `policy-server`'s `client_filters.labels`
+matches against) — JSON field stays `attributes`, matching `GET /api/v1/clients`'s existing response
+shape.
+
+## `PATCH /api/v1/clients/{hostname}/sans`
+
+Body:
+
+```json
+{"add": ["new.internal"], "remove": ["old.internal"]}
+```
+
+`200` with the client's updated record. `404` if `hostname` isn't enrolled. Adding an already-present
+alias or removing an absent one is a no-op, not an error.
+
 ## `GET /api/v1/catalog`
 
 Query parameters (all optional):

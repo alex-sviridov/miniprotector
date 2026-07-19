@@ -52,6 +52,7 @@ make clientmanager-api
 ## See Also
 
 - [client-manager](./client-manager.md) — the CLI tool sharing this component's database
+- [clientmanager-admin-api](./clientmanager-admin-api.md) — the write-capable sibling service, packaged in the same container
 - [issuer](./issuer.md) — the existing precedent for a daemon sharing client-manager's database
 - [api-server](./api-server.md) — the only intended caller of this service today
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
