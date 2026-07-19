@@ -69,4 +69,118 @@ describe('clients store', () => {
     expect(result).toEqual({ hostname: 'webserver', revoked: false })
     expect(clients.error).toBeNull()
   })
+
+  it('enroll posts hostname/sans, records a minimal list entry, and sets pendingToken', async () => {
+    apiFetch.mockResolvedValue({ hostname: 'node-1', token: 'tok-abc' })
+    const clients = useClientsStore()
+
+    const result = await clients.enroll('node-1', ['alias.internal'])
+
+    expect(apiFetch).toHaveBeenCalledWith('/clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostname: 'node-1', sans: ['alias.internal'] }),
+    })
+    expect(result).toEqual({ hostname: 'node-1', token: 'tok-abc' })
+    expect(clients.list).toEqual([{ hostname: 'node-1', revoked: false, revoked_at: 0, last_seen_at: 0 }])
+    expect(clients.pendingToken).toEqual({ hostname: 'node-1', token: 'tok-abc' })
+  })
+
+  it('enroll records an error and rethrows on failure', async () => {
+    apiFetch.mockRejectedValue(new Error('client node-1 already enrolled'))
+    const clients = useClientsStore()
+
+    await expect(clients.enroll('node-1', [])).rejects.toThrow('client node-1 already enrolled')
+    expect(clients.error).toBe('client node-1 already enrolled')
+    expect(clients.pendingToken).toBeNull()
+  })
+
+  it('reenroll posts sans, sets pendingToken, and does not touch list/byHostname', async () => {
+    apiFetch.mockResolvedValue({ hostname: 'node-1', token: 'tok-fresh' })
+    const clients = useClientsStore()
+
+    const result = await clients.reenroll('node-1', ['override.internal'])
+
+    expect(apiFetch).toHaveBeenCalledWith('/clients/node-1/reenroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sans: ['override.internal'] }),
+    })
+    expect(result).toEqual({ hostname: 'node-1', token: 'tok-fresh' })
+    expect(clients.pendingToken).toEqual({ hostname: 'node-1', token: 'tok-fresh' })
+    expect(clients.list).toEqual([])
+  })
+
+  it('revoke posts to the revoke endpoint and updates byHostname and the matching list row', async () => {
+    const updated = { hostname: 'node-1', revoked: true, revoked_at: 111, last_seen_at: 0 }
+    apiFetch.mockResolvedValue(updated)
+    const clients = useClientsStore()
+    clients.list = [{ hostname: 'node-1', revoked: false, revoked_at: 0, last_seen_at: 0 }]
+
+    const result = await clients.revoke('node-1')
+
+    expect(apiFetch).toHaveBeenCalledWith('/clients/node-1/revoke', { method: 'POST' })
+    expect(result).toEqual(updated)
+    expect(clients.byHostname['node-1']).toEqual(updated)
+    expect(clients.list[0]).toEqual(updated)
+  })
+
+  it('unrevoke posts to the unrevoke endpoint and updates the cache', async () => {
+    const updated = { hostname: 'node-1', revoked: false, revoked_at: 0, last_seen_at: 0 }
+    apiFetch.mockResolvedValue(updated)
+    const clients = useClientsStore()
+    clients.list = [{ hostname: 'node-1', revoked: true, revoked_at: 111, last_seen_at: 0 }]
+
+    await clients.unrevoke('node-1')
+
+    expect(apiFetch).toHaveBeenCalledWith('/clients/node-1/unrevoke', { method: 'POST' })
+    expect(clients.byHostname['node-1']).toEqual(updated)
+    expect(clients.list[0]).toEqual(updated)
+  })
+
+  it('updateDescription PATCHes set/unset and updates the cache', async () => {
+    const updated = { hostname: 'node-1', descriptions: { owner: 'alice' } }
+    apiFetch.mockResolvedValue(updated)
+    const clients = useClientsStore()
+
+    const result = await clients.updateDescription('node-1', { owner: 'alice' }, ['old'])
+
+    expect(apiFetch).toHaveBeenCalledWith('/clients/node-1/description', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ set: { owner: 'alice' }, unset: ['old'] }),
+    })
+    expect(result).toEqual(updated)
+    expect(clients.byHostname['node-1']).toEqual(updated)
+  })
+
+  it('updateAttributes PATCHes set/unset and updates the cache', async () => {
+    const updated = { hostname: 'node-1', attributes: { role: 'db' } }
+    apiFetch.mockResolvedValue(updated)
+    const clients = useClientsStore()
+
+    await clients.updateAttributes('node-1', { role: 'db' }, [])
+
+    expect(apiFetch).toHaveBeenCalledWith('/clients/node-1/attributes', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ set: { role: 'db' }, unset: [] }),
+    })
+    expect(clients.byHostname['node-1']).toEqual(updated)
+  })
+
+  it('updateSans PATCHes add/remove and updates the cache', async () => {
+    const updated = { hostname: 'node-1', sans: ['new.internal'] }
+    apiFetch.mockResolvedValue(updated)
+    const clients = useClientsStore()
+
+    await clients.updateSans('node-1', ['new.internal'], ['old.internal'])
+
+    expect(apiFetch).toHaveBeenCalledWith('/clients/node-1/sans', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ add: ['new.internal'], remove: ['old.internal'] }),
+    })
+    expect(clients.byHostname['node-1']).toEqual(updated)
+  })
 })
