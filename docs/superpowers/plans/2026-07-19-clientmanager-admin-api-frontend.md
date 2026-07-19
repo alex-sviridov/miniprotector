@@ -757,10 +757,9 @@ describe('KeyValueEditor', () => {
   it('Update button enables once a value changes, and emits the correct set/unset diff', async () => {
     const wrapper = mountEditor({ owner: 'alice', old: 'gone' })
 
-    const keyInputs = wrapper.findAll('[data-test="description-key-input"]')
     const valueInputs = wrapper.findAll('[data-test="description-value-input"]')
     await valueInputs[0].setValue('bob')
-    await wrapper.find('[data-test="description-remove"]').trigger('click')
+    await wrapper.findAll('[data-test="description-remove"]')[1].trigger('click')
 
     expect(wrapper.find('[data-test="description-update"]').attributes('disabled')).toBeUndefined()
 
