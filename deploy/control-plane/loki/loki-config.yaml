@@ -28,3 +28,11 @@ schema_config:
 
 limits_config:
   retention_period: 720h
+  # Query-cost bounds for GET /api/v1/jobs and /api/v1/jobs/{job_id}/logs
+  # (docs/superpowers/specs/2026-07-19-jobs-endpoint-design.md) -- defense
+  # in depth so a broad or misbehaving query can't peg this single Loki
+  # instance, the same "generous but bounded" philosophy log-gateway
+  # already applies to push size/timeout.
+  max_query_length: 168h
+  max_entries_limit_per_query: 5000
+  query_timeout: 30s
