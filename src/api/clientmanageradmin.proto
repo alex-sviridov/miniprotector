@@ -1,0 +1,61 @@
+// src/api/clientmanageradmin.proto
+syntax = "proto3";
+
+package clientmanageradminservice;
+
+import "api/clientmanager.proto";
+
+option go_package = "./proto";
+
+// ClientManagerAdminService holds the CA provisioner password directly
+// (CA-admin-equivalent access) -- deliberately isolated from
+// clientmanager-api's general-purpose, password-free read surface. See
+// docs/superpowers/specs/2026-07-19-clientmanager-admin-api-design.md.
+service ClientManagerAdminService {
+  rpc AddClient(AddClientRequest) returns (AddClientResponse);
+  rpc ReEnrollClient(ReEnrollClientRequest) returns (ReEnrollClientResponse);
+  rpc RevokeClient(RevokeClientRequest) returns (clientmanagerapiservice.Client);
+  rpc UnrevokeClient(UnrevokeClientRequest) returns (clientmanagerapiservice.Client);
+  rpc UpdateDescription(UpdateClientKVRequest) returns (clientmanagerapiservice.Client);
+  rpc UpdateAttributes(UpdateClientKVRequest) returns (clientmanagerapiservice.Client);
+  rpc UpdateSANs(UpdateClientSANsRequest) returns (clientmanagerapiservice.Client);
+}
+
+message AddClientRequest {
+  string hostname = 1;
+  repeated string sans = 2;
+}
+
+message AddClientResponse {
+  string token = 1;
+}
+
+message ReEnrollClientRequest {
+  string hostname = 1;
+  // Empty means keep the hostname's currently stored SANs.
+  repeated string sans = 2;
+}
+
+message ReEnrollClientResponse {
+  string token = 1;
+}
+
+message RevokeClientRequest {
+  string hostname = 1;
+}
+
+message UnrevokeClientRequest {
+  string hostname = 1;
+}
+
+message UpdateClientKVRequest {
+  string hostname = 1;
+  map<string, string> set = 2;
+  repeated string unset = 3;
+}
+
+message UpdateClientSANsRequest {
+  string hostname = 1;
+  repeated string add = 2;
+  repeated string remove = 3;
+}
