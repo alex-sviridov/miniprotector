@@ -68,6 +68,49 @@ func TestHandleListJobs_PairsStartAndFinishByJobID(t *testing.T) {
 	assert.Equal(t, "success", job["state"])
 }
 
+// TestHandleListJobs_ReadsJobIDFromStreamLevelStructuredMetadata reproduces
+// real Loki 3.7.3's actual query_range wire shape for this query pattern:
+// since job_id is unique per invocation, each matching line's structured
+// metadata is homogeneous within its stream group, so Loki hoists
+// job_id/event/status onto the stream object and returns bare [timestamp,
+// line] values -- no 3rd per-value metadata element. Confirmed against a
+// real demo Loki instance: api-server's /api/v1/jobs came back empty despite
+// brfs/bwfs/agent and Vector all correctly producing and shipping the data.
+func TestHandleListJobs_ReadsJobIDFromStreamLevelStructuredMetadata(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+			{
+				Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1752400500", "event": "start"},
+				Values: []lokiValue{{Timestamp: 1752400500000000000}},
+			},
+		},
+		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+			{
+				Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1752400500", "event": "finish", "status": "success"},
+				Values: []lokiValue{{Timestamp: 1752400501000000000}},
+			},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 1, "job dropped -- job_id must be read from stream-level fields when per-value Metadata is absent")
+	job := data[0].(map[string]any)
+	assert.Equal(t, "operating-refresh:1752400500", job["job_id"])
+	assert.Equal(t, "success", job["state"])
+	assert.Equal(t, float64(1752400501), job["finished_at"])
+}
+
 func TestHandleListJobs_NoFinishLineMeansInProgress(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
 		`{binary=~"agent|brfs|bwfs"} | event="start"`: {

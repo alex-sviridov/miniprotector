@@ -91,17 +91,33 @@ func (s *server) queryEvent(ctx context.Context, labelSelector, event string, si
 	count := 0
 	for _, stream := range streams {
 		hostname := stream.Stream["hostname"]
+		// job_id is unique per job invocation, so within one stream group
+		// every line shares the same job_id/status -- real Loki (3.7.3,
+		// confirmed against a live instance) hoists that homogeneous
+		// structured metadata onto the stream object instead of repeating
+		// it per value, leaving Values with no 3rd element at all. Metadata
+		// is checked first since it's still the authoritative per-line
+		// source on the rare stream that does carry it.
+		streamJobID := stream.Stream["job_id"]
+		streamStatus := stream.Stream["status"]
 		for _, v := range stream.Values {
 			count++
 			jobID := v.Metadata["job_id"]
 			if jobID == "" {
+				jobID = streamJobID
+			}
+			if jobID == "" {
 				continue
+			}
+			status := v.Metadata["status"]
+			if status == "" {
+				status = streamStatus
 			}
 			lines = append(lines, jobEventLine{
 				JobID:     jobID,
 				Hostname:  hostname,
 				Timestamp: v.Timestamp / 1_000_000_000,
-				Status:    v.Metadata["status"],
+				Status:    status,
 			})
 		}
 	}
