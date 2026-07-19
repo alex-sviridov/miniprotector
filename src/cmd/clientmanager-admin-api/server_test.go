@@ -155,3 +155,47 @@ func TestUnrevokeClient_UnknownHostnameReturnsNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
+
+func TestUpdateDescription_SetsAndUnsetsKeys(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindDescription, "old", "gone"))
+
+	client, err := srv.UpdateDescription(context.Background(), &pb.UpdateClientKVRequest{
+		Hostname: "node-1",
+		Set:      map[string]string{"owner": "alice"},
+		Unset:    []string{"old"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "alice", client.GetDescriptions()["owner"])
+	_, stillThere := client.GetDescriptions()["old"]
+	assert.False(t, stillThere)
+}
+
+func TestUpdateDescription_UnknownHostnameReturnsNotFound(t *testing.T) {
+	srv, _, _ := newTestAdminServer(t)
+
+	_, err := srv.UpdateDescription(context.Background(), &pb.UpdateClientKVRequest{Hostname: "ghost", Set: map[string]string{"k": "v"}})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestUpdateAttributes_SetsAndUnsetsKeys(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+
+	client, err := srv.UpdateAttributes(context.Background(), &pb.UpdateClientKVRequest{
+		Hostname: "node-1",
+		Set:      map[string]string{"role": "db"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "db", client.GetAttributes()["role"])
+}
+
+func TestUpdateAttributes_UnknownHostnameReturnsNotFound(t *testing.T) {
+	srv, _, _ := newTestAdminServer(t)
+
+	_, err := srv.UpdateAttributes(context.Background(), &pb.UpdateClientKVRequest{Hostname: "ghost", Set: map[string]string{"k": "v"}})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}

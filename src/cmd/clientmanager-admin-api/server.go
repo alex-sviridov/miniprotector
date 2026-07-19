@@ -103,6 +103,37 @@ func (s *clientManagerAdminServer) setRevoked(hostname string, revoked bool) (*p
 	return s.loadClient(hostname)
 }
 
+func (s *clientManagerAdminServer) UpdateDescription(ctx context.Context, req *pb.UpdateClientKVRequest) (*pb.Client, error) {
+	return s.updateKV(req, clientmanagerstore.KindDescription)
+}
+
+func (s *clientManagerAdminServer) UpdateAttributes(ctx context.Context, req *pb.UpdateClientKVRequest) (*pb.Client, error) {
+	return s.updateKV(req, clientmanagerstore.KindAttribute)
+}
+
+func (s *clientManagerAdminServer) updateKV(req *pb.UpdateClientKVRequest, kind clientmanagerstore.KVKind) (*pb.Client, error) {
+	hostname := req.GetHostname()
+	for key, value := range req.GetSet() {
+		if err := s.store.SetKV(hostname, kind, key, value); err != nil {
+			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
+				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+			}
+			s.logger.Error("updateKV: set failed", "hostname", hostname, "kind", kind, "key", key, "error", err)
+			return nil, status.Errorf(codes.Internal, "set %s: %v", kind, err)
+		}
+	}
+	for _, key := range req.GetUnset() {
+		if err := s.store.UnsetKV(hostname, kind, key); err != nil {
+			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
+				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+			}
+			s.logger.Error("updateKV: unset failed", "hostname", hostname, "kind", kind, "key", key, "error", err)
+			return nil, status.Errorf(codes.Internal, "unset %s: %v", kind, err)
+		}
+	}
+	return s.loadClient(hostname)
+}
+
 // loadClient loads hostname's full record for a response, used by every
 // RPC below AddClient/ReEnrollClient that returns the updated Client.
 func (s *clientManagerAdminServer) loadClient(hostname string) (*pb.Client, error) {
