@@ -119,6 +119,11 @@ pipeline reads from continuously.
    own docs and an open upstream issue asking for exactly that — so it would have broken that
    invariant for the first time. Vector, with its API left at its default, doesn't.
 
+   > **Follow-up (2026-07-19):** Vector's config additionally lifts `job_id`/`event`/`status` into Loki
+   > structured metadata (not labels — avoids the per-job stream-cardinality problem this document's
+   > own Data Flow section already flags for `job_id`). See
+   > [Design: /jobs REST Endpoint](2026-07-19-jobs-endpoint-design.md).
+
    **Bundling and isolation** (so a pre-existing, unrelated log shipper on the same host, if any,
    is never touched or interfered with):
    - The Vector binary is copied into the same directory as `agent`/`certclient`/`policyclient`/

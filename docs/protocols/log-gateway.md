@@ -43,6 +43,15 @@ per Loki's own convention). `502 Bad Gateway` if Loki itself is unreachable. `40
 no verified peer certificate was presented. `413 Request Entity Too Large` if the body exceeds
 `log-gateway`'s 10MB cap. `405 Method Not Allowed` for anything other than `POST`.
 
+## `GET /loki/api/v1/query_range`
+
+Same mTLS operating-tier gate as the push path. Query parameters are forwarded to Loki's real
+`query_range` endpoint unmodified; the response body is forwarded back unmodified, capped at 10MB
+(`502 Bad Gateway` if exceeded or if Loki is unreachable). `401 Unauthorized` if no verified peer
+certificate was presented. `405 Method Not Allowed` for anything other than `GET`. Added for
+`api-server`'s `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}/logs` — see
+[Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
+
 ## See Also
 
 - [log-gateway](../components/log-gateway.md)

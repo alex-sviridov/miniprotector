@@ -159,7 +159,7 @@ Query parameters (all optional):
 | Param | Type | Description |
 |-------|------|--------------|
 | `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update` |
-| `source_host` | string | Exact match on the job's start-line hostname |
+| `source_host` | string | Exact match on the job's start-line hostname. Must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
 | `state` | string | Exact match on the job's terminal status (e.g. `success`, `failure`); jobs still running never match, since they have no finish line yet |
 | `since` | int, unix seconds | Start of the query window, default `now - 24h` |
 | `until` | int, unix seconds | End of the query window, default `now` |
@@ -194,8 +194,24 @@ underlying Loki queries hit its own line cap and the result may be incomplete; n
 `until` is before `since`, the window exceeds 168h, or `limit` isn't an integer in `[1, 500]`.
 `502` if the underlying Loki query fails.
 
-`GET /api/v1/jobs/{job_id}/logs` (fetching the raw log lines for one job) is registered but not
-yet implemented as of this endpoint's introduction.
+## `GET /api/v1/jobs/{job_id}/logs`
+
+| Param | Type | Description |
+|-------|------|--------------|
+| `since` | unix seconds | Only lines after this timestamp. Default: 24h before now |
+| `source_host` / `store_host` | string | Optional — narrows the query to the hosts involved, if already known from a prior `/jobs` response. Each must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
+
+`job_id` must match `^[a-zA-Z0-9:_-]+$` — `400` otherwise.
+
+```json
+{
+  "data": [
+    {"timestamp": 1752400000123456789, "hostname": "database", "binary": "brfs", "line": "{...raw json log line...}"}
+  ]
+}
+```
+
+A client polling with an advancing `since` cursor gets a near-real-time tail.
 
 ## See Also
 

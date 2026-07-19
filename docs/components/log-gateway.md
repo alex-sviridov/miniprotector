@@ -36,6 +36,11 @@ Loki's own status/body proxied through otherwise) rather than swallowed.
 `mtls.ServerTLSConfig`/`ServerTLSConfig`-equivalent tier check `bwfs`/`catalog` already enforce
 (via `common/mtls.LoadServerCredentials`) rejects a bootstrap/issuer-caller credential outright.
 
+`log-gateway` also proxies Loki's read path: `GET /loki/api/v1/query_range`, gated by the same
+operating-tier mTLS check, forwarding query parameters unmodified. See
+[log-gateway Protocol](../protocols/log-gateway.md) and
+[Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
+
 ## Building
 
 ```bash

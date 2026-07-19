@@ -23,7 +23,11 @@ api-server --port 8090 --token <bearer-token>
 
 ## Endpoints
 
-See [REST API v1](../api/rest-v1.md) for the full endpoint reference.
+See [REST API v1](../api/rest-v1.md) for the full endpoint reference. Every endpoint maps to exactly
+one backend gRPC call except `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}/logs`, which query
+Loki (through `log-gateway`'s read-proxy route) and aggregate the result — the one deliberate
+exception to that rule, documented in
+[Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
 ## Authentication
 
@@ -45,6 +49,7 @@ convention, not a new gap.
 - `catalog_host` / `catalog_port` — where to dial `catalog`
 - `policy_server_host` / `policy_server_port` — where to dial `policy-server` *(default port:
   9300)*
+- `log_gateway_host` / `log_gateway_port` — where to dial `log-gateway`'s Loki query-proxy route for `GET /api/v1/jobs*` *(default port: 9400)*
 
 ## Certificates
 
