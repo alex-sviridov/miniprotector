@@ -161,6 +161,9 @@ func (s *clientManagerAdminServer) UpdateSANs(ctx context.Context, req *pb.Updat
 // RPC below AddClient/ReEnrollClient that returns the updated Client.
 func (s *clientManagerAdminServer) loadClient(hostname string) (*pb.Client, error) {
 	view, err := s.store.LoadClientView(hostname)
+	if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
+		return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+	}
 	if err != nil {
 		s.logger.Error("loadClient: query failed", "hostname", hostname, "error", err)
 		return nil, status.Errorf(codes.Internal, "load client: %v", err)

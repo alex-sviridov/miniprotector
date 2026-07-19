@@ -220,3 +220,23 @@ func TestUpdateSANs_UnknownHostnameReturnsNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
+
+// An empty Set/Unset (or Add/Remove) request skips every store call and
+// falls straight through to loadClient -- this must still report
+// NotFound for an unknown hostname, not the Internal loadClient itself
+// falls back to on a genuine query failure.
+func TestUpdateSANs_EmptyRequestOnUnknownHostnameStillReturnsNotFound(t *testing.T) {
+	srv, _, _ := newTestAdminServer(t)
+
+	_, err := srv.UpdateSANs(context.Background(), &pb.UpdateClientSANsRequest{Hostname: "ghost"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestUpdateDescription_EmptyRequestOnUnknownHostnameStillReturnsNotFound(t *testing.T) {
+	srv, _, _ := newTestAdminServer(t)
+
+	_, err := srv.UpdateDescription(context.Background(), &pb.UpdateClientKVRequest{Hostname: "ghost"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
