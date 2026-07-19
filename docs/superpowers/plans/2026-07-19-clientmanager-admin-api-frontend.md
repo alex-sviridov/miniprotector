@@ -1317,8 +1317,12 @@ function confirmUnrevoke() {
   }
 }
 async function reenroll() {
-  await clients.reenroll(hostname.value)
-  checkPendingToken()
+  try {
+    await clients.reenroll(hostname.value)
+    checkPendingToken()
+  } catch {
+    // error already recorded on clients.error by the store
+  }
 }
 
 async function copyToken() {
