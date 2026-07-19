@@ -84,6 +84,25 @@ func (s *clientManagerAdminServer) ReEnrollClient(ctx context.Context, req *pb.R
 	return &pb.ReEnrollClientResponse{Token: token}, nil
 }
 
+func (s *clientManagerAdminServer) RevokeClient(ctx context.Context, req *pb.RevokeClientRequest) (*pb.Client, error) {
+	return s.setRevoked(req.GetHostname(), true)
+}
+
+func (s *clientManagerAdminServer) UnrevokeClient(ctx context.Context, req *pb.UnrevokeClientRequest) (*pb.Client, error) {
+	return s.setRevoked(req.GetHostname(), false)
+}
+
+func (s *clientManagerAdminServer) setRevoked(hostname string, revoked bool) (*pb.Client, error) {
+	if err := s.store.SetRevoked(hostname, revoked, time.Now()); err != nil {
+		if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
+			return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+		}
+		s.logger.Error("setRevoked: update failed", "hostname", hostname, "revoked", revoked, "error", err)
+		return nil, status.Errorf(codes.Internal, "update revoked: %v", err)
+	}
+	return s.loadClient(hostname)
+}
+
 // loadClient loads hostname's full record for a response, used by every
 // RPC below AddClient/ReEnrollClient that returns the updated Client.
 func (s *clientManagerAdminServer) loadClient(hostname string) (*pb.Client, error) {

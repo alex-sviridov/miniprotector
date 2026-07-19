@@ -118,3 +118,40 @@ func TestReEnrollClient_WithSANOverride_UsesOverrideNotStoredSANs(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"override1"}, rec.lastSANs)
 }
+
+func TestRevokeClient_SetsRevokedAndReturnsUpdatedClient(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+
+	client, err := srv.RevokeClient(context.Background(), &pb.RevokeClientRequest{Hostname: "node-1"})
+	require.NoError(t, err)
+	assert.True(t, client.GetRevoked())
+	assert.NotZero(t, client.GetRevokedAt())
+}
+
+func TestRevokeClient_UnknownHostnameReturnsNotFound(t *testing.T) {
+	srv, _, _ := newTestAdminServer(t)
+
+	_, err := srv.RevokeClient(context.Background(), &pb.RevokeClientRequest{Hostname: "ghost"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestUnrevokeClient_ClearsRevokedFlag(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.SetRevoked("node-1", true, time.Now()))
+
+	client, err := srv.UnrevokeClient(context.Background(), &pb.UnrevokeClientRequest{Hostname: "node-1"})
+	require.NoError(t, err)
+	assert.False(t, client.GetRevoked())
+	assert.Zero(t, client.GetRevokedAt())
+}
+
+func TestUnrevokeClient_UnknownHostnameReturnsNotFound(t *testing.T) {
+	srv, _, _ := newTestAdminServer(t)
+
+	_, err := srv.UnrevokeClient(context.Background(), &pb.UnrevokeClientRequest{Hostname: "ghost"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
