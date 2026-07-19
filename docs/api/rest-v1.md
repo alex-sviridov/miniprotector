@@ -1,8 +1,10 @@
 # REST API v1
 
-`api-server`'s REST surface: v1, no RBAC. Client, catalog, and job endpoints are read-only; policy
-endpoints support create/update/delete. See [api-server](../components/api-server.md) for auth and
-deployment.
+`api-server`'s REST surface: v1, no RBAC. Catalog and job endpoints are read-only; policy and client
+endpoints support create/update/delete (client writes — enroll/re-enroll, revoke/unrevoke,
+description/attribute/SAN management — proxy to `clientmanager-admin-api`, see
+[Design: clientmanager-admin-api](../superpowers/specs/2026-07-19-clientmanager-admin-api-design.md)).
+See [api-server](../components/api-server.md) for auth and deployment.
 
 ## Conventions
 

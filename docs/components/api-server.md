@@ -39,10 +39,14 @@ Every request must present `Authorization: Bearer <token>`, checked against the 
 config-supplied token; missing or mismatched returns `401`. This is the only auth layer today — no
 RBAC, no per-user identity, including for the policy write endpoints (see
 [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md) and
-[Design: Policy Management API](../superpowers/specs/2026-07-18-policy-management-api-design.md)).
+[Design: Policy Management API](../superpowers/specs/2026-07-18-policy-management-api-design.md))
+and for the client write endpoints, whose stakes are notably higher — a leaked token can mint
+enrollment tokens or revoke arbitrary nodes, not just edit backup policies (see
+[Design: clientmanager-admin-api](../superpowers/specs/2026-07-19-clientmanager-admin-api-design.md)).
 Any node holding a valid mesh operating credential can still call
-`clientmanager-api`/`catalog`/`policy-server`'s RPCs directly, bypassing this token — an accepted
-continuation of this project's existing "any operating-tier cert may call any RPC it can reach"
+`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`'s RPCs directly, bypassing
+this token — an accepted continuation of this project's existing "any operating-tier cert may call
+any RPC it can reach"
 convention, not a new gap.
 
 ## Configuration Keys
