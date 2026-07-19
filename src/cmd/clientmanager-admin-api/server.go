@@ -59,6 +59,31 @@ func (s *clientManagerAdminServer) AddClient(ctx context.Context, req *pb.AddCli
 	return &pb.AddClientResponse{Token: token}, nil
 }
 
+func (s *clientManagerAdminServer) ReEnrollClient(ctx context.Context, req *pb.ReEnrollClientRequest) (*pb.ReEnrollClientResponse, error) {
+	hostname := req.GetHostname()
+	rec, err := s.store.GetClient(hostname)
+	if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
+		return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+	}
+	if err != nil {
+		s.logger.Error("ReEnrollClient: query failed", "hostname", hostname, "error", err)
+		return nil, status.Errorf(codes.Internal, "get client: %v", err)
+	}
+
+	sans := req.GetSans()
+	if len(sans) == 0 {
+		sans = rec.SANsList()
+	}
+
+	token, err := s.mint(hostname, sans, s.mintOpts)
+	if err != nil {
+		s.logger.Error("ReEnrollClient: mint failed", "hostname", hostname, "error", err)
+		return nil, status.Errorf(codes.Internal, "mint token: %v", err)
+	}
+
+	return &pb.ReEnrollClientResponse{Token: token}, nil
+}
+
 // loadClient loads hostname's full record for a response, used by every
 // RPC below AddClient/ReEnrollClient that returns the updated Client.
 func (s *clientManagerAdminServer) loadClient(hostname string) (*pb.Client, error) {

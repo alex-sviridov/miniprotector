@@ -90,3 +90,31 @@ func TestAddClient_MintFailureDoesNotRecordClient(t *testing.T) {
 	_, err = store.GetClient("node-1")
 	assert.ErrorIs(t, err, clientmanagerstore.ErrClientNotFound)
 }
+
+func TestReEnrollClient_UnknownHostnameReturnsNotFound(t *testing.T) {
+	srv, _, rec := newTestAdminServer(t)
+
+	_, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "ghost"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.Equal(t, 0, rec.calls)
+}
+
+func TestReEnrollClient_NoSANOverride_ReusesStoredSANs(t *testing.T) {
+	srv, store, rec := newTestAdminServer(t)
+	require.NoError(t, store.AddClient("node-1", []string{"alias1", "alias2"}, time.Now()))
+
+	resp, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "node-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "tok-default", resp.GetToken())
+	assert.Equal(t, []string{"alias1", "alias2"}, rec.lastSANs)
+}
+
+func TestReEnrollClient_WithSANOverride_UsesOverrideNotStoredSANs(t *testing.T) {
+	srv, store, rec := newTestAdminServer(t)
+	require.NoError(t, store.AddClient("node-1", []string{"alias1"}, time.Now()))
+
+	_, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "node-1", Sans: []string{"override1"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"override1"}, rec.lastSANs)
+}
