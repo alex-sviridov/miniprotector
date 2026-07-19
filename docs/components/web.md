@@ -1,7 +1,8 @@
 # web
 
-A small read-only browser UI over [api-server](./api-server.md)'s REST API — lists enrolled
-clients and browses catalog entries. **Not a mesh member:** unlike every other control-plane
+A small browser UI over [api-server](./api-server.md)'s REST API — lists enrolled clients,
+browses catalog entries, and manages backup policies (list/create/edit/delete). **Not a mesh
+member:** unlike every other control-plane
 component, `web` has no mTLS identity of its own; it's a static Vue single-page app served by
 nginx, which reverse-proxies `/api/*` to `api-server` so the browser's calls stay same-origin (no
 CORS changes were needed on `api-server`).
@@ -17,9 +18,13 @@ no data — there's no read-only "guest" mode.
 - `/` — placeholder landing page
 - `/clients` — every enrolled client (hostname, revoked, last seen), linking to:
 - `/clients/:hostname` — one client's full record (SANs, attributes, descriptions)
-- `/catalog` — catalog entries, filterable by source host and a path-pattern substring,
-  paginated with Prev/Next (the catalog API only supports cursor pagination — no total count, so
-  there's no page-number jump)
+- `/catalog` — catalog entries, filterable by real source host, store host (the `bwfs` node that
+  replicated the entry), and a path-pattern substring, paginated with Prev/Next (the catalog API
+  only supports cursor pagination — no total count, so there's no page-number jump)
+- `/policies` — every policy (name, RPO, destination), linking to:
+- `/policies/:id` — one policy's full record (client filters, object filters, backup window)
+- `/policies/new` — create a new policy
+- `/policies/:id/edit` — edit an existing policy
 
 ## Local development
 

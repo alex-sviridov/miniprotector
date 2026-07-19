@@ -15,8 +15,8 @@ func TestEnsureEntries_PersistsBatch(t *testing.T) {
 	defer store.Close()
 
 	batch := []Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", Ctime: 100, SourceSeq: 1, SourceCreatedAt: time.Now()},
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", Ctime: 200, SourceSeq: 2, SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", Ctime: 100, StoreSeq: 1, StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", Ctime: 200, StoreSeq: 2, StoreCreatedAt: time.Now()},
 	}
 	require.NoError(t, store.EnsureEntries(batch))
 
@@ -25,12 +25,12 @@ func TestEnsureEntries_PersistsBatch(t *testing.T) {
 	assert.Equal(t, int64(2), count)
 }
 
-func TestEnsureEntries_DuplicateSameSourceIsNoOp(t *testing.T) {
+func TestEnsureEntries_DuplicateSameStoreNodeIsNoOp(t *testing.T) {
 	store, err := New(t.TempDir())
 	require.NoError(t, err)
 	defer store.Close()
 
-	batch := []Entry{{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()}}
+	batch := []Entry{{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()}}
 	require.NoError(t, store.EnsureEntries(batch))
 	require.NoError(t, store.EnsureEntries(batch)) // resend, e.g. after a retried RPC
 
@@ -39,14 +39,14 @@ func TestEnsureEntries_DuplicateSameSourceIsNoOp(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
-func TestEnsureEntries_SameJobObjectDifferentSourceNodeAreDistinctRows(t *testing.T) {
+func TestEnsureEntries_SameJobObjectDifferentStoreNodeAreDistinctRows(t *testing.T) {
 	store, err := New(t.TempDir())
 	require.NoError(t, err)
 	defer store.Close()
 
 	batch := []Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
-		{SourceNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
 	}
 	require.NoError(t, store.EnsureEntries(batch))
 
@@ -63,6 +63,21 @@ func TestEnsureEntries_EmptyBatchSucceeds(t *testing.T) {
 	assert.NoError(t, store.EnsureEntries(nil))
 }
 
+func TestEnsureEntries_PersistsSourceHost(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, _, err := store.ListEntries(ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "database", entries[0].SourceHost)
+}
+
 func TestNew_CreatesMissingStorageDir(t *testing.T) {
 	base := t.TempDir() + "/does/not/exist/yet"
 
@@ -71,21 +86,55 @@ func TestNew_CreatesMissingStorageDir(t *testing.T) {
 	defer store.Close()
 }
 
-func TestListEntries_FiltersBySourceNode(t *testing.T) {
+func TestListEntries_FiltersByStoreNode(t *testing.T) {
 	store, err := New(t.TempDir())
 	require.NoError(t, err)
 	defer store.Close()
 
 	require.NoError(t, store.EnsureEntries([]Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
-		{SourceNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-2", SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
 	}))
 
-	entries, hasMore, err := store.ListEntries(ListEntriesFilter{SourceNode: "bwfs-a"})
+	entries, hasMore, err := store.ListEntries(ListEntriesFilter{StoreNode: "bwfs-a"})
 	require.NoError(t, err)
 	assert.False(t, hasMore)
 	require.Len(t, entries, 1)
-	assert.Equal(t, "bwfs-a", entries[0].SourceNode)
+	assert.Equal(t, "bwfs-a", entries[0].StoreNode)
+}
+
+func TestListEntries_FiltersBySourceHost(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, hasMore, err := store.ListEntries(ListEntriesFilter{SourceHost: "database"})
+	require.NoError(t, err)
+	assert.False(t, hasMore)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "database", entries[0].SourceHost)
+}
+
+func TestListEntries_FiltersByStoreNodeAndSourceHostCombined(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-3", SourceHost: "database", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, _, err := store.ListEntries(ListEntriesFilter{StoreNode: "bwfs-a", SourceHost: "database"})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "obj-1", entries[0].ObjectID)
 }
 
 func TestListEntries_FiltersByPatternSubstringOnObjectID(t *testing.T) {
@@ -94,8 +143,8 @@ func TestListEntries_FiltersByPatternSubstringOnObjectID(t *testing.T) {
 	defer store.Close()
 
 	require.NoError(t, store.EnsureEntries([]Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "fs://bwfs-a:f:/var/log/syslog:100", SourceCreatedAt: time.Now()},
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "fs://bwfs-a:f:/etc/passwd:100", SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "fs://bwfs-a:f:/var/log/syslog:100", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "fs://bwfs-a:f:/etc/passwd:100", StoreCreatedAt: time.Now()},
 	}))
 
 	entries, _, err := store.ListEntries(ListEntriesFilter{Pattern: "/var/log"})
@@ -111,7 +160,7 @@ func TestListEntries_PaginationHasMoreAndStartingAfter(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		require.NoError(t, store.EnsureEntries([]Entry{
-			{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: fmt.Sprintf("obj-%d", i), SourceCreatedAt: time.Now()},
+			{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: fmt.Sprintf("obj-%d", i), StoreCreatedAt: time.Now()},
 		}))
 	}
 
@@ -140,7 +189,7 @@ func TestListEntries_LimitDefaultsAndCaps(t *testing.T) {
 	defer store.Close()
 
 	require.NoError(t, store.EnsureEntries([]Entry{
-		{SourceNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
 	}))
 
 	entries, _, err := store.ListEntries(ListEntriesFilter{Limit: 0})

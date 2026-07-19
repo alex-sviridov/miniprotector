@@ -45,7 +45,8 @@ func TestE2E_CatalogReceivesReplicatedFileVersions(t *testing.T) {
 	rows := waitForCatalogEntryCount(t, catalogStorageDir, wantCount)
 	assert.Len(t, rows, wantCount)
 	for _, row := range rows {
-		assert.Equal(t, "bwfs.internal", row.SourceNode)
+		assert.Equal(t, "bwfs.internal", row.StoreNode)
+		assert.Equal(t, "e2e-src-host", row.SourceHost)
 		assert.NotEmpty(t, row.JobID)
 		assert.NotEmpty(t, row.ObjectID)
 	}

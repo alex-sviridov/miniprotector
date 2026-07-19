@@ -3,6 +3,9 @@ import HomeView from './views/HomeView.vue'
 import ClientsListView from './views/ClientsListView.vue'
 import ClientDetailView from './views/ClientDetailView.vue'
 import CatalogView from './views/CatalogView.vue'
+import PoliciesListView from './views/PoliciesListView.vue'
+import PolicyDetailView from './views/PolicyDetailView.vue'
+import PolicyFormView from './views/PolicyFormView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -11,5 +14,9 @@ export const router = createRouter({
     { path: '/clients', component: ClientsListView },
     { path: '/clients/:hostname', component: ClientDetailView },
     { path: '/catalog', component: CatalogView },
+    { path: '/policies', component: PoliciesListView },
+    { path: '/policies/new', component: PolicyFormView },
+    { path: '/policies/:id', component: PolicyDetailView },
+    { path: '/policies/:id/edit', component: PolicyFormView },
   ],
 })

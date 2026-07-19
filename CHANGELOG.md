@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-18 — catalog: rename source_* to store_*, add a real source_host
+
+The catalog's `source_node`/`source_seq`/`source_created_at`/`source_host` fields all actually
+identified the `bwfs` node that replicated a batch, not the machine whose files were backed up —
+confusing given "source" means the backup source everywhere else in the system. They're renamed to
+`store_node`/`store_seq`/`store_created_at`/`store_host`. A new `source_host` is added in their
+place: the real originating host, decoded once from each entry's metadata at sync time and
+persisted as an indexed column, so it's independently filterable from `store_host`. Both are now
+exposed through `ListEntries`, `GET /api/v1/catalog`, and the web frontend's Catalog view. No data
+migration — existing `catalog.db` files should be deleted before running the updated binary.
+
 ## 2026-07-18 — policy-server: an admin write API for policies, proxied through api-server
 
 `policy-server` gains `ListPolicies` (an unfiltered admin view, distinct from the existing
@@ -21,6 +32,16 @@ to `api-server` so the browser's requests stay same-origin — no CORS changes w
 `api-server` itself. A one-time bearer-token prompt (stored in `localStorage`) is the only auth,
 matching `api-server`'s existing model. Wired into `demo/docker-compose.yml` as a new `web` service
 on `localhost:8091`; not yet added to `deploy/control-plane/`.
+
+## 2026-07-18 — web: add policy management UI (list, create, edit, delete)
+
+The `web` frontend gains a policy management interface: a browseable list of all policies, detail
+views for each policy's configuration (client filters, object filters, backup window), and forms
+to create new policies or edit existing ones. All operations flow through `api-server`'s proxied
+`/api/v1/policies[/{id}]` endpoints (POST, GET, PUT, DELETE), backed by `policy-server`'s in-memory
+cache and atomic file writes. The Pinia `policies` store handles CRUD state, three new view
+components (`PoliciesListView`, `PolicyDetailView`, `PolicyFormView`) render each page, and
+Vue Router wires `/policies`, `/policies/:id`, `/policies/new`, and `/policies/:id/edit` routes.
 
 ## 2026-07-14 — api-server: unified read-only REST API for clients and catalog
 

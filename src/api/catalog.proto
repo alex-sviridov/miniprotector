@@ -14,7 +14,7 @@ message FileVersionEntry {
   string object_id  = 2;
   bytes  metadata   = 3;
   int64  ctime      = 4;
-  int64  source_seq = 5; // bwfs's local file_versions.seq — informational only
+  int64  store_seq  = 5; // bwfs's local file_versions.seq — informational only
   int64  created_at = 6; // unix seconds; bwfs's original recording time
 }
 
@@ -25,10 +25,11 @@ message SyncRequest {
 message SyncResponse {} // empty ack — GrpcSender only checks error/nil
 
 message ListEntriesRequest {
-  string source_host    = 1; // exact match; empty = all hosts
+  string store_host     = 1; // exact match against the sending bwfs node's identity; empty = all
   string pattern        = 2; // substring match against object_id; empty = no filter
   int32  limit           = 3; // 1..500, default 100
   int64  starting_after  = 4; // last-seen entry ID from a previous page; 0 = first page
+  string source_host    = 5; // exact match against the real originating (backed-up) host; empty = all
 }
 
 message ListEntriesResponse {
@@ -38,11 +39,11 @@ message ListEntriesResponse {
 
 message Entry {
   int64  id                = 1;
-  string source_host       = 2;
+  string store_host        = 2;
   string job_id            = 3;
   string object_id         = 4;
   int64  ctime             = 5;
-  int64  source_created_at = 6;
+  int64  store_created_at  = 6;
   int64  received_at       = 7;
   // decoded server-side from the stored Metadata blob:
   string path      = 8;
@@ -51,4 +52,5 @@ message Entry {
   uint32 owner     = 11; // Unix UID (or Windows SID hash) — numeric, no name resolution
   uint32 group     = 12; // Unix GID (or Windows SID hash) — numeric, no name resolution
   int64  mod_time   = 13;
+  string source_host = 14; // the real originating (backed-up) host, derived from Metadata at sync time
 }

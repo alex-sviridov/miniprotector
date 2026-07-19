@@ -37,7 +37,7 @@ func (s *GrpcSender) Send(batch []wfs.FileVersionRecord) error {
 			ObjectId:  r.ObjectID,
 			Metadata:  r.Metadata,
 			Ctime:     r.Ctime,
-			SourceSeq: r.Seq,
+			StoreSeq:  r.Seq,
 			CreatedAt: r.CreatedAt.Unix(),
 		}
 	}

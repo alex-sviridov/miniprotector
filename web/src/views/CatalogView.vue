@@ -4,7 +4,7 @@ import { useCatalogStore } from '../stores/catalog'
 import { formatTimestamp } from '../utils/format'
 
 const catalog = useCatalogStore()
-const form = reactive({ sourceHost: '', pattern: '' })
+const form = reactive({ sourceHost: '', storeHost: '', pattern: '' })
 
 function submit() {
   catalog.search({ ...form })
@@ -20,6 +20,7 @@ onMounted(() => {
     <h1 class="text-xl font-semibold mb-4">Catalog</h1>
     <form @submit.prevent="submit" class="flex gap-2 mb-4">
       <input v-model="form.sourceHost" placeholder="source host" class="border rounded px-2 py-1" />
+      <input v-model="form.storeHost" placeholder="store host" class="border rounded px-2 py-1" />
       <input v-model="form.pattern" placeholder="path pattern" class="border rounded px-2 py-1" />
       <button type="submit" class="bg-blue-600 text-white rounded px-3 py-1">Search</button>
     </form>
@@ -30,6 +31,7 @@ onMounted(() => {
         <tr class="border-b">
           <th class="py-2 pr-4">Path</th>
           <th class="py-2 pr-4">Source Host</th>
+          <th class="py-2 pr-4">Store Host</th>
           <th class="py-2 pr-4">Size</th>
           <th class="py-2 pr-4">Mode</th>
           <th class="py-2 pr-4">Modified</th>
@@ -39,6 +41,7 @@ onMounted(() => {
         <tr v-for="entry in catalog.entries" :key="entry.id" class="border-b">
           <td class="py-2 pr-4">{{ entry.path }}</td>
           <td class="py-2 pr-4">{{ entry.source_host }}</td>
+          <td class="py-2 pr-4">{{ entry.store_host }}</td>
           <td class="py-2 pr-4">{{ entry.size }}</td>
           <td class="py-2 pr-4">{{ entry.mode }}</td>
           <td class="py-2 pr-4">{{ formatTimestamp(entry.mod_time) }}</td>

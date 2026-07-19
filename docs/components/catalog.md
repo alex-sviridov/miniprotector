@@ -2,8 +2,8 @@
 
 Receives `catalogsync`'s replicated `bwfs` file-version batches over gRPC and persists them
 idempotently to its own SQLite database. **Control-plane component** — runs centrally, not
-colocated with any single `bwfs` node. Also serves `ListEntries`, a read-only query RPC (filter by
-source host and a substring match against the underlying object ID, keyset-paginated) — see
+colocated with any single `bwfs` node. Also serves `ListEntries`, a read-only query RPC (filter by store host, real source host, and a
+substring match against the underlying object ID, keyset-paginated) — see
 [api-server](./api-server.md), the only intended caller today.
 
 ## Usage
@@ -23,13 +23,17 @@ catalog <storage_path> [--port N] [--debug]
 ## How It Works
 
 `SyncFileVersions` is the write path: one call per batch `catalogsync` sends. Each entry is
-persisted keyed by `(source_node, job_id, object_id)`:
+persisted keyed by `(store_node, job_id, object_id)`:
 
-- `source_node` is the CA-verified hostname from the caller's mTLS client certificate
+- `store_node` is the CA-verified hostname from the caller's mTLS client certificate
   (`mtls.PeerHostname`), never taken from the RPC payload. `job_id`/`object_id` alone are only
-  unique within a single `bwfs` node; `source_node` disambiguates across a fleet of nodes
+  unique within a single `bwfs` node; `store_node` disambiguates across a fleet of nodes
   replicating to the same catalog.
-- A batch containing an entry already stored for its `(source_node, job_id, object_id)` is a
+- `source_host` — the real originating (backed-up) host — is derived at the same time, by decoding
+  each entry's `metadata` blob and reading its embedded host. It's distinct from `store_node`: a
+  `bwfs` node forwards entries for whatever host was actually backed up, which is not necessarily
+  itself.
+- A batch containing an entry already stored for its `(store_node, job_id, object_id)` is a
   no-op for that entry (`ON CONFLICT DO NOTHING`) — safe for `catalogsync` to resend a batch it
   isn't sure was received.
 
