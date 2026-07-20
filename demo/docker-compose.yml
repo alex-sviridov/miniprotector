@@ -132,6 +132,7 @@ services:
     restart: unless-stopped
 
   database:
+    hostname: database
     build:
       context: ..
       dockerfile: demo/backup-host/Dockerfile
@@ -150,6 +151,7 @@ services:
     restart: unless-stopped
 
   webserver:
+    hostname: webserver
     build:
       context: ..
       dockerfile: demo/backup-host/Dockerfile
