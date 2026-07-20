@@ -1,29 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect } from 'vitest'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import JobsListView from './JobsListView.vue'
 import { useJobsStore } from '../stores/jobs'
 
-const { destroy, DataTable } = vi.hoisted(() => {
-  const destroy = vi.fn()
-  const DataTable = vi.fn(() => ({ destroy }))
-  return { destroy, DataTable }
-})
-
-vi.mock('simple-datatables', () => ({ DataTable }))
-
-beforeEach(() => {
-  DataTable.mockClear()
-  destroy.mockClear()
-})
-
 function mountView(state) {
   const pinia = createTestingPinia({ stubActions: true, initialState: { jobs: state } })
   const wrapper = mount(JobsListView, {
-    global: {
-      plugins: [pinia],
-      stubs: { RouterLink: { template: '<a :href="to"><slot /></a>', props: ['to'] } },
-    },
+    global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
   })
   return { wrapper, jobs: useJobsStore() }
 }
@@ -51,7 +35,8 @@ describe('JobsListView', () => {
       error: null,
     })
     expect(wrapper.text()).toContain('backup:nightly:1752400000')
-    expect(wrapper.find('a').attributes('href')).toBe('/jobs/backup:nightly:1752400000')
+    const link = wrapper.findAllComponents(RouterLinkStub).find((l) => l.text() === 'backup:nightly:1752400000')
+    expect(link.props('to')).toEqual({ name: 'job-detail', params: { job_id: 'backup:nightly:1752400000' } })
   })
 
   it('renders a dash for a null store_host and finished_at', () => {
@@ -70,7 +55,9 @@ describe('JobsListView', () => {
       loading: false,
       error: null,
     })
-    expect(wrapper.text()).toContain('—')
+    const cells = wrapper.findAll('tbody td')
+    expect(cells[3].text()).toBe('—')
+    expect(cells[5].text()).toBe('—')
   })
 
   it('shows the store error message when present', () => {
@@ -78,28 +65,8 @@ describe('JobsListView', () => {
     expect(wrapper.text()).toContain('boom')
   })
 
-  it('initializes simple-datatables on the rendered table once data loads, and destroys it on unmount', async () => {
-    const { wrapper } = mountView({
-      list: [
-        {
-          job_id: 'a',
-          kind: 'backup',
-          source_host: 'h',
-          store_host: null,
-          started_at: 1,
-          finished_at: null,
-          state: 'in_progress',
-        },
-      ],
-      loading: false,
-      error: null,
-    })
-    await flushPromises()
-
-    expect(DataTable).toHaveBeenCalledTimes(1)
-    expect(DataTable.mock.calls[0][0].tagName).toBe('TABLE')
-
-    wrapper.unmount()
-    expect(destroy).toHaveBeenCalledTimes(1)
+  it('shows an empty-state message when there are no jobs', () => {
+    const { wrapper } = mountView({ list: [], loading: false, error: null })
+    expect(wrapper.text()).toContain('No jobs in the last 24h.')
   })
 })

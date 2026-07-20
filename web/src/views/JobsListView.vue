@@ -1,62 +1,49 @@
 <script setup>
-import { onMounted, onBeforeUnmount, nextTick, ref } from 'vue'
-import { DataTable } from 'simple-datatables'
-import 'simple-datatables/dist/style.css'
+import { onMounted } from 'vue'
 import { useJobsStore } from '../stores/jobs'
 import { formatTimestamp } from '../utils/format'
+import PageHeader from '../components/ui/PageHeader.vue'
+import StatusMessage from '../components/ui/StatusMessage.vue'
+import DataTable from '../components/ui/DataTable.vue'
 
 const jobs = useJobsStore()
-const tableRef = ref(null)
-let dataTable = null
 
-onMounted(async () => {
-  await jobs.fetchAll()
-  await nextTick()
-  if (tableRef.value) {
-    dataTable = new DataTable(tableRef.value)
-  }
+onMounted(() => {
+  jobs.fetchAll()
 })
 
-onBeforeUnmount(() => {
-  if (dataTable) {
-    dataTable.destroy()
-    dataTable = null
-  }
-})
+const columns = [
+  { label: 'Job ID', field: 'job_id', sortable: true },
+  { label: 'Kind', field: 'kind', sortable: true },
+  { label: 'Source Host', field: 'source_host', sortable: true },
+  { label: 'Store Host', field: 'store_host', sortable: true, formatFn: (v) => v || '—' },
+  { label: 'Started At', field: 'started_at', sortable: true, type: 'number', formatFn: (v) => formatTimestamp(v) || '—' },
+  { label: 'Finished At', field: 'finished_at', sortable: true, type: 'number', formatFn: (v) => formatTimestamp(v) || '—' },
+  { label: 'State', field: 'state', sortable: true },
+]
 </script>
 
 <template>
   <div>
-    <h1 class="text-xl font-semibold mb-4">Jobs</h1>
-    <p v-if="jobs.loading">Loading...</p>
-    <p v-else-if="jobs.error" class="text-red-600">{{ jobs.error }}</p>
-    <table v-else ref="tableRef" class="w-full text-left border-collapse">
-      <thead>
-        <tr class="border-b">
-          <th class="py-2 pr-4">Job ID</th>
-          <th class="py-2 pr-4">Kind</th>
-          <th class="py-2 pr-4">Source Host</th>
-          <th class="py-2 pr-4">Store Host</th>
-          <th class="py-2 pr-4">Started At</th>
-          <th class="py-2 pr-4">Finished At</th>
-          <th class="py-2 pr-4">State</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="job in jobs.list" :key="job.job_id" class="border-b hover:bg-gray-50">
-          <td class="py-2 pr-4">
-            <router-link :to="`/jobs/${job.job_id}`" class="text-blue-600 hover:underline">
-              {{ job.job_id }}
-            </router-link>
-          </td>
-          <td class="py-2 pr-4">{{ job.kind }}</td>
-          <td class="py-2 pr-4">{{ job.source_host }}</td>
-          <td class="py-2 pr-4">{{ job.store_host || '—' }}</td>
-          <td class="py-2 pr-4">{{ formatTimestamp(job.started_at) || '—' }}</td>
-          <td class="py-2 pr-4">{{ formatTimestamp(job.finished_at) || '—' }}</td>
-          <td class="py-2 pr-4">{{ job.state }}</td>
-        </tr>
-      </tbody>
-    </table>
+    <PageHeader title="Jobs" />
+    <StatusMessage
+      :loading="jobs.loading"
+      :error="jobs.error"
+      :empty="jobs.list.length === 0"
+      empty-text="No jobs in the last 24h."
+    >
+      <DataTable :columns="columns" :rows="jobs.list">
+        <template #table-row="{ column, row, formattedRow }">
+          <router-link
+            v-if="column.field === 'job_id'"
+            :to="{ name: 'job-detail', params: { job_id: row.job_id } }"
+            class="text-blue-600 hover:underline"
+          >
+            {{ row.job_id }}
+          </router-link>
+          <span v-else>{{ formattedRow[column.field] }}</span>
+        </template>
+      </DataTable>
+    </StatusMessage>
   </div>
 </template>
