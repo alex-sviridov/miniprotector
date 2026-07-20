@@ -167,8 +167,12 @@ const UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
 export function formatBytes(bytes) {
   if (bytes === null || bytes === undefined) return '—'
   if (bytes === 0) return '0 B'
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), UNITS.length - 1)
-  const value = bytes / 1024 ** exponent
+  let exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), UNITS.length - 1)
+  let value = bytes / 1024 ** exponent
+  if (exponent > 0 && Number(value.toFixed(1)) >= 1024 && exponent < UNITS.length - 1) {
+    exponent += 1
+    value = bytes / 1024 ** exponent
+  }
   return `${exponent === 0 ? value : value.toFixed(1)} ${UNITS[exponent]}`
 }
 ```

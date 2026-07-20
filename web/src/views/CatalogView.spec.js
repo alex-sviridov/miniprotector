@@ -49,7 +49,7 @@ function mountView(state) {
 }
 
 function selectRow(rowIndex) {
-  const call = on.mock.calls.find(([event]) => event === 'datatable.selectrow')
+  const call = on.mock.calls.findLast(([event]) => event === 'datatable.selectrow')
   call[1](rowIndex)
 }
 

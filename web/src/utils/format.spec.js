@@ -38,4 +38,9 @@ describe('formatBytes', () => {
   it('caps at TB for enormous values instead of introducing a new unit', () => {
     expect(formatBytes(5 * 1024 ** 5)).toBe('5120.0 TB')
   })
+
+  it('bumps to the next unit instead of rounding to "1024.0" at a unit boundary', () => {
+    expect(formatBytes(1024 * 1024 - 1)).toBe('1.0 MB')
+    expect(formatBytes(1024 * 1024 * 1024 - 1)).toBe('1.0 GB')
+  })
 })

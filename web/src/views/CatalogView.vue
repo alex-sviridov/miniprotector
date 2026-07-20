@@ -40,6 +40,7 @@ async function renderTable() {
 }
 
 async function submit() {
+  selectedGroup.value = null
   if (!canSearch.value) return
   hasSearched.value = true
   await catalog.search({ ...form })
