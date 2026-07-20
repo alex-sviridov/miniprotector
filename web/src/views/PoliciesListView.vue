@@ -1,6 +1,10 @@
 <script setup>
 import { onMounted } from 'vue'
 import { usePoliciesStore } from '../stores/policies'
+import PageHeader from '../components/ui/PageHeader.vue'
+import StatusMessage from '../components/ui/StatusMessage.vue'
+import DataTable from '../components/ui/DataTable.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
 
 const policies = usePoliciesStore()
 
@@ -13,41 +17,50 @@ function confirmDelete(id) {
     policies.remove(id)
   }
 }
+
+const columns = [
+  { label: 'Name', field: 'name', sortable: true },
+  { label: 'RPO', field: 'rpo', sortable: true },
+  { label: 'Destination', field: 'destination', sortable: true },
+  { label: '', field: 'actions', sortable: false },
+]
 </script>
 
 <template>
   <div>
-    <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-semibold">Policies</h1>
-      <router-link to="/policies/new" class="bg-blue-600 text-white rounded px-3 py-1">
-        New Policy
-      </router-link>
-    </div>
-    <p v-if="policies.loading">Loading...</p>
-    <p v-else-if="policies.error" class="text-red-600">{{ policies.error }}</p>
-    <table v-else class="w-full text-left border-collapse">
-      <thead>
-        <tr class="border-b">
-          <th class="py-2 pr-4">Name</th>
-          <th class="py-2 pr-4">RPO</th>
-          <th class="py-2 pr-4">Destination</th>
-          <th class="py-2 pr-4"></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="policy in policies.list" :key="policy.id" class="border-b hover:bg-gray-50">
-          <td class="py-2 pr-4">
-            <router-link :to="`/policies/${policy.id}`" class="text-blue-600 hover:underline">
-              {{ policy.name }}
-            </router-link>
-          </td>
-          <td class="py-2 pr-4">{{ policy.rpo }}</td>
-          <td class="py-2 pr-4">{{ policy.destination }}</td>
-          <td class="py-2 pr-4">
-            <button @click="confirmDelete(policy.id)" class="border rounded px-2 py-1">Delete</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <PageHeader title="Policies">
+      <template #actions>
+        <router-link :to="{ name: 'policy-new' }" class="bg-blue-600 text-white rounded px-3 py-1">
+          New Policy
+        </router-link>
+      </template>
+    </PageHeader>
+    <StatusMessage
+      :loading="policies.loading"
+      :error="policies.error"
+      :empty="policies.list.length === 0"
+      empty-text="No policies defined yet."
+    >
+      <DataTable :columns="columns" :rows="policies.list">
+        <template #table-row="{ column, row, formattedRow }">
+          <router-link
+            v-if="column.field === 'name'"
+            :to="{ name: 'policy-detail', params: { id: row.id } }"
+            class="text-blue-600 hover:underline"
+          >
+            {{ row.name }}
+          </router-link>
+          <BaseButton
+            v-else-if="column.field === 'actions'"
+            data-test="policy-delete"
+            variant="danger"
+            @click="confirmDelete(row.id)"
+          >
+            Delete
+          </BaseButton>
+          <span v-else>{{ formattedRow[column.field] }}</span>
+        </template>
+      </DataTable>
+    </StatusMessage>
   </div>
 </template>

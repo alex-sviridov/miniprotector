@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import PoliciesListView from './PoliciesListView.vue'
 import { usePoliciesStore } from '../stores/policies'
@@ -7,10 +7,7 @@ import { usePoliciesStore } from '../stores/policies'
 function mountView(state) {
   const pinia = createTestingPinia({ stubActions: true, initialState: { policies: state } })
   const wrapper = mount(PoliciesListView, {
-    global: {
-      plugins: [pinia],
-      stubs: { RouterLink: { template: '<a :href="to"><slot /></a>', props: ['to'] } },
-    },
+    global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
   })
   return { wrapper, policies: usePoliciesStore() }
 }
@@ -27,17 +24,19 @@ describe('PoliciesListView', () => {
 
   it('renders each policy with a link to its detail page', () => {
     const { wrapper } = mountView({
-      list: [{ id: 'p1', name: 'nightly-db-backup' }],
+      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destination: 'store:8080' }],
       loading: false,
       error: null,
     })
     expect(wrapper.text()).toContain('nightly-db-backup')
-    expect(wrapper.find('a[href="/policies/p1"]').exists()).toBe(true)
+    const link = wrapper.findAllComponents(RouterLinkStub).find((l) => l.text() === 'nightly-db-backup')
+    expect(link.props('to')).toEqual({ name: 'policy-detail', params: { id: 'p1' } })
   })
 
   it('links to the create form', () => {
     const { wrapper } = mountView({ list: [], loading: false, error: null })
-    expect(wrapper.find('a[href="/policies/new"]').exists()).toBe(true)
+    const link = wrapper.findAllComponents(RouterLinkStub).find((l) => l.text() === 'New Policy')
+    expect(link.props('to')).toEqual({ name: 'policy-new' })
   })
 
   it('shows the store error message when present', () => {
@@ -45,15 +44,20 @@ describe('PoliciesListView', () => {
     expect(wrapper.text()).toContain('boom')
   })
 
+  it('shows an empty-state message when there are no policies', () => {
+    const { wrapper } = mountView({ list: [], loading: false, error: null })
+    expect(wrapper.text()).toContain('No policies defined yet.')
+  })
+
   it('deletes a policy after confirming', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { wrapper, policies } = mountView({
-      list: [{ id: 'p1', name: 'nightly-db-backup' }],
+      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destination: 'store:8080' }],
       loading: false,
       error: null,
     })
 
-    await wrapper.find('button').trigger('click')
+    await wrapper.find('[data-test="policy-delete"]').trigger('click')
 
     expect(policies.remove).toHaveBeenCalledWith('p1')
   })
@@ -61,12 +65,12 @@ describe('PoliciesListView', () => {
   it('does not delete when the confirm dialog is dismissed', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     const { wrapper, policies } = mountView({
-      list: [{ id: 'p1', name: 'nightly-db-backup' }],
+      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destination: 'store:8080' }],
       loading: false,
       error: null,
     })
 
-    await wrapper.find('button').trigger('click')
+    await wrapper.find('[data-test="policy-delete"]').trigger('click')
 
     expect(policies.remove).not.toHaveBeenCalled()
   })
