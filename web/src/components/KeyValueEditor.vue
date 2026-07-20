@@ -1,5 +1,7 @@
 <script setup>
 import { reactive, computed, watch } from 'vue'
+import RepeatableFieldList from './ui/RepeatableFieldList.vue'
+import BaseButton from './ui/BaseButton.vue'
 
 const props = defineProps({
   modelValue: { type: Object, default: () => ({}) },
@@ -23,13 +25,6 @@ watch(
   }
 )
 
-function addRow() {
-  draft.push({ key: '', value: '' })
-}
-function removeRow(i) {
-  draft.splice(i, 1)
-}
-
 function toMap(rows) {
   return Object.fromEntries(rows.map((r) => [r.key.trim(), r.value]).filter(([key]) => key))
 }
@@ -51,34 +46,24 @@ function submit() {
 <template>
   <div>
     <label class="block font-medium mb-1">{{ label }}</label>
-    <div v-for="(_, i) in draft" :key="i" class="flex gap-2 mb-1">
-      <input
-        :data-test="`${testPrefix}-key-input`"
-        v-model="draft[i].key"
-        placeholder="key"
-        class="flex-1 border rounded px-2 py-1"
-      />
-      <input
-        :data-test="`${testPrefix}-value-input`"
-        v-model="draft[i].value"
-        placeholder="value"
-        class="flex-1 border rounded px-2 py-1"
-      />
-      <button type="button" :data-test="`${testPrefix}-remove`" @click="removeRow(i)" class="border rounded px-2">
-        Remove
-      </button>
-    </div>
-    <button type="button" :data-test="`${testPrefix}-add`" @click="addRow" class="border rounded px-3 py-1 mr-2">
-      Add
-    </button>
-    <button
-      type="button"
-      :data-test="`${testPrefix}-update`"
-      :disabled="!dirty"
-      @click="submit"
-      class="bg-blue-600 text-white rounded px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
-    >
+    <RepeatableFieldList :items="draft" :new-item="() => ({ key: '', value: '' })" add-label="Add" :test-prefix="testPrefix">
+      <template #row="{ index }">
+        <input
+          :data-test="`${testPrefix}-key-input`"
+          v-model="draft[index].key"
+          placeholder="key"
+          class="flex-1 border rounded px-2 py-1"
+        />
+        <input
+          :data-test="`${testPrefix}-value-input`"
+          v-model="draft[index].value"
+          placeholder="value"
+          class="flex-1 border rounded px-2 py-1"
+        />
+      </template>
+    </RepeatableFieldList>
+    <BaseButton variant="primary" :data-test="`${testPrefix}-update`" :disabled="!dirty" class="mt-2" @click="submit">
       Update
-    </button>
+    </BaseButton>
   </div>
 </template>
