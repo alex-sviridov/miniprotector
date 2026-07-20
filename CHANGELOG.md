@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-20 — web: consistency and best-practices refresh
+
+`web` gains a small shared `components/ui/` layer (`BaseButton`, `PageHeader`, `StatusMessage`,
+`DetailList`, `RepeatableFieldList`, `DataTable`) used across every view, replacing markup that had
+been hand-copied and drifted slightly between pages. `simple-datatables` — a DOM-manipulating
+library that sat outside Vue's reactivity — is replaced by `vue-good-table-next` everywhere it was
+used (`/clients`, `/policies`, `/jobs`, `/catalog`); this also fixes a real bug in `/catalog`, where
+clicking a row after sorting a column could open the wrong file's version modal, because the old
+integration correlated a post-sort row index back into the pre-sort data. Every Pinia store's
+repeated `loading`/`error`/try-catch boilerplate collapses onto one `withRequest` helper. Routing
+switches from eagerly-imported, string-path routes to lazy-loaded, named routes, so internal links
+no longer depend on hand-built path strings scattered across templates.
+
 ## 2026-07-20 — web: rewrite the catalog view's filtering, pagination, and versions modal
 
 `/catalog` previously layered a custom server-side filter form and cursor-based Prev/Next

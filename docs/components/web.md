@@ -17,7 +17,7 @@ no data — there's no read-only "guest" mode.
 
 - `/` — placeholder landing page
 - `/clients` — every enrolled client (hostname, revoked, last seen), with client-side search/sort
-  via `simple-datatables`, linking to:
+  via `vue-good-table-next`, linking to:
 - `/clients/new` — enroll a new client (hostname + optional SANs); shows the resulting one-time
   enrollment token on the new client's detail page after redirecting
 - `/clients/:hostname` — one client's full record (SANs, attributes, descriptions), with actions to
@@ -28,8 +28,9 @@ no data — there's no read-only "guest" mode.
   replicated the entry), and a path-pattern substring; at least one filter must be filled in before
   Search is enabled, since the catalog has no natural bound the way `/jobs`' 24h window does. On
   search, every matching page is fetched (the catalog API is cursor-paginated) before entries are
-  grouped into one row per distinct file (source host + path) and handed to `simple-datatables` for
-  client-side sort/pagination — grouping over the complete result set means a file's versions are
+  grouped into one row per distinct file (source host + path) and handed to a client-side
+  sortable/paginated table (`vue-good-table-next`) — grouping over the complete result set means a
+  file's versions are
   never split across a page boundary. Sizes render human-readable (KB/MB/...); a "Versions" count
   on multi-version files opens a modal (click anywhere on that row) listing that file's other
   versions.
@@ -39,7 +40,7 @@ no data — there's no read-only "guest" mode.
 - `/policies/:id/edit` — edit an existing policy
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
-  `simple-datatables` (also used on `/catalog`), linking to:
+  `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
 - `/jobs/:job_id` — one job's raw log lines from the last 24h, fetched once on page load (no
   live-tail/polling)
 
@@ -68,4 +69,5 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/web":/app -w /app node:20-
 - [api-server](./api-server.md) — the backend this UI is a client of
 - [REST API v1](../api/rest-v1.md)
 - [Design: web frontend](../superpowers/specs/2026-07-18-web-frontend-design.md)
+- [Design: web frontend consistency & best-practices refresh](../superpowers/specs/2026-07-20-web-frontend-refresh-design.md)
 - [Architecture](../ARCHITECTURE.md)
