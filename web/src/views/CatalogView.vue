@@ -5,6 +5,7 @@ import { formatBytes, formatTimestamp } from '../utils/format'
 import { groupEntriesByFile } from '../utils/catalogGrouping'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
 import VersionsModal from '../components/VersionsModal.vue'
 
 const catalog = useCatalogStore()
@@ -50,13 +51,9 @@ const columns = [
       <input v-model="form.sourceHost" placeholder="source host" class="border rounded px-2 py-1" />
       <input v-model="form.storeHost" placeholder="store host" class="border rounded px-2 py-1" />
       <input v-model="form.pattern" placeholder="path pattern" class="border rounded px-2 py-1" />
-      <button
-        type="submit"
-        :disabled="!canSearch"
-        class="bg-blue-600 text-white rounded px-3 py-1 disabled:opacity-50"
-      >
+      <BaseButton type="submit" variant="primary" :disabled="!canSearch">
         Search
-      </button>
+      </BaseButton>
     </form>
     <p v-if="!hasSearched && !catalog.error" class="text-gray-500">Enter a filter and search.</p>
     <StatusMessage
