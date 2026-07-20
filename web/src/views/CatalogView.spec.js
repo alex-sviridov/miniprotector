@@ -1,23 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import CatalogView from './CatalogView.vue'
 import { useCatalogStore } from '../stores/catalog'
-
-const { destroy, on, DataTable } = vi.hoisted(() => {
-  const destroy = vi.fn()
-  const on = vi.fn()
-  const DataTable = vi.fn(() => ({ destroy, on }))
-  return { destroy, on, DataTable }
-})
-
-vi.mock('simple-datatables', () => ({ DataTable }))
-
-beforeEach(() => {
-  DataTable.mockClear()
-  destroy.mockClear()
-  on.mockClear()
-})
 
 function entry(overrides) {
   return {
@@ -46,11 +31,6 @@ function mountView(state) {
   })
   const wrapper = mount(CatalogView, { global: { plugins: [pinia] } })
   return { wrapper, catalog: useCatalogStore() }
-}
-
-function selectRow(rowIndex) {
-  const call = on.mock.calls.findLast(([event]) => event === 'datatable.selectrow')
-  call[1](rowIndex)
 }
 
 async function search(wrapper, sourceHost = 'database') {
@@ -134,40 +114,41 @@ describe('CatalogView', () => {
     expect(cells[cells.length - 1].text()).toBe('')
   })
 
-  it('constructs simple-datatables with search disabled and a 25-row page size, and destroys it on unmount', async () => {
+  it('opens the versions modal for the row actually clicked, even after sorting reorders the table', async () => {
     const { wrapper, catalog } = mountView({})
-    catalog.entries = [entry({ id: 1 })]
-    await search(wrapper)
-
-    expect(DataTable).toHaveBeenCalledTimes(1)
-    expect(DataTable.mock.calls[0][0].tagName).toBe('TABLE')
-    expect(DataTable.mock.calls[0][1]).toEqual({ searchable: false, perPage: 25 })
-
-    wrapper.unmount()
-    expect(destroy).toHaveBeenCalledTimes(1)
-  })
-
-  it('opens the versions modal when a multi-version row is selected', async () => {
-    const { wrapper, catalog } = mountView({})
+    // Insertion order: "webserver" (1 version) first, "database" (2
+    // versions) second — so row 0 is webserver *before* sorting. Sorting
+    // ascending by Path puts "database" (/var/lib/...) before "webserver"
+    // (/var/www/...), so row 0 becomes database *after* sorting. The old
+    // simple-datatables integration mapped a clicked row's index back into
+    // the pre-sort array, so clicking post-sort row 0 there would have
+    // resolved to webserver (wrong, and single-version besides). Row-click
+    // now hands back the actual clicked row object, so it must resolve to
+    // database regardless of sort order.
     catalog.entries = [
-      entry({ id: 1, store_created_at: 1752300000 }),
-      entry({ id: 2, store_created_at: 1752400000 }),
+      entry({ id: 3, source_host: 'webserver', path: '/var/www/index.html', store_created_at: 1752350000 }),
+      entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/data.db', store_created_at: 1752300000 }),
+      entry({ id: 2, source_host: 'database', path: '/var/lib/dbdata/data.db', store_created_at: 1752400000 }),
     ]
     await search(wrapper)
 
-    selectRow(0)
+    await wrapper.find('thead th button').trigger('click') // sorts by Path ascending
+    await flushPromises()
+    const sortedRows = wrapper.findAll('tbody tr')
+    expect(sortedRows[0].text()).toContain('/var/lib/dbdata/data.db')
+
+    await sortedRows[0].trigger('click')
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.find('.fixed').exists()).toBe(true)
     expect(wrapper.text()).toContain('Versions of /var/lib/dbdata/data.db on database')
   })
 
-  it('does not open the versions modal when a single-version row is selected', async () => {
+  it('does not open the versions modal when a single-version row is clicked', async () => {
     const { wrapper, catalog } = mountView({})
     catalog.entries = [entry({ id: 1 })]
     await search(wrapper)
 
-    selectRow(0)
+    await wrapper.find('tbody tr').trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('.fixed').exists()).toBe(false)
@@ -181,7 +162,7 @@ describe('CatalogView', () => {
     ]
     await search(wrapper)
 
-    selectRow(0)
+    await wrapper.find('tbody tr').trigger('click')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.fixed').exists()).toBe(true)
 
