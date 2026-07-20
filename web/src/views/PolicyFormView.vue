@@ -1,7 +1,10 @@
+<!-- web/src/views/PolicyFormView.vue -->
 <script setup>
 import { reactive, computed, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePoliciesStore } from '../stores/policies'
+import RepeatableFieldList from '../components/ui/RepeatableFieldList.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,9 +45,6 @@ const form = reactive(emptyForm())
 
 onMounted(async () => {
   if (isEdit.value) {
-    // Defer past the current microtask so tests that configure
-    // `policies.fetchOne`'s mocked resolution immediately after mount()
-    // (a synchronous call) still observe it on this call.
     await nextTick()
     try {
       const policy = await policies.fetchOne(route.params.id)
@@ -54,31 +54,6 @@ onMounted(async () => {
     }
   }
 })
-
-function addHostname() {
-  form.client_filters.hostnames.push('')
-}
-function removeHostname(i) {
-  form.client_filters.hostnames.splice(i, 1)
-}
-function addLabel() {
-  form.client_filters.labels.push({ key: '', value: '' })
-}
-function removeLabel(i) {
-  form.client_filters.labels.splice(i, 1)
-}
-function addWindow() {
-  form.backup_window.push('')
-}
-function removeWindow(i) {
-  form.backup_window.splice(i, 1)
-}
-function addFilter() {
-  form.object_filters.push({ path: '', includeText: '', excludeText: '' })
-}
-function removeFilter(i) {
-  form.object_filters.splice(i, 1)
-}
 
 function splitCsv(text) {
   return text.split(',').map((s) => s.trim()).filter(Boolean)
@@ -114,7 +89,7 @@ async function submit() {
     const policy = isEdit.value
       ? await policies.update(route.params.id, payload)
       : await policies.create(payload)
-    router.push(`/policies/${policy.id}`)
+    router.push({ name: 'policy-detail', params: { id: policy.id } })
   } catch {
     // error already recorded on policies.error by the store
   }
@@ -133,73 +108,73 @@ async function submit() {
 
       <div>
         <label class="block font-medium mb-1">Hostnames (glob patterns)</label>
-        <div v-for="(_, i) in form.client_filters.hostnames" :key="i" class="flex gap-2 mb-1">
-          <input
-            data-test="hostname-input"
-            v-model="form.client_filters.hostnames[i]"
-            class="flex-1 border rounded px-2 py-1"
-          />
-          <button type="button" data-test="remove-hostname" @click="removeHostname(i)" class="border rounded px-2">
-            Remove
-          </button>
-        </div>
-        <button type="button" data-test="add-hostname" @click="addHostname" class="border rounded px-3 py-1">
-          Add Hostname
-        </button>
+        <RepeatableFieldList :items="form.client_filters.hostnames" add-label="Add Hostname" test-prefix="hostname">
+          <template #row="{ index }">
+            <input
+              data-test="hostname-input"
+              v-model="form.client_filters.hostnames[index]"
+              class="flex-1 border rounded px-2 py-1"
+            />
+          </template>
+        </RepeatableFieldList>
       </div>
 
       <div>
         <label class="block font-medium mb-1">Labels</label>
-        <div v-for="(_, i) in form.client_filters.labels" :key="i" class="flex gap-2 mb-1">
-          <input
-            data-test="label-key-input"
-            v-model="form.client_filters.labels[i].key"
-            placeholder="key"
-            class="flex-1 border rounded px-2 py-1"
-          />
-          <input
-            data-test="label-value-input"
-            v-model="form.client_filters.labels[i].value"
-            placeholder="value"
-            class="flex-1 border rounded px-2 py-1"
-          />
-          <button type="button" data-test="remove-label" @click="removeLabel(i)" class="border rounded px-2">
-            Remove
-          </button>
-        </div>
-        <button type="button" data-test="add-label" @click="addLabel" class="border rounded px-3 py-1">
-          Add Label
-        </button>
+        <RepeatableFieldList
+          :items="form.client_filters.labels"
+          :new-item="() => ({ key: '', value: '' })"
+          add-label="Add Label"
+          test-prefix="label"
+        >
+          <template #row="{ index }">
+            <input
+              data-test="label-key-input"
+              v-model="form.client_filters.labels[index].key"
+              placeholder="key"
+              class="flex-1 border rounded px-2 py-1"
+            />
+            <input
+              data-test="label-value-input"
+              v-model="form.client_filters.labels[index].value"
+              placeholder="value"
+              class="flex-1 border rounded px-2 py-1"
+            />
+          </template>
+        </RepeatableFieldList>
       </div>
 
       <div>
         <label class="block font-medium mb-1">Object Filters</label>
-        <div v-for="(_, i) in form.object_filters" :key="i" class="border rounded p-2 mb-2 space-y-1">
-          <input
-            data-test="filter-path-input"
-            v-model="form.object_filters[i].path"
-            placeholder="path"
-            class="w-full border rounded px-2 py-1"
-          />
-          <input
-            data-test="filter-include-input"
-            v-model="form.object_filters[i].includeText"
-            placeholder="include patterns, comma-separated"
-            class="w-full border rounded px-2 py-1"
-          />
-          <input
-            data-test="filter-exclude-input"
-            v-model="form.object_filters[i].excludeText"
-            placeholder="exclude patterns, comma-separated"
-            class="w-full border rounded px-2 py-1"
-          />
-          <button type="button" data-test="remove-filter" @click="removeFilter(i)" class="border rounded px-2">
-            Remove Filter
-          </button>
-        </div>
-        <button type="button" data-test="add-filter" @click="addFilter" class="border rounded px-3 py-1">
-          Add Object Filter
-        </button>
+        <RepeatableFieldList
+          :items="form.object_filters"
+          :new-item="() => ({ path: '', includeText: '', excludeText: '' })"
+          add-label="Add Object Filter"
+          remove-label="Remove Filter"
+          row-class="border rounded p-2 mb-2 space-y-1"
+          test-prefix="filter"
+        >
+          <template #row="{ index }">
+            <input
+              data-test="filter-path-input"
+              v-model="form.object_filters[index].path"
+              placeholder="path"
+              class="w-full border rounded px-2 py-1"
+            />
+            <input
+              data-test="filter-include-input"
+              v-model="form.object_filters[index].includeText"
+              placeholder="include patterns, comma-separated"
+              class="w-full border rounded px-2 py-1"
+            />
+            <input
+              data-test="filter-exclude-input"
+              v-model="form.object_filters[index].excludeText"
+              placeholder="exclude patterns, comma-separated"
+              class="w-full border rounded px-2 py-1"
+            />
+          </template>
+        </RepeatableFieldList>
       </div>
 
       <div>
@@ -209,20 +184,16 @@ async function submit() {
 
       <div>
         <label class="block font-medium mb-1">Backup Window (cron expressions)</label>
-        <div v-for="(_, i) in form.backup_window" :key="i" class="flex gap-2 mb-1">
-          <input
-            data-test="window-input"
-            v-model="form.backup_window[i]"
-            placeholder="0 2 * * *"
-            class="flex-1 border rounded px-2 py-1"
-          />
-          <button type="button" data-test="remove-window" @click="removeWindow(i)" class="border rounded px-2">
-            Remove
-          </button>
-        </div>
-        <button type="button" data-test="add-window" @click="addWindow" class="border rounded px-3 py-1">
-          Add Window
-        </button>
+        <RepeatableFieldList :items="form.backup_window" add-label="Add Window" test-prefix="window">
+          <template #row="{ index }">
+            <input
+              data-test="window-input"
+              v-model="form.backup_window[index]"
+              placeholder="0 2 * * *"
+              class="flex-1 border rounded px-2 py-1"
+            />
+          </template>
+        </RepeatableFieldList>
       </div>
 
       <div>
@@ -230,9 +201,9 @@ async function submit() {
         <input name="destination" v-model="form.destination" placeholder="host:port" class="w-full border rounded px-2 py-1" />
       </div>
 
-      <button type="submit" class="bg-blue-600 text-white rounded px-4 py-2">
+      <BaseButton type="submit" variant="primary">
         {{ isEdit ? 'Save Changes' : 'Create Policy' }}
-      </button>
+      </BaseButton>
     </form>
   </div>
 </template>

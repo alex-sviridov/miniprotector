@@ -50,7 +50,7 @@ describe('PolicyFormView', () => {
         backup_window: [],
         destination: 'store:8080',
       })
-      expect(push).toHaveBeenCalledWith('/policies/p9')
+      expect(push).toHaveBeenCalledWith({ name: 'policy-detail', params: { id: 'p9' } })
     })
   })
 
@@ -107,7 +107,7 @@ describe('PolicyFormView', () => {
         backup_window: [],
         destination: 'store:8080',
       })
-      expect(push).toHaveBeenCalledWith('/policies/p1')
+      expect(push).toHaveBeenCalledWith({ name: 'policy-detail', params: { id: 'p1' } })
     })
   })
 
@@ -117,8 +117,8 @@ describe('PolicyFormView', () => {
       const { wrapper, policies } = mountView({ error: null })
       policies.create.mockResolvedValue({ id: 'p9' })
 
-      await wrapper.find('[data-test="add-hostname"]').trigger('click')
-      await wrapper.find('[data-test="add-hostname"]').trigger('click')
+      await wrapper.find('[data-test="hostname-add"]').trigger('click')
+      await wrapper.find('[data-test="hostname-add"]').trigger('click')
       const hostnameInputs = wrapper.findAll('[data-test="hostname-input"]')
       await hostnameInputs[0].setValue('database')
       await hostnameInputs[1].setValue('  ')
@@ -135,7 +135,7 @@ describe('PolicyFormView', () => {
       const { wrapper, policies } = mountView({ error: null })
       policies.create.mockResolvedValue({ id: 'p9' })
 
-      await wrapper.find('[data-test="add-label"]').trigger('click')
+      await wrapper.find('[data-test="label-add"]').trigger('click')
       await wrapper.find('[data-test="label-key-input"]').setValue('env')
       await wrapper.find('[data-test="label-value-input"]').setValue('prod')
       await wrapper.find('form').trigger('submit')
@@ -151,14 +151,12 @@ describe('PolicyFormView', () => {
       const { wrapper, policies } = mountView({ error: null })
       policies.create.mockResolvedValue({ id: 'p9' })
 
-      await wrapper.find('[data-test="add-window"]').trigger('click')
+      await wrapper.find('[data-test="window-add"]').trigger('click')
       await wrapper.find('[data-test="window-input"]').setValue('0 2 * * *')
       await wrapper.find('form').trigger('submit')
       await Promise.resolve()
 
-      expect(policies.create).toHaveBeenCalledWith(
-        expect.objectContaining({ backup_window: ['0 2 * * *'] })
-      )
+      expect(policies.create).toHaveBeenCalledWith(expect.objectContaining({ backup_window: ['0 2 * * *'] }))
     })
 
     it('adds an object filter and splits comma-separated include/exclude into arrays', async () => {
@@ -166,7 +164,7 @@ describe('PolicyFormView', () => {
       const { wrapper, policies } = mountView({ error: null })
       policies.create.mockResolvedValue({ id: 'p9' })
 
-      await wrapper.find('[data-test="add-filter"]').trigger('click')
+      await wrapper.find('[data-test="filter-add"]').trigger('click')
       await wrapper.find('[data-test="filter-path-input"]').setValue('/var/lib/dbdata')
       await wrapper.find('[data-test="filter-include-input"]').setValue('*.sql, *.dump')
       await wrapper.find('[data-test="filter-exclude-input"]').setValue('*.tmp')
@@ -185,9 +183,9 @@ describe('PolicyFormView', () => {
       const { wrapper, policies } = mountView({ error: null })
       policies.create.mockResolvedValue({ id: 'p9' })
 
-      await wrapper.find('[data-test="add-hostname"]').trigger('click')
+      await wrapper.find('[data-test="hostname-add"]').trigger('click')
       await wrapper.find('[data-test="hostname-input"]').setValue('database')
-      await wrapper.find('[data-test="remove-hostname"]').trigger('click')
+      await wrapper.find('[data-test="hostname-remove"]').trigger('click')
       await wrapper.find('form').trigger('submit')
       await Promise.resolve()
 
