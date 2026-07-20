@@ -31,14 +31,22 @@ onMounted(async () => {
   checkPendingToken()
 })
 
-function confirmRevoke() {
+async function confirmRevoke() {
   if (window.confirm(`Revoke ${hostname.value}?`)) {
-    clients.revoke(hostname.value)
+    try {
+      await clients.revoke(hostname.value)
+    } catch {
+      // error already recorded on clients.error by the store
+    }
   }
 }
-function confirmUnrevoke() {
+async function confirmUnrevoke() {
   if (window.confirm(`Unrevoke ${hostname.value}?`)) {
-    clients.unrevoke(hostname.value)
+    try {
+      await clients.unrevoke(hostname.value)
+    } catch {
+      // error already recorded on clients.error by the store
+    }
   }
 }
 async function reenroll() {
@@ -51,17 +59,34 @@ async function reenroll() {
 }
 
 async function copyToken() {
-  await navigator.clipboard.writeText(tokenValue.value)
+  try {
+    await navigator.clipboard.writeText(tokenValue.value)
+  } catch {
+    // clipboard access can fail (insecure context, denied permission);
+    // the token is still visible in the banner for manual copying
+  }
 }
 
-function saveDescription({ set, unset }) {
-  clients.updateDescription(hostname.value, set, unset)
+async function saveDescription({ set, unset }) {
+  try {
+    await clients.updateDescription(hostname.value, set, unset)
+  } catch {
+    // error already recorded on clients.error by the store
+  }
 }
-function saveAttributes({ set, unset }) {
-  clients.updateAttributes(hostname.value, set, unset)
+async function saveAttributes({ set, unset }) {
+  try {
+    await clients.updateAttributes(hostname.value, set, unset)
+  } catch {
+    // error already recorded on clients.error by the store
+  }
 }
-function saveSans({ add, remove }) {
-  clients.updateSans(hostname.value, add, remove)
+async function saveSans({ add, remove }) {
+  try {
+    await clients.updateSans(hostname.value, add, remove)
+  } catch {
+    // error already recorded on clients.error by the store
+  }
 }
 </script>
 

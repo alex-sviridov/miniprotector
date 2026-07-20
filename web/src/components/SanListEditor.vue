@@ -35,6 +35,11 @@ function submit() {
   const snapshotSet = new Set(normalize(snapshot))
   const add = [...draftSet].filter((s) => !snapshotSet.has(s))
   const remove = [...snapshotSet].filter((s) => !draftSet.has(s))
+  // dirty is a raw draft-vs-snapshot comparison (so an empty added row
+  // enables Update immediately), but that can leave add/remove both empty
+  // after normalization -- e.g. an added-then-untouched blank row. Skip
+  // the round-trip rather than emitting a no-op save.
+  if (add.length === 0 && remove.length === 0) return
   emit('save', { add, remove })
 }
 </script>

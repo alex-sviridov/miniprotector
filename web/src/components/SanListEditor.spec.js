@@ -28,6 +28,17 @@ describe('SanListEditor', () => {
     expect(wrapper.emitted('save')[0][0]).toEqual({ add: ['new.internal'], remove: ['old.internal'] })
   })
 
+  it('does not emit save when clicking Update on an added-then-empty row (normalized add/remove are both empty)', async () => {
+    const wrapper = mount(SanListEditor, { props: { modelValue: ['old.internal'] } })
+
+    await wrapper.find('[data-test="san-add"]').trigger('click')
+    expect(wrapper.find('[data-test="san-update"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('[data-test="san-update"]').trigger('click')
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+  })
+
   it('resets its draft when modelValue prop changes', async () => {
     const wrapper = mount(SanListEditor, { props: { modelValue: ['old.internal'] } })
     await wrapper.find('[data-test="san-add"]').trigger('click')

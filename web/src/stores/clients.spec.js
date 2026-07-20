@@ -125,6 +125,17 @@ describe('clients store', () => {
     expect(clients.list[0]).toEqual(updated)
   })
 
+  it('revoke records an error and rethrows on failure, leaving the cache untouched', async () => {
+    apiFetch.mockRejectedValue(new Error('client node-1 not found'))
+    const clients = useClientsStore()
+    clients.list = [{ hostname: 'node-1', revoked: false, revoked_at: 0, last_seen_at: 0 }]
+
+    await expect(clients.revoke('node-1')).rejects.toThrow('client node-1 not found')
+    expect(clients.error).toBe('client node-1 not found')
+    expect(clients.byHostname['node-1']).toBeUndefined()
+    expect(clients.list[0]).toEqual({ hostname: 'node-1', revoked: false, revoked_at: 0, last_seen_at: 0 })
+  })
+
   it('unrevoke posts to the unrevoke endpoint and updates the cache', async () => {
     const updated = { hostname: 'node-1', revoked: false, revoked_at: 0, last_seen_at: 0 }
     apiFetch.mockResolvedValue(updated)
@@ -152,6 +163,17 @@ describe('clients store', () => {
     })
     expect(result).toEqual(updated)
     expect(clients.byHostname['node-1']).toEqual(updated)
+  })
+
+  it('updateDescription records an error and rethrows on failure, leaving the cache untouched', async () => {
+    apiFetch.mockRejectedValue(new Error('client node-1 not found'))
+    const clients = useClientsStore()
+
+    await expect(clients.updateDescription('node-1', { owner: 'alice' }, [])).rejects.toThrow(
+      'client node-1 not found'
+    )
+    expect(clients.error).toBe('client node-1 not found')
+    expect(clients.byHostname['node-1']).toBeUndefined()
   })
 
   it('updateAttributes PATCHes set/unset and updates the cache', async () => {
