@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { apiFetch } from '../api/client'
+import { withRequest } from './helpers'
 
 export const useClientsStore = defineStore('clients', {
   state: () => ({
@@ -11,39 +12,28 @@ export const useClientsStore = defineStore('clients', {
   }),
   actions: {
     async fetchAll() {
-      this.loading = true
-      this.error = null
-      try {
-        const body = await apiFetch('/clients')
-        this.list = body.data
-      } catch (err) {
-        this.error = err.message
-      } finally {
-        this.loading = false
-      }
+      await withRequest(
+        this,
+        async () => {
+          const body = await apiFetch('/clients')
+          this.list = body.data
+        },
+        { rethrow: false }
+      )
     },
     async fetchOne(hostname) {
       if (this.byHostname[hostname]) {
         this.error = null
         return this.byHostname[hostname]
       }
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const client = await apiFetch(`/clients/${encodeURIComponent(hostname)}`)
         this.byHostname[hostname] = client
         return client
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     async enroll(hostname, sans) {
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const result = await apiFetch('/clients', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -52,17 +42,10 @@ export const useClientsStore = defineStore('clients', {
         this.list.push({ hostname: result.hostname, revoked: false, revoked_at: 0, last_seen_at: 0 })
         this.pendingToken = { hostname: result.hostname, token: result.token }
         return result
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     async reenroll(hostname, sans) {
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const result = await apiFetch(`/clients/${encodeURIComponent(hostname)}/reenroll`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -70,45 +53,24 @@ export const useClientsStore = defineStore('clients', {
         })
         this.pendingToken = { hostname: result.hostname, token: result.token }
         return result
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     async revoke(hostname) {
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const client = await apiFetch(`/clients/${encodeURIComponent(hostname)}/revoke`, { method: 'POST' })
         this.updateCache(client)
         return client
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     async unrevoke(hostname) {
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const client = await apiFetch(`/clients/${encodeURIComponent(hostname)}/unrevoke`, { method: 'POST' })
         this.updateCache(client)
         return client
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     async updateDescription(hostname, set, unset) {
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const client = await apiFetch(`/clients/${encodeURIComponent(hostname)}/description`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -116,17 +78,10 @@ export const useClientsStore = defineStore('clients', {
         })
         this.updateCache(client)
         return client
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     async updateAttributes(hostname, set, unset) {
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const client = await apiFetch(`/clients/${encodeURIComponent(hostname)}/attributes`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -134,17 +89,10 @@ export const useClientsStore = defineStore('clients', {
         })
         this.updateCache(client)
         return client
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     async updateSans(hostname, add, remove) {
-      this.loading = true
-      this.error = null
-      try {
+      return withRequest(this, async () => {
         const client = await apiFetch(`/clients/${encodeURIComponent(hostname)}/sans`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -152,12 +100,7 @@ export const useClientsStore = defineStore('clients', {
         })
         this.updateCache(client)
         return client
-      } catch (err) {
-        this.error = err.message
-        throw err
-      } finally {
-        this.loading = false
-      }
+      })
     },
     // updateCache writes a fresh client record (from revoke/unrevoke/update*
     // responses) into both byHostname and the matching list row, so every
