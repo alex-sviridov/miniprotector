@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onBeforeUnmount } from 'vue'
 import { formatBytes, formatTimestamp } from '../utils/format'
+import BaseButton from './ui/BaseButton.vue'
 
 const props = defineProps({
   group: { type: Object, required: true },
@@ -31,7 +32,7 @@ onBeforeUnmount(() => {
         <h2 class="text-lg font-semibold">
           Versions of {{ group.path }} on {{ group.sourceHost }}
         </h2>
-        <button type="button" class="text-gray-500 hover:text-gray-800" @click="close">Close</button>
+        <BaseButton variant="secondary" @click="close">Close</BaseButton>
       </div>
       <table class="w-full text-left border-collapse">
         <thead>
