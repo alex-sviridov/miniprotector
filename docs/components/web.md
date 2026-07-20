@@ -25,13 +25,14 @@ no data — there's no read-only "guest" mode.
   description, attributes, and SANs, each gated by its own "Update" button that enables only once
   that section has a pending change
 - `/catalog` — catalog entries, filterable by real source host, store host (the `bwfs` node that
-  replicated the entry), and a path-pattern substring, paginated with Prev/Next (the catalog API
-  only supports cursor pagination — no total count, so there's no page-number jump). Entries within
-  the currently loaded page are grouped into one row per distinct file (source host + path), using
-  `simple-datatables` (as `/jobs` does) for client-side search/sort over that page; a "Versions"
-  count opens a modal listing that file's other versions. Grouping is scoped to the loaded page —
-  versions of the same file split across a Prev/Next page boundary appear as separate
-  single-version rows on their own pages.
+  replicated the entry), and a path-pattern substring; at least one filter must be filled in before
+  Search is enabled, since the catalog has no natural bound the way `/jobs`' 24h window does. On
+  search, every matching page is fetched (the catalog API is cursor-paginated) before entries are
+  grouped into one row per distinct file (source host + path) and handed to `simple-datatables` for
+  client-side sort/pagination — grouping over the complete result set means a file's versions are
+  never split across a page boundary. Sizes render human-readable (KB/MB/...); a "Versions" count
+  on multi-version files opens a modal (click anywhere on that row) listing that file's other
+  versions.
 - `/policies` — every policy (name, RPO, destination), linking to:
 - `/policies/:id` — one policy's full record (client filters, object filters, backup window)
 - `/policies/new` — create a new policy
