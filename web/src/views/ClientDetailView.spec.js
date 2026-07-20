@@ -53,6 +53,12 @@ describe('ClientDetailView', () => {
     expect(wrapper.text()).toContain('client not found')
   })
 
+  it('does not show any action buttons while the client has not loaded', () => {
+    const { wrapper } = mountView({ byHostname: {}, loading: false, error: null, pendingToken: null })
+    expect(wrapper.find('[data-test="revoke-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="reenroll-button"]').exists()).toBe(false)
+  })
+
   it('shows a Revoke button for a non-revoked client, and calls revoke after confirming', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { wrapper, clients } = mountView({

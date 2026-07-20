@@ -5,6 +5,10 @@ import { useClientsStore } from '../stores/clients'
 import { formatTimestamp } from '../utils/format'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
 import SanListEditor from '../components/SanListEditor.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import StatusMessage from '../components/ui/StatusMessage.vue'
+import DetailList from '../components/ui/DetailList.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
 
 const route = useRoute()
 const clients = useClientsStore()
@@ -88,64 +92,58 @@ async function saveSans({ add, remove }) {
     // error already recorded on clients.error by the store
   }
 }
+
+const detailRows = computed(() => {
+  if (!client.value) return []
+  return [
+    { key: 'revoked', label: 'Revoked', value: client.value.revoked ? 'Yes' : 'No' },
+    { key: 'revokedAt', label: 'Revoked At', value: formatTimestamp(client.value.revoked_at) || '—' },
+    { key: 'lastSeen', label: 'Last Seen', value: formatTimestamp(client.value.last_seen_at) || 'Never' },
+  ]
+})
 </script>
 
 <template>
   <div>
-    <h1 class="text-xl font-semibold mb-4">{{ hostname }}</h1>
-    <p v-if="clients.loading">Loading...</p>
-    <p v-else-if="clients.error" class="text-red-600">{{ clients.error }}</p>
-    <template v-else-if="client">
-      <div v-if="showToken" data-test="token-banner" class="bg-yellow-50 border border-yellow-400 rounded p-3 mb-4">
-        <p class="font-medium">Enrollment token (shown once):</p>
-        <code data-test="token-value" class="block bg-white border rounded px-2 py-1 my-1 break-all">{{ tokenValue }}</code>
-        <button type="button" @click="copyToken" class="border rounded px-2 py-1 mr-2">Copy</button>
-        <button type="button" @click="showToken = false" class="border rounded px-2 py-1">Dismiss</button>
-        <p class="text-sm text-gray-600 mt-1">This token won't be shown again — relay it to the node now.</p>
-      </div>
+    <PageHeader :title="hostname" />
+    <StatusMessage :loading="clients.loading" :error="clients.error">
+      <template v-if="client">
+        <div v-if="showToken" data-test="token-banner" class="bg-yellow-50 border border-yellow-400 rounded p-3 mb-4">
+          <p class="font-medium">Enrollment token (shown once):</p>
+          <code data-test="token-value" class="block bg-white border rounded px-2 py-1 my-1 break-all">{{ tokenValue }}</code>
+          <BaseButton variant="secondary" class="mr-2" @click="copyToken">Copy</BaseButton>
+          <BaseButton variant="secondary" @click="showToken = false">Dismiss</BaseButton>
+          <p class="text-sm text-gray-600 mt-1">This token won't be shown again — relay it to the node now.</p>
+        </div>
 
-      <div class="mb-4 space-x-2">
-        <button
-          v-if="!client.revoked"
-          type="button"
-          data-test="revoke-button"
-          @click="confirmRevoke"
-          class="border rounded px-3 py-1"
-        >
-          Revoke
-        </button>
-        <button v-else type="button" data-test="unrevoke-button" @click="confirmUnrevoke" class="border rounded px-3 py-1">
-          Unrevoke
-        </button>
-        <button type="button" data-test="reenroll-button" @click="reenroll" class="border rounded px-3 py-1">
-          Re-enroll
-        </button>
-      </div>
+        <div class="mb-4 flex gap-2">
+          <BaseButton v-if="!client.revoked" data-test="revoke-button" variant="danger" @click="confirmRevoke">
+            Revoke
+          </BaseButton>
+          <BaseButton v-else data-test="unrevoke-button" variant="secondary" @click="confirmUnrevoke">
+            Unrevoke
+          </BaseButton>
+          <BaseButton data-test="reenroll-button" variant="secondary" @click="reenroll">Re-enroll</BaseButton>
+        </div>
 
-      <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 mb-6">
-        <dt class="font-medium">Revoked</dt>
-        <dd>{{ client.revoked ? 'Yes' : 'No' }}</dd>
-        <dt class="font-medium">Revoked At</dt>
-        <dd>{{ formatTimestamp(client.revoked_at) || '—' }}</dd>
-        <dt class="font-medium">Last Seen</dt>
-        <dd>{{ formatTimestamp(client.last_seen_at) || 'Never' }}</dd>
-      </dl>
+        <DetailList :rows="detailRows" class="mb-6" />
 
-      <KeyValueEditor
-        :model-value="client.descriptions || {}"
-        label="Description"
-        test-prefix="description"
-        class="mb-6"
-        @save="saveDescription"
-      />
-      <KeyValueEditor
-        :model-value="client.attributes || {}"
-        label="Attributes"
-        test-prefix="attribute"
-        class="mb-6"
-        @save="saveAttributes"
-      />
-      <SanListEditor :model-value="client.sans || []" @save="saveSans" />
-    </template>
+        <KeyValueEditor
+          :model-value="client.descriptions || {}"
+          label="Description"
+          test-prefix="description"
+          class="mb-6"
+          @save="saveDescription"
+        />
+        <KeyValueEditor
+          :model-value="client.attributes || {}"
+          label="Attributes"
+          test-prefix="attribute"
+          class="mb-6"
+          @save="saveAttributes"
+        />
+        <SanListEditor :model-value="client.sans || []" @save="saveSans" />
+      </template>
+    </StatusMessage>
   </div>
 </template>
