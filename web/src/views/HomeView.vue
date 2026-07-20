@@ -1,6 +1,9 @@
+<script setup>
+import PageHeader from '../components/ui/PageHeader.vue'
+</script>
+
 <template>
-  <div>
-    <h1 class="text-xl font-semibold">Miniprotector</h1>
+  <PageHeader title="Miniprotector">
     <p class="text-gray-600">Select a page from the sidebar.</p>
-  </div>
+  </PageHeader>
 </template>

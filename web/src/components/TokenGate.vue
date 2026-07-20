@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import BaseButton from './ui/BaseButton.vue'
 
 const auth = useAuthStore()
 const input = ref('')
@@ -24,7 +25,7 @@ function submit() {
         placeholder="Bearer token"
         class="w-full border rounded px-2 py-1"
       />
-      <button type="submit" class="w-full bg-blue-600 text-white rounded py-1">Continue</button>
+      <BaseButton type="submit" variant="primary" class="w-full">Continue</BaseButton>
     </form>
   </div>
 </template>

@@ -3,6 +3,8 @@ import { onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useJobsStore } from '../stores/jobs'
 import { formatTimestamp } from '../utils/format'
+import PageHeader from '../components/ui/PageHeader.vue'
+import StatusMessage from '../components/ui/StatusMessage.vue'
 
 const route = useRoute()
 const jobs = useJobsStore()
@@ -22,15 +24,19 @@ function formatLineTimestamp(nanos) {
 
 <template>
   <div>
-    <h1 class="text-xl font-semibold mb-4">{{ jobId }}</h1>
-    <p v-if="jobs.logsLoading">Loading...</p>
-    <p v-else-if="jobs.logsError" class="text-red-600">{{ jobs.logsError }}</p>
-    <p v-else-if="jobs.logs.length === 0">No log lines found for this job in the last 24h.</p>
-    <ul v-else class="font-mono text-sm space-y-1">
-      <li v-for="(line, index) in jobs.logs" :key="index">
-        <span class="text-gray-500">{{ formatLineTimestamp(line.timestamp) }}</span>
-        [{{ line.hostname }}/{{ line.binary }}] {{ line.line }}
-      </li>
-    </ul>
+    <PageHeader :title="jobId" />
+    <StatusMessage
+      :loading="jobs.logsLoading"
+      :error="jobs.logsError"
+      :empty="jobs.logs.length === 0"
+      empty-text="No log lines found for this job in the last 24h."
+    >
+      <ul class="font-mono text-sm space-y-1">
+        <li v-for="(line, index) in jobs.logs" :key="index">
+          <span class="text-gray-500">{{ formatLineTimestamp(line.timestamp) }}</span>
+          [{{ line.hostname }}/{{ line.binary }}] {{ line.line }}
+        </li>
+      </ul>
+    </StatusMessage>
   </div>
 </template>
