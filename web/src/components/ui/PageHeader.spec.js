@@ -15,6 +15,14 @@ describe('PageHeader', () => {
       slots: { default: '<p>body</p>' },
     })
     expect(wrapper.find('p').text()).toBe('body')
+
+    // Verify ordering: h1 should appear before p in the DOM
+    const html = wrapper.html()
+    const h1Index = html.indexOf('<h1')
+    const pIndex = html.indexOf('<p')
+    expect(h1Index).toBeGreaterThanOrEqual(0)
+    expect(pIndex).toBeGreaterThanOrEqual(0)
+    expect(h1Index).toBeLessThan(pIndex)
   })
 
   it('renders the actions slot when provided', () => {
