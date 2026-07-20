@@ -1,5 +1,6 @@
+// web/src/views/PolicyDetailView.spec.js
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import PolicyDetailView from './PolicyDetailView.vue'
 import { usePoliciesStore } from '../stores/policies'
@@ -14,10 +15,7 @@ vi.mock('vue-router', () => ({
 function mountView(state) {
   const pinia = createTestingPinia({ stubActions: true, initialState: { policies: state } })
   const wrapper = mount(PolicyDetailView, {
-    global: {
-      plugins: [pinia],
-      stubs: { RouterLink: { template: '<a :href="to"><slot /></a>', props: ['to'] } },
-    },
+    global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
   })
   return { wrapper, policies: usePoliciesStore() }
 }
@@ -52,7 +50,8 @@ describe('PolicyDetailView', () => {
     expect(wrapper.text()).toContain('nightly-db-backup')
     expect(wrapper.text()).toContain('1h')
     expect(wrapper.text()).toContain('/var/lib/dbdata')
-    expect(wrapper.find('a[href="/policies/p1/edit"]').exists()).toBe(true)
+    const editLink = wrapper.findAllComponents(RouterLinkStub).find((l) => l.text() === 'Edit')
+    expect(editLink.props('to')).toEqual({ name: 'policy-edit', params: { id: 'p1' } })
   })
 
   it('shows the store error message on a 404', () => {
@@ -69,10 +68,10 @@ describe('PolicyDetailView', () => {
     })
     policies.remove.mockResolvedValue(undefined)
 
-    await wrapper.find('button').trigger('click')
+    await wrapper.find('[data-test="policy-delete"]').trigger('click')
     await Promise.resolve()
 
     expect(policies.remove).toHaveBeenCalledWith('p1')
-    expect(push).toHaveBeenCalledWith('/policies')
+    expect(push).toHaveBeenCalledWith({ name: 'policies' })
   })
 })
