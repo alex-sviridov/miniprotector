@@ -30,15 +30,15 @@ describe('ClientFormView', () => {
     await Promise.resolve()
 
     expect(clients.enroll).toHaveBeenCalledWith('node-1', [])
-    expect(push).toHaveBeenCalledWith('/clients/node-1')
+    expect(push).toHaveBeenCalledWith({ name: 'client-detail', params: { hostname: 'node-1' } })
   })
 
   it('adds and removes SAN rows, sending only non-empty trimmed values', async () => {
     const { wrapper, clients } = mountView({ error: null })
     clients.enroll.mockResolvedValue({ hostname: 'node-1', token: 'tok-abc' })
 
-    await wrapper.find('[data-test="add-san"]').trigger('click')
-    await wrapper.find('[data-test="add-san"]').trigger('click')
+    await wrapper.find('[data-test="san-add"]').trigger('click')
+    await wrapper.find('[data-test="san-add"]').trigger('click')
     const sanInputs = wrapper.findAll('[data-test="san-input"]')
     await sanInputs[0].setValue('alias.internal')
     await sanInputs[1].setValue('  ')
@@ -53,9 +53,9 @@ describe('ClientFormView', () => {
     const { wrapper, clients } = mountView({ error: null })
     clients.enroll.mockResolvedValue({ hostname: 'node-1', token: 'tok-abc' })
 
-    await wrapper.find('[data-test="add-san"]').trigger('click')
+    await wrapper.find('[data-test="san-add"]').trigger('click')
     await wrapper.find('[data-test="san-input"]').setValue('alias.internal')
-    await wrapper.find('[data-test="remove-san"]').trigger('click')
+    await wrapper.find('[data-test="san-remove"]').trigger('click')
     await wrapper.find('input[name="hostname"]').setValue('node-1')
     await wrapper.find('form').trigger('submit')
     await Promise.resolve()
