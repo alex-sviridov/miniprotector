@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import VersionsModal from './VersionsModal.vue'
 
@@ -84,13 +84,18 @@ describe('VersionsModal', () => {
   })
 
   it('emits close on Escape, and stops listening after unmount', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener')
     const wrapper = mount(VersionsModal, { props: { group: group() } })
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    const closeEvents = wrapper.emitted('close')
-    expect(closeEvents).toHaveLength(1)
+    const handler = addSpy.mock.calls.find(([type]) => type === 'keydown')[1]
 
-    wrapper.unmount()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    expect(closeEvents).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    wrapper.unmount()
+    expect(removeSpy).toHaveBeenCalledWith('keydown', handler)
+
+    addSpy.mockRestore()
+    removeSpy.mockRestore()
   })
 })
