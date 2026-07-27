@@ -85,6 +85,19 @@ func TestParsePolicyFile_DifferentFilenamesYieldDifferentPolicyIDs(t *testing.T)
 	assert.NotEqual(t, pa.Metadata.ID, pb.Metadata.ID, "identical metadata.name in different files must not collide")
 }
 
+func TestParsePolicyFile_SameBasenameInDifferentTypeSubfoldersYieldsDifferentIDs(t *testing.T) {
+	dir := t.TempDir()
+	pathBackup := writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}}`)
+	pathOther := writePolicyFile(t, filepath.Join(dir, "other"), "nightly.json", `{"metadata": {"name": "nightly"}}`)
+
+	pBackup, err := parsePolicyFile(pathBackup, "backup")
+	require.NoError(t, err)
+	pOther, err := parsePolicyFile(pathOther, "other")
+	require.NoError(t, err)
+
+	assert.NotEqual(t, pBackup.Metadata.ID, pOther.Metadata.ID, "same basename in different type subfolders must not collide")
+}
+
 func TestParsePolicyFile_ObjectFiltersAtDifferentIndicesGetDifferentIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := writePolicyFile(t, dir, "multi.json", `{
