@@ -12,6 +12,7 @@ import (
 
 func writePolicyFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	path := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 	return path
@@ -28,7 +29,7 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 		"destination": "bwfs-east.internal:8080"
 	}`)
 
-	p, err := parsePolicyFile(path)
+	p, err := parsePolicyFile(path, "backup")
 	require.NoError(t, err)
 	assert.Equal(t, "nightly-web-backup", p.Metadata.Name)
 	assert.NotEmpty(t, p.Metadata.ID)
@@ -46,6 +47,15 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 	assert.Equal(t, path, p.SourcePath)
 }
 
+func TestParsePolicyFile_SetsTypeFromArgument(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "nightly.json", `{"metadata": {"name": "nightly"}}`)
+
+	p, err := parsePolicyFile(path, "backup")
+	require.NoError(t, err)
+	assert.Equal(t, "backup", p.Type)
+}
+
 func TestParsePolicyFile_ComputesDeterministicPolicyID(t *testing.T) {
 	dir := t.TempDir()
 	path := writePolicyFile(t, dir, "nightly.json", `{
@@ -53,9 +63,9 @@ func TestParsePolicyFile_ComputesDeterministicPolicyID(t *testing.T) {
 		"object_filters": [{"path": "/var/www"}]
 	}`)
 
-	p1, err := parsePolicyFile(path)
+	p1, err := parsePolicyFile(path, "backup")
 	require.NoError(t, err)
-	p2, err := parsePolicyFile(path)
+	p2, err := parsePolicyFile(path, "backup")
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, p1.Metadata.ID)
@@ -67,9 +77,9 @@ func TestParsePolicyFile_DifferentFilenamesYieldDifferentPolicyIDs(t *testing.T)
 	pathA := writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "same-name"}}`)
 	pathB := writePolicyFile(t, dir, "b.json", `{"metadata": {"name": "same-name"}}`)
 
-	pa, err := parsePolicyFile(pathA)
+	pa, err := parsePolicyFile(pathA, "backup")
 	require.NoError(t, err)
-	pb, err := parsePolicyFile(pathB)
+	pb, err := parsePolicyFile(pathB, "backup")
 	require.NoError(t, err)
 
 	assert.NotEqual(t, pa.Metadata.ID, pb.Metadata.ID, "identical metadata.name in different files must not collide")
@@ -82,7 +92,7 @@ func TestParsePolicyFile_ObjectFiltersAtDifferentIndicesGetDifferentIDs(t *testi
 		"object_filters": [{"path": "/a"}, {"path": "/b"}]
 	}`)
 
-	p, err := parsePolicyFile(path)
+	p, err := parsePolicyFile(path, "backup")
 	require.NoError(t, err)
 	require.Len(t, p.ObjectFilters, 2)
 	assert.NotEmpty(t, p.ObjectFilters[0].ID)
@@ -100,7 +110,7 @@ func TestParsePolicyFile_ObjectFiltersWithIdenticalPathGetDistinctIDs(t *testing
 		]
 	}`)
 
-	p, err := parsePolicyFile(path)
+	p, err := parsePolicyFile(path, "backup")
 	require.NoError(t, err)
 	require.Len(t, p.ObjectFilters, 2)
 	assert.NotEqual(t, p.ObjectFilters[0].ID, p.ObjectFilters[1].ID, "two object filters sharing a path must still get distinct IDs")
@@ -113,7 +123,7 @@ func TestParsePolicyFile_ObjectFilterOmitsIncludeExclude(t *testing.T) {
 		"object_filters": [{"path": "/data"}]
 	}`)
 
-	p, err := parsePolicyFile(path)
+	p, err := parsePolicyFile(path, "backup")
 	require.NoError(t, err)
 	require.Len(t, p.ObjectFilters, 1)
 	assert.Equal(t, "/data", p.ObjectFilters[0].Path)
@@ -128,7 +138,7 @@ func TestParsePolicyFile_InvalidIncludePatternFails(t *testing.T) {
 		"object_filters": [{"path": "/data", "include": ["["]}]
 	}`)
 
-	_, err := parsePolicyFile(path)
+	_, err := parsePolicyFile(path, "backup")
 	assert.Error(t, err)
 }
 
@@ -139,7 +149,7 @@ func TestParsePolicyFile_InvalidExcludePatternFails(t *testing.T) {
 		"object_filters": [{"path": "/data", "exclude": ["["]}]
 	}`)
 
-	_, err := parsePolicyFile(path)
+	_, err := parsePolicyFile(path, "backup")
 	assert.Error(t, err)
 }
 
@@ -147,7 +157,7 @@ func TestParsePolicyFile_MissingNameFails(t *testing.T) {
 	dir := t.TempDir()
 	path := writePolicyFile(t, dir, "bad.json", `{"metadata": {"name": ""}}`)
 
-	_, err := parsePolicyFile(path)
+	_, err := parsePolicyFile(path, "backup")
 	assert.Error(t, err)
 }
 
@@ -155,7 +165,7 @@ func TestParsePolicyFile_InvalidJSONFails(t *testing.T) {
 	dir := t.TempDir()
 	path := writePolicyFile(t, dir, "bad.json", `not json`)
 
-	_, err := parsePolicyFile(path)
+	_, err := parsePolicyFile(path, "backup")
 	assert.Error(t, err)
 }
 
@@ -166,12 +176,12 @@ func TestParsePolicyFile_InvalidHostnamePatternFails(t *testing.T) {
 		"client_filters": {"hostnames": ["["]}
 	}`)
 
-	_, err := parsePolicyFile(path)
+	_, err := parsePolicyFile(path, "backup")
 	assert.Error(t, err)
 }
 
 func TestParsePolicyFile_MissingFileFails(t *testing.T) {
-	_, err := parsePolicyFile(filepath.Join(t.TempDir(), "does-not-exist.json"))
+	_, err := parsePolicyFile(filepath.Join(t.TempDir(), "does-not-exist.json"), "backup")
 	assert.Error(t, err)
 }
 

@@ -1,5 +1,5 @@
 // policy-server serves backup policies -- static, operator-maintained JSON
-// files under $MP_CONFIG_PATH/policies/ -- filtered to whatever the
+// files under $MP_CONFIG_PATH/policies/backup/ -- filtered to whatever the
 // requesting client's verified hostname and certificate-embedded attribute
 // labels match. It is bootstrapped and certificate-managed exactly like any
 // other node in the mesh (client-manager add, agent + issuer refresh); it
