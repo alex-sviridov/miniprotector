@@ -1,18 +1,8 @@
 # This file documents the intended Docker build context for this repo.
 #
-# NOTE: src/e2e/docker.go builds the e2e test image by hand-walking the
-# filesystem (filepath.Walk in addDirToTar) rather than using the Docker
-# CLI/SDK's dockerignore-aware context builder, so this file is NOT
-# automatically applied by that code path. Instead, addDirToTar is scoped
-# to walk only src/ (the one directory the Dockerfile's `COPY src/ .`
-# instruction needs), which achieves the same effect directly in Go.
-#
-# This file remains here for:
-#   - documentation of what's excluded and why
-#   - defense-in-depth / correctness if `docker build` is ever invoked
-#     directly (e.g. CLI, CI, or a future build path that does honor
-#     .dockerignore) against the repo root
-#   - safety if the Dockerfile's COPY scope ever expands beyond src/
+# It applies to (and is honored by) the repo-root-context Docker builds
+# used by demo/docker-compose.yml and deploy/ — there is no longer any
+# build path in this repo that bypasses it.
 .git
 bin
 docs
