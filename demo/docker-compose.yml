@@ -2,7 +2,8 @@ services:
   ca:
     build:
       context: ..
-      dockerfile: demo/ca/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: ca
     volumes:
       - ca-data:/home/step
       - client-manager-data:/data/client-manager
@@ -14,7 +15,8 @@ services:
   issuer:
     build:
       context: ..
-      dockerfile: demo/issuer/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: issuer-demo
     depends_on:
       - ca
     volumes:
@@ -29,7 +31,8 @@ services:
   clientmanager-api:
     build:
       context: ..
-      dockerfile: deploy/control-plane/clientmanager-api/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: clientmanager-api
     depends_on:
       - ca
       - issuer
@@ -47,7 +50,8 @@ services:
   catalog:
     build:
       context: ..
-      dockerfile: deploy/control-plane/catalog/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: catalog
     depends_on:
       - ca
       - issuer
@@ -63,7 +67,8 @@ services:
   api-server:
     build:
       context: ..
-      dockerfile: deploy/control-plane/api-server/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: api-server
     depends_on:
       - ca
       - issuer
@@ -93,7 +98,8 @@ services:
   policy-server:
     build:
       context: ..
-      dockerfile: deploy/control-plane/policy-server/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: policy-server
     depends_on:
       - ca
       - issuer
@@ -117,7 +123,8 @@ services:
   log-gateway:
     build:
       context: ..
-      dockerfile: deploy/control-plane/log-gateway/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: log-gateway
     depends_on:
       - ca
       - issuer
@@ -135,7 +142,8 @@ services:
     hostname: database
     build:
       context: ..
-      dockerfile: demo/backup-host/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: backup-host
     depends_on:
       - ca
       - issuer
@@ -154,7 +162,8 @@ services:
     hostname: webserver
     build:
       context: ..
-      dockerfile: demo/backup-host/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: backup-host
     depends_on:
       - ca
       - issuer
@@ -172,7 +181,8 @@ services:
   store:
     build:
       context: ..
-      dockerfile: demo/backup-host/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: backup-host
     depends_on:
       - ca
       - issuer

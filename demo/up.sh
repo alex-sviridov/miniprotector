@@ -2,6 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
+export COMPOSE_BAKE=true
 
 echo "Building images..."
 for svc in $(docker compose config --services); do
