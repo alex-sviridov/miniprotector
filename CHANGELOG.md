@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-27 — build: docker-consolidation follow-up fixes
+
+Three small fixes to the demo/control-plane Docker consolidation: `demo/local.conf` was missing
+`clientmanager_admin_api_host`, which crash-looped `api-server` (and `web`, downstream of it) on
+every fresh demo stack — added, mirroring the working control-plane config.
+`deploy/build/Dockerfile`'s `ca` stage is renamed to `ca-demo`, matching the `issuer-demo`/
+`issuer-controlplane` naming convention, since it's demo-only but was previously named ambiguously
+enough that wiring the control-plane's `step-ca` service to it would have silently installed the
+wrong entrypoint. `demo/README.md`'s stale "eight images" is corrected to 11, the current count of
+build-based demo services. A fourth planned fix — adding `--mount=type=cache` to `src/e2e/Dockerfile`
+— was dropped: that Dockerfile is built by `src/e2e/docker.go` via the classic, non-BuildKit Docker
+Engine API, which rejects that syntax outright, and reworking `docker.go`'s build-response parsing
+to support BuildKit was judged out of scope for this otherwise-small fix set.
+
 ## 2026-07-27 — build: consolidate demo/control-plane Dockerfiles
 
 The 9 separate per-image Dockerfiles under `demo/` and `deploy/control-plane/` are replaced by one
