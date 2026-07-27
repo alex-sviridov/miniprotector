@@ -95,6 +95,6 @@ make test
 # Run go vet
 make lint
 
-# Run Docker-based e2e tests (requires Docker daemon, ~3 min)
+# Run e2e smoke test against the running demo lab (run `make demo-up` first)
 make test-e2e
 ```
