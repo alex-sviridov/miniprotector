@@ -51,10 +51,17 @@ directly:
     ],
     "rpo": "24h",
     "backup_window": ["0 2 * * *"],
-    "destination": "bwfs-east.internal:8080"
+    "destination": "bwfs-east.internal:8080",
+    "type": "backup"
   }
 ]
 ```
+
+`type` is derived by `policy-server` from the subfolder the policy file lives in (`policies/backup/`
+today) — pure passthrough data as far as `policyclient` is concerned; see
+[Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md).
+`agent` is the consumer that actually branches on it (see
+[agent](./agent.md#policy-driven-backup-execution)).
 
 ## Building
 

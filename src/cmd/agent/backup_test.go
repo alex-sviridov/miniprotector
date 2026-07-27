@@ -98,6 +98,7 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "daily-db-backup",
+		"type": "backup",
 		"object_filters": [
 			{"id": "aaaaaaaa-1111-1111-1111-111111111111", "path": "/var/lib/postgres"},
 			{"id": "bbbbbbbb-2222-2222-2222-222222222222", "path": "/etc/postgres"}
@@ -122,6 +123,7 @@ func TestBackupTasks_ObjectFiltersSharingPathGetDistinctTaskIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "web-policy",
+		"type": "backup",
 		"object_filters": [
 			{"id": "aaaaaaaa-1111-1111-1111-111111111111", "path": "/var/www", "include": ["*.html"]},
 			{"id": "bbbbbbbb-2222-2222-2222-222222222222", "path": "/var/www", "exclude": ["*.log"]}
@@ -146,6 +148,7 @@ func TestBackupTasks_TaskArgsMatchBrfsShape(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "daily-db-backup",
+		"type": "backup",
 		"object_filters": [{"path": "/var/lib/postgres"}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
@@ -172,6 +175,7 @@ func TestBackupTasks_DueRequiresBothWindowOpenAndRpoElapsed(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
+		"type": "backup",
 		"object_filters": [{"path": "/data"}],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
@@ -198,6 +202,7 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
+		"type": "backup",
 		"object_filters": [
 			{"id": "aaaaaaaa-1111-1111-1111-111111111111", "path": "/a"},
 			{"id": "bbbbbbbb-2222-2222-2222-222222222222", "path": "/b"}
@@ -232,6 +237,7 @@ func TestBackupTasks_UnparseableRpoSkipsPolicyEntirely(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
+		"type": "backup",
 		"object_filters": [{"path": "/data"}],
 		"rpo": "not-a-duration",
 		"backup_window": ["0 2 * * *"],
@@ -247,6 +253,7 @@ func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "p",
+		"type": "backup",
 		"object_filters": [{"path": "/data"}],
 		"rpo": "1h",
 		"backup_window": ["not a cron expression"],
@@ -256,6 +263,49 @@ func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
 	tasks, ok := backupTasks(path, conf)
 	assert.True(t, ok)
 	assert.Empty(t, tasks)
+}
+
+func TestBackupTasks_NonBackupTypeSkipsPolicyEntirely(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[{
+		"name": "p",
+		"type": "restore",
+		"object_filters": [{"path": "/data"}],
+		"rpo": "1h",
+		"backup_window": ["0 2 * * *"],
+		"destination": "bwfs:8080"
+	}]`)
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	tasks, ok := backupTasks(path, conf)
+	assert.True(t, ok, "the file itself was still validly read")
+	assert.Empty(t, tasks, "a cached policy whose type isn't \"backup\" must contribute zero tasks")
+}
+
+func TestBackupTasks_MixedTypesOnlyBackupTypeProducesTasks(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[
+		{
+			"name": "backup-policy",
+			"type": "backup",
+			"object_filters": [{"path": "/data"}],
+			"rpo": "1h",
+			"backup_window": ["0 2 * * *"],
+			"destination": "bwfs:8080"
+		},
+		{
+			"name": "other-policy",
+			"type": "restore",
+			"object_filters": [{"path": "/other"}],
+			"rpo": "1h",
+			"backup_window": ["0 2 * * *"],
+			"destination": "bwfs:8080"
+		}
+	]`)
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	tasks, ok := backupTasks(path, conf)
+	require.True(t, ok)
+	require.Len(t, tasks, 1)
+	assert.Contains(t, tasks[0].ID, "backup-policy")
 }
 
 func TestBackupTasks_MissingCacheFileReturnsOkFalseWithNoTasks(t *testing.T) {
@@ -279,6 +329,7 @@ func TestBackupTasks_JobIDFieldMatchesArgsFlag(t *testing.T) {
 	cachePath := filepath.Join(dir, "policies-cache.json")
 	cached := []cachedPolicy{{
 		Name:          "web-policy",
+		Type:          "backup",
 		ObjectFilters: []ObjectFilter{{Path: "/srv/web"}},
 		RPO:           "1h",
 		BackupWindow:  []string{"* * * * *"},
@@ -305,7 +356,7 @@ func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 
 	require.NoError(t, os.WriteFile(cachePath, []byte(`[{
-		"name": "p", "object_filters": [{"path": "/data"}], "rpo": "1h",
+		"name": "p", "type": "backup", "object_filters": [{"path": "/data"}], "rpo": "1h",
 		"backup_window": ["0 2 * * *"], "destination": "bwfs:8080"
 	}]`), 0o644))
 	tasks, ok := backupTasks(cachePath, conf)
@@ -322,6 +373,7 @@ func TestBackupTasks_TaskArgsIncludeIncludeExcludeFlagsWhenPresent(t *testing.T)
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
 		"name": "web-policy",
+		"type": "backup",
 		"object_filters": [{"path": "/var/www", "include": ["*.html", "*.css"], "exclude": ["*.tmp"]}],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],

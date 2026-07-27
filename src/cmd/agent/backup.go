@@ -33,6 +33,7 @@ type ObjectFilter struct {
 // main package -- so these fields are duplicated here rather than shared.
 type cachedPolicy struct {
 	Name          string         `json:"name"`
+	Type          string         `json:"type"`
 	ObjectFilters []ObjectFilter `json:"object_filters"`
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
@@ -182,6 +183,14 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 
 	var tasks []Policy
 	for _, p := range cachedPolicies {
+		// Only type "backup" policies become backup tasks -- a future
+		// non-backup type simply contributes zero tasks here, the same
+		// fail-safe direction as the unparseable-rpo/no-backup_window
+		// skips below: no sound backup task can be built for a policy
+		// this loop doesn't understand how to interpret.
+		if p.Type != "backup" {
+			continue
+		}
 		rpo, err := time.ParseDuration(p.RPO)
 		if err != nil {
 			continue

@@ -11,6 +11,7 @@ import (
 	"encoding/asn1"
 	"encoding/json"
 	"math/big"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -83,11 +84,11 @@ func newTestServerWithPolicies(t *testing.T, dir string) *policyServerServer {
 
 func TestGetPolicies_ReturnsOnlyMatchingPolicies(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "web.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
 		"client_filters": {"hostnames": ["web-*"]}
 	}`)
-	writePolicyFile(t, dir, "db.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "db.json", `{
 		"metadata": {"name": "db-policy"},
 		"client_filters": {"labels": {"role": "db"}}
 	}`)
@@ -101,7 +102,7 @@ func TestGetPolicies_ReturnsOnlyMatchingPolicies(t *testing.T) {
 
 func TestGetPolicies_EmptyFiltersMatchEveryone(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "all.json", `{"metadata": {"name": "everyone"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "all.json", `{"metadata": {"name": "everyone"}}`)
 	srv := newTestServerWithPolicies(t, dir)
 
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "anything", nil), &pb.GetPoliciesRequest{})
@@ -112,7 +113,7 @@ func TestGetPolicies_EmptyFiltersMatchEveryone(t *testing.T) {
 
 func TestGetPolicies_MatchesOnPeerCertLabels(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "db.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "db.json", `{
 		"metadata": {"name": "db-policy"},
 		"client_filters": {"labels": {"role": "db"}}
 	}`)
@@ -134,7 +135,7 @@ func TestGetPolicies_NoPeerIdentityRejected(t *testing.T) {
 
 func TestGetPolicies_MissingJobIDRejected(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "web.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
 		"client_filters": {"hostnames": ["web-*"]}
 	}`)
@@ -146,7 +147,7 @@ func TestGetPolicies_MissingJobIDRejected(t *testing.T) {
 
 func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "full.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "full.json", `{
 		"metadata": {"name": "full-policy", "created_at": "2026-07-10T00:00:00Z", "updated_at": "2026-07-11T00:00:00Z"},
 		"object_filters": [{"path": "/var/www", "include": ["*.html"], "exclude": ["*.tmp"]}, {"path": "/etc"}],
 		"rpo": "24h",
@@ -179,11 +180,11 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 
 func TestListPolicies_ReturnsAllPoliciesRegardlessOfIdentity(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "web.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
 		"client_filters": {"hostnames": ["web-*"]}
 	}`)
-	writePolicyFile(t, dir, "db.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "db.json", `{
 		"metadata": {"name": "db-policy"},
 		"client_filters": {"labels": {"role": "db"}}
 	}`)
@@ -196,7 +197,7 @@ func TestListPolicies_ReturnsAllPoliciesRegardlessOfIdentity(t *testing.T) {
 
 func TestListPolicies_IncludesClientFilters(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "web.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
 		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}}
 	}`)
@@ -211,7 +212,7 @@ func TestListPolicies_IncludesClientFilters(t *testing.T) {
 
 func TestGetPolicies_StillOmitsClientFilters(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "web.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
 		"client_filters": {"hostnames": ["web-*"]}
 	}`)
@@ -221,4 +222,30 @@ func TestGetPolicies_StillOmitsClientFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Policies, 1)
 	assert.Nil(t, resp.Policies[0].ClientFilters)
+}
+
+func TestGetPolicies_ResponseIncludesType(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "backup", resp.Policies[0].Type)
+}
+
+func TestListPolicies_ResponseIncludesType(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "backup", resp.Policies[0].Type)
 }

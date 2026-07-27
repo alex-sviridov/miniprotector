@@ -1,8 +1,8 @@
 # policy-server
 
-Serves backup policies — JSON files under `$MP_CONFIG_PATH/policies/`, one per policy — filtered to
-exactly the policies whose `client_filters` match a requesting client's verified hostname and
-certificate-embedded attribute labels. Also exposes an admin write API
+Serves backup policies — JSON files under `$MP_CONFIG_PATH/policies/backup/`, one per policy —
+filtered to exactly the policies whose `client_filters` match a requesting client's verified
+hostname and certificate-embedded attribute labels. Also exposes an admin write API
 (`ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy`) that `api-server` proxies as REST, so
 policies no longer have to be hand-edited on this host. See
 [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md) and
@@ -41,9 +41,24 @@ carries no further meaning to the caller.
 `policy-server` never parses, validates, or evaluates a policy's `rpo` or `backup_window` — both
 are opaque strings, stored and returned verbatim for a future consumer to interpret.
 
+### Policy types and directory layout
+
+A policy's type is derived from the name of the immediate subfolder its file lives in under
+`$MP_CONFIG_PATH/policies/` — `policies/backup/*.json` are type `"backup"`, the only type that
+exists today. Type is never read from or written to the on-disk policy JSON itself; it's purely a
+function of file location, computed at load time the same way `policy-server` already computes each
+policy's `id` and never reads it from the file. A `*.json` sitting directly under `policies/`,
+outside any type subfolder, is skipped and logged — the same "loud skip, don't block the rest"
+treatment already applied to a malformed file (see below). An unrecognized subfolder name is still
+loaded and tagged with its literal name; `policy-server` does not validate against a whitelist of
+known types — that's left to whichever downstream consumer (`agent` today) knows what to do with a
+given type. `CreatePolicy` always writes into `policies/backup/`, creating that subdirectory if
+missing — there is currently no way to create a policy of any other type through this RPC. See
+[Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md).
+
 ### Policy files and hot reload
 
-Each `$MP_CONFIG_PATH/policies/*.json` file is one policy: `metadata` (`name` plus operator-set
+Each policy type subfolder's `*.json` file is one policy: `metadata` (`name` plus operator-set
 `created_at`/`updated_at`), `client_filters` (`hostnames` glob list, `labels` map), `object_filters`
 (a list of `{"path": "...", "include": [...], "exclude": [...]}` entries — `include`/`exclude` are
 optional glob-pattern lists, validated as syntactically-valid patterns at load time but otherwise
@@ -57,9 +72,10 @@ and each filter's position — stable across reloads, and changes only if the fi
 
 All policies are loaded into memory at startup. To pick up edits, touch
 `$MP_CONFIG_PATH/policies/.changed` after finishing your edit(s) — `policy-server` watches that one
-sentinel file via `fsnotify` and reloads the entire directory as a single atomic swap on each
-write. This lets you edit several policy files as a batch and trigger exactly one reload, rather
-than reloading (potentially mid-edit) on every individual file write.
+top-level sentinel file via `fsnotify` and reloads every type subfolder as a single atomic swap on
+each write. This lets you edit several policy files (in one or more type subfolders) as a batch and
+trigger exactly one reload, rather than reloading (potentially mid-edit) on every individual file
+write.
 
 A single malformed policy file is skipped, logged loudly, and does not block the rest of the
 directory from loading. If every file in a reload attempt fails to parse, the previous good

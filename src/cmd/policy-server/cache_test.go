@@ -16,8 +16,8 @@ func testLogger() *slog.Logger {
 
 func TestCache_ReloadLoadsValidPolicies(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
-	writePolicyFile(t, dir, "b.json", `{"metadata": {"name": "policy-b"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "b.json", `{"metadata": {"name": "policy-b"}}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -28,8 +28,8 @@ func TestCache_ReloadLoadsValidPolicies(t *testing.T) {
 
 func TestCache_ReloadSkipsMalformedFileKeepsGoodOnes(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "good.json", `{"metadata": {"name": "policy-good"}}`)
-	writePolicyFile(t, dir, "bad.json", `not json`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "good.json", `{"metadata": {"name": "policy-good"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "bad.json", `not json`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -41,14 +41,14 @@ func TestCache_ReloadSkipsMalformedFileKeepsGoodOnes(t *testing.T) {
 
 func TestCache_ReloadAllFilesFailKeepsPreviousCache(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "good.json", `{"metadata": {"name": "policy-good"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "good.json", `{"metadata": {"name": "policy-good"}}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
 	require.Len(t, c.Policies(), 1)
 
-	require.NoError(t, os.Remove(filepath.Join(dir, "good.json")))
-	writePolicyFile(t, dir, "bad.json", `not json`)
+	require.NoError(t, os.Remove(filepath.Join(dir, "backup", "good.json")))
+	writePolicyFile(t, filepath.Join(dir, "backup"), "bad.json", `not json`)
 
 	err := c.Reload(dir, testLogger())
 	assert.Error(t, err)
@@ -65,9 +65,38 @@ func TestCache_ReloadEmptyDirectoryYieldsEmptyPolicies(t *testing.T) {
 	assert.Empty(t, c.Policies())
 }
 
+func TestCache_ReloadTagsPoliciesWithSubfolderNameAsType(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "other"), "b.json", `{"metadata": {"name": "policy-b"}}`)
+
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+
+	types := map[string]string{}
+	for _, p := range c.Policies() {
+		types[p.Metadata.Name] = p.Type
+	}
+	assert.Equal(t, "backup", types["policy-a"])
+	assert.Equal(t, "other", types["policy-b"], "an unrecognized subfolder name is still loaded and tagged with its literal name")
+}
+
+func TestCache_ReloadSkipsFileDirectlyUnderPoliciesDir(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, dir, "stray.json", `{"metadata": {"name": "stray"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+
+	got := c.Policies()
+	require.Len(t, got, 1, "a *.json file with no type subfolder must not be loaded")
+	assert.Equal(t, "policy-a", got[0].Metadata.Name)
+}
+
 func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "a.json", `{
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{
 		"metadata": {"name": "policy-a"},
 		"client_filters": {
 			"hostnames": ["host1", "host2"],
@@ -109,11 +138,12 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	assert.Equal(t, "*.tmp", got2[0].ObjectFilters[0].Exclude[0], "mutating ObjectFilters[].Exclude in returned snapshot must not affect cache")
 	assert.Equal(t, "08:00", got2[0].BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
 	assert.NotEmpty(t, got2[0].ObjectFilters[0].ID, "ObjectFilter.ID must survive the snapshot copy")
+	assert.Equal(t, "backup", got2[0].Type, "Type must survive the snapshot copy")
 }
 
 func TestCache_FindByIDReturnsMatchingPolicy(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -122,7 +152,7 @@ func TestCache_FindByIDReturnsMatchingPolicy(t *testing.T) {
 	got, ok := c.FindByID(want.Metadata.ID)
 	require.True(t, ok)
 	assert.Equal(t, "policy-a", got.Metadata.Name)
-	assert.Equal(t, filepath.Join(dir, "a.json"), got.SourcePath)
+	assert.Equal(t, filepath.Join(dir, "backup", "a.json"), got.SourcePath)
 }
 
 func TestCache_FindByIDUnknownIDReturnsFalse(t *testing.T) {
@@ -133,12 +163,12 @@ func TestCache_FindByIDUnknownIDReturnsFalse(t *testing.T) {
 
 func TestCache_FindBySourcePathReturnsMatchingPolicy(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
 
-	got, ok := c.FindBySourcePath(filepath.Join(dir, "a.json"))
+	got, ok := c.FindBySourcePath(filepath.Join(dir, "backup", "a.json"))
 	require.True(t, ok)
 	assert.Equal(t, "policy-a", got.Metadata.Name)
 }

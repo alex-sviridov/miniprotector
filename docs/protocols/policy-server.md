@@ -49,6 +49,7 @@ message Policy {
   string destination = 7;
   string id = 8;
   ClientFilters client_filters = 9;
+  string type = 10;
 }
 
 message CreatePolicyRequest {
@@ -97,6 +98,12 @@ certificate — the same requirement every server except `issuer`'s own listener
   never read from or written to the on-disk policy JSON. They exist so two policies, or two object
   filters within one policy, can never be confused with each other downstream even when their
   human-facing `name`/`path` happen to collide.
+- `Policy.type` is likewise computed, not read from the file -- derived from the name of the
+  immediate subfolder the policy file lives in under `$MP_CONFIG_PATH/policies/` (`"backup"` for
+  `policies/backup/*.json`, the only type today). Populated by both `GetPolicies` and
+  `ListPolicies`. `CreatePolicy`/`UpdatePolicyRequest` carry no `type` field -- `CreatePolicy`
+  always writes into `policies/backup/`. See
+  [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md).
 - Each `object_filters` entry's `include`/`exclude` are opaque, pass-through glob-pattern lists —
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
   applies them, during its own directory walk.
@@ -120,3 +127,4 @@ certificate — the same requirement every server except `issuer`'s own listener
 - [issuer](../components/issuer.md) — embeds the attribute extension this protocol's authorization
   depends on
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
+- [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)

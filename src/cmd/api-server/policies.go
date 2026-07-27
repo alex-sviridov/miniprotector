@@ -30,6 +30,7 @@ type policyDTO struct {
 	RPO           string            `json:"rpo"`
 	BackupWindow  []string          `json:"backup_window"`
 	Destination   string            `json:"destination"`
+	Type          string            `json:"type"`
 }
 
 func toPolicyDTO(p *pb.Policy) policyDTO {
@@ -50,6 +51,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		RPO:           p.GetRpo(),
 		BackupWindow:  p.GetBackupWindow(),
 		Destination:   p.GetDestination(),
+		Type:          p.GetType(),
 	}
 }
 

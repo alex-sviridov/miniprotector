@@ -3,8 +3,9 @@
 A self-contained `docker compose` stack — CA, `issuer`, `catalog`, `policy-server`, and three
 backup-capable nodes (`database`, `webserver`, `store`) — mutually enrolled via mTLS, brought up
 with one script. Unlike [`deploy/control-plane`](../deploy/control-plane/README.md), this never
-touches your host filesystem beyond this directory (except `demo/policy-server/policies/`, which
-you're meant to edit — see "Backup policies" below): every secret and every byte of state lives in
+touches your host filesystem beyond this directory (except `demo/policy-server/policies/backup/`,
+which you're meant to edit — see "Backup policies" below): every secret and every byte of state
+lives in
 Docker-managed named volumes, and no port is published to the host. Everything is reached via
 `docker compose exec`.
 
@@ -39,7 +40,7 @@ placeholder token, `dev-placeholder-token-change-me` (see `demo/local.conf`). Fr
 
 ## Backup policies
 
-`policy-server` ships with three example policies (`demo/policy-server/policies/`), each
+`policy-server` ships with three example policies (`demo/policy-server/policies/backup/`), each
 demonstrating a different way `client_filters` can select clients:
 
 | Policy | Selects | Backs up |
@@ -71,12 +72,13 @@ docker compose -f demo/docker-compose.yml exec catalog sqlite3 /data/storage/cat
 ```
 
 Edit a policy and watch it reload live. `policy-server` watches one sentinel file,
-`policies/.changed` — any write to it triggers a full reload of every `*.json` file under
-`policies/`, so a multi-file edit reloads atomically instead of file-by-file:
+`policies/.changed` — any write to it triggers a full reload of every `*.json` file found one level
+under `policies/` (i.e. under a type subfolder such as `policies/backup/`), so a multi-file edit
+reloads atomically instead of file-by-file:
 
 ```bash
 docker compose -f demo/docker-compose.yml exec policy-server sh -c \
-  "sed -i 's/1h/30m/' /data/policies/database-backup.json && touch /data/policies/.changed"
+  "sed -i 's/1h/30m/' /data/policies/backup/database-backup.json && touch /data/policies/.changed"
 docker compose -f demo/docker-compose.yml logs policy-server | tail -5   # confirm the reload log line
 ```
 
