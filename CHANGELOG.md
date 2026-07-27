@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-20 — policy-server: policy type subfolders
+
+Policies now live under a per-type subfolder — `$MP_CONFIG_PATH/policies/backup/*.json` today,
+tagged `type: "backup"` — instead of flat under `policies/`. A policy's type is derived purely from
+the name of the subfolder it's loaded from, never read from or written to the file itself, so a
+future second policy type is just a new subfolder name with no schema migration for existing files.
+`agent`'s backup-task derivation now skips any cached policy whose type isn't `"backup"`, laying the
+groundwork for a future non-backup policy type to coexist without being misinterpreted as one. This
+is a breaking on-disk layout change with no migration path: existing flat `policies/*.json` files
+must be moved into `policies/backup/` before upgrading. `CreatePolicy`/`UpdatePolicy` are unchanged
+otherwise — no `type` parameter yet, since there's nothing to choose between until a second type
+exists.
+
 ## 2026-07-20 — web: consistency and best-practices refresh
 
 `web` gains a small shared `components/ui/` layer (`BaseButton`, `PageHeader`, `StatusMessage`,
