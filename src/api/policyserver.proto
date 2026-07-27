@@ -65,6 +65,11 @@ message Policy {
   // by GetPolicies so a node never learns another node's targeting rules
   // from a policy that already matched its own identity.
   ClientFilters client_filters = 9;
+  // Derived from the name of the subfolder the policy file was loaded from
+  // (e.g. "backup" for policies/backup/*.json) -- never read from or
+  // written to the on-disk policy JSON. Populated by both GetPolicies and
+  // ListPolicies.
+  string type = 10;
 }
 
 message CreatePolicyRequest {
