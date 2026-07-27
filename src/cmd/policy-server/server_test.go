@@ -223,3 +223,29 @@ func TestGetPolicies_StillOmitsClientFilters(t *testing.T) {
 	require.Len(t, resp.Policies, 1)
 	assert.Nil(t, resp.Policies[0].ClientFilters)
 }
+
+func TestGetPolicies_ResponseIncludesType(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "backup", resp.Policies[0].Type)
+}
+
+func TestListPolicies_ResponseIncludesType(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "backup", resp.Policies[0].Type)
+}
