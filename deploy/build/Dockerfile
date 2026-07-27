@@ -37,3 +37,14 @@ COPY --from=builder /build/bin/brfs /build/bin/bwfs /build/bin/rwfs /build/bin/c
 COPY --from=vector-source /usr/bin/vector ./vector
 COPY --chmod=0755 demo/backup-host/entrypoint.sh ./entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]
+
+FROM smallstep/step-ca AS ca
+
+USER root
+COPY --chmod=0755 --from=builder /build/bin/clientmanager /usr/local/bin/clientmanager
+RUN mkdir -p /home/step/templates /data/client-manager && chown step:step /data/client-manager
+COPY --chmod=0644 deploy/control-plane/ca/templates/leaf.tpl /home/step/templates/leaf.tpl
+COPY --chmod=0755 demo/ca/entrypoint.sh /home/step/entrypoint.sh
+USER step
+
+ENTRYPOINT ["/home/step/entrypoint.sh"]
