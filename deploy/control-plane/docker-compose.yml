@@ -13,7 +13,8 @@ services:
   issuer:
     build:
       context: ../..
-      dockerfile: deploy/control-plane/issuer/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: issuer-controlplane
     depends_on:
       - step-ca
     volumes:
@@ -31,7 +32,8 @@ services:
   clientmanager-api:
     build:
       context: ../..
-      dockerfile: deploy/control-plane/clientmanager-api/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: clientmanager-api
     depends_on:
       - step-ca
       - issuer
@@ -52,7 +54,8 @@ services:
   catalog:
     build:
       context: ../..
-      dockerfile: deploy/control-plane/catalog/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: catalog
     depends_on:
       - step-ca
       - issuer
@@ -70,7 +73,8 @@ services:
   api-server:
     build:
       context: ../..
-      dockerfile: deploy/control-plane/api-server/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: api-server
     depends_on:
       - step-ca
       - issuer
@@ -90,7 +94,8 @@ services:
   policy-server:
     build:
       context: ../..
-      dockerfile: deploy/control-plane/policy-server/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: policy-server
     depends_on:
       - step-ca
       - issuer
@@ -115,7 +120,8 @@ services:
   log-gateway:
     build:
       context: ../..
-      dockerfile: deploy/control-plane/log-gateway/Dockerfile
+      dockerfile: deploy/build/Dockerfile
+      target: log-gateway
     depends_on:
       - step-ca
       - issuer

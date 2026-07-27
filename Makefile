@@ -183,7 +183,7 @@ control-plane-up: ## Initialize (if needed) and start the control-plane stack (c
 		mkdir -p $(CONTROL_PLANE_DIR)/ca/data/secrets; \
 		openssl rand -base64 32 > $(CONTROL_PLANE_DIR)/ca/data/secrets/password; \
 	fi
-	@cd $(CONTROL_PLANE_DIR) && docker compose up -d
+	@cd $(CONTROL_PLANE_DIR) && COMPOSE_BAKE=true docker compose up -d
 	@echo -e "$(GREEN)Control plane up.$(NC) ca: https://localhost:9000  catalog: localhost:15723"
 
 demo-up: ## Bring up the self-contained demo lab (ca + issuer + catalog + policy-server + database + webserver + store)
