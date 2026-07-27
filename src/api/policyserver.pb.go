@@ -325,6 +325,11 @@ type Policy struct {
 	// by GetPolicies so a node never learns another node's targeting rules
 	// from a policy that already matched its own identity.
 	ClientFilters *ClientFilters `protobuf:"bytes,9,opt,name=client_filters,json=clientFilters,proto3" json:"client_filters,omitempty"`
+	// Derived from the name of the subfolder the policy file was loaded from
+	// (e.g. "backup" for policies/backup/*.json) -- never read from or
+	// written to the on-disk policy JSON. Populated by both GetPolicies and
+	// ListPolicies.
+	Type          string `protobuf:"bytes,10,opt,name=type,proto3" json:"type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -420,6 +425,13 @@ func (x *Policy) GetClientFilters() *ClientFilters {
 		return x.ClientFilters
 	}
 	return nil
+}
+
+func (x *Policy) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
 }
 
 type CreatePolicyRequest struct {
@@ -703,7 +715,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\ainclude\x18\x02 \x03(\tR\ainclude\x12\x18\n" +
 	"\aexclude\x18\x03 \x03(\tR\aexclude\x12\x0e\n" +
-	"\x02id\x18\x04 \x01(\tR\x02id\"\x90\x03\n" +
+	"\x02id\x18\x04 \x01(\tR\x02id\"\xa4\x03\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -715,7 +727,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12 \n" +
 	"\vdestination\x18\a \x01(\tR\vdestination\x12\x0e\n" +
 	"\x02id\x18\b \x01(\tR\x02id\x12I\n" +
-	"\x0eclient_filters\x18\t \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\"\x97\x02\n" +
+	"\x0eclient_filters\x18\t \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12\x12\n" +
+	"\x04type\x18\n" +
+	" \x01(\tR\x04type\"\x97\x02\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
