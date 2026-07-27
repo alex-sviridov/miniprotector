@@ -42,6 +42,11 @@ type CachedPolicy struct {
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
 	Destination   string         `json:"destination"`
+	// Derived by policy-server from the subfolder the policy file was
+	// loaded from (e.g. "backup"). Pure passthrough here -- policyclient
+	// itself never branches on it; agent does (see
+	// cmd/agent/backup.go's backupTasks).
+	Type string `json:"type"`
 }
 
 // policyServiceClient is the subset of pb.PolicyServiceClient runFetch
@@ -121,6 +126,7 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			RPO:           p.GetRpo(),
 			BackupWindow:  p.GetBackupWindow(),
 			Destination:   p.GetDestination(),
+			Type:          p.GetType(),
 		})
 	}
 	return out
