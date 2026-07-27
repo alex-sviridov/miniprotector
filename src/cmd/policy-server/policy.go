@@ -1,6 +1,7 @@
 // policy-server's on-disk policy schema: one JSON file per policy under
-// $MP_CONFIG_PATH/policies/. See
-// docs/superpowers/specs/2026-07-10-policy-server-design.md.
+// $MP_CONFIG_PATH/policies/<type>/ (e.g. policies/backup/). See
+// docs/superpowers/specs/2026-07-10-policy-server-design.md and
+// docs/superpowers/specs/2026-07-20-policy-type-subfolders-design.md.
 package main
 
 import (
@@ -48,6 +49,11 @@ type Policy struct {
 	BackupWindow  []string       `json:"backup_window"`
 	Destination   string         `json:"destination"`
 	SourcePath    string         `json:"-"`
+	// Type is derived from the name of the immediate subfolder the policy
+	// file was loaded from (e.g. "backup" for policies/backup/*.json) --
+	// never read from or written to the on-disk policy JSON. Set by
+	// parsePolicyFile.
+	Type string `json:"-"`
 }
 
 // validatePolicy checks the fields an operator can set on a policy,
@@ -79,9 +85,11 @@ func validatePolicy(p Policy) error {
 	return nil
 }
 
-// parsePolicyFile reads and validates a single policy JSON file -- see
-// validatePolicy for the validation rules applied.
-func parsePolicyFile(filePath string) (Policy, error) {
+// parsePolicyFile reads and validates a single policy JSON file, tagging it
+// with policyType -- the caller's own knowledge of which type subfolder
+// filePath was found in (see Cache.Reload) -- see validatePolicy for the
+// validation rules applied.
+func parsePolicyFile(filePath, policyType string) (Policy, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return Policy{}, fmt.Errorf("read %s: %w", filePath, err)
@@ -97,6 +105,7 @@ func parsePolicyFile(filePath string) (Policy, error) {
 	policyUUID := uuid.NewSHA1(policyIDNamespace, []byte(filepath.Base(filePath)))
 	p.Metadata.ID = policyUUID.String()
 	p.SourcePath = filePath
+	p.Type = policyType
 	for i := range p.ObjectFilters {
 		p.ObjectFilters[i].ID = uuid.NewSHA1(policyUUID, []byte(strconv.Itoa(i))).String()
 	}

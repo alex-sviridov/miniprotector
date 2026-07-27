@@ -22,7 +22,7 @@ func TestWatchForReload_ReloadsOnChangedFileWrite(t *testing.T) {
 	go watchForReload(ctx, dir, c, testLogger())
 	time.Sleep(50 * time.Millisecond)
 
-	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".changed"), []byte("1"), 0o644))
 
 	require.Eventually(t, func() bool {
@@ -44,7 +44,7 @@ func TestWatchForReload_ReloadsOnTouchOfExistingChangedFile(t *testing.T) {
 	go watchForReload(ctx, dir, c, testLogger())
 	time.Sleep(50 * time.Millisecond)
 
-	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
 
 	// Simulate `touch` on an already-existing file: an mtime-only update,
 	// which Linux inotify reports as IN_ATTRIB (fsnotify's Chmod op), not
@@ -66,7 +66,7 @@ func TestWatchForReload_IgnoresOtherFileWrites(t *testing.T) {
 	defer cancel()
 	go watchForReload(ctx, dir, c, testLogger())
 
-	writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
 
 	time.Sleep(100 * time.Millisecond)
 	assert.Empty(t, c.Policies(), "reload must not fire without a write to .changed")

@@ -92,7 +92,8 @@ func fromProtoObjectFilters(filters []*pb.ObjectFilter) []ObjectFilter {
 
 // CreatePolicy validates req, allocates a filename from a slug of the
 // policy's name (appending "-2", "-3", ... on collision), and atomically
-// writes the new policy file before reloading the cache. The filename it
+// writes the new policy file into policies/backup/ (the only policy type
+// this RPC creates today) before reloading the cache. The filename it
 // picks is permanent for that policy's lifetime -- it's what the policy's
 // id derives from.
 func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest) (*pb.Policy, error) {
@@ -117,12 +118,22 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	if slug == "" {
 		return nil, status.Error(codes.InvalidArgument, "name must contain at least one alphanumeric character")
 	}
-	filename, err := uniqueFilename(s.policiesDir, slug)
+
+	// Every policy created through this RPC is type "backup" -- the only
+	// type that exists today. A future second type needs its own creation
+	// path once it exists; see
+	// docs/superpowers/specs/2026-07-20-policy-type-subfolders-design.md.
+	backupDir := filepath.Join(s.policiesDir, "backup")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		s.logger.Error("CreatePolicy: failed to create backup policies directory", "path", backupDir, "error", err)
+		return nil, status.Error(codes.Internal, "failed to create policy type directory")
+	}
+	filename, err := uniqueFilename(backupDir, slug)
 	if err != nil {
 		s.logger.Error("CreatePolicy: filename allocation failed", "error", err)
 		return nil, status.Error(codes.Internal, "failed to allocate a policy filename")
 	}
-	filePath := filepath.Join(s.policiesDir, filename)
+	filePath := filepath.Join(backupDir, filename)
 
 	if err := atomicWriteJSON(filePath, p); err != nil {
 		s.logger.Error("CreatePolicy: write failed", "path", filePath, "error", err)
