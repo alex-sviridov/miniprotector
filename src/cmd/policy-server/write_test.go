@@ -284,3 +284,13 @@ func TestDeletePolicy_LeavesOtherPoliciesIntact(t *testing.T) {
 	require.Len(t, remaining, 1)
 	assert.Equal(t, "policy-b", remaining[0].Metadata.Name)
 }
+
+func TestCreatePolicy_ResponseIncludesBackupType(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Name: "nightly"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "backup", resp.Type)
+}
