@@ -26,3 +26,14 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     cd src && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /build/bin/clientmanager ./cmd/clientmanager
 
 FROM timberio/vector:0.46.0-debian AS vector-source
+
+FROM debian:bookworm-slim AS backup-host
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgcc-s1 ca-certificates netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /build/bin/brfs /build/bin/bwfs /build/bin/rwfs /build/bin/catalogsync /build/bin/certclient /build/bin/agent /build/bin/policyclient ./
+COPY --from=vector-source /usr/bin/vector ./vector
+COPY --chmod=0755 demo/backup-host/entrypoint.sh ./entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]
