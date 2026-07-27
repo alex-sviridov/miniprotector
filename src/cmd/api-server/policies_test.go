@@ -133,6 +133,7 @@ func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.
 		Rpo:           "24h",
 		BackupWindow:  []string{"0 2 * * *"},
 		Destination:   "bwfs:8080",
+		Type:          "backup",
 	}
 
 	dto := toPolicyDTO(p)
@@ -144,6 +145,7 @@ func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.
 	require.Len(t, dto.ObjectFilters, 1)
 	assert.Equal(t, "f1", dto.ObjectFilters[0].ID)
 	assert.Equal(t, "/data", dto.ObjectFilters[0].Path)
+	assert.Equal(t, "backup", dto.Type)
 }
 
 func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
