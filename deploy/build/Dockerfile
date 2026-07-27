@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # overrides an environment variable of the same name when invoked through
 # `make` — `CGO_ENABLED=0 make clientmanager` would silently produce a
 # dynamically-linked binary. Its runtime image (smallstep/step-ca, see the
-# `ca` stage below) has no libgcc-s1 installed, so a dynamically-linked
+# `ca-demo` stage below) has no libgcc-s1 installed, so a dynamically-linked
 # clientmanager would fail to start there. This mirrors the original
 # demo/ca/Dockerfile's own build line exactly, including the lack of an
 # LDFLAGS version stamp (`-trimpath` only) that every other binary gets via
@@ -57,7 +57,7 @@ USER step
 ENTRYPOINT ["/home/step/entrypoint.sh"]
 
 # uid/gid 1000 below must match the smallstep/step-ca base image's `step` user
-# (see the `ca` stage above), so the shared client-manager-data volume stays
+# (see the `ca-demo` stage above), so the shared client-manager-data volume stays
 # writable by both clientmanager (running as `step` in ca's container) and
 # issuer here. If that base image's step uid ever changes, this coupling
 # breaks silently with an ownership mismatch.

@@ -15,7 +15,7 @@ Docker-managed named volumes, and no port is published to the host. Everything i
 make demo-up
 ```
 
-Equivalent to `./demo/up.sh` directly. Builds all 11 images, brings up `ca` and `issuer` first,
+Equivalent to `./demo/up.sh` directly. Builds all 11 service images, brings up `ca` and `issuer` first,
 then mints and redeems an enrollment token for `catalog`, `policy-server`, `database`, `webserver`,
 and `store` in turn (skipping re-minting on a re-run against an already-enrolled node). `webserver`
 is additionally tagged with the attribute `role=web`, used by one of the example backup policies
