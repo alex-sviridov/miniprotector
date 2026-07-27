@@ -6,16 +6,18 @@ narrative connecting them.
 
 ## The flow
 
-1. An operator writes a policy JSON file under `policy-server`'s `$MP_CONFIG_PATH/policies/`. Each
-   `object_filters` entry is a backup root (`path`) plus optional `include`/`exclude` glob-pattern
-   lists. Neither is required — omit both to back up everything under `path`.
+1. An operator writes a policy JSON file under `policy-server`'s
+   `$MP_CONFIG_PATH/policies/backup/`. Each `object_filters` entry is a backup root (`path`) plus
+   optional `include`/`exclude` glob-pattern lists. Neither is required — omit both to back up
+   everything under `path`.
 2. Every enrolled node's `agent` runs `policyclient fetch` on a schedule, which calls
    `policy-server`'s `GetPolicies` RPC and caches the matching policies (including each object
    filter's `include`/`exclude`) to `policies-cache.json`.
-3. `agent` derives one backup task per cached `(policy, object filter)` pair. When a task is due
-   (its `backup_window` is open and its `rpo` has elapsed), `agent` execs `brfs <path>
-   --destination <destination> --job-id <id>`, adding `--include <patterns>` and/or `--exclude
-   <patterns>` only when the object filter actually carries them.
+3. `agent` derives one backup task per cached `(policy, object filter)` pair, considering only
+   cached policies of type `"backup"` (the only type today). When a task is due (its
+   `backup_window` is open and its `rpo` has elapsed), `agent` execs `brfs <path> --destination
+   <destination> --job-id <id>`, adding `--include <patterns>` and/or `--exclude <patterns>` only
+   when the object filter actually carries them.
 4. `brfs` walks `path`, applying `--exclude` first (pruning a matched directory's entire subtree,
    omitting a matched file) and `--include` second (a files-only whitelist — directories are never
    filtered by it). Surviving files stream to `bwfs`.

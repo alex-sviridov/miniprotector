@@ -102,7 +102,7 @@ func parsePolicyFile(filePath, policyType string) (Policy, error) {
 		return Policy{}, fmt.Errorf("%s: %w", filePath, err)
 	}
 
-	policyUUID := uuid.NewSHA1(policyIDNamespace, []byte(filepath.Base(filePath)))
+	policyUUID := uuid.NewSHA1(policyIDNamespace, []byte(filepath.Join(policyType, filepath.Base(filePath))))
 	p.Metadata.ID = policyUUID.String()
 	p.SourcePath = filePath
 	p.Type = policyType

@@ -13,7 +13,10 @@ groundwork for a future non-backup policy type to coexist without being misinter
 is a breaking on-disk layout change with no migration path: existing flat `policies/*.json` files
 must be moved into `policies/backup/` before upgrading. `CreatePolicy`/`UpdatePolicy` are unchanged
 otherwise — no `type` parameter yet, since there's nothing to choose between until a second type
-exists.
+exists. Policy and object-filter IDs are now derived from the type-qualified path (`<type>/<basename>`)
+rather than the basename alone, so every existing policy's ID rotates on the next reload after this
+change — same effect as the layout move itself, no migration by design — meaning each node's first
+post-upgrade backup for a given path runs as a "never succeeded before" run.
 
 ## 2026-07-20 — web: consistency and best-practices refresh
 
