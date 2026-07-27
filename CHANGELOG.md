@@ -4,7 +4,7 @@ All notable changes to this project are documented here, most recent first.
 
 ## 2026-07-27 — build: consolidate demo/control-plane Dockerfiles
 
-The 7 separate per-image Dockerfiles under `demo/` and `deploy/control-plane/` are replaced by one
+The 9 separate per-image Dockerfiles under `demo/` and `deploy/control-plane/` are replaced by one
 `deploy/build/Dockerfile` with a single shared `builder` stage and nine final runtime stages,
 selected via Compose's `build.target`. Previously, six of those Dockerfiles each ran their own
 `make <binary list>`, and because each list differed, Docker's layer cache never matched between
@@ -12,10 +12,14 @@ them — `agent`, `certclient`, and `policyclient` were recompiled from scratch 
 builder stages on every `make demo-up` or control-plane build, despite producing byte-identical
 binaries each time. The shared stage also gains persistent `--mount=type=cache` mounts for Go's
 build and module caches, so even a source-code change only recompiles the affected packages instead
-of the whole stage. `demo/up.sh` and the `control-plane-up` Makefile target now export
-`COMPOSE_BAKE=true` before building, so Compose builds the shared stage once and fans out to the
-final stages in parallel. No runtime behavior changes: every final image's installed packages,
-users, and entrypoint are unchanged from before this refactor.
+of the whole stage. The `control-plane-up` Makefile target now exports `COMPOSE_BAKE=true` before
+its single `docker compose up -d`, so Compose builds the shared stage once and fans the six
+control-plane images out in parallel. `demo/up.sh` still builds one service at a time (a
+deliberate constraint from an earlier fix for OOM on memory-constrained hosts, unrelated to this
+change) — it still benefits from the shared `builder` stage compiling once and being reused via
+Docker's local layer cache across the eleven sequential builds, just without Bake's parallel
+fan-out. No runtime behavior changes: every final image's installed packages, users, and entrypoint
+are unchanged from before this refactor.
 
 ## 2026-07-20 — policy-server: policy type subfolders
 

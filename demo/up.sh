@@ -2,6 +2,15 @@
 set -e
 
 cd "$(dirname "$0")"
+# Enables Docker Compose Bake, used by the control-plane build (see the
+# Makefile's control-plane-up target). It's a no-op in THIS script: the
+# per-service build loop below predates Bake and only ever hands Bake one
+# target at a time, so there's nothing to fan out in parallel. The loop
+# itself is deliberate, not an oversight — it was added to avoid OOM on
+# memory-constrained hosts by building one Go compile at a time — so this
+# export is kept for forward compatibility (a future consolidation of the
+# loop into a single `docker compose build` call would pick up parallel
+# builds for free) rather than being removed as dead configuration.
 export COMPOSE_BAKE=true
 
 echo "Building images..."

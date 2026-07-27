@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # deploy/build/Dockerfile
 #
 # Single shared build for every demo/control-plane image. All Go binaries are
@@ -20,7 +21,13 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # clientmanager would fail to start there. This mirrors the original
 # demo/ca/Dockerfile's own build line exactly, including the lack of an
 # LDFLAGS version stamp (`-trimpath` only) that every other binary gets via
-# `make`.
+# `make`. Note `make build` above already compiles clientmanager once (it's
+# included in the Makefile's `$(wildcard src/cmd/*)` binary list) before this
+# second RUN discards and replaces it with the statically-linked version — a
+# few seconds of wasted compute on a cache miss, accepted as a tradeoff rather
+# than an oversight, since avoiding it would require either a Makefile change
+# or reintroducing a fragile explicit per-image binary list, which is exactly
+# what this consolidated Dockerfile was written to eliminate.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     cd src && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /build/bin/clientmanager ./cmd/clientmanager
