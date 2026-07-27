@@ -69,3 +69,16 @@ ENTRYPOINT ["./issuer", "serve", "--hostname", "issuer", \
             "--root", "/ca-data/certs/root_ca.crt", \
             "--provisioner", "admin@backup.internal", \
             "--password-file", "/ca-data/secrets/password"]
+
+FROM debian:bookworm-slim AS issuer-controlplane
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgcc-s1 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /build/bin/issuer ./
+ENTRYPOINT ["./issuer", "serve", "--hostname", "issuer", \
+            "--ca-url", "https://step-ca:9000", \
+            "--root", "/data/root_ca.crt", \
+            "--provisioner", "admin@backup.internal", \
+            "--password-file", "/data/secrets/password"]
