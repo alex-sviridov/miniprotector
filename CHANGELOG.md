@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-27 — E2E test suite rewrite
+
+Removed all three existing e2e-tagged test suites (`src/e2e`'s Docker-built brfs/bwfs backup
+flow, `cmd/issuer`'s real step-ca test, and `cmd/log-gateway`'s real Loki test) and replaced them
+with a single minimal smoke test that requires the demo lab (`make demo-up`) to already be
+running and checks its web UI responds. The old suites were slow (~3 min) and duplicated
+infrastructure the repo already has in `demo/`; the new test trades that coverage for a fast,
+simple check that the demo stack is genuinely reachable end-to-end.
+
 ## 2026-07-27 — build: docker-consolidation follow-up fixes
 
 Three small fixes to the demo/control-plane Docker consolidation: `demo/local.conf` was missing
