@@ -82,3 +82,16 @@ ENTRYPOINT ["./issuer", "serve", "--hostname", "issuer", \
             "--root", "/data/root_ca.crt", \
             "--provisioner", "admin@backup.internal", \
             "--password-file", "/data/secrets/password"]
+
+FROM debian:bookworm-slim AS api-server
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgcc-s1 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /build/bin/api-server /build/bin/certclient /build/bin/agent /build/bin/policyclient ./
+COPY --from=vector-source /usr/bin/vector ./vector
+COPY deploy/control-plane/api-server/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]
