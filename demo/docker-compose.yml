@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/build/Dockerfile
-      target: ca
+      target: ca-demo
     volumes:
       - ca-data:/home/step
       - client-manager-data:/data/client-manager

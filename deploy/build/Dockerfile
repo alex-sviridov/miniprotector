@@ -45,7 +45,7 @@ COPY --from=vector-source /usr/bin/vector ./vector
 COPY --chmod=0755 demo/backup-host/entrypoint.sh ./entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]
 
-FROM smallstep/step-ca AS ca
+FROM smallstep/step-ca AS ca-demo
 
 USER root
 COPY --chmod=0755 --from=builder /build/bin/clientmanager /usr/local/bin/clientmanager
