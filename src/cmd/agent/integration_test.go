@@ -30,6 +30,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 
 	cacheJSON := `[{
 		"name": "daily-db-backup",
+		"type": "backup",
 		"object_filters": [{"path": "/var/lib/postgres"}],
 		"rpo": "1h",
 		"backup_window": ["* * * * *"],
