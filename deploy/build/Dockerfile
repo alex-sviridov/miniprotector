@@ -95,3 +95,16 @@ COPY deploy/control-plane/api-server/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
 ENTRYPOINT ["./entrypoint.sh"]
+
+FROM debian:bookworm-slim AS catalog
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgcc-s1 ca-certificates sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /build/bin/catalog /build/bin/certclient /build/bin/agent /build/bin/policyclient ./
+COPY --from=vector-source /usr/bin/vector ./vector
+COPY deploy/control-plane/catalog/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]
