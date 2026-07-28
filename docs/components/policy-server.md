@@ -44,31 +44,44 @@ are opaque strings, stored and returned verbatim for a future consumer to interp
 ### Policy types and directory layout
 
 A policy's type is derived from the name of the immediate subfolder its file lives in under
-`$MP_CONFIG_PATH/policies/` — `policies/backup/*.json` are type `"backup"`, the only type that
-exists today. Type is never read from or written to the on-disk policy JSON itself; it's purely a
-function of file location, computed at load time the same way `policy-server` already computes each
-policy's `id` and never reads it from the file. A `*.json` sitting directly under `policies/`,
-outside any type subfolder, is skipped and logged — the same "loud skip, don't block the rest"
-treatment already applied to a malformed file (see below). An unrecognized subfolder name is still
-loaded and tagged with its literal name; `policy-server` does not validate against a whitelist of
-known types — that's left to whichever downstream consumer (`agent` today) knows what to do with a
-given type. `CreatePolicy` always writes into `policies/backup/`, creating that subdirectory if
-missing — there is currently no way to create a policy of any other type through this RPC. See
-[Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md).
+`$MP_CONFIG_PATH/policies/` — `policies/backup/*.json` are type `"backup"`, `policies/storage/*.json`
+are type `"storage"`. Type is never read from or written to the on-disk policy JSON itself; it's
+purely a function of file location, computed at load time the same way `policy-server` already
+computes each policy's `id`. Each type is a distinct Go type internally (`BackupPolicy`,
+`StoragePolicy`) implementing a shared `Policy` interface, with its own on-disk schema, validation,
+and wire conversion — adding a further type means writing one more such type and registering its
+parser, not changing `policy-server`'s directory-walking or RPC-handling code. A `*.json` sitting
+directly under `policies/`, outside any type subfolder, is skipped and logged — the same "loud skip,
+don't block the rest" treatment applied to a malformed file. **A subfolder name that isn't a
+registered type is also skipped and logged**, the same way — there's no schema to load an
+unrecognized type's file into, so it can no longer be loaded generically the way an earlier design
+allowed. `CreatePolicy` requires a `type` (`"backup"` or `"storage"`) and writes into the matching
+`policies/<type>/`, creating that subdirectory if missing; a request that sets fields belonging to
+the other type is rejected. See
+[Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
+and [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
+
+A `"backup"` policy describes what to back up and where: `object_filters`, `rpo`, `backup_window`,
+`destination`. A `"storage"` policy describes where a future storage server should run and how it
+should be configured: `hostname`, `port`, and an opaque `config` JSON blob `policy-server` validates
+is well-formed but never interprets — nothing in `policy-server` yet runs anything based on it.
 
 ### Policy files and hot reload
 
-Each policy type subfolder's `*.json` file is one policy: `metadata` (`name` plus operator-set
-`created_at`/`updated_at`), `client_filters` (`hostnames` glob list, `labels` map), `object_filters`
-(a list of `{"path": "...", "include": [...], "exclude": [...]}` entries — `include`/`exclude` are
-optional glob-pattern lists, validated as syntactically-valid patterns at load time but otherwise
-opaque to `policy-server`; see [Filesystem Backup Flow](../process/filesystem-backup.md) for how
-`brfs` applies them), `rpo` (a duration string, e.g. `"24h"`), `backup_window`
-(a list of cron expressions, e.g. `["0 2 * * *", "0 20 * * *"]`), and `destination` (a `host:port`
-string, the target `bwfs` for this policy's backups). `policy-server` also computes (never reads)
-a deterministic ID for the policy itself and for each object filter, derived from the file's name
-and each filter's position — stable across reloads, and changes only if the file is renamed or its
-`object_filters` are reordered/have entries inserted before an existing one.
+Each policy type subfolder's `*.json` file is one policy. Every type shares `metadata` (`name` plus
+operator-set `created_at`/`updated_at`) and `client_filters` (`hostnames` glob list, `labels` map). A
+`"backup"` policy additionally has `object_filters` (a list of `{"path": "...", "include": [...],
+"exclude": [...]}` entries — `include`/`exclude` are optional glob-pattern lists, validated as
+syntactically-valid patterns at load time but otherwise opaque to `policy-server`; see
+[Filesystem Backup Flow](../process/filesystem-backup.md) for how `brfs` applies them), `rpo` (a
+duration string, e.g. `"24h"`), `backup_window` (a list of cron expressions, e.g.
+`["0 2 * * *", "0 20 * * *"]`), and `destination` (a `host:port` string, the target `bwfs` for this
+policy's backups). A `"storage"` policy instead has `hostname`, `port`, and `config` (an opaque JSON
+object, validated as well-formed at load time but never interpreted). `policy-server` also computes
+(never reads) a deterministic ID for the policy itself — and, for a `"backup"` policy, one for each
+object filter — derived from the file's name (and each filter's position) — stable across reloads,
+and changes only if the file is renamed or (for a backup policy) its `object_filters` are
+reordered/have entries inserted before an existing one.
 
 All policies are loaded into memory at startup. To pick up edits, touch
 `$MP_CONFIG_PATH/policies/.changed` after finishing your edit(s) — `policy-server` watches that one

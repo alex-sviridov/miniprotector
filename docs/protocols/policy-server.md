@@ -50,6 +50,9 @@ message Policy {
   string id = 8;
   ClientFilters client_filters = 9;
   string type = 10;
+  string hostname = 11;
+  int32 port = 12;
+  string config = 13;
 }
 
 message CreatePolicyRequest {
@@ -59,6 +62,10 @@ message CreatePolicyRequest {
   string rpo = 4;
   repeated string backup_window = 5;
   string destination = 6;
+  string type = 7;
+  string hostname = 8;
+  int32 port = 9;
+  string config = 10;
 }
 
 message UpdatePolicyRequest {
@@ -69,6 +76,9 @@ message UpdatePolicyRequest {
   string rpo = 5;
   repeated string backup_window = 6;
   string destination = 7;
+  string hostname = 8;
+  int32 port = 9;
+  string config = 10;
 }
 
 message DeletePolicyRequest {
@@ -99,11 +109,19 @@ certificate — the same requirement every server except `issuer`'s own listener
   filters within one policy, can never be confused with each other downstream even when their
   human-facing `name`/`path` happen to collide.
 - `Policy.type` is likewise computed, not read from the file -- derived from the name of the
-  immediate subfolder the policy file lives in under `$MP_CONFIG_PATH/policies/` (`"backup"` for
-  `policies/backup/*.json`, the only type today). Populated by both `GetPolicies` and
-  `ListPolicies`. `CreatePolicy`/`UpdatePolicyRequest` carry no `type` field -- `CreatePolicy`
-  always writes into `policies/backup/`. See
-  [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md).
+  immediate subfolder the policy file lives in under `$MP_CONFIG_PATH/policies/` (`"backup"` or
+  `"storage"` today). Populated by both `GetPolicies` and `ListPolicies`. `CreatePolicyRequest.type`
+  is required and selects which policy type is created (`policies/<type>/`, creating that
+  subdirectory if missing); a request that also sets fields belonging to the other type is rejected.
+  `UpdatePolicyRequest` carries no `type` field -- a policy's type is immutable via `UpdatePolicy`,
+  derived from the record being updated. See
+  [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
+  and
+  [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
+- `hostname`/`port`/`config` are only meaningful on a `"storage"`-typed policy -- unset/zero on a
+  `"backup"`-typed one, and vice versa for `object_filters`/`rpo`/`backup_window`/`destination`.
+  `config` is opaque, pass-through JSON text -- `policy-server` validates it's well-formed at load
+  and write time but never interprets its contents.
 - Each `object_filters` entry's `include`/`exclude` are opaque, pass-through glob-pattern lists —
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
   applies them, during its own directory walk.
@@ -128,3 +146,4 @@ certificate — the same requirement every server except `issuer`'s own listener
   depends on
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
 - [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
+- [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md)

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-28 — policy-server: add storage policy type
+
+`policy-server` now supports a second policy type, `"storage"` (`hostname`, `port`, and an opaque
+`config` JSON blob) alongside the existing `"backup"` type, for a future storage server to read.
+Internally, `Policy` changed from one flat struct into an interface implemented by `BackupPolicy`
+and `StoragePolicy`, each with its own schema, validation, and wire conversion — adding a further
+type going forward is now a matter of writing one more such type and registering its parser.
+`CreatePolicy` requires a `type` selector and writes into the matching `policies/<type>/`.
+
+**Breaking change:** a `policies/<subfolder>/` whose name isn't a registered type (`"backup"` or
+`"storage"`) is now skipped and logged at load time, rather than loaded generically as an earlier
+design allowed — there's no schema to parse an unrecognized type's files into anymore.
+
 ## 2026-07-27 — E2E test suite rewrite
 
 Removed all three existing e2e-tagged test suites (`src/e2e`'s Docker-built brfs/bwfs backup
