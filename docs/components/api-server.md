@@ -33,6 +33,16 @@ Loki (through `log-gateway`'s read-proxy route) and aggregate the result — the
 exception to that rule, documented in
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
+`policy-server` also supports a `"storage"` policy type (`hostname`/`port`/`config`), but the policy
+REST endpoints here model `"backup"` policies only. A `"storage"`-typed policy still shows up in
+`GET /policies` and `GET /policies/{id}` — with its `type` field passed through — but its
+type-specific fields (`hostname`, `port`, `config`) are absent from the response DTO, since
+`policyDTO` only has fields for a backup policy's shape. Creating or updating a policy through this
+REST API is `"backup"`-only: `policyInput` has no way to supply `hostname`/`port`/`config`, so
+`PUT /policies/{id}` against a storage policy fails with `400` (the backend's `StoragePolicy.Validate()`
+rejects the resulting request). Adding storage-policy support to this REST surface is out of scope
+for now.
+
 ## Authentication
 
 Every request must present `Authorization: Bearer <token>`, checked against the single

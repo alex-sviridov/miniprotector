@@ -224,6 +224,27 @@ func TestGetPolicies_StillOmitsClientFilters(t *testing.T) {
 	assert.Nil(t, resp.Policies[0].ClientFilters)
 }
 
+func TestGetPolicies_StoragePolicyStillOmitsClientFilters(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
+		"metadata": {"name": "east-1-storage"},
+		"client_filters": {"hostnames": ["storage-east-*"]},
+		"hostname": "storage-east-1.internal",
+		"port": 9400,
+		"config": {"backend": "filesystem"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "storage-east-1", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	p := resp.Policies[0]
+	assert.Equal(t, "storage-east-1.internal", p.Hostname)
+	assert.Equal(t, int32(9400), p.Port)
+	assert.JSONEq(t, `{"backend": "filesystem"}`, p.Config)
+	assert.Nil(t, p.ClientFilters)
+}
+
 func TestGetPolicies_ResponseIncludesType(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{

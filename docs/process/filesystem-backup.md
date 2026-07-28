@@ -14,7 +14,8 @@ narrative connecting them.
    `policy-server`'s `GetPolicies` RPC and caches the matching policies (including each object
    filter's `include`/`exclude`) to `policies-cache.json`.
 3. `agent` derives one backup task per cached `(policy, object filter)` pair, considering only
-   cached policies of type `"backup"` (the only type today). When a task is due (its
+   cached policies of type `"backup"` (a `"storage"` type also exists, but `agent` skips it — it
+   contributes zero backup tasks). When a task is due (its
    `backup_window` is open and its `rpo` has elapsed), `agent` execs `brfs <path> --destination
    <destination> --job-id <id>`, adding `--include <patterns>` and/or `--exclude <patterns>` only
    when the object filter actually carries them.

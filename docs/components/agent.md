@@ -59,8 +59,9 @@ on the next tick, the same fail-safe direction used everywhere else in this comp
 Every reconcile tick, `agent` re-reads `policies-cache.json` fresh (so it notices `policy-update`
 refreshing the cache without needing a restart) and derives one backup task per
 `(policy, object_filters path)` pair, considering only cached policies whose `type` is `"backup"` —
-the only type that exists today. A cached policy of any other type is silently skipped, the same
-fail-safe direction already used for an unparseable `rpo` or missing `backup_window` below; see
+today the `"storage"` type also exists, and a cached policy of any non-backup type is silently
+skipped, contributing zero backup tasks, the same fail-safe direction already used for an
+unparseable `rpo` or missing `backup_window` below; see
 [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md).
 Each task is tracked independently in `agent-state.json`
 (ID: `backup:<policy-name>:<path>:<short-filter-id>`, where `<short-filter-id>` is the first 8
