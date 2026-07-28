@@ -25,7 +25,11 @@ message GetPoliciesResponse {
   repeated Policy policies = 1;
 }
 
-message ListPoliciesRequest {}
+message ListPoliciesRequest {
+  // Optional. "backup" or "storage" -- when set, only policies of this type
+  // are returned. Empty returns every type (unfiltered, today's behavior).
+  string type = 1;
+}
 
 message ListPoliciesResponse {
   repeated Policy policies = 1;

@@ -21,7 +21,9 @@ message GetPoliciesResponse {
   repeated Policy policies = 1;
 }
 
-message ListPoliciesRequest {}
+message ListPoliciesRequest {
+  string type = 1;
+}
 
 message ListPoliciesResponse {
   repeated Policy policies = 1;
@@ -138,6 +140,11 @@ certificate — the same requirement every server except `issuer`'s own listener
   overwriting only the file's content. Every write reloads `policy-server`'s own in-memory cache
   synchronously before responding, bypassing the `.changed` sentinel entirely — that remains solely
   the mechanism for an operator's own manual, possibly multi-file, batch edits.
+- `ListPoliciesRequest.type` is an optional filter — `"backup"` or `"storage"` restricts the
+  response to that type; empty (the default) returns every type, unchanged from before this field
+  existed. A `type` value that matches no loaded policy's `Kind()` returns an empty list, not an
+  error — there is no closed enum at this layer, `Kind()` is just whatever string the type
+  subfolder produced.
 
 ## See Also
 
