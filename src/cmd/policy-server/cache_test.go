@@ -171,3 +171,23 @@ func TestCache_FindBySourcePathUnknownPathReturnsFalse(t *testing.T) {
 	_, ok := c.FindBySourcePath("/does/not/exist.json")
 	assert.False(t, ok)
 }
+
+func TestCache_ReloadLoadsBackupAndStoragePoliciesTogether(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "storage"), "b.json", `{
+		"metadata": {"name": "policy-b"}, "hostname": "h", "port": 9400, "config": {}
+	}`)
+
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+
+	got := c.Policies()
+	require.Len(t, got, 2)
+	kinds := map[string]string{}
+	for _, p := range got {
+		kinds[p.Meta().Name] = p.Kind()
+	}
+	assert.Equal(t, "backup", kinds["policy-a"])
+	assert.Equal(t, "storage", kinds["policy-b"])
+}
