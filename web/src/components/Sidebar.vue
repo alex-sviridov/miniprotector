@@ -9,6 +9,9 @@
     <router-link :to="{ name: 'policies' }" class="block px-2 py-1 rounded hover:bg-gray-200" active-class="bg-gray-200 font-semibold">
       Policies
     </router-link>
+    <router-link :to="{ name: 'storage' }" class="block px-2 py-1 rounded hover:bg-gray-200" active-class="bg-gray-200 font-semibold">
+      Storage
+    </router-link>
     <router-link :to="{ name: 'jobs' }" class="block px-2 py-1 rounded hover:bg-gray-200" active-class="bg-gray-200 font-semibold">
       Jobs
     </router-link>
