@@ -129,6 +129,7 @@ func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
 		Name:          in.Name,
+		Type:          "backup",
 		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
 		ObjectFilters: toProtoObjectFiltersInput(in.ObjectFilters),
 		Rpo:           in.RPO,

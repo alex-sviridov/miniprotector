@@ -162,6 +162,7 @@ func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code)
 	require.NotNil(t, fake.lastCreateReq)
 	assert.Equal(t, "nightly", fake.lastCreateReq.GetName())
+	assert.Equal(t, "backup", fake.lastCreateReq.GetType())
 	assert.Equal(t, "bwfs:8080", fake.lastCreateReq.GetDestination())
 }
 
