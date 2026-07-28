@@ -104,6 +104,27 @@ describe('StorageView', () => {
     expect(wrapper.findComponent({ name: 'StorageEditModal' }).exists()).toBe(false)
   })
 
+  it('keeps the modal open and shows the server error when create fails', async () => {
+    const { wrapper, storagePolicies } = mountView({ list: [], loading: false, error: null })
+    // Mirrors withRequest: the store records the error before the rejection
+    // propagates to the caller.
+    storagePolicies.create.mockImplementation(async () => {
+      storagePolicies.error = 'name must contain alphanumeric characters'
+      throw new Error('name must contain alphanumeric characters')
+    })
+    await wrapper.find('[data-test="storage-new"]').trigger('click')
+
+    const payload = { name: '***', hostname: 'h', port: 1, config: '{}', client_filters: { hostnames: [], labels: {} } }
+    await wrapper.findComponent({ name: 'StorageEditModal' }).vm.$emit('save', payload)
+    await nextTick()
+
+    expect(storagePolicies.create).toHaveBeenCalledWith(payload)
+    const modal = wrapper.findComponent({ name: 'StorageEditModal' })
+    expect(modal.exists()).toBe(true)
+    expect(modal.props('serverError')).toBe('name must contain alphanumeric characters')
+    expect(wrapper.text()).toContain('name must contain alphanumeric characters')
+  })
+
   it('closes the modal without saving on close', async () => {
     const { wrapper } = mountView({ list: [], loading: false, error: null })
     await wrapper.find('[data-test="storage-new"]').trigger('click')

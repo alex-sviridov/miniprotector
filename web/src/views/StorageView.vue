@@ -10,6 +10,7 @@ import StorageEditModal from '../components/storage/StorageEditModal.vue'
 const storagePolicies = useStoragePoliciesStore()
 const showModal = ref(false)
 const editingPolicy = ref(null)
+const serverError = ref('')
 
 onMounted(() => {
   storagePolicies.fetchAll()
@@ -25,6 +26,7 @@ function storageBackend(configText) {
 
 function openCreate() {
   editingPolicy.value = null
+  serverError.value = ''
   showModal.value = true
 }
 
@@ -33,21 +35,27 @@ function openEdit(row) {
   // clone with tracking fields (vgt_id, originalIndex). Look the pristine
   // object up from the store by id instead of using the augmented clone.
   editingPolicy.value = storagePolicies.list.find((p) => p.id === row.id) || row
+  serverError.value = ''
   showModal.value = true
 }
 
 function closeModal() {
   showModal.value = false
   editingPolicy.value = null
+  serverError.value = ''
 }
 
 async function save(payload) {
-  if (editingPolicy.value) {
-    await storagePolicies.update(editingPolicy.value.id, payload)
-  } else {
-    await storagePolicies.create(payload)
+  try {
+    if (editingPolicy.value) {
+      await storagePolicies.update(editingPolicy.value.id, payload)
+    } else {
+      await storagePolicies.create(payload)
+    }
+    closeModal()
+  } catch {
+    serverError.value = storagePolicies.error
   }
-  closeModal()
 }
 
 function confirmDelete(id) {
@@ -103,6 +111,12 @@ const columns = [
         </template>
       </DataTable>
     </StatusMessage>
-    <StorageEditModal v-if="showModal" :policy="editingPolicy" @close="closeModal" @save="save" />
+    <StorageEditModal
+      v-if="showModal"
+      :policy="editingPolicy"
+      :server-error="serverError"
+      @close="closeModal"
+      @save="save"
+    />
   </div>
 </template>

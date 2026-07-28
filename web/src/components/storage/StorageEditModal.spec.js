@@ -66,6 +66,46 @@ describe('StorageEditModal', () => {
     })
   })
 
+  it('preserves unknown config keys when editing and saving', async () => {
+    const wrapper = mount(StorageEditModal, {
+      props: {
+        policy: {
+          id: 's1',
+          name: 'east-1-storage',
+          hostname: 'storage-east-1.internal',
+          port: 9400,
+          config: '{"backend": "filesystem", "root": "/data/storage", "compression": "zstd"}',
+        },
+      },
+    })
+    await wrapper.find('[data-test="storage-name-input"]').setValue('east-1-storage-renamed')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('save')).toHaveLength(1)
+    const payload = wrapper.emitted('save')[0][0]
+    expect(JSON.parse(payload.config)).toEqual({
+      backend: 'filesystem',
+      root: '/data/storage',
+      compression: 'zstd',
+    })
+  })
+
+  it('does not throw and falls back to defaults when config is the literal null', () => {
+    const wrapper = mount(StorageEditModal, {
+      props: {
+        policy: {
+          id: 's1',
+          name: 'east-1-storage',
+          hostname: 'storage-east-1.internal',
+          port: 9400,
+          config: 'null',
+        },
+      },
+    })
+    expect(wrapper.find('[data-test="storage-type-select"]').element.value).toBe('filesystem')
+    expect(wrapper.find('[data-test="storage-path-input"]').element.value).toBe('')
+  })
+
   it('rejects a port outside 1-65535', async () => {
     const wrapper = mount(StorageEditModal, { props: { policy: null } })
     await wrapper.find('[data-test="storage-name-input"]').setValue('x')

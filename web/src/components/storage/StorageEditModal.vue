@@ -5,12 +5,14 @@ import BaseButton from '../ui/BaseButton.vue'
 
 const props = defineProps({
   policy: { type: Object, default: null },
+  serverError: { type: String, default: '' },
 })
 const emit = defineEmits(['close', 'save'])
 
 function parseConfig(configText) {
   try {
-    return JSON.parse(configText || '{}')
+    const c = JSON.parse(configText || '{}')
+    return c && typeof c === 'object' ? c : {}
   } catch {
     return {}
   }
@@ -67,7 +69,11 @@ function submit() {
     name: form.name.trim(),
     hostname: form.hostname.trim(),
     port,
-    config: JSON.stringify({ backend: form.storageType, root: form.path.trim() }),
+    config: JSON.stringify({
+      ...parseConfig(props.policy?.config),
+      backend: form.storageType,
+      root: form.path.trim(),
+    }),
     client_filters: { hostnames: [], labels: {} },
   })
 }
@@ -80,7 +86,7 @@ function submit() {
         <h2 class="text-lg font-semibold">{{ policy ? 'Edit Storage Policy' : 'New Storage Policy' }}</h2>
         <BaseButton variant="secondary" data-test="storage-cancel" @click="close">Cancel</BaseButton>
       </div>
-      <p v-if="errors.message" class="text-red-600 mb-4">{{ errors.message }}</p>
+      <p v-if="errors.message || serverError" class="text-red-600 mb-4">{{ errors.message || serverError }}</p>
       <form @submit.prevent="submit" class="space-y-4">
         <div>
           <label class="block font-medium mb-1">Name</label>
