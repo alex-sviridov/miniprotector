@@ -103,50 +103,26 @@ func backupFieldsSet(objectFilters []*pb.ObjectFilter, rpo string, backupWindow 
 	return len(objectFilters) > 0 || rpo != "" || len(backupWindow) > 0 || destination != ""
 }
 
-// buildPolicyForCreate constructs the concrete Policy req.GetType() asks
-// for, rejecting a request that also sets fields belonging to the other
-// type. The returned Policy's Metadata.ID/SourcePath/Type are left zero --
-// Cache.Reload assigns them once the caller writes the file and reloads.
-func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, error) {
-	base := PolicyBase{
-		Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
-		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
-	}
-	switch req.GetType() {
-	case "backup":
-		if storageFieldsSet(req.GetHostname(), req.GetPort(), req.GetConfig()) {
-			return nil, fmt.Errorf("a backup policy must not set hostname/port/config")
-		}
-		return &BackupPolicy{
-			PolicyBase:    base,
-			ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
-			RPO:           req.GetRpo(),
-			BackupWindow:  req.GetBackupWindow(),
-			Destination:   req.GetDestination(),
-		}, nil
-	case "storage":
-		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetDestination()) {
-			return nil, fmt.Errorf("a storage policy must not set object_filters/rpo/backup_window/destination")
-		}
-		return &StoragePolicy{
-			PolicyBase: base,
-			Hostname:   req.GetHostname(),
-			Port:       int(req.GetPort()),
-			Config:     json.RawMessage(req.GetConfig()),
-		}, nil
-	default:
-		return nil, fmt.Errorf("unknown policy type %q", req.GetType())
-	}
+// policyFieldsGetter is the subset of pb.CreatePolicyRequest/
+// pb.UpdatePolicyRequest that buildPolicy needs to construct a concrete
+// Policy -- both proto messages implement it with identical getters, so one
+// switch below serves both RPCs.
+type policyFieldsGetter interface {
+	GetObjectFilters() []*pb.ObjectFilter
+	GetRpo() string
+	GetBackupWindow() []string
+	GetDestination() string
+	GetHostname() string
+	GetPort() int32
+	GetConfig() string
 }
 
-// buildPolicyForUpdate constructs the same concrete type as the existing
-// policy being updated -- a policy's type is immutable via UpdatePolicy, so
-// kind comes from the existing record (existing.Kind()), not the request.
-func buildPolicyForUpdate(req *pb.UpdatePolicyRequest, kind string, existingMeta Metadata, now time.Time) (Policy, error) {
-	base := PolicyBase{
-		Metadata:      Metadata{Name: req.GetName(), CreatedAt: existingMeta.CreatedAt, UpdatedAt: now},
-		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
-	}
+// buildPolicy constructs the concrete Policy kind asks for out of base and
+// req's type-specific fields, rejecting a request that also sets fields
+// belonging to the other type. Shared by buildPolicyForCreate (kind ==
+// req.GetType()) and buildPolicyForUpdate (kind == existing.Kind(), since a
+// policy's type is immutable via update).
+func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, error) {
 	switch kind {
 	case "backup":
 		if storageFieldsSet(req.GetHostname(), req.GetPort(), req.GetConfig()) {
@@ -170,8 +146,33 @@ func buildPolicyForUpdate(req *pb.UpdatePolicyRequest, kind string, existingMeta
 			Config:     json.RawMessage(req.GetConfig()),
 		}, nil
 	default:
+		return nil, fmt.Errorf("unknown policy type %q", kind)
+	}
+}
+
+// buildPolicyForCreate constructs the concrete Policy req.GetType() asks
+// for. The returned Policy's Metadata.ID/SourcePath/Type are left zero --
+// Cache.Reload assigns them once the caller writes the file and reloads.
+func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, error) {
+	base := PolicyBase{
+		Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
+		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+	}
+	return buildPolicy(req.GetType(), base, req)
+}
+
+// buildPolicyForUpdate constructs the same concrete type as the existing
+// policy being updated -- a policy's type is immutable via UpdatePolicy, so
+// kind comes from the existing record (existing.Kind()), not the request.
+func buildPolicyForUpdate(req *pb.UpdatePolicyRequest, kind string, existingMeta Metadata, now time.Time) (Policy, error) {
+	if kind != "backup" && kind != "storage" {
 		return nil, fmt.Errorf("existing policy has unknown type %q", kind)
 	}
+	base := PolicyBase{
+		Metadata:      Metadata{Name: req.GetName(), CreatedAt: existingMeta.CreatedAt, UpdatedAt: now},
+		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+	}
+	return buildPolicy(kind, base, req)
 }
 
 // CreatePolicy validates req, allocates a filename from a slug of the
