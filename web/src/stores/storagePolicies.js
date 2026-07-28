@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { apiFetch } from '../api/client'
 import { withRequest } from './helpers'
 
-export const usePoliciesStore = defineStore('policies', {
+export const useStoragePoliciesStore = defineStore('storagePolicies', {
   state: () => ({
     list: [],
     byId: {},
@@ -14,7 +14,7 @@ export const usePoliciesStore = defineStore('policies', {
       await withRequest(
         this,
         async () => {
-          const body = await apiFetch('/policies?type=backup')
+          const body = await apiFetch('/policies?type=storage')
           this.list = body.data
         },
         { rethrow: false }
@@ -33,7 +33,7 @@ export const usePoliciesStore = defineStore('policies', {
     },
     async create(input) {
       return withRequest(this, async () => {
-        const policy = await apiFetch('/policies', {
+        const policy = await apiFetch('/storage-policies', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(input),
@@ -45,7 +45,7 @@ export const usePoliciesStore = defineStore('policies', {
     },
     async update(id, input) {
       return withRequest(this, async () => {
-        const policy = await apiFetch(`/policies/${encodeURIComponent(id)}`, {
+        const policy = await apiFetch(`/storage-policies/${encodeURIComponent(id)}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(input),
