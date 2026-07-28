@@ -336,3 +336,101 @@ func TestHandleDeletePolicy_UnknownIDReturns404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+func TestHandleCreateStoragePolicy_ReturnsCreatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "s1", Name: "east-1-storage", Type: "storage",
+		Hostname: "storage-east-1.internal", Port: 9400, Config: `{"backend": "filesystem"}`,
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "east-1-storage",
+		"hostname": "storage-east-1.internal",
+		"port": 9400,
+		"config": "{\"backend\": \"filesystem\"}"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "storage", fake.lastCreateReq.GetType())
+	assert.Equal(t, "east-1-storage", fake.lastCreateReq.GetName())
+	assert.Equal(t, "storage-east-1.internal", fake.lastCreateReq.GetHostname())
+	assert.Equal(t, int32(9400), fake.lastCreateReq.GetPort())
+	assert.Equal(t, `{"backend": "filesystem"}`, fake.lastCreateReq.GetConfig())
+
+	var respBody map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "storage-east-1.internal", respBody["hostname"])
+}
+
+func TestHandleCreateStoragePolicy_MalformedJSONReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", strings.NewReader("not json"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastCreateReq, "backend must not be called on malformed input")
+}
+
+func TestHandleCreateStoragePolicy_BackendValidationErrorReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "hostname is required")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", strings.NewReader(`{"name": "x"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleUpdateStoragePolicy_ReturnsUpdatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{
+		Id: "s1", Name: "east-1-storage-renamed", Type: "storage",
+		Hostname: "storage-east-2.internal", Port: 9401, Config: `{"backend": "filesystem"}`,
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "east-1-storage-renamed",
+		"hostname": "storage-east-2.internal",
+		"port": 9401,
+		"config": "{\"backend\": \"filesystem\"}"
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/s1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	assert.Equal(t, "s1", fake.lastUpdateReq.GetId())
+	assert.Equal(t, "storage-east-2.internal", fake.lastUpdateReq.GetHostname())
+	assert.Equal(t, int32(9401), fake.lastUpdateReq.GetPort())
+}
+
+func TestHandleUpdateStoragePolicy_UnknownIDReturns404(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.NotFound, "policy \"ghost\" not found")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/ghost", strings.NewReader(`{"name": "x", "hostname": "h", "port": 1, "config": "{}"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}

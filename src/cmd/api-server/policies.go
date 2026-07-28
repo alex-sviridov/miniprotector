@@ -174,6 +174,67 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toPolicyDTO(resp))
 }
 
+type storagePolicyInput struct {
+	Name          string           `json:"name"`
+	ClientFilters clientFiltersDTO `json:"client_filters"`
+	Hostname      string           `json:"hostname"`
+	Port          int32            `json:"port"`
+	Config        string           `json:"config"`
+}
+
+func decodeStoragePolicyInput(r *http.Request) (storagePolicyInput, error) {
+	var in storagePolicyInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		return storagePolicyInput{}, err
+	}
+	return in, nil
+}
+
+func (s *server) handleCreateStoragePolicy(w http.ResponseWriter, r *http.Request) {
+	in, err := decodeStoragePolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
+		Name:          in.Name,
+		Type:          "storage",
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Hostname:      in.Hostname,
+		Port:          in.Port,
+		Config:        in.Config,
+	})
+	if err != nil {
+		s.logger.Error("handleCreateStoragePolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
+}
+
+func (s *server) handleUpdateStoragePolicy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	in, err := decodeStoragePolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.UpdatePolicy(r.Context(), &pb.UpdatePolicyRequest{
+		Id:            id,
+		Name:          in.Name,
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Hostname:      in.Hostname,
+		Port:          in.Port,
+		Config:        in.Config,
+	})
+	if err != nil {
+		s.logger.Error("handleUpdateStoragePolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toPolicyDTO(resp))
+}
+
 func (s *server) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	_, err := s.policy.DeletePolicy(r.Context(), &pb.DeletePolicyRequest{Id: id})
