@@ -149,6 +149,8 @@ Query parameters (all optional):
 
 Returns every policy, unfiltered by any client identity (unlike `policy-server`'s own `GetPolicies`
 RPC, which every mesh node calls and which is scoped to its own matching policies). Not paginated.
+Accepts an optional `?type=backup` or `?type=storage` query parameter to restrict the response to
+one policy type; omitted returns every type.
 
 ```json
 {
@@ -164,7 +166,11 @@ RPC, which every mesh node calls and which is scoped to its own matching policie
       ],
       "rpo": "24h",
       "backup_window": ["0 2 * * *", "0 20 * * *"],
-      "destination": "bwfs-east.internal:8080"
+      "destination": "bwfs-east.internal:8080",
+      "type": "backup",
+      "hostname": "",
+      "port": 0,
+      "config": ""
     }
   ]
 }
@@ -207,6 +213,31 @@ match any policy.
 ## `DELETE /api/v1/policies/{id}`
 
 Deletes a policy. `204` on success, `404` if `id` doesn't match any policy.
+
+## `POST /api/v1/storage-policies`
+
+Creates a new `"storage"`-typed policy. Body:
+
+```json
+{
+  "name": "east-1-storage",
+  "client_filters": {"hostnames": [], "labels": {}},
+  "hostname": "storage-east-1.internal",
+  "port": 9400,
+  "config": "{\"backend\": \"filesystem\", \"root\": \"/data/storage\"}"
+}
+```
+
+`config` is a JSON string, not a nested object — `policy-server` treats it as opaque, pass-through
+text; the web UI is the one that gives it the `backend`/`root` shape shown above. `201` with the
+created policy on success. `400` if `name` is empty, `hostname` is empty, `port` isn't in `[1,
+65535]`, or `config` isn't well-formed JSON — no file is written when validation fails.
+
+## `PUT /api/v1/storage-policies/{id}`
+
+Replaces an existing storage policy's editable fields — same body shape as `POST`, full replacement
+rather than a partial patch. `200` with the updated policy; `id`, `created_at`, and `type` never
+change. `400` on the same validation failures as `POST`. `404` if `id` doesn't match any policy.
 
 ## `GET /api/v1/jobs`
 
