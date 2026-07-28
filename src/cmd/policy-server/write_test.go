@@ -163,7 +163,7 @@ func TestCreatePolicy_ConcurrentCreatesForDifferentNamesBothSurvive(t *testing.T
 
 	got := map[string]bool{}
 	for _, p := range srv.cache.Policies() {
-		got[p.Metadata.Name] = true
+		got[p.Meta().Name] = true
 	}
 	for _, name := range names {
 		assert.True(t, got[name], "policy %q must be visible in cache after both concurrent creates complete", name)
@@ -196,14 +196,14 @@ func TestUpdatePolicy_OverwritesFileKeepsIDAndCreatedAt(t *testing.T) {
 	original := srv.cache.Policies()[0]
 
 	resp, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
-		Id:            original.Metadata.ID,
+		Id:            original.Meta().ID,
 		Name:          "nightly-renamed",
 		ObjectFilters: []*pb.ObjectFilter{{Path: "/new"}},
 		Destination:   "bwfs:9090",
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, original.Metadata.ID, resp.Id, "id must stay stable across an update")
+	assert.Equal(t, original.Meta().ID, resp.Id, "id must stay stable across an update")
 	assert.Equal(t, "nightly-renamed", resp.Name)
 	assert.Equal(t, "bwfs:9090", resp.Destination)
 	assert.Equal(t, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), resp.CreatedAt.AsTime())
@@ -230,7 +230,7 @@ func TestUpdatePolicy_InvalidInputReturnsInvalidArgumentLeavesFileUnchanged(t *t
 	before, err := os.ReadFile(filepath.Join(dir, "backup", "nightly.json"))
 	require.NoError(t, err)
 
-	_, err = srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{Id: original.Metadata.ID, Name: ""})
+	_, err = srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{Id: original.Meta().ID, Name: ""})
 
 	st, ok := status.FromError(err)
 	require.True(t, ok)
@@ -246,7 +246,7 @@ func TestDeletePolicy_RemovesFileAndReloads(t *testing.T) {
 	srv := newTestWriteServer(t, dir)
 	original := srv.cache.Policies()[0]
 
-	_, err := srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: original.Metadata.ID})
+	_, err := srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: original.Meta().ID})
 
 	require.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, "backup", "nightly.json"))
@@ -272,17 +272,17 @@ func TestDeletePolicy_LeavesOtherPoliciesIntact(t *testing.T) {
 	srv := newTestWriteServer(t, dir)
 	var target Policy
 	for _, p := range srv.cache.Policies() {
-		if p.Metadata.Name == "policy-a" {
+		if p.Meta().Name == "policy-a" {
 			target = p
 		}
 	}
 
-	_, err := srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: target.Metadata.ID})
+	_, err := srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: target.Meta().ID})
 
 	require.NoError(t, err)
 	remaining := srv.cache.Policies()
 	require.Len(t, remaining, 1)
-	assert.Equal(t, "policy-b", remaining[0].Metadata.Name)
+	assert.Equal(t, "policy-b", remaining[0].Meta().Name)
 }
 
 func TestCreatePolicy_ResponseIncludesBackupType(t *testing.T) {

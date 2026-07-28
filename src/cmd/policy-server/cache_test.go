@@ -36,7 +36,7 @@ func TestCache_ReloadSkipsMalformedFileKeepsGoodOnes(t *testing.T) {
 
 	got := c.Policies()
 	require.Len(t, got, 1)
-	assert.Equal(t, "policy-good", got[0].Metadata.Name)
+	assert.Equal(t, "policy-good", got[0].Meta().Name)
 }
 
 func TestCache_ReloadAllFilesFailKeepsPreviousCache(t *testing.T) {
@@ -54,7 +54,7 @@ func TestCache_ReloadAllFilesFailKeepsPreviousCache(t *testing.T) {
 	assert.Error(t, err)
 	got := c.Policies()
 	require.Len(t, got, 1, "previous good cache must be kept")
-	assert.Equal(t, "policy-good", got[0].Metadata.Name)
+	assert.Equal(t, "policy-good", got[0].Meta().Name)
 }
 
 func TestCache_ReloadEmptyDirectoryYieldsEmptyPolicies(t *testing.T) {
@@ -65,7 +65,7 @@ func TestCache_ReloadEmptyDirectoryYieldsEmptyPolicies(t *testing.T) {
 	assert.Empty(t, c.Policies())
 }
 
-func TestCache_ReloadTagsPoliciesWithSubfolderNameAsType(t *testing.T) {
+func TestCache_ReloadSkipsUnrecognizedTypeSubfolder(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
 	writePolicyFile(t, filepath.Join(dir, "other"), "b.json", `{"metadata": {"name": "policy-b"}}`)
@@ -73,12 +73,10 @@ func TestCache_ReloadTagsPoliciesWithSubfolderNameAsType(t *testing.T) {
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
 
-	types := map[string]string{}
-	for _, p := range c.Policies() {
-		types[p.Metadata.Name] = p.Type
-	}
-	assert.Equal(t, "backup", types["policy-a"])
-	assert.Equal(t, "other", types["policy-b"], "an unrecognized subfolder name is still loaded and tagged with its literal name")
+	got := c.Policies()
+	require.Len(t, got, 1, "a subfolder name absent from policyParsers must be skipped, not loaded")
+	assert.Equal(t, "policy-a", got[0].Meta().Name)
+	assert.Equal(t, "backup", got[0].Kind())
 }
 
 func TestCache_ReloadSkipsFileDirectlyUnderPoliciesDir(t *testing.T) {
@@ -91,7 +89,7 @@ func TestCache_ReloadSkipsFileDirectlyUnderPoliciesDir(t *testing.T) {
 
 	got := c.Policies()
 	require.Len(t, got, 1, "a *.json file with no type subfolder must not be loaded")
-	assert.Equal(t, "policy-a", got[0].Metadata.Name)
+	assert.Equal(t, "policy-a", got[0].Meta().Name)
 }
 
 func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
@@ -110,35 +108,30 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
 
-	// Test mutation of plain value field (should not affect cache)
 	got := c.Policies()
-	got[0].Metadata.Name = "mutated-name"
+	bp, ok := got[0].(*BackupPolicy)
+	require.True(t, ok)
 
-	// Test mutation of nested slice field
-	got[0].ClientFilters.Hostnames[0] = "mutated-host"
+	bp.Metadata.Name = "mutated-name"
+	bp.ClientFilters.Hostnames[0] = "mutated-host"
+	bp.ClientFilters.Labels["env"] = "dev"
+	bp.ObjectFilters[0].Path = "/mutated/*"
+	bp.ObjectFilters[0].Include[0] = "mutated"
+	bp.ObjectFilters[0].Exclude[0] = "mutated"
+	bp.BackupWindow[0] = "23:00"
 
-	// Test mutation of nested map field
-	got[0].ClientFilters.Labels["env"] = "dev"
-
-	// Test mutation of ObjectFilters slice
-	got[0].ObjectFilters[0].Path = "/mutated/*"
-	got[0].ObjectFilters[0].Include[0] = "mutated"
-	got[0].ObjectFilters[0].Exclude[0] = "mutated"
-
-	// Test mutation of BackupWindow slice
-	got[0].BackupWindow[0] = "23:00"
-
-	// Verify that a fresh call to Policies() returns the original values
 	got2 := c.Policies()
-	assert.Equal(t, "policy-a", got2[0].Metadata.Name, "mutating Metadata.Name in returned snapshot must not affect cache")
-	assert.Equal(t, "host1", got2[0].ClientFilters.Hostnames[0], "mutating Hostnames in returned snapshot must not affect cache")
-	assert.Equal(t, "prod", got2[0].ClientFilters.Labels["env"], "mutating Labels in returned snapshot must not affect cache")
-	assert.Equal(t, "/data/*", got2[0].ObjectFilters[0].Path, "mutating ObjectFilters in returned snapshot must not affect cache")
-	assert.Equal(t, "*.sql", got2[0].ObjectFilters[0].Include[0], "mutating ObjectFilters[].Include in returned snapshot must not affect cache")
-	assert.Equal(t, "*.tmp", got2[0].ObjectFilters[0].Exclude[0], "mutating ObjectFilters[].Exclude in returned snapshot must not affect cache")
-	assert.Equal(t, "08:00", got2[0].BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
-	assert.NotEmpty(t, got2[0].ObjectFilters[0].ID, "ObjectFilter.ID must survive the snapshot copy")
-	assert.Equal(t, "backup", got2[0].Type, "Type must survive the snapshot copy")
+	bp2, ok := got2[0].(*BackupPolicy)
+	require.True(t, ok)
+	assert.Equal(t, "policy-a", bp2.Metadata.Name, "mutating Metadata.Name in returned snapshot must not affect cache")
+	assert.Equal(t, "host1", bp2.ClientFilters.Hostnames[0], "mutating Hostnames in returned snapshot must not affect cache")
+	assert.Equal(t, "prod", bp2.ClientFilters.Labels["env"], "mutating Labels in returned snapshot must not affect cache")
+	assert.Equal(t, "/data/*", bp2.ObjectFilters[0].Path, "mutating ObjectFilters in returned snapshot must not affect cache")
+	assert.Equal(t, "*.sql", bp2.ObjectFilters[0].Include[0], "mutating ObjectFilters[].Include in returned snapshot must not affect cache")
+	assert.Equal(t, "*.tmp", bp2.ObjectFilters[0].Exclude[0], "mutating ObjectFilters[].Exclude in returned snapshot must not affect cache")
+	assert.Equal(t, "08:00", bp2.BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
+	assert.NotEmpty(t, bp2.ObjectFilters[0].ID, "ObjectFilter.ID must survive the snapshot copy")
+	assert.Equal(t, "backup", bp2.Type, "Type must survive the snapshot copy")
 }
 
 func TestCache_FindByIDReturnsMatchingPolicy(t *testing.T) {
@@ -149,10 +142,10 @@ func TestCache_FindByIDReturnsMatchingPolicy(t *testing.T) {
 	require.NoError(t, c.Reload(dir, testLogger()))
 
 	want := c.Policies()[0]
-	got, ok := c.FindByID(want.Metadata.ID)
+	got, ok := c.FindByID(want.Meta().ID)
 	require.True(t, ok)
-	assert.Equal(t, "policy-a", got.Metadata.Name)
-	assert.Equal(t, filepath.Join(dir, "backup", "a.json"), got.SourcePath)
+	assert.Equal(t, "policy-a", got.Meta().Name)
+	assert.Equal(t, filepath.Join(dir, "backup", "a.json"), got.Path())
 }
 
 func TestCache_FindByIDUnknownIDReturnsFalse(t *testing.T) {
@@ -170,7 +163,7 @@ func TestCache_FindBySourcePathReturnsMatchingPolicy(t *testing.T) {
 
 	got, ok := c.FindBySourcePath(filepath.Join(dir, "backup", "a.json"))
 	require.True(t, ok)
-	assert.Equal(t, "policy-a", got.Metadata.Name)
+	assert.Equal(t, "policy-a", got.Meta().Name)
 }
 
 func TestCache_FindBySourcePathUnknownPathReturnsFalse(t *testing.T) {

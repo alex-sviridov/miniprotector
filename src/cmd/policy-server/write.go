@@ -101,15 +101,17 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	defer s.writeMu.Unlock()
 
 	now := time.Now().UTC()
-	p := Policy{
-		Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
-		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+	p := &BackupPolicy{
+		PolicyBase: PolicyBase{
+			Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
+			ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+		},
 		ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
 		RPO:           req.GetRpo(),
 		BackupWindow:  req.GetBackupWindow(),
 		Destination:   req.GetDestination(),
 	}
-	if err := validatePolicy(p); err != nil {
+	if err := p.Validate(); err != nil {
 		s.logger.Error("CreatePolicy: validation failed", "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -148,8 +150,8 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	if !ok {
 		return nil, status.Error(codes.Internal, "policy not found in cache after create")
 	}
-	s.logger.Info("CreatePolicy", "id", created.Metadata.ID, "name", created.Metadata.Name, "path", filePath)
-	return toProtoPolicyAdmin(created), nil
+	s.logger.Info("CreatePolicy", "id", created.Meta().ID, "name", created.Meta().Name, "path", filePath)
+	return created.ToProto(true), nil
 }
 
 // UpdatePolicy fully replaces an existing policy's editable fields,
@@ -165,21 +167,23 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))
 	}
 
-	p := Policy{
-		Metadata:      Metadata{Name: req.GetName(), CreatedAt: existing.Metadata.CreatedAt, UpdatedAt: time.Now().UTC()},
-		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+	p := &BackupPolicy{
+		PolicyBase: PolicyBase{
+			Metadata:      Metadata{Name: req.GetName(), CreatedAt: existing.Meta().CreatedAt, UpdatedAt: time.Now().UTC()},
+			ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+		},
 		ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
 		RPO:           req.GetRpo(),
 		BackupWindow:  req.GetBackupWindow(),
 		Destination:   req.GetDestination(),
 	}
-	if err := validatePolicy(p); err != nil {
+	if err := p.Validate(); err != nil {
 		s.logger.Error("UpdatePolicy: validation failed", "id", req.GetId(), "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if err := atomicWriteJSON(existing.SourcePath, p); err != nil {
-		s.logger.Error("UpdatePolicy: write failed", "path", existing.SourcePath, "error", err)
+	if err := atomicWriteJSON(existing.Path(), p); err != nil {
+		s.logger.Error("UpdatePolicy: write failed", "path", existing.Path(), "error", err)
 		return nil, status.Error(codes.Internal, "failed to write policy file")
 	}
 	if err := s.cache.Reload(s.policiesDir, s.logger); err != nil {
@@ -187,12 +191,12 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 		return nil, status.Error(codes.Internal, "failed to reload policies after write")
 	}
 
-	updated, ok := s.cache.FindBySourcePath(existing.SourcePath)
+	updated, ok := s.cache.FindBySourcePath(existing.Path())
 	if !ok {
 		return nil, status.Error(codes.Internal, "policy not found in cache after update")
 	}
-	s.logger.Info("UpdatePolicy", "id", updated.Metadata.ID, "name", updated.Metadata.Name, "path", existing.SourcePath)
-	return toProtoPolicyAdmin(updated), nil
+	s.logger.Info("UpdatePolicy", "id", updated.Meta().ID, "name", updated.Meta().Name, "path", existing.Path())
+	return updated.ToProto(true), nil
 }
 
 // DeletePolicy removes the policy file backing id and reloads the cache.
@@ -205,8 +209,8 @@ func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePol
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))
 	}
 
-	if err := os.Remove(existing.SourcePath); err != nil {
-		s.logger.Error("DeletePolicy: remove failed", "path", existing.SourcePath, "error", err)
+	if err := os.Remove(existing.Path()); err != nil {
+		s.logger.Error("DeletePolicy: remove failed", "path", existing.Path(), "error", err)
 		return nil, status.Error(codes.Internal, "failed to remove policy file")
 	}
 	if err := s.cache.Reload(s.policiesDir, s.logger); err != nil {
@@ -214,6 +218,6 @@ func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePol
 		return nil, status.Error(codes.Internal, "failed to reload policies after delete")
 	}
 
-	s.logger.Info("DeletePolicy", "id", req.GetId(), "path", existing.SourcePath)
+	s.logger.Info("DeletePolicy", "id", req.GetId(), "path", existing.Path())
 	return &pb.DeletePolicyResponse{}, nil
 }

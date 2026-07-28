@@ -8,7 +8,6 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // policyServerServer implements PolicyService: the sole RPC any node calls
@@ -63,45 +62,15 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 		if !p.Matches(hostname, labels) {
 			continue
 		}
-		matched = append(matched, toProtoPolicy(p))
+		matched = append(matched, p.ToProto(false))
 	}
 
 	s.logger.Info("GetPolicies", "hostname", hostname, "job_id", jobID, "matched", len(matched))
 	return &pb.GetPoliciesResponse{Policies: matched}, nil
 }
 
-func toProtoPolicy(p Policy) *pb.Policy {
-	objectFilters := make([]*pb.ObjectFilter, len(p.ObjectFilters))
-	for i, f := range p.ObjectFilters {
-		objectFilters[i] = &pb.ObjectFilter{Id: f.ID, Path: f.Path, Include: f.Include, Exclude: f.Exclude}
-	}
-	return &pb.Policy{
-		Id:            p.Metadata.ID,
-		Name:          p.Metadata.Name,
-		CreatedAt:     timestamppb.New(p.Metadata.CreatedAt),
-		UpdatedAt:     timestamppb.New(p.Metadata.UpdatedAt),
-		ObjectFilters: objectFilters,
-		Rpo:           p.RPO,
-		BackupWindow:  p.BackupWindow,
-		Destination:   p.Destination,
-		Type:          p.Type,
-	}
-}
-
 func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
 	return &pb.ClientFilters{Hostnames: cf.Hostnames, Labels: cf.Labels}
-}
-
-// toProtoPolicyAdmin is toProtoPolicy plus client_filters -- used by every
-// RPC except GetPolicies (ListPolicies, CreatePolicy, UpdatePolicy), where
-// an operator editing the full policy set needs to see and change
-// client_filters. GetPolicies keeps using toProtoPolicy so a matched node
-// never learns another node's targeting rules from a policy that already
-// matched its own identity.
-func toProtoPolicyAdmin(p Policy) *pb.Policy {
-	pp := toProtoPolicy(p)
-	pp.ClientFilters = toProtoClientFilters(p.ClientFilters)
-	return pp
 }
 
 // ListPolicies returns every currently-loaded policy, unfiltered by any
@@ -112,7 +81,7 @@ func (s *policyServerServer) ListPolicies(ctx context.Context, _ *pb.ListPolicie
 	policies := s.cache.Policies()
 	out := make([]*pb.Policy, len(policies))
 	for i, p := range policies {
-		out[i] = toProtoPolicyAdmin(p)
+		out[i] = p.ToProto(true)
 	}
 	s.logger.Info("ListPolicies", "count", len(out))
 	return &pb.ListPoliciesResponse{Policies: out}, nil

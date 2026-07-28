@@ -74,7 +74,7 @@ func TestPolicy_Matches(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := Policy{ClientFilters: tc.filters}
+			p := PolicyBase{ClientFilters: tc.filters}
 			assert.Equal(t, tc.want, p.Matches(tc.hostname, tc.labels))
 		})
 	}

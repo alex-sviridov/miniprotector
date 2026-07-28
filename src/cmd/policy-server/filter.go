@@ -9,11 +9,11 @@ import "path"
 // labels -- extra labels the client has beyond what's listed don't
 // disqualify a match. Both conditions must hold (AND); there is no
 // either-hostname-or-labels mode.
-func (p Policy) Matches(hostname string, labels map[string]string) bool {
-	if !hostnameMatches(p.ClientFilters.Hostnames, hostname) {
+func (b PolicyBase) Matches(hostname string, labels map[string]string) bool {
+	if !hostnameMatches(b.ClientFilters.Hostnames, hostname) {
 		return false
 	}
-	return labelsMatch(p.ClientFilters.Labels, labels)
+	return labelsMatch(b.ClientFilters.Labels, labels)
 }
 
 func hostnameMatches(patterns []string, hostname string) bool {

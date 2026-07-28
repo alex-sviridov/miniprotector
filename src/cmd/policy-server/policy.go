@@ -1,19 +1,21 @@
 // policy-server's on-disk policy schema: one JSON file per policy under
-// $MP_CONFIG_PATH/policies/<type>/ (e.g. policies/backup/). See
-// docs/superpowers/specs/2026-07-10-policy-server-design.md and
-// docs/superpowers/specs/2026-07-20-policy-type-subfolders-design.md.
+// $MP_CONFIG_PATH/policies/<type>/ (e.g. policies/backup/, policies/storage/).
+// Each policy type is a concrete Go type implementing the Policy interface;
+// see backup_policy.go and storage_policy.go. See docs/superpowers/specs/
+// 2026-07-10-policy-server-design.md, 2026-07-20-policy-type-subfolders-design.md,
+// and 2026-07-28-storage-policy-type-design.md.
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+
+	pb "github.com/alex-sviridov/miniprotector/api"
 )
 
 // policyIDNamespace scopes this project's deterministic policy/object-filter
@@ -41,74 +43,118 @@ type ObjectFilter struct {
 	Exclude []string `json:"exclude,omitempty"`
 }
 
-type Policy struct {
-	Metadata      Metadata       `json:"metadata"`
-	ClientFilters ClientFilters  `json:"client_filters"`
-	ObjectFilters []ObjectFilter `json:"object_filters"`
-	RPO           string         `json:"rpo"`
-	BackupWindow  []string       `json:"backup_window"`
-	Destination   string         `json:"destination"`
-	SourcePath    string         `json:"-"`
-	// Type is derived from the name of the immediate subfolder the policy
-	// file was loaded from (e.g. "backup" for policies/backup/*.json) --
-	// never read from or written to the on-disk policy JSON. Set by
-	// parsePolicyFile.
-	Type string `json:"-"`
+// PolicyBase holds everything shared across every policy type: identity,
+// client-filter matching, and on-disk bookkeeping. Embedded by value in
+// every concrete policy type -- never used on its own.
+type PolicyBase struct {
+	Metadata      Metadata      `json:"metadata"`
+	ClientFilters ClientFilters `json:"client_filters"`
+	SourcePath    string        `json:"-"`
+	Type          string        `json:"-"`
 }
 
-// validatePolicy checks the fields an operator can set on a policy,
-// independent of where it came from (a file on disk, via parsePolicyFile,
-// or a CreatePolicy/UpdatePolicy RPC request): metadata.name must be
-// non-empty, and every client_filters.hostnames/object_filters include/
-// exclude glob pattern must be syntactically valid (path.Match's syntax).
-func validatePolicy(p Policy) error {
-	if p.Metadata.Name == "" {
+func (b PolicyBase) Meta() Metadata         { return b.Metadata }
+func (b PolicyBase) Filters() ClientFilters { return b.ClientFilters }
+func (b PolicyBase) Path() string           { return b.SourcePath }
+func (b PolicyBase) Kind() string           { return b.Type }
+
+// setIdentity assigns the fields policy-server itself computes -- never
+// read from or written to the on-disk policy JSON -- after a policy file
+// has been parsed and validated: its on-disk path, its type (the subfolder
+// it was loaded from), and its deterministic ID. BackupPolicy overrides
+// this to also derive its ObjectFilters' IDs from the same id.
+func (b *PolicyBase) setIdentity(sourcePath, policyType, id string) {
+	b.SourcePath = sourcePath
+	b.Type = policyType
+	b.Metadata.ID = id
+}
+
+// clone deep-copies the reference-typed fields PolicyBase owns. Used by
+// every concrete type's Clone() to build its own PolicyBase field.
+func (b PolicyBase) clone() PolicyBase {
+	hostnames := make([]string, len(b.ClientFilters.Hostnames))
+	copy(hostnames, b.ClientFilters.Hostnames)
+	labels := make(map[string]string, len(b.ClientFilters.Labels))
+	for k, v := range b.ClientFilters.Labels {
+		labels[k] = v
+	}
+	return PolicyBase{
+		Metadata:      b.Metadata,
+		SourcePath:    b.SourcePath,
+		Type:          b.Type,
+		ClientFilters: ClientFilters{Hostnames: hostnames, Labels: labels},
+	}
+}
+
+// Policy is anything policy-server can load, cache, and serve: a shared
+// identity (PolicyBase) plus type-specific data and behavior only its own
+// concrete type (BackupPolicy, StoragePolicy) knows how to validate, copy,
+// and convert to its wire representation.
+type Policy interface {
+	Meta() Metadata
+	Filters() ClientFilters
+	Path() string
+	Kind() string
+	Matches(hostname string, labels map[string]string) bool
+	Validate() error
+	Clone() Policy
+	ToProto(includeClientFilters bool) *pb.Policy
+	setIdentity(sourcePath, policyType, id string)
+}
+
+// policyParsers maps a policy type name (a policies/ subfolder's base name)
+// to the function that unmarshals that type's on-disk JSON schema. Adding a
+// new policy type means writing its parseXPolicyJSON and adding one entry
+// here -- no other code in this file changes.
+var policyParsers = map[string]func(data []byte) (Policy, error){
+	"backup": parseBackupPolicyJSON,
+}
+
+// validateCommon checks the fields every policy type shares, independent of
+// where it came from (a file on disk, or a Create/UpdatePolicy RPC
+// request): metadata.name must be non-empty, and every
+// client_filters.hostnames glob pattern must be syntactically valid
+// (path.Match's syntax).
+func validateCommon(base PolicyBase) error {
+	if base.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
-	for _, pattern := range p.ClientFilters.Hostnames {
+	for _, pattern := range base.ClientFilters.Hostnames {
 		if _, err := path.Match(pattern, ""); err != nil {
 			return fmt.Errorf("invalid hostname pattern %q: %w", pattern, err)
-		}
-	}
-	for _, of := range p.ObjectFilters {
-		for _, pattern := range of.Include {
-			if _, err := path.Match(pattern, ""); err != nil {
-				return fmt.Errorf("invalid include pattern %q: %w", pattern, err)
-			}
-		}
-		for _, pattern := range of.Exclude {
-			if _, err := path.Match(pattern, ""); err != nil {
-				return fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
-			}
 		}
 	}
 	return nil
 }
 
-// parsePolicyFile reads and validates a single policy JSON file, tagging it
-// with policyType -- the caller's own knowledge of which type subfolder
-// filePath was found in (see Cache.Reload) -- see validatePolicy for the
-// validation rules applied.
+// parsePolicyFile reads, unmarshals (via policyParsers[policyType]), and
+// validates a single policy JSON file, then assigns the identity fields
+// policy-server itself computes: SourcePath, Type (policyType -- the
+// caller's own knowledge of which type subfolder filePath was found in, see
+// Cache.Reload), and a deterministic ID derived from policyType and the
+// file's basename. A policyType absent from policyParsers is reported the
+// same way a malformed file is -- there is no schema to unmarshal an
+// unrecognized type into.
 func parsePolicyFile(filePath, policyType string) (Policy, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return Policy{}, fmt.Errorf("read %s: %w", filePath, err)
-	}
-	var p Policy
-	if err := json.Unmarshal(data, &p); err != nil {
-		return Policy{}, fmt.Errorf("parse %s: %w", filePath, err)
-	}
-	if err := validatePolicy(p); err != nil {
-		return Policy{}, fmt.Errorf("%s: %w", filePath, err)
+		return nil, fmt.Errorf("read %s: %w", filePath, err)
 	}
 
-	policyUUID := uuid.NewSHA1(policyIDNamespace, []byte(filepath.Join(policyType, filepath.Base(filePath))))
-	p.Metadata.ID = policyUUID.String()
-	p.SourcePath = filePath
-	p.Type = policyType
-	for i := range p.ObjectFilters {
-		p.ObjectFilters[i].ID = uuid.NewSHA1(policyUUID, []byte(strconv.Itoa(i))).String()
+	parse, ok := policyParsers[policyType]
+	if !ok {
+		return nil, fmt.Errorf("%s: unrecognized policy type %q", filePath, policyType)
 	}
+	p, err := parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", filePath, err)
+	}
+	if err := p.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", filePath, err)
+	}
+
+	id := uuid.NewSHA1(policyIDNamespace, []byte(filepath.Join(policyType, filepath.Base(filePath))))
+	p.setIdentity(filePath, policyType, id.String())
 
 	return p, nil
 }

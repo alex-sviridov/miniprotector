@@ -22,55 +22,26 @@ func NewCache() *Cache {
 }
 
 // Policies returns a snapshot of the currently-loaded policy list; mutating
-// the returned slice/elements never affects the cache.
+// the returned slice/elements never affects the cache. Each policy deep-
+// copies itself via its own Clone().
 func (c *Cache) Policies() []Policy {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	out := make([]Policy, len(c.policies))
 	for i, p := range c.policies {
-		// Deep copy the Policy: Metadata, RPO, and Destination are plain value types,
-		// but Hostnames, Labels, ObjectFilters, and BackupWindow are reference types.
-		out[i] = Policy{
-			Metadata: p.Metadata, // plain types: string, time.Time, time.Time
-			ClientFilters: ClientFilters{
-				Hostnames: make([]string, len(p.ClientFilters.Hostnames)),
-				Labels:    make(map[string]string, len(p.ClientFilters.Labels)),
-			},
-			ObjectFilters: make([]ObjectFilter, len(p.ObjectFilters)),
-			RPO:           p.RPO, // plain string
-			BackupWindow:  make([]string, len(p.BackupWindow)),
-			Destination:   p.Destination, // plain string
-			SourcePath:    p.SourcePath,  // plain string
-			Type:          p.Type,        // plain string
-		}
-
-		// Copy the slice and map contents
-		copy(out[i].ClientFilters.Hostnames, p.ClientFilters.Hostnames)
-		for k, v := range p.ClientFilters.Labels {
-			out[i].ClientFilters.Labels[k] = v
-		}
-		for j, f := range p.ObjectFilters {
-			out[i].ObjectFilters[j] = ObjectFilter{
-				ID:      f.ID,
-				Path:    f.Path,
-				Include: append([]string(nil), f.Include...),
-				Exclude: append([]string(nil), f.Exclude...),
-			}
-		}
-		copy(out[i].BackupWindow, p.BackupWindow)
+		out[i] = p.Clone()
 	}
 	return out
 }
 
 // Reload re-reads every *.json file found one level under dir -- i.e.
-// dir/<type>/*.json for every immediate subdirectory <type> of dir --
-// tagging each loaded policy with that subdirectory's name as its Type. A
+// dir/<type>/*.json for every immediate subdirectory <type> of dir. A
 // *.json file sitting directly under dir, outside any type subfolder, is
 // logged and skipped, the same as a malformed file -- it doesn't block the
-// rest of the directory from loading. Reload does not validate subfolder
-// names against a whitelist of known types; an unrecognized subfolder is
-// still loaded and tagged with its literal name -- deciding what an
-// unrecognized type means is left to downstream consumers (agent today).
+// rest of the directory from loading. A subfolder whose name isn't
+// registered in policyParsers is reported by parsePolicyFile the same way a
+// malformed file is, so it's skipped file-by-file through the same branch
+// below -- there is no separate "unknown type" code path here.
 //
 // If dir contains at least one *.json file (anywhere: stray or in a type
 // subfolder) and every loadable one failed to parse, the previous good
@@ -135,11 +106,11 @@ func (c *Cache) Reload(dir string, logger *slog.Logger) error {
 // caller-facing ID rather than its on-disk filename.
 func (c *Cache) FindByID(id string) (Policy, bool) {
 	for _, p := range c.Policies() {
-		if p.Metadata.ID == id {
+		if p.Meta().ID == id {
 			return p, true
 		}
 	}
-	return Policy{}, false
+	return nil, false
 }
 
 // FindBySourcePath returns the currently-loaded policy parsed from exactly
@@ -147,9 +118,9 @@ func (c *Cache) FindByID(id string) (Policy, bool) {
 // once Reload has re-parsed it and computed its ID.
 func (c *Cache) FindBySourcePath(path string) (Policy, bool) {
 	for _, p := range c.Policies() {
-		if p.SourcePath == path {
+		if p.Path() == path {
 			return p, true
 		}
 	}
-	return Policy{}, false
+	return nil, false
 }
