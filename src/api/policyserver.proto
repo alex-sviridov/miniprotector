@@ -70,6 +70,13 @@ message Policy {
   // written to the on-disk policy JSON. Populated by both GetPolicies and
   // ListPolicies.
   string type = 10;
+  // storage policy only -- unset/empty for a backup policy.
+  string hostname = 11;
+  // storage policy only.
+  int32 port = 12;
+  // storage policy only -- opaque JSON text, verbatim passthrough. Never
+  // parsed or interpreted by policy-server beyond checking well-formedness.
+  string config = 13;
 }
 
 message CreatePolicyRequest {
@@ -81,6 +88,13 @@ message CreatePolicyRequest {
   string rpo = 4;
   repeated string backup_window = 5;
   string destination = 6;
+  // "backup" or "storage" -- required. Determines which of the fields above
+  // (backup) or below (storage) are valid; mixing fields from both types is
+  // rejected.
+  string type = 7;
+  string hostname = 8;
+  int32 port = 9;
+  string config = 10;
 }
 
 message UpdatePolicyRequest {
@@ -93,6 +107,13 @@ message UpdatePolicyRequest {
   string rpo = 5;
   repeated string backup_window = 6;
   string destination = 7;
+  // A policy's type is immutable via UpdatePolicy -- there is no type field
+  // here. hostname/port/config are only valid when the policy being updated
+  // is already type "storage"; object_filters/rpo/backup_window/destination
+  // are only valid when it's already type "backup".
+  string hostname = 8;
+  int32 port = 9;
+  string config = 10;
 }
 
 message DeletePolicyRequest {
