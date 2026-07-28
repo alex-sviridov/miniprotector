@@ -60,6 +60,7 @@ func TestCreatePolicy_WritesFileAndReturnsPolicyWithID(t *testing.T) {
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:          "Nightly DB Backup",
+		Type:          "backup",
 		ObjectFilters: []*pb.ObjectFilter{{Path: "/var/lib/postgres"}},
 		Rpo:           "24h",
 		BackupWindow:  []string{"0 2 * * *"},
@@ -83,7 +84,7 @@ func TestCreatePolicy_SecondCallWithSameNameGetsDistinctFile(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
 
-	req := &pb.CreatePolicyRequest{Name: "dup", Destination: "bwfs:8080"}
+	req := &pb.CreatePolicyRequest{Name: "dup", Type: "backup", Destination: "bwfs:8080"}
 	first, err := srv.CreatePolicy(context.Background(), req)
 	require.NoError(t, err)
 	second, err := srv.CreatePolicy(context.Background(), req)
@@ -100,7 +101,7 @@ func TestCreatePolicy_MissingNameReturnsInvalidArgument(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
 
-	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{})
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Type: "backup"})
 
 	st, ok := status.FromError(err)
 	require.True(t, ok)
@@ -113,6 +114,7 @@ func TestCreatePolicy_InvalidGlobPatternReturnsInvalidArgumentAndWritesNoFile(t 
 
 	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:          "broken",
+		Type:          "backup",
 		ObjectFilters: []*pb.ObjectFilter{{Path: "/data", Include: []string{"["}}},
 	})
 
@@ -150,6 +152,7 @@ func TestCreatePolicy_ConcurrentCreatesForDifferentNamesBothSurvive(t *testing.T
 			defer wg.Done()
 			_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 				Name:        name,
+				Type:        "backup",
 				Destination: "bwfs:8080",
 			})
 			errs[i] = err
@@ -176,6 +179,7 @@ func TestCreatePolicy_ClientFiltersRoundTrip(t *testing.T) {
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:          "web",
+		Type:          "backup",
 		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-*"}, Labels: map[string]string{"env": "prod"}},
 	})
 
@@ -289,8 +293,124 @@ func TestCreatePolicy_ResponseIncludesBackupType(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
 
-	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Name: "nightly"})
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Name: "nightly", Type: "backup"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "backup", resp.Type)
+}
+
+func TestCreatePolicy_UnknownTypeReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Name: "x", Type: "quux"})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_StoragePolicyWritesIntoStorageDir(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:     "East 1 Storage",
+		Type:     "storage",
+		Hostname: "storage-east-1.internal",
+		Port:     9400,
+		Config:   `{"backend": "filesystem"}`,
+	})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.Id)
+	assert.Equal(t, "storage", resp.Type)
+	assert.Equal(t, "storage-east-1.internal", resp.Hostname)
+	assert.Equal(t, int32(9400), resp.Port)
+	assert.JSONEq(t, `{"backend": "filesystem"}`, resp.Config)
+
+	_, err = os.Stat(filepath.Join(dir, "storage", "east-1-storage.json"))
+	require.NoError(t, err)
+}
+
+func TestCreatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "bad",
+		Type:        "storage",
+		Hostname:    "h",
+		Port:        9400,
+		Config:      `{}`,
+		Destination: "bwfs:8080",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_BackupTypeWithStorageFieldsRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:     "bad",
+		Type:     "backup",
+		Hostname: "h",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestUpdatePolicy_StoragePolicyRoundTripsAndTypeStaysImmutable(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
+		"metadata": {"name": "east-1"},
+		"hostname": "old-host",
+		"port": 1111,
+		"config": {"a": 1}
+	}`)
+	srv := newTestWriteServer(t, dir)
+	original := srv.cache.Policies()[0]
+
+	resp, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:       original.Meta().ID,
+		Name:     "east-1-renamed",
+		Hostname: "new-host",
+		Port:     2222,
+		Config:   `{"a": 2}`,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, original.Meta().ID, resp.Id, "id must stay stable across an update")
+	assert.Equal(t, "storage", resp.Type, "type must stay \"storage\" -- UpdatePolicy cannot change it")
+	assert.Equal(t, "new-host", resp.Hostname)
+	assert.Equal(t, int32(2222), resp.Port)
+	assert.JSONEq(t, `{"a": 2}`, resp.Config)
+}
+
+func TestUpdatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
+		"metadata": {"name": "east-1"}, "hostname": "h", "port": 1111, "config": {}
+	}`)
+	srv := newTestWriteServer(t, dir)
+	original := srv.cache.Policies()[0]
+
+	_, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:          original.Meta().ID,
+		Name:        "east-1",
+		Hostname:    "h",
+		Port:        1111,
+		Config:      `{}`,
+		Destination: "bwfs:8080",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }

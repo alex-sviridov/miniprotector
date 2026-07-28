@@ -3,7 +3,8 @@
 // proposed content, atomically writes/removes the file, then synchronously
 // reloads its own in-memory cache before responding -- the caller only ever
 // sees a state the cache has already picked up. See
-// docs/superpowers/specs/2026-07-18-policy-management-api-design.md.
+// docs/superpowers/specs/2026-07-18-policy-management-api-design.md and
+// docs/superpowers/specs/2026-07-28-storage-policy-type-design.md.
 package main
 
 import (
@@ -90,10 +91,93 @@ func fromProtoObjectFilters(filters []*pb.ObjectFilter) []ObjectFilter {
 	return out
 }
 
+// storageFieldsSet reports whether any storage-only field is non-default --
+// used to reject a request mixing storage fields into a backup policy.
+func storageFieldsSet(hostname string, port int32, config string) bool {
+	return hostname != "" || port != 0 || config != ""
+}
+
+// backupFieldsSet reports whether any backup-only field is non-default --
+// used to reject a request mixing backup fields into a storage policy.
+func backupFieldsSet(objectFilters []*pb.ObjectFilter, rpo string, backupWindow []string, destination string) bool {
+	return len(objectFilters) > 0 || rpo != "" || len(backupWindow) > 0 || destination != ""
+}
+
+// buildPolicyForCreate constructs the concrete Policy req.GetType() asks
+// for, rejecting a request that also sets fields belonging to the other
+// type. The returned Policy's Metadata.ID/SourcePath/Type are left zero --
+// Cache.Reload assigns them once the caller writes the file and reloads.
+func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, error) {
+	base := PolicyBase{
+		Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
+		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+	}
+	switch req.GetType() {
+	case "backup":
+		if storageFieldsSet(req.GetHostname(), req.GetPort(), req.GetConfig()) {
+			return nil, fmt.Errorf("a backup policy must not set hostname/port/config")
+		}
+		return &BackupPolicy{
+			PolicyBase:    base,
+			ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
+			RPO:           req.GetRpo(),
+			BackupWindow:  req.GetBackupWindow(),
+			Destination:   req.GetDestination(),
+		}, nil
+	case "storage":
+		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetDestination()) {
+			return nil, fmt.Errorf("a storage policy must not set object_filters/rpo/backup_window/destination")
+		}
+		return &StoragePolicy{
+			PolicyBase: base,
+			Hostname:   req.GetHostname(),
+			Port:       int(req.GetPort()),
+			Config:     json.RawMessage(req.GetConfig()),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown policy type %q", req.GetType())
+	}
+}
+
+// buildPolicyForUpdate constructs the same concrete type as the existing
+// policy being updated -- a policy's type is immutable via UpdatePolicy, so
+// kind comes from the existing record (existing.Kind()), not the request.
+func buildPolicyForUpdate(req *pb.UpdatePolicyRequest, kind string, existingMeta Metadata, now time.Time) (Policy, error) {
+	base := PolicyBase{
+		Metadata:      Metadata{Name: req.GetName(), CreatedAt: existingMeta.CreatedAt, UpdatedAt: now},
+		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+	}
+	switch kind {
+	case "backup":
+		if storageFieldsSet(req.GetHostname(), req.GetPort(), req.GetConfig()) {
+			return nil, fmt.Errorf("a backup policy must not set hostname/port/config")
+		}
+		return &BackupPolicy{
+			PolicyBase:    base,
+			ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
+			RPO:           req.GetRpo(),
+			BackupWindow:  req.GetBackupWindow(),
+			Destination:   req.GetDestination(),
+		}, nil
+	case "storage":
+		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetDestination()) {
+			return nil, fmt.Errorf("a storage policy must not set object_filters/rpo/backup_window/destination")
+		}
+		return &StoragePolicy{
+			PolicyBase: base,
+			Hostname:   req.GetHostname(),
+			Port:       int(req.GetPort()),
+			Config:     json.RawMessage(req.GetConfig()),
+		}, nil
+	default:
+		return nil, fmt.Errorf("existing policy has unknown type %q", kind)
+	}
+}
+
 // CreatePolicy validates req, allocates a filename from a slug of the
 // policy's name (appending "-2", "-3", ... on collision), and atomically
-// writes the new policy file into policies/backup/ (the only policy type
-// this RPC creates today) before reloading the cache. The filename it
+// writes the new policy file into policies/<type>/ (req.GetType(), creating
+// that subdirectory if missing) before reloading the cache. The filename it
 // picks is permanent for that policy's lifetime -- it's what the policy's
 // id derives from.
 func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest) (*pb.Policy, error) {
@@ -101,41 +185,32 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	defer s.writeMu.Unlock()
 
 	now := time.Now().UTC()
-	p := &BackupPolicy{
-		PolicyBase: PolicyBase{
-			Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
-			ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
-		},
-		ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
-		RPO:           req.GetRpo(),
-		BackupWindow:  req.GetBackupWindow(),
-		Destination:   req.GetDestination(),
+	p, err := buildPolicyForCreate(req, now)
+	if err != nil {
+		s.logger.Error("CreatePolicy: validation failed", "error", err)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if err := p.Validate(); err != nil {
 		s.logger.Error("CreatePolicy: validation failed", "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	slug := slugify(p.Metadata.Name)
+	slug := slugify(p.Meta().Name)
 	if slug == "" {
 		return nil, status.Error(codes.InvalidArgument, "name must contain at least one alphanumeric character")
 	}
 
-	// Every policy created through this RPC is type "backup" -- the only
-	// type that exists today. A future second type needs its own creation
-	// path once it exists; see
-	// docs/superpowers/specs/2026-07-20-policy-type-subfolders-design.md.
-	backupDir := filepath.Join(s.policiesDir, "backup")
-	if err := os.MkdirAll(backupDir, 0o755); err != nil {
-		s.logger.Error("CreatePolicy: failed to create backup policies directory", "path", backupDir, "error", err)
+	typeDir := filepath.Join(s.policiesDir, req.GetType())
+	if err := os.MkdirAll(typeDir, 0o755); err != nil {
+		s.logger.Error("CreatePolicy: failed to create policy type directory", "path", typeDir, "error", err)
 		return nil, status.Error(codes.Internal, "failed to create policy type directory")
 	}
-	filename, err := uniqueFilename(backupDir, slug)
+	filename, err := uniqueFilename(typeDir, slug)
 	if err != nil {
 		s.logger.Error("CreatePolicy: filename allocation failed", "error", err)
 		return nil, status.Error(codes.Internal, "failed to allocate a policy filename")
 	}
-	filePath := filepath.Join(backupDir, filename)
+	filePath := filepath.Join(typeDir, filename)
 
 	if err := atomicWriteJSON(filePath, p); err != nil {
 		s.logger.Error("CreatePolicy: write failed", "path", filePath, "error", err)
@@ -156,8 +231,9 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 
 // UpdatePolicy fully replaces an existing policy's editable fields,
 // identified by id. The on-disk filename -- and therefore the policy's id,
-// which derives from it -- never changes; only the file's content does.
-// CreatedAt is preserved from the existing record; UpdatedAt is set to now.
+// which derives from it -- never changes; only the file's content does. A
+// policy's type is immutable via UpdatePolicy. CreatedAt is preserved from
+// the existing record; UpdatedAt is set to now.
 func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest) (*pb.Policy, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -167,15 +243,10 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))
 	}
 
-	p := &BackupPolicy{
-		PolicyBase: PolicyBase{
-			Metadata:      Metadata{Name: req.GetName(), CreatedAt: existing.Meta().CreatedAt, UpdatedAt: time.Now().UTC()},
-			ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
-		},
-		ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
-		RPO:           req.GetRpo(),
-		BackupWindow:  req.GetBackupWindow(),
-		Destination:   req.GetDestination(),
+	p, err := buildPolicyForUpdate(req, existing.Kind(), existing.Meta(), time.Now().UTC())
+	if err != nil {
+		s.logger.Error("UpdatePolicy: validation failed", "id", req.GetId(), "error", err)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if err := p.Validate(); err != nil {
 		s.logger.Error("UpdatePolicy: validation failed", "id", req.GetId(), "error", err)
