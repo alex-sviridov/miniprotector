@@ -31,6 +31,9 @@ type policyDTO struct {
 	BackupWindow  []string          `json:"backup_window"`
 	Destination   string            `json:"destination"`
 	Type          string            `json:"type"`
+	Hostname      string            `json:"hostname"`
+	Port          int32             `json:"port"`
+	Config        string            `json:"config"`
 }
 
 func toPolicyDTO(p *pb.Policy) policyDTO {
@@ -52,11 +55,14 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		BackupWindow:  p.GetBackupWindow(),
 		Destination:   p.GetDestination(),
 		Type:          p.GetType(),
+		Hostname:      p.GetHostname(),
+		Port:          p.GetPort(),
+		Config:        p.GetConfig(),
 	}
 }
 
 func (s *server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.policy.ListPolicies(r.Context(), &pb.ListPoliciesRequest{})
+	resp, err := s.policy.ListPolicies(r.Context(), &pb.ListPoliciesRequest{Type: r.URL.Query().Get("type")})
 	if err != nil {
 		s.logger.Error("handleListPolicies: backend call failed", "error", err)
 		writeGRPCError(w, err)

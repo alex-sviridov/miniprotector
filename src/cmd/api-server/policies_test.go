@@ -20,8 +20,9 @@ import (
 )
 
 type fakePolicyServiceClient struct {
-	listResp *pb.ListPoliciesResponse
-	listErr  error
+	listResp    *pb.ListPoliciesResponse
+	listErr     error
+	lastListReq *pb.ListPoliciesRequest
 
 	createResp    *pb.Policy
 	createErr     error
@@ -37,6 +38,7 @@ type fakePolicyServiceClient struct {
 }
 
 func (f *fakePolicyServiceClient) ListPolicies(ctx context.Context, in *pb.ListPoliciesRequest, opts ...grpc.CallOption) (*pb.ListPoliciesResponse, error) {
+	f.lastListReq = in
 	return f.listResp, f.listErr
 }
 
@@ -86,6 +88,36 @@ func TestHandleListPolicies_BackendErrorTranslated(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadGateway, rec.Code)
+}
+
+func TestHandleListPolicies_PassesTypeQueryParamThrough(t *testing.T) {
+	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies?type=storage", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastListReq)
+	assert.Equal(t, "storage", fake.lastListReq.GetType())
+}
+
+func TestHandleListPolicies_NoTypeParamSendsEmptyType(t *testing.T) {
+	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastListReq)
+	assert.Equal(t, "", fake.lastListReq.GetType())
 }
 
 func TestHandleGetPolicy_ReturnsMatchingPolicy(t *testing.T) {
@@ -146,6 +178,23 @@ func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.
 	assert.Equal(t, "f1", dto.ObjectFilters[0].ID)
 	assert.Equal(t, "/data", dto.ObjectFilters[0].Path)
 	assert.Equal(t, "backup", dto.Type)
+}
+
+func TestToPolicyDTO_IncludesStorageFields(t *testing.T) {
+	p := &pb.Policy{
+		Id:       "s1",
+		Name:     "east-1-storage",
+		Type:     "storage",
+		Hostname: "storage-east-1.internal",
+		Port:     9400,
+		Config:   `{"backend": "filesystem", "root": "/data/storage"}`,
+	}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, "storage-east-1.internal", dto.Hostname)
+	assert.Equal(t, int32(9400), dto.Port)
+	assert.Equal(t, `{"backend": "filesystem", "root": "/data/storage"}`, dto.Config)
 }
 
 func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
