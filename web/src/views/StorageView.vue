@@ -24,6 +24,10 @@ function storageBackend(configText) {
   }
 }
 
+function targetHostname(clientFilters) {
+  return clientFilters?.hostnames?.[0] || '—'
+}
+
 function openCreate() {
   editingPolicy.value = null
   serverError.value = ''
@@ -66,7 +70,7 @@ function confirmDelete(id) {
 
 const columns = [
   { label: 'Name', field: 'name', sortable: true },
-  { label: 'Hostname', field: 'hostname', sortable: true },
+  { label: 'Target Hostname', field: 'targetHostname', sortable: false },
   { label: 'Port', field: 'port', sortable: true },
   { label: 'Storage Type', field: 'storageType', sortable: false },
   { label: '', field: 'actions', sortable: false },
@@ -99,6 +103,7 @@ const columns = [
             {{ row.name }}
           </button>
           <span v-else-if="column.field === 'storageType'">{{ storageBackend(row.config) }}</span>
+          <span v-else-if="column.field === 'targetHostname'">{{ targetHostname(row.client_filters) }}</span>
           <BaseButton
             v-else-if="column.field === 'actions'"
             :data-test="`storage-delete-${row.id}`"

@@ -6,7 +6,7 @@ describe('StorageEditModal', () => {
   it('renders empty fields in create mode', () => {
     const wrapper = mount(StorageEditModal, { props: { policy: null } })
     expect(wrapper.find('[data-test="storage-name-input"]').element.value).toBe('')
-    expect(wrapper.find('[data-test="storage-hostname-input"]').element.value).toBe('')
+    expect(wrapper.find('[data-test="storage-target-hostname-input"]').element.value).toBe('')
     expect(wrapper.find('[data-test="storage-port-input"]').element.value).toBe('')
     expect(wrapper.find('[data-test="storage-path-input"]').element.value).toBe('')
   })
@@ -17,14 +17,14 @@ describe('StorageEditModal', () => {
         policy: {
           id: 's1',
           name: 'east-1-storage',
-          hostname: 'storage-east-1.internal',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
           port: 9400,
           config: '{"backend": "filesystem", "root": "/data/storage"}',
         },
       },
     })
     expect(wrapper.find('[data-test="storage-name-input"]').element.value).toBe('east-1-storage')
-    expect(wrapper.find('[data-test="storage-hostname-input"]').element.value).toBe('storage-east-1.internal')
+    expect(wrapper.find('[data-test="storage-target-hostname-input"]').element.value).toBe('storage-east-1.internal')
     expect(wrapper.find('[data-test="storage-port-input"]').element.value).toBe('9400')
     expect(wrapper.find('[data-test="storage-path-input"]').element.value).toBe('/data/storage')
   })
@@ -51,7 +51,7 @@ describe('StorageEditModal', () => {
   it('emits save with the built payload on valid submit', async () => {
     const wrapper = mount(StorageEditModal, { props: { policy: null } })
     await wrapper.find('[data-test="storage-name-input"]').setValue('east-1-storage')
-    await wrapper.find('[data-test="storage-hostname-input"]').setValue('storage-east-1.internal')
+    await wrapper.find('[data-test="storage-target-hostname-input"]').setValue('storage-east-1.internal')
     await wrapper.find('[data-test="storage-port-input"]').setValue('9400')
     await wrapper.find('[data-test="storage-path-input"]').setValue('/data/storage')
     await wrapper.find('form').trigger('submit')
@@ -59,10 +59,9 @@ describe('StorageEditModal', () => {
     expect(wrapper.emitted('save')).toHaveLength(1)
     expect(wrapper.emitted('save')[0][0]).toEqual({
       name: 'east-1-storage',
-      hostname: 'storage-east-1.internal',
       port: 9400,
       config: JSON.stringify({ backend: 'filesystem', root: '/data/storage' }),
-      client_filters: { hostnames: [], labels: {} },
+      client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
     })
   })
 
@@ -72,7 +71,7 @@ describe('StorageEditModal', () => {
         policy: {
           id: 's1',
           name: 'east-1-storage',
-          hostname: 'storage-east-1.internal',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
           port: 9400,
           config: '{"backend": "filesystem", "root": "/data/storage", "compression": "zstd"}',
         },
@@ -96,7 +95,7 @@ describe('StorageEditModal', () => {
         policy: {
           id: 's1',
           name: 'east-1-storage',
-          hostname: 'storage-east-1.internal',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
           port: 9400,
           config: 'null',
         },
@@ -109,12 +108,23 @@ describe('StorageEditModal', () => {
   it('rejects a port outside 1-65535', async () => {
     const wrapper = mount(StorageEditModal, { props: { policy: null } })
     await wrapper.find('[data-test="storage-name-input"]').setValue('x')
-    await wrapper.find('[data-test="storage-hostname-input"]').setValue('h')
+    await wrapper.find('[data-test="storage-target-hostname-input"]').setValue('h')
     await wrapper.find('[data-test="storage-port-input"]').setValue('70000')
     await wrapper.find('[data-test="storage-path-input"]').setValue('/data')
     await wrapper.find('form').trigger('submit')
 
     expect(wrapper.emitted('save')).toBeUndefined()
     expect(wrapper.text()).toContain('port')
+  })
+
+  it('requires a target hostname before emitting save', async () => {
+    const wrapper = mount(StorageEditModal, { props: { policy: null } })
+    await wrapper.find('[data-test="storage-name-input"]').setValue('x')
+    await wrapper.find('[data-test="storage-port-input"]').setValue('9400')
+    await wrapper.find('[data-test="storage-path-input"]').setValue('/data')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.text()).toContain('required')
   })
 })

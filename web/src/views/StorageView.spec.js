@@ -27,7 +27,7 @@ describe('StorageView', () => {
         {
           id: 's1',
           name: 'east-1-storage',
-          hostname: 'storage-east-1.internal',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
           port: 9400,
           config: '{"backend": "filesystem", "root": "/data/storage"}',
         },
@@ -60,7 +60,7 @@ describe('StorageView', () => {
 
   it('opens the modal in edit mode when a row is clicked', async () => {
     const { wrapper } = mountView({
-      list: [{ id: 's1', name: 'east-1-storage', hostname: 'h', port: 9400, config: '{}' }],
+      list: [{ id: 's1', name: 'east-1-storage', port: 9400, config: '{}' }],
       loading: false,
       error: null,
     })
@@ -68,7 +68,6 @@ describe('StorageView', () => {
     expect(wrapper.findComponent({ name: 'StorageEditModal' }).props('policy')).toEqual({
       id: 's1',
       name: 'east-1-storage',
-      hostname: 'h',
       port: 9400,
       config: '{}',
     })
@@ -79,7 +78,7 @@ describe('StorageView', () => {
     storagePolicies.create.mockResolvedValue({ id: 's2', name: 'new-storage' })
     await wrapper.find('[data-test="storage-new"]').trigger('click')
 
-    const payload = { name: 'new-storage', hostname: 'h', port: 1, config: '{}', client_filters: { hostnames: [], labels: {} } }
+    const payload = { name: 'new-storage', port: 1, config: '{}', client_filters: { hostnames: [], labels: {} } }
     await wrapper.findComponent({ name: 'StorageEditModal' }).vm.$emit('save', payload)
     await nextTick()
 
@@ -89,14 +88,14 @@ describe('StorageView', () => {
 
   it('calls update and closes the modal on save in edit mode', async () => {
     const { wrapper, storagePolicies } = mountView({
-      list: [{ id: 's1', name: 'east-1-storage', hostname: 'h', port: 9400, config: '{}' }],
+      list: [{ id: 's1', name: 'east-1-storage', port: 9400, config: '{}' }],
       loading: false,
       error: null,
     })
     storagePolicies.update.mockResolvedValue({ id: 's1', name: 'renamed' })
     await wrapper.find('[data-test="storage-edit-s1"]').trigger('click')
 
-    const payload = { name: 'renamed', hostname: 'h', port: 9400, config: '{}', client_filters: { hostnames: [], labels: {} } }
+    const payload = { name: 'renamed', port: 9400, config: '{}', client_filters: { hostnames: [], labels: {} } }
     await wrapper.findComponent({ name: 'StorageEditModal' }).vm.$emit('save', payload)
     await nextTick()
 
@@ -114,7 +113,7 @@ describe('StorageView', () => {
     })
     await wrapper.find('[data-test="storage-new"]').trigger('click')
 
-    const payload = { name: '***', hostname: 'h', port: 1, config: '{}', client_filters: { hostnames: [], labels: {} } }
+    const payload = { name: '***', port: 1, config: '{}', client_filters: { hostnames: [], labels: {} } }
     await wrapper.findComponent({ name: 'StorageEditModal' }).vm.$emit('save', payload)
     await nextTick()
 
@@ -135,7 +134,7 @@ describe('StorageView', () => {
   it('deletes a storage policy after confirming', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { wrapper, storagePolicies } = mountView({
-      list: [{ id: 's1', name: 'east-1-storage', hostname: 'h', port: 9400, config: '{}' }],
+      list: [{ id: 's1', name: 'east-1-storage', port: 9400, config: '{}' }],
       loading: false,
       error: null,
     })
@@ -148,7 +147,7 @@ describe('StorageView', () => {
   it('does not delete when the confirm dialog is dismissed', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     const { wrapper, storagePolicies } = mountView({
-      list: [{ id: 's1', name: 'east-1-storage', hostname: 'h', port: 9400, config: '{}' }],
+      list: [{ id: 's1', name: 'east-1-storage', port: 9400, config: '{}' }],
       loading: false,
       error: null,
     })
