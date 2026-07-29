@@ -125,6 +125,6 @@ describe('StorageEditModal', () => {
     await wrapper.find('form').trigger('submit')
 
     expect(wrapper.emitted('save')).toBeUndefined()
-    expect(wrapper.text()).toContain('required')
+    expect(wrapper.text()).toContain('Target hostname is required.')
   })
 })
