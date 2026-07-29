@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -178,12 +179,21 @@ func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 
 	s.mu.Lock()
 	err := cmd.Start()
+	shuttingDown := s.shuttingDown
 	if err == nil {
 		s.cmd = cmd
 	}
 	s.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("start bwfs: %w", err)
+	}
+	if shuttingDown {
+		// Stop() raced ahead of this spawn: it ran (and saw s.cmd == nil,
+		// so sent no signal) before cmd.Start() above completed. Without
+		// this check the process just-started would run forever unsignalled
+		// -- superviseLoop only rechecks shuttingDown after spawnAndWait
+		// returns, which blocks on cmd.Wait() until the process exits.
+		_ = cmd.Process.Signal(syscall.SIGTERM)
 	}
 	if s.onSpawnForTest != nil {
 		s.onSpawnForTest()
@@ -203,4 +213,77 @@ func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 	}()
 
 	return cmd.Wait()
+}
+
+// storageManager holds one storageSupervisor per current storage task,
+// keyed by task ID, and reconciles that set against agent's latest read of
+// policies-cache.json every tick (see reconcile.go's run(), which calls
+// reconcile once per loop iteration).
+type storageManager struct {
+	binary string
+	logger *slog.Logger
+
+	mu          sync.Mutex
+	supervisors map[string]*storageSupervisor
+	args        map[string][]string // last-started args, to detect a changed task
+}
+
+func newStorageManager(binary string, logger *slog.Logger) *storageManager {
+	return &storageManager{
+		binary:      binary,
+		logger:      logger,
+		supervisors: map[string]*storageSupervisor{},
+		args:        map[string][]string{},
+	}
+}
+
+// reconcile starts a supervisor for every newly-appeared task, stops and
+// removes one for every task that disappeared or whose Args changed
+// (port/path edited on the same policy -- the old process is stopped, a
+// fresh one started with the new args), and leaves an unchanged task's
+// supervisor running untouched. rs is the same reconcileState run()'s own
+// loop already uses -- recordOutcome is mutex-guarded internally, so this
+// is safe to call from storageSupervisor's own background goroutines
+// concurrently with run()'s main loop, exactly like backup-task goroutines
+// already do.
+func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, tasks []storageTask) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	wanted := make(map[string][]string, len(tasks))
+	for _, t := range tasks {
+		wanted[t.ID] = t.Args
+	}
+
+	for id, sup := range m.supervisors {
+		newArgs, stillWanted := wanted[id]
+		if !stillWanted || !slices.Equal(newArgs, m.args[id]) {
+			sup.Stop()
+			delete(m.supervisors, id)
+			delete(m.args, id)
+		}
+	}
+
+	for _, t := range tasks {
+		if _, exists := m.supervisors[t.ID]; exists {
+			continue
+		}
+		id := t.ID
+		sup := newStorageSupervisor(m.binary, t.Args, m.logger, func(err error) {
+			rs.recordOutcome(id, err, time.Now())
+		})
+		sup.Start(ctx)
+		m.supervisors[t.ID] = sup
+		m.args[t.ID] = t.Args
+	}
+}
+
+// StopAll stops every currently-supervised bwfs process -- called on agent
+// shutdown so none are orphaned.
+func (m *storageManager) StopAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sup := range m.supervisors {
+		sup.Stop()
+	}
 }

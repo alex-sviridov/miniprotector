@@ -241,3 +241,140 @@ func osWriteExecutable(t *testing.T, path, content string) error {
 	t.Helper()
 	return os.WriteFile(path, []byte(content), 0o755)
 }
+
+func TestStorageManager_StartsSupervisorForNewTask(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	mgr := newStorageManager(script, testLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: nil}})
+
+	require.Eventually(t, func() bool {
+		return rs.get("storage:east-1").LastSuccessAt != nil
+	}, time.Second, 10*time.Millisecond, "a newly-appeared task must get a running supervisor recorded as successful")
+
+	mgr.StopAll()
+}
+
+func TestStorageManager_StopsSupervisorForRemovedTask(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	mgr := newStorageManager(script, testLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: nil}})
+	require.Eventually(t, func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		return len(mgr.supervisors) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	mgr.reconcile(ctx, rs, nil) // task no longer present
+
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+	assert.Empty(t, mgr.supervisors, "a supervisor for a removed task must be stopped and dropped")
+}
+
+func TestStorageManager_RestartsSupervisorWhenArgsChange(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	mgr := newStorageManager(script, testLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: []string{"/data/old", "server", "--port", "9400"}}})
+	require.Eventually(t, func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		return len(mgr.supervisors) == 1
+	}, time.Second, 10*time.Millisecond)
+	mgr.mu.Lock()
+	firstSup := mgr.supervisors["storage:east-1"]
+	mgr.mu.Unlock()
+
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: []string{"/data/new", "server", "--port", "9401"}}})
+
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+	require.Len(t, mgr.supervisors, 1)
+	assert.NotSame(t, firstSup, mgr.supervisors["storage:east-1"], "a task whose args changed must get a fresh supervisor")
+}
+
+func TestStorageManager_DoesNotDoubleStartAlreadySupervisedTask(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	mgr := newStorageManager(script, testLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	task := storageTask{ID: "storage:east-1", Args: []string{"/data", "server", "--port", "9400"}}
+	mgr.reconcile(ctx, rs, []storageTask{task})
+	require.Eventually(t, func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		return len(mgr.supervisors) == 1
+	}, time.Second, 10*time.Millisecond)
+	mgr.mu.Lock()
+	firstSup := mgr.supervisors["storage:east-1"]
+	mgr.mu.Unlock()
+
+	mgr.reconcile(ctx, rs, []storageTask{task}) // same task, second tick
+
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+	assert.Same(t, firstSup, mgr.supervisors["storage:east-1"], "an unchanged task must not be restarted")
+}
+
+func TestStorageManager_StopAllStopsEverySupervisor(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	mgr := newStorageManager(script, testLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr.reconcile(ctx, rs, []storageTask{
+		{ID: "storage:a", Args: nil},
+		{ID: "storage:b", Args: nil},
+	})
+	require.Eventually(t, func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		return len(mgr.supervisors) == 2
+	}, time.Second, 10*time.Millisecond)
+
+	mgr.mu.Lock()
+	dones := make([]chan struct{}, 0, len(mgr.supervisors))
+	for _, sup := range mgr.supervisors {
+		dones = append(dones, sup.loopDone)
+	}
+	mgr.mu.Unlock()
+
+	mgr.StopAll()
+
+	for _, done := range dones {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("StopAll did not stop every supervisor")
+		}
+	}
+}
