@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
+	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,4 +114,130 @@ func TestStorageTasks_MultiplePoliciesEachGetTheirOwnTask(t *testing.T) {
 	ids := []string{tasks[0].ID, tasks[1].ID}
 	assert.Contains(t, ids, "storage:a")
 	assert.Contains(t, ids, "storage:b")
+}
+
+func TestStorageSupervisor_StartsAndStopsCleanlyOnContextCancel(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	var spawns int64
+	sup := newStorageSupervisor(script, nil, testLogger(), func(error) {})
+	sup.onSpawnForTest = func() { atomic.AddInt64(&spawns, 1) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sup.Start(ctx)
+
+	time.Sleep(100 * time.Millisecond)
+	require.EqualValues(t, 1, atomic.LoadInt64(&spawns))
+	cancel()
+
+	select {
+	case <-sup.loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervise loop did not stop after context cancellation")
+	}
+	assert.EqualValues(t, 1, atomic.LoadInt64(&spawns), "no respawn should happen once ctx is cancelled")
+}
+
+func TestStorageSupervisor_RestartsOnUnexpectedExitAndRecordsFailure(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\nexit 1\n"))
+
+	origBase, origMax := backoffBase, backoffMax
+	backoffBase, backoffMax = 10*time.Millisecond, 30*time.Millisecond
+	defer func() { backoffBase, backoffMax = origBase, origMax }()
+
+	var spawns int64
+	var mu sync.Mutex
+	var outcomes []error
+	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		outcomes = append(outcomes, err)
+	})
+	sup.onSpawnForTest = func() { atomic.AddInt64(&spawns, 1) }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	sup.Start(ctx)
+
+	select {
+	case <-sup.loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervise loop did not stop after context timeout")
+	}
+
+	assert.GreaterOrEqual(t, atomic.LoadInt64(&spawns), int64(2), "a persistently crashing bwfs must be respawned more than once")
+
+	mu.Lock()
+	defer mu.Unlock()
+	var sawFailure bool
+	for _, err := range outcomes {
+		if err != nil {
+			sawFailure = true
+		}
+	}
+	assert.True(t, sawFailure, "at least one crash must be recorded as a failure")
+}
+
+func TestStorageSupervisor_SuccessfulStartRecordsSuccessImmediately(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	outcomes := make(chan error, 1)
+	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) { outcomes <- err })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sup.Start(ctx)
+
+	select {
+	case err := <-outcomes:
+		assert.NoError(t, err, "a successful start must record success without waiting for the process to exit")
+	case <-time.After(time.Second):
+		t.Fatal("onOutcome was never called for a successful start")
+	}
+	sup.Stop()
+}
+
+func TestStorageSupervisor_DeliberateStopDoesNotRecordFailure(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+
+	var mu sync.Mutex
+	var outcomes []error
+	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		outcomes = append(outcomes, err)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sup.Start(ctx)
+	time.Sleep(100 * time.Millisecond) // let it start (records one nil outcome)
+
+	sup.Stop()
+	select {
+	case <-sup.loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervise loop did not stop after Stop()")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, err := range outcomes {
+		assert.NoError(t, err, "a deliberate Stop() must never record a failure outcome")
+	}
+}
+
+// osWriteExecutable writes content to path as an executable file --
+// shared test helper so every fake-bwfs.sh fixture above is one line.
+func osWriteExecutable(t *testing.T, path, content string) error {
+	t.Helper()
+	return os.WriteFile(path, []byte(content), 0o755)
 }
