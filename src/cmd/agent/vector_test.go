@@ -121,6 +121,21 @@ func TestRenderVectorConfig_LiftsJobLifecycleFieldsIntoStructuredMetadata(t *tes
 	assert.Contains(t, got, `status: "{{ status }}"`)
 }
 
+func TestRenderVectorConfig_UsesTextCodecSoLineIsJustTheMessage(t *testing.T) {
+	// codec: json would serialize the whole Vector event (host, file,
+	// source_type, message, plus the binary/job_id/event/status fields
+	// add_binary_label attaches) as the stored Loki line -- burying the
+	// app's own slog JSON one level deeper inside a "message" string that
+	// api-server/web never unwrap. codec: text uses only the event's
+	// .message field (the app's original log line) as the stored line,
+	// since binary/hostname/job_id/event/status are already carried as
+	// labels/structured_metadata above.
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
+	require.NoError(t, err)
+	assert.Contains(t, got, "codec: text")
+	assert.NotContains(t, got, "codec: json")
+}
+
 func TestHostnameFromBootstrapCert_ReadsCommonName(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeBootstrapCert(t, dir, "node-under-test")

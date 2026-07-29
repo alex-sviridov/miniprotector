@@ -48,8 +48,11 @@ no data — there's no read-only "guest" mode.
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
-- `/jobs/:job_id` — one job's raw log lines from the last 24h, fetched once on page load (no
-  live-tail/polling)
+- `/jobs/:job_id` — one job's log lines from the last 24h, fetched once on page load (no
+  live-tail/polling); each line is parsed from its underlying JSON via `LogLine.vue` into a
+  level-colored `[LEVEL] time binary@hostname: message` summary, with the remaining fields
+  (`job_id`, `event`, `status`, etc.) collapsed behind a click — a line that isn't valid JSON
+  falls back to plain text
 
 ## Local development
 

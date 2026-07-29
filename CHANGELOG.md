@@ -25,6 +25,23 @@ type going forward is now a matter of writing one more such type and registering
 `"storage"`) is now skipped and logged at load time, rather than loaded generically as an earlier
 design allowed — there's no schema to parse an unrecognized type's files into anymore.
 
+## 2026-07-27 — web: parse and render job log lines; fix Vector line encoding
+
+`/jobs/:job_id` now parses each line's underlying slog JSON instead of showing it raw: a
+level-colored `[LEVEL] time binary@hostname: message` summary per line, with the remaining fields
+(`job_id`, `event`, `status`, `duration`, `error`, etc.) collapsed behind a click. Lines that aren't
+valid JSON still render as plain text. New `LogLine.vue` component and `utils/logLine.js` parser
+take over rendering that was previously inlined in `JobDetailView.vue`.
+
+This also fixes the underlying cause of the raw display: agent's Vector config shipped logs to
+Loki with `encoding.codec: json`, which serializes the whole Vector event (host, file,
+source_type, plus the `binary`/`job_id`/`event`/`status` fields the `add_binary_label` transform
+attaches) as the stored line — burying the app's actual slog JSON one level deeper, double-encoded
+inside a `message` string, so nothing on the frontend could sensibly parse it. Switched to
+`encoding.codec: text`, which stores only the event's `message` field (the app's original log
+line) since `binary`/`hostname`/`job_id`/`event`/`status` are already carried as Loki
+labels/structured metadata.
+
 ## 2026-07-27 — E2E test suite rewrite
 
 Removed all three existing e2e-tagged test suites (`src/e2e`'s Docker-built brfs/bwfs backup

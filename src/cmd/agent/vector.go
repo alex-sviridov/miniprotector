@@ -75,7 +75,7 @@ sinks:
     inputs: ["add_binary_label"]
     endpoint: "https://{{ .LogGatewayHost }}:{{ .LogGatewayPort }}"
     encoding:
-      codec: json
+      codec: text
     labels:
       binary: "{{"{{ binary }}"}}"
       hostname: "{{ .Hostname }}"

@@ -25,7 +25,7 @@ describe('JobDetailView', () => {
     expect(wrapper.find('h1').text()).toBe('backup:nightly:1752400000')
   })
 
-  it('renders each log line with its formatted timestamp, hostname, binary, and raw line', () => {
+  it('renders each log line via LogLine with timestamp, hostname, binary, and message', () => {
     const { wrapper } = mountView({
       logs: [
         { timestamp: 1752400000123456789, hostname: 'database', binary: 'brfs', line: '{"msg":"started"}' },
@@ -35,7 +35,8 @@ describe('JobDetailView', () => {
     })
     expect(wrapper.text()).toContain('database')
     expect(wrapper.text()).toContain('brfs')
-    expect(wrapper.text()).toContain('{"msg":"started"}')
+    expect(wrapper.text()).toContain('started')
+    expect(wrapper.text()).not.toContain('{"msg":"started"}')
   })
 
   it('shows an empty-state message when no lines are returned', () => {

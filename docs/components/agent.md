@@ -133,7 +133,11 @@ policies already use. Vector's own HTTP API is never enabled, so this adds no li
 `agent`'s footprint, which stays outbound-only. `log-gateway` authenticates the push but never
 inspects its body (see [Security Model](../SECURITY.md)), so `agent` is the one that sets each
 shipped stream's `hostname` label -- read from this node's own `bootstrap.crt` `CommonName`, the
-same source `certclient`'s `operating-refresh` already uses to know its own hostname. See
+same source `certclient`'s `operating-refresh` already uses to know its own hostname. The Loki
+sink's `encoding.codec: text` stores only each event's own log line (the app's slog JSON) as the
+shipped line text, since `binary`/`hostname`/`job_id`/`event`/`status` are already carried
+separately as Loki labels/structured metadata -- `codec: json` would instead wrap the whole Vector
+event, including those already-duplicated fields, into the stored line. See
 [Design: Fleet Log Aggregation](../superpowers/specs/2026-07-11-fleet-log-aggregation-design.md).
 
 ## Configuration Keys
