@@ -27,19 +27,6 @@ var (
 // rather than orphaning it.
 type runner func(ctx context.Context, binary string, args []string) error
 
-// realExec runs binary with args under ctx. If binary is a bare name (no
-// path separator), it is first resolved relative to this agent's own
-// executable directory — the same "colocated sibling binary" layout used
-// elsewhere in this repo (see deploy/control-plane/catalog's
-// entrypoint.sh, which execs ./certclient from the same directory as its
-// own binary, and common/config.ResolveBaseDir/ResolveVarDir, which
-// resolve relative to os.Executable() the same way). This matters because
-// Go's os/exec only resolves a bare name via $PATH, never via the working
-// or executable directory, and nothing in that deployment layout puts
-// certclient/brfs on $PATH. If no colocated file is found, binary is
-// passed through unchanged so exec.Command falls back to its normal $PATH
-// lookup — this keeps local/dev usage, where these binaries genuinely are
-// on $PATH, working exactly as before.
 // resolveExecPath resolves binary to a colocated sibling of this agent's
 // own executable when one exists there (bare name, no path separator),
 // falling back to binary unchanged otherwise so exec.Command's normal
@@ -64,6 +51,8 @@ func resolveExecPath(binary string) string {
 	return candidate
 }
 
+// realExec runs binary with args under ctx, resolving binary via
+// resolveExecPath first.
 func realExec(ctx context.Context, binary string, args []string) error {
 	return exec.CommandContext(ctx, resolveExecPath(binary), args...).Run()
 }
