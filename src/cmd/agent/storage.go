@@ -1,12 +1,10 @@
 // storage.go derives agent's "ensure this bwfs server is running" tasks
-// from cached "storage"-type policies -- see storage_supervisor.go... no
-// wait, kept in this same file: storageSupervisor/storageManager (Tasks 4-5
-// of docs/superpowers/plans/2026-07-28-agent-storage-supervision.md) also
-// live here. Unlike backupTasks (backup.go), there is no per-node targeting
-// check: policy-server's GetPolicies already applied ClientFilters.Matches
-// before a policy ever reached policies-cache.json, so anything with
-// Type == "storage" in the cache is already scoped to this node. See
-// docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md.
+// from cached "storage"-type policies. Like backupTasks (backup.go), it
+// relies on policy-server's server-side scoping: ClientFilters.Matches
+// applies in GetPolicies before a policy reaches policies-cache.json,
+// so anything with Type == "storage" in the cache is already scoped to
+// this node. A later task adds process supervision on top of this task
+// derivation. See docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md.
 package main
 
 import (
