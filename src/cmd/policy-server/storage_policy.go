@@ -8,16 +8,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// StoragePolicy is the "storage" policy type: where a future storage server
-// should run (hostname, port) and how it should be configured (config).
+// StoragePolicy is the "storage" policy type: how a future storage server
+// should be configured (port, config). There is no Hostname field --
+// targeting which node runs it is PolicyBase's ClientFilters, the same
+// mechanism a BackupPolicy already uses, not a field specific to this type.
 // policy-server never interprets config beyond checking it's well-formed
 // JSON -- it's opaque pass-through data for whatever future component reads
-// it.
+// it. See docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md.
 type StoragePolicy struct {
 	PolicyBase
-	Hostname string          `json:"hostname"`
-	Port     int             `json:"port"`
-	Config   json.RawMessage `json:"config"`
+	Port   int             `json:"port"`
+	Config json.RawMessage `json:"config"`
 }
 
 func parseStoragePolicyJSON(data []byte) (Policy, error) {
@@ -30,16 +31,13 @@ func parseStoragePolicyJSON(data []byte) (Policy, error) {
 
 // Validate checks the fields an operator can set on a storage policy,
 // independent of where it came from (a file on disk or a Create/UpdatePolicy
-// RPC request): the fields validateCommon checks, plus hostname must be
-// non-empty, port must be a valid TCP port (1-65535), and config must be
-// non-empty, well-formed JSON -- its contents are never interpreted
-// further.
+// RPC request): the fields validateCommon checks (including client_filters,
+// which is how a storage policy targets a node), plus port must be a valid
+// TCP port (1-65535), and config must be non-empty, well-formed JSON -- its
+// contents are never interpreted further.
 func (p *StoragePolicy) Validate() error {
 	if err := validateCommon(p.PolicyBase); err != nil {
 		return err
-	}
-	if p.Hostname == "" {
-		return fmt.Errorf("hostname is required")
 	}
 	if p.Port < 1 || p.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535, got %d", p.Port)
@@ -60,7 +58,6 @@ func (p *StoragePolicy) Clone() Policy {
 	copy(config, p.Config)
 	return &StoragePolicy{
 		PolicyBase: p.PolicyBase.clone(),
-		Hostname:   p.Hostname,
 		Port:       p.Port,
 		Config:     config,
 	}
@@ -76,7 +73,6 @@ func (p *StoragePolicy) ToProto(includeClientFilters bool) *pb.Policy {
 		CreatedAt: timestamppb.New(p.Metadata.CreatedAt),
 		UpdatedAt: timestamppb.New(p.Metadata.UpdatedAt),
 		Type:      p.Type,
-		Hostname:  p.Hostname,
 		Port:      int32(p.Port),
 		Config:    string(p.Config),
 	}

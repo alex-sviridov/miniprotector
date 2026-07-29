@@ -176,7 +176,7 @@ func TestCache_ReloadLoadsBackupAndStoragePoliciesTogether(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
 	writePolicyFile(t, filepath.Join(dir, "storage"), "b.json", `{
-		"metadata": {"name": "policy-b"}, "hostname": "h", "port": 9400, "config": {}
+		"metadata": {"name": "policy-b"}, "port": 9400, "config": {}
 	}`)
 
 	c := NewCache()

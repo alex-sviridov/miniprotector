@@ -93,8 +93,8 @@ func fromProtoObjectFilters(filters []*pb.ObjectFilter) []ObjectFilter {
 
 // storageFieldsSet reports whether any storage-only field is non-default --
 // used to reject a request mixing storage fields into a backup policy.
-func storageFieldsSet(hostname string, port int32, config string) bool {
-	return hostname != "" || port != 0 || config != ""
+func storageFieldsSet(port int32, config string) bool {
+	return port != 0 || config != ""
 }
 
 // backupFieldsSet reports whether any backup-only field is non-default --
@@ -112,7 +112,6 @@ type policyFieldsGetter interface {
 	GetRpo() string
 	GetBackupWindow() []string
 	GetDestination() string
-	GetHostname() string
 	GetPort() int32
 	GetConfig() string
 }
@@ -125,8 +124,8 @@ type policyFieldsGetter interface {
 func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, error) {
 	switch kind {
 	case "backup":
-		if storageFieldsSet(req.GetHostname(), req.GetPort(), req.GetConfig()) {
-			return nil, fmt.Errorf("a backup policy must not set hostname/port/config")
+		if storageFieldsSet(req.GetPort(), req.GetConfig()) {
+			return nil, fmt.Errorf("a backup policy must not set port/config")
 		}
 		return &BackupPolicy{
 			PolicyBase:    base,
@@ -141,7 +140,6 @@ func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, 
 		}
 		return &StoragePolicy{
 			PolicyBase: base,
-			Hostname:   req.GetHostname(),
 			Port:       int(req.GetPort()),
 			Config:     json.RawMessage(req.GetConfig()),
 		}, nil
