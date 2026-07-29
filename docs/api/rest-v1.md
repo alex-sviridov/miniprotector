@@ -168,7 +168,6 @@ one policy type; omitted returns every type.
       "backup_window": ["0 2 * * *", "0 20 * * *"],
       "destination": "bwfs-east.internal:8080",
       "type": "backup",
-      "hostname": "",
       "port": 0,
       "config": ""
     }
@@ -221,16 +220,16 @@ Creates a new `"storage"`-typed policy. Body:
 ```json
 {
   "name": "east-1-storage",
-  "client_filters": {"hostnames": [], "labels": {}},
-  "hostname": "storage-east-1.internal",
+  "client_filters": {"hostnames": ["storage-east-1.internal"], "labels": {}},
   "port": 9400,
   "config": "{\"backend\": \"filesystem\", \"root\": \"/data/storage\"}"
 }
 ```
 
 `config` is a JSON string, not a nested object — `policy-server` treats it as opaque, pass-through
-text; the web UI is the one that gives it the `backend`/`root` shape shown above. `201` with the
-created policy on success. `400` if `name` is empty, `hostname` is empty, `port` isn't in `[1,
+text; the web UI is the one that gives it the `backend`/`root` shape shown above. There is no
+`hostname` field — targeting a node is `client_filters.hostnames`, identical to a backup policy.
+`201` with the created policy on success. `400` if `name` is empty, `port` isn't in `[1,
 65535]`, or `config` isn't well-formed JSON — no file is written when validation fails.
 
 ## `PUT /api/v1/storage-policies/{id}`

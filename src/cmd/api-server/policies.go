@@ -31,7 +31,6 @@ type policyDTO struct {
 	BackupWindow  []string          `json:"backup_window"`
 	Destination   string            `json:"destination"`
 	Type          string            `json:"type"`
-	Hostname      string            `json:"hostname"`
 	Port          int32             `json:"port"`
 	Config        string            `json:"config"`
 }
@@ -55,7 +54,6 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		BackupWindow:  p.GetBackupWindow(),
 		Destination:   p.GetDestination(),
 		Type:          p.GetType(),
-		Hostname:      p.GetHostname(),
 		Port:          p.GetPort(),
 		Config:        p.GetConfig(),
 	}
@@ -177,7 +175,6 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 type storagePolicyInput struct {
 	Name          string           `json:"name"`
 	ClientFilters clientFiltersDTO `json:"client_filters"`
-	Hostname      string           `json:"hostname"`
 	Port          int32            `json:"port"`
 	Config        string           `json:"config"`
 }
@@ -200,7 +197,6 @@ func (s *server) handleCreateStoragePolicy(w http.ResponseWriter, r *http.Reques
 		Name:          in.Name,
 		Type:          "storage",
 		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
-		Hostname:      in.Hostname,
 		Port:          in.Port,
 		Config:        in.Config,
 	})
@@ -223,7 +219,6 @@ func (s *server) handleUpdateStoragePolicy(w http.ResponseWriter, r *http.Reques
 		Id:            id,
 		Name:          in.Name,
 		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
-		Hostname:      in.Hostname,
 		Port:          in.Port,
 		Config:        in.Config,
 	})
