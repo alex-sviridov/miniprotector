@@ -11,6 +11,7 @@ const EXPECTED_NAMES = [
   'policy-new',
   'policy-detail',
   'policy-edit',
+  'storage',
   'jobs',
   'job-detail',
 ]

@@ -33,15 +33,16 @@ Loki (through `log-gateway`'s read-proxy route) and aggregate the result — the
 exception to that rule, documented in
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
-`policy-server` also supports a `"storage"` policy type (`hostname`/`port`/`config`), but the policy
-REST endpoints here model `"backup"` policies only. A `"storage"`-typed policy still shows up in
-`GET /policies` and `GET /policies/{id}` — with its `type` field passed through — but its
-type-specific fields (`hostname`, `port`, `config`) are absent from the response DTO, since
-`policyDTO` only has fields for a backup policy's shape. Creating or updating a policy through this
-REST API is `"backup"`-only: `policyInput` has no way to supply `hostname`/`port`/`config`, so
-`PUT /policies/{id}` against a storage policy fails with `400` (the backend's `StoragePolicy.Validate()`
-rejects the resulting request). Adding storage-policy support to this REST surface is out of scope
-for now.
+`policy-server` also supports a `"storage"` policy type (`hostname`/`port`/`config`).
+`GET /policies` accepts an optional `?type=backup|storage` query parameter to filter by type;
+without it, every policy of every type is returned, each with `hostname`/`port`/`config` populated
+in the response DTO when applicable (empty/zero for a `"backup"`-typed policy, and vice versa for
+`rpo`/`destination`/`object_filters`). Creating or updating a storage policy uses a separate pair of
+endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage policy's input
+shape (`hostname`/`port`/`config`) shares nothing with a backup policy's
+(`object_filters`/`rpo`/`backup_window`/`destination`) beyond `name`/`client_filters`. `GET
+/policies/{id}` and `DELETE /policies/{id}` are shared across both types — both operations are
+already type-agnostic, looking a policy up or removing it by `id` alone.
 
 ## Authentication
 

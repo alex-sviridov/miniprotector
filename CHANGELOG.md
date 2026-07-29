@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-28 — api-server/web: storage policy create/edit support
+
+`api-server`'s `GET /policies` now accepts a `?type=` filter, and two new endpoints —
+`POST /storage-policies` / `PUT /storage-policies/{id}` — let a caller create and edit `"storage"`
+-typed policies, which `policy-server` has supported since the previous entry but which nothing
+above it could write until now. The web UI gained a dedicated `Storage` section (`/storage`) —
+list, create, and edit via a modal — kept fully separate from the existing backup-only `Policies`
+section, which now requests `?type=backup` explicitly so it never renders a storage policy's blank
+`rpo`/`destination` fields.
+
 ## 2026-07-28 — policy-server: add storage policy type
 
 `policy-server` now supports a second policy type, `"storage"` (`hostname`, `port`, and an opaque

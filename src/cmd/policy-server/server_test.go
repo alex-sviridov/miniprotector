@@ -270,3 +270,53 @@ func TestListPolicies_ResponseIncludesType(t *testing.T) {
 	require.Len(t, resp.Policies, 1)
 	assert.Equal(t, "backup", resp.Policies[0].Type)
 }
+
+func TestListPolicies_FilterByTypeReturnsOnlyMatchingType(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"}
+	}`)
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
+		"metadata": {"name": "east-1-storage"},
+		"hostname": "storage-east-1.internal",
+		"port": 9400,
+		"config": {"backend": "filesystem"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{Type: "storage"})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "east-1-storage", resp.Policies[0].Name)
+	assert.Equal(t, "storage", resp.Policies[0].Type)
+}
+
+func TestListPolicies_EmptyTypeReturnsEveryType(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"}
+	}`)
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
+		"metadata": {"name": "east-1-storage"},
+		"hostname": "storage-east-1.internal",
+		"port": 9400,
+		"config": {"backend": "filesystem"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+	require.NoError(t, err)
+	assert.Len(t, resp.Policies, 2)
+}
+
+func TestListPolicies_UnknownTypeReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{Type: "quux"})
+	require.NoError(t, err)
+	assert.Empty(t, resp.Policies)
+}

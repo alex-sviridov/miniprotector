@@ -19,7 +19,7 @@ describe('policies store', () => {
 
     await policies.fetchAll()
 
-    expect(apiFetch).toHaveBeenCalledWith('/policies')
+    expect(apiFetch).toHaveBeenCalledWith('/policies?type=backup')
     expect(policies.list).toEqual([{ id: 'p1', name: 'nightly' }])
     expect(policies.loading).toBe(false)
     expect(policies.error).toBeNull()

@@ -103,7 +103,10 @@ func (x *GetPoliciesResponse) GetPolicies() []*Policy {
 }
 
 type ListPoliciesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Optional. "backup" or "storage" -- when set, only policies of this type
+	// are returned. Empty returns every type (unfiltered, today's behavior).
+	Type          string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -136,6 +139,13 @@ func (x *ListPoliciesRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListPoliciesRequest.ProtoReflect.Descriptor instead.
 func (*ListPoliciesRequest) Descriptor() ([]byte, []int) {
 	return file_api_policyserver_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ListPoliciesRequest) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
 }
 
 type ListPoliciesResponse struct {
@@ -792,8 +802,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x16api/policyserver.proto\x12\x13policyserverservice\x1a\x1fgoogle/protobuf/timestamp.proto\"\x14\n" +
 	"\x12GetPoliciesRequest\"N\n" +
 	"\x13GetPoliciesResponse\x127\n" +
-	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\"\x15\n" +
-	"\x13ListPoliciesRequest\"O\n" +
+	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\")\n" +
+	"\x13ListPoliciesRequest\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\"O\n" +
 	"\x14ListPoliciesResponse\x127\n" +
 	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies\"\xb0\x01\n" +
 	"\rClientFilters\x12\x1c\n" +

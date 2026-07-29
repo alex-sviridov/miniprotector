@@ -76,13 +76,18 @@ func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
 // ListPolicies returns every currently-loaded policy, unfiltered by any
 // caller identity -- the admin surface api-server proxies for browsing and
 // editing the full policy set. Unlike GetPolicies, it is never called by a
-// mesh node itself.
-func (s *policyServerServer) ListPolicies(ctx context.Context, _ *pb.ListPoliciesRequest) (*pb.ListPoliciesResponse, error) {
+// mesh node itself. If req.Type is set, only policies whose Kind() matches
+// are returned; empty Type returns every type, unchanged from before this
+// filter existed.
+func (s *policyServerServer) ListPolicies(ctx context.Context, req *pb.ListPoliciesRequest) (*pb.ListPoliciesResponse, error) {
 	policies := s.cache.Policies()
-	out := make([]*pb.Policy, len(policies))
-	for i, p := range policies {
-		out[i] = p.ToProto(true)
+	var out []*pb.Policy
+	for _, p := range policies {
+		if req.GetType() != "" && p.Kind() != req.GetType() {
+			continue
+		}
+		out = append(out, p.ToProto(true))
 	}
-	s.logger.Info("ListPolicies", "count", len(out))
+	s.logger.Info("ListPolicies", "type", req.GetType(), "count", len(out))
 	return &pb.ListPoliciesResponse{Policies: out}, nil
 }

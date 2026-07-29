@@ -12,6 +12,7 @@ export const router = createRouter({
     { path: '/policies/new', name: 'policy-new', component: () => import('./views/PolicyFormView.vue') },
     { path: '/policies/:id', name: 'policy-detail', component: () => import('./views/PolicyDetailView.vue') },
     { path: '/policies/:id/edit', name: 'policy-edit', component: () => import('./views/PolicyFormView.vue') },
+    { path: '/storage', name: 'storage', component: () => import('./views/StorageView.vue') },
     { path: '/jobs', name: 'jobs', component: () => import('./views/JobsListView.vue') },
     { path: '/jobs/:job_id', name: 'job-detail', component: () => import('./views/JobDetailView.vue') },
   ],

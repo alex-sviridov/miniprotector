@@ -10,6 +10,7 @@ describe('Sidebar', () => {
       { name: 'clients' },
       { name: 'catalog' },
       { name: 'policies' },
+      { name: 'storage' },
       { name: 'jobs' },
     ])
   })

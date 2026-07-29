@@ -57,7 +57,8 @@ registered type is also skipped and logged**, the same way — there's no schema
 unrecognized type's file into, so it can no longer be loaded generically the way an earlier design
 allowed. `CreatePolicy` requires a `type` (`"backup"` or `"storage"`) and writes into the matching
 `policies/<type>/`, creating that subdirectory if missing; a request that sets fields belonging to
-the other type is rejected. See
+the other type is rejected. `ListPolicies` additionally accepts an optional `type` filter — `"backup"` or `"storage"` restricts
+the response to that type; empty returns every type, unchanged from before this filter existed. See
 [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
 and [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
 
