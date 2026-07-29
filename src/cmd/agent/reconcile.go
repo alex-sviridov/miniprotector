@@ -40,17 +40,32 @@ type runner func(ctx context.Context, binary string, args []string) error
 // passed through unchanged so exec.Command falls back to its normal $PATH
 // lookup — this keeps local/dev usage, where these binaries genuinely are
 // on $PATH, working exactly as before.
-func realExec(ctx context.Context, binary string, args []string) error {
-	path := binary
-	if !strings.Contains(binary, string(filepath.Separator)) {
-		if exePath, err := os.Executable(); err == nil {
-			candidate := filepath.Join(filepath.Dir(exePath), binary)
-			if _, err := os.Stat(candidate); err == nil {
-				path = candidate
-			}
-		}
+// resolveExecPath resolves binary to a colocated sibling of this agent's
+// own executable when one exists there (bare name, no path separator),
+// falling back to binary unchanged otherwise so exec.Command's normal
+// $PATH lookup applies -- the same "colocated sibling binary" layout used
+// elsewhere in this repo (see deploy/control-plane/catalog's
+// entrypoint.sh, and common/config.ResolveBaseDir/ResolveVarDir). Shared by
+// realExec (one-shot policy execs) and main.go's bwfs resolution for
+// storage.go's storageManager (which resolves "bwfs" once at construction
+// rather than per-spawn).
+func resolveExecPath(binary string) string {
+	if strings.Contains(binary, string(filepath.Separator)) {
+		return binary
 	}
-	return exec.CommandContext(ctx, path, args...).Run()
+	exePath, err := os.Executable()
+	if err != nil {
+		return binary
+	}
+	candidate := filepath.Join(filepath.Dir(exePath), binary)
+	if _, err := os.Stat(candidate); err != nil {
+		return binary
+	}
+	return candidate
+}
+
+func realExec(ctx context.Context, binary string, args []string) error {
+	return exec.CommandContext(ctx, resolveExecPath(binary), args...).Run()
 }
 
 // isDue reports whether p should run now, given its last recorded state.
@@ -260,7 +275,10 @@ func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
 // goroutine it launched has finished (each one's execute call receives
 // the same ctx, so a context-respecting runner like realExec terminates
 // rather than being orphaned).
-func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string)) error {
+// storageTasksFunc/storageMgr add ensure-running bwfs supervision alongside
+// the due/execute policy loop below -- either nil disables it entirely,
+// preserving prior behavior exactly (see storage.go).
+func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string), storageTasksFunc func() ([]storageTask, bool), storageMgr *storageManager) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
@@ -273,12 +291,26 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 	for ctx.Err() == nil {
 		now := time.Now()
 		policyList, ok := policiesFunc()
-		if ok {
-			currentIDs := make(map[string]struct{}, len(policyList))
+
+		var storageTaskList []storageTask
+		storageOk := true
+		if storageTasksFunc != nil {
+			storageTaskList, storageOk = storageTasksFunc()
+		}
+
+		if ok && storageOk {
+			currentIDs := make(map[string]struct{}, len(policyList)+len(storageTaskList))
 			for _, p := range policyList {
 				currentIDs[p.ID] = struct{}{}
 			}
+			for _, t := range storageTaskList {
+				currentIDs[t.ID] = struct{}{}
+			}
 			rs.prune(currentIDs)
+		}
+
+		if storageMgr != nil && storageOk {
+			storageMgr.reconcile(ctx, rs, storageTaskList)
 		}
 
 		for _, p := range policyList {

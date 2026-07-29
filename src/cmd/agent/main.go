@@ -113,7 +113,7 @@ func main() {
 		}
 
 		logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath, "vector_config", vectorConfigPath)
-		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess); err != nil {
+		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess, nil, nil); err != nil {
 			logger.Error("agent exited with error", "error", err)
 			os.Exit(1)
 		}
