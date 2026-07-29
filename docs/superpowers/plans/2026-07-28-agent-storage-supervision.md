@@ -6,15 +6,15 @@
 
 **Architecture:** `policy-server` drops `StoragePolicy.Hostname` (targeting moves to `client_filters`, the mechanism backup policies already use). `policyclient` carries a storage policy's `port`/`config` into `policies-cache.json` (previously dropped). `agent` gains a new `storage.go`: `storageTasks` derives one ensure-running task per cached storage policy (parsing `config` for a `filesystem` backend's root path), and a `storageSupervisor`/`storageManager` pair (modeled on the existing `vectorSupervisor`) starts, crash-restarts, and prunes `bwfs server` processes — sharing `agent-state.json` and `agent list-policies` with everything else agent already tracks. `bwfs` gets a small fix (missing `signal.NotifyContext` wiring) so agent's `SIGTERM` actually drains it gracefully instead of killing in-flight streams.
 
-**Tech Stack:** Go 1.26, gRPC/protobuf (`protoc` + `protoc-gen-go`/`protoc-gen-go-grpc`, already installed at `~/.local/bin`), `testify` (`assert`/`require`), Vue/Pinia (unaffected — no web UI code in this plan).
+**Tech Stack:** Go 1.26, gRPC/protobuf (`protoc` + `protoc-gen-go`/`protoc-gen-go-grpc`, already installed at `~/.local/bin`), `testify` (`assert`/`require`), Vue/Pinia + Vitest (`web/`, for Task 3 only).
 
 ## Global Constraints
 
 - Every source file in this repo lives under `src/`; the Go module root is `src/go.mod` (`module github.com/alex-sviridov/miniprotector`, `go 1.26.0`). Run all `go build`/`go test` commands from `src/` (or with `-C src`).
-- This repo's `.claude/CLAUDE.md` requires, before any commit that changes a `.proto` file or feature behavior: updating the matching `docs/protocols/*.md` and `docs/components/*.md`, cross-linking from `README.md` if the component list/quick-start is affected, and adding a `CHANGELOG.md` entry before merging to `main`. Each task below folds in the specific doc updates it triggers; Task 9 does the remaining repo-wide ones (`ARCHITECTURE.md`, `CHANGELOG.md`).
+- This repo's `.claude/CLAUDE.md` requires, before any commit that changes a `.proto` file or feature behavior: updating the matching `docs/protocols/*.md` and `docs/components/*.md`, cross-linking from `README.md` if the component list/quick-start is affected, and adding a `CHANGELOG.md` entry before merging to `main`. Each task below folds in the specific doc updates it triggers; Task 11 does the remaining repo-wide ones (`ARCHITECTURE.md`, `CHANGELOG.md`).
 - Never use `git commit --amend`, `--no-verify`, or force-push. Create a new commit per task.
-- This plan does **not** touch the web UI (`web/`) or `api-server` — those are a separate, not-yet-implemented body of work tracked by `docs/superpowers/specs/2026-07-28-storage-policy-web-ui-design.md` (already updated in a prior commit to match this plan's removal of `StoragePolicy.Hostname`).
-- Design reference: `docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md`. One deliberate implementation simplification versus that doc's literal wording: instead of refactoring `run()` in `reconcile.go` to *accept* a pre-built `*reconcileState` from `main.go`, `run()` keeps building its own `reconcileState` internally exactly as today, and the new storage-supervision call happens *inside* `run()`'s existing loop (see Task 6) — so `main.go`'s call to `run()` still only passes a `cachePath` string, not a `reconcileState` object. This achieves the design's actual goal (one shared, mutex-safe cache, no two-writer race) with a much smaller diff: no existing test call site needs its first few arguments changed, only two new trailing arguments appended.
+- **Revision note:** an earlier draft of this plan assumed `api-server` and the web `Storage` section were unimplemented (per `docs/superpowers/specs/2026-07-28-storage-policy-web-ui-design.md`, which describes them as a separate, not-yet-built body of work). That assumption turned out to be false — a complete, working implementation existed on an unmerged branch (`storage-policy-web-ui`) and has since been merged into `main`. It implements the *original* design: a raw `Hostname` field throughout `api-server`'s `policyDTO`/`storagePolicyInput` and the web `StorageEditModal`/`StorageView`. Two new tasks are inserted after Task 1 to bring that real code in line with the `client_filters`-based targeting decision Task 1 makes in `policy-server` — without them, Task 1's proto/Go changes would break `api-server`'s build: Task 2 (`api-server`) and Task 3 (`web`). Every task from the old Task 2 onward is renumbered +2 (old Task 2 → Task 4, ..., old Task 9 → Task 11).
+- Design reference: `docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md`. One deliberate implementation simplification versus that doc's literal wording: instead of refactoring `run()` in `reconcile.go` to *accept* a pre-built `*reconcileState` from `main.go`, `run()` keeps building its own `reconcileState` internally exactly as today, and the new storage-supervision call happens *inside* `run()`'s existing loop (see Task 8) — so `main.go`'s call to `run()` still only passes a `cachePath` string, not a `reconcileState` object. This achieves the design's actual goal (one shared, mutex-safe cache, no two-writer race) with a much smaller diff: no existing test call site needs its first few arguments changed, only two new trailing arguments appended.
 
 ---
 
@@ -34,7 +34,7 @@
 
 **Interfaces:**
 - Produces: `StoragePolicy{PolicyBase, Port int, Config json.RawMessage}` (no `Hostname` field). `pb.Policy`/`pb.CreatePolicyRequest`/`pb.UpdatePolicyRequest` no longer have a `Hostname` field or `GetHostname()` method. `policyFieldsGetter` interface (`write.go`) no longer requires `GetHostname()`.
-- Consumed by: Task 2 (`policyclient`'s `toCachedPolicies` already never read `Hostname`, so no change needed there beyond what Task 2 adds).
+- Consumed by: Task 4 (`policyclient`'s `toCachedPolicies` already never read `Hostname`, so no change needed there beyond what Task 4 adds).
 
 This is one atomic change — the Go struct, the proto, and every test fixture referencing `Hostname` must all move together or the package won't build. Do it in this order so you never have an uncompilable intermediate commit.
 
@@ -559,7 +559,872 @@ EOF
 
 ---
 
-## Task 2: `policyclient` — carry `port`/`config` through to `CachedPolicy`
+## Task 2: `api-server` — remove `Hostname`, keep `client_filters` passthrough
+
+**Files:**
+- Modify: `src/cmd/api-server/policies.go`
+- Modify: `src/cmd/api-server/policies_test.go`
+- Modify: `docs/components/api-server.md`
+- Modify: `docs/api/rest-v1.md`
+
+**Interfaces:**
+- Consumes: `pb.Policy`/`pb.CreatePolicyRequest`/`pb.UpdatePolicyRequest` with no `Hostname` field (Task 1).
+- Produces: `policyDTO{..., ClientFilters clientFiltersDTO, Port int32, Config string, ...}` (no `Hostname` field), `storagePolicyInput{Name string, ClientFilters clientFiltersDTO, Port int32, Config string}` (no `Hostname` field). Consumed by Task 3 (the web layer decodes/builds this exact JSON shape).
+
+This code was merged into `main` from a previously-unmerged branch that implemented the *original* design (a raw `Hostname` field). It compiles against today's `main` (pre-Task-1) but will not compile once Task 1's proto/Go changes land — do this task after confirming Task 1 is committed, in the same branch.
+
+- [ ] **Step 1: Write the failing test**
+
+Replace `TestToPolicyDTO_IncludesStorageFields` in `src/cmd/api-server/policies_test.go`:
+
+```go
+func TestToPolicyDTO_IncludesStorageFields(t *testing.T) {
+	p := &pb.Policy{
+		Id:     "s1",
+		Name:   "east-1-storage",
+		Type:   "storage",
+		Port:   9400,
+		Config: `{"backend": "filesystem", "root": "/data/storage"}`,
+	}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, int32(9400), dto.Port)
+	assert.Equal(t, `{"backend": "filesystem", "root": "/data/storage"}`, dto.Config)
+}
+```
+
+Replace `TestHandleCreateStoragePolicy_ReturnsCreatedPolicy`:
+
+```go
+func TestHandleCreateStoragePolicy_ReturnsCreatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "s1", Name: "east-1-storage", Type: "storage",
+		Port: 9400, Config: `{"backend": "filesystem"}`,
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{"storage-east-1.internal"}, Labels: map[string]string{}},
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "east-1-storage",
+		"client_filters": {"hostnames": ["storage-east-1.internal"], "labels": {}},
+		"port": 9400,
+		"config": "{\"backend\": \"filesystem\"}"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "storage", fake.lastCreateReq.GetType())
+	assert.Equal(t, "east-1-storage", fake.lastCreateReq.GetName())
+	assert.Equal(t, []string{"storage-east-1.internal"}, fake.lastCreateReq.GetClientFilters().GetHostnames())
+	assert.Equal(t, int32(9400), fake.lastCreateReq.GetPort())
+	assert.Equal(t, `{"backend": "filesystem"}`, fake.lastCreateReq.GetConfig())
+
+	var respBody map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, []any{"storage-east-1.internal"}, respBody["client_filters"].(map[string]any)["hostnames"])
+}
+```
+
+Replace `TestHandleCreateStoragePolicy_BackendValidationErrorReturns400`'s fake error text (it no longer needs to say "hostname"; the test's actual point — a backend `InvalidArgument` surfaces as `400` — is unaffected by which message it carries):
+
+```go
+func TestHandleCreateStoragePolicy_BackendValidationErrorReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "port must be between 1 and 65535, got 0")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", strings.NewReader(`{"name": "x"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+```
+
+Replace `TestHandleUpdateStoragePolicy_ReturnsUpdatedPolicy`:
+
+```go
+func TestHandleUpdateStoragePolicy_ReturnsUpdatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{
+		Id: "s1", Name: "east-1-storage-renamed", Type: "storage",
+		Port: 9401, Config: `{"backend": "filesystem"}`,
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{"storage-east-2.internal"}, Labels: map[string]string{}},
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "east-1-storage-renamed",
+		"client_filters": {"hostnames": ["storage-east-2.internal"], "labels": {}},
+		"port": 9401,
+		"config": "{\"backend\": \"filesystem\"}"
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/s1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	assert.Equal(t, "s1", fake.lastUpdateReq.GetId())
+	assert.Equal(t, []string{"storage-east-2.internal"}, fake.lastUpdateReq.GetClientFilters().GetHostnames())
+	assert.Equal(t, int32(9401), fake.lastUpdateReq.GetPort())
+}
+```
+
+Replace `TestHandleUpdateStoragePolicy_UnknownIDReturns404`'s request body (drop the raw `"hostname"` key, since `storagePolicyInput` no longer has one — an unknown extra JSON key would be silently ignored by `encoding/json` anyway, but the body should reflect the real shape):
+
+```go
+func TestHandleUpdateStoragePolicy_UnknownIDReturns404(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.NotFound, "policy \"ghost\" not found")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/ghost", strings.NewReader(`{"name": "x", "port": 1, "config": "{}"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+```
+
+- [ ] **Step 2: Run tests to confirm they fail**
+
+Run: `cd src && go build ./cmd/api-server/... 2>&1 | head -20`
+Expected: FAIL to build — `pb.Policy`/`pb.CreatePolicyRequest`/`pb.UpdatePolicyRequest` still have `Hostname` in this step (Task 1 already removed it from the proto in the same branch), so `policies.go` itself is what's now broken (references `GetHostname()`/`Hostname` that no longer exist) — this confirms the test file changes above are consistent with the *target* shape, and that `policies.go` genuinely needs the edit in Step 3.
+
+- [ ] **Step 3: Update `policies.go`**
+
+Replace the `policyDTO` struct:
+
+```go
+type policyDTO struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	CreatedAt     int64             `json:"created_at"`
+	UpdatedAt     int64             `json:"updated_at"`
+	ClientFilters clientFiltersDTO  `json:"client_filters"`
+	ObjectFilters []objectFilterDTO `json:"object_filters"`
+	RPO           string            `json:"rpo"`
+	BackupWindow  []string          `json:"backup_window"`
+	Destination   string            `json:"destination"`
+	Type          string            `json:"type"`
+	Hostname      string            `json:"hostname"`
+	Port          int32             `json:"port"`
+	Config        string            `json:"config"`
+}
+```
+
+with:
+
+```go
+type policyDTO struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	CreatedAt     int64             `json:"created_at"`
+	UpdatedAt     int64             `json:"updated_at"`
+	ClientFilters clientFiltersDTO  `json:"client_filters"`
+	ObjectFilters []objectFilterDTO `json:"object_filters"`
+	RPO           string            `json:"rpo"`
+	BackupWindow  []string          `json:"backup_window"`
+	Destination   string            `json:"destination"`
+	Type          string            `json:"type"`
+	Port          int32             `json:"port"`
+	Config        string            `json:"config"`
+}
+```
+
+Replace `toPolicyDTO`'s composite literal:
+
+```go
+	return policyDTO{
+		ID:        p.GetId(),
+		Name:      p.GetName(),
+		CreatedAt: p.GetCreatedAt().AsTime().Unix(),
+		UpdatedAt: p.GetUpdatedAt().AsTime().Unix(),
+		ClientFilters: clientFiltersDTO{
+			Hostnames: p.GetClientFilters().GetHostnames(),
+			Labels:    p.GetClientFilters().GetLabels(),
+		},
+		ObjectFilters: objectFilters,
+		RPO:           p.GetRpo(),
+		BackupWindow:  p.GetBackupWindow(),
+		Destination:   p.GetDestination(),
+		Type:          p.GetType(),
+		Hostname:      p.GetHostname(),
+		Port:          p.GetPort(),
+		Config:        p.GetConfig(),
+	}
+```
+
+with:
+
+```go
+	return policyDTO{
+		ID:        p.GetId(),
+		Name:      p.GetName(),
+		CreatedAt: p.GetCreatedAt().AsTime().Unix(),
+		UpdatedAt: p.GetUpdatedAt().AsTime().Unix(),
+		ClientFilters: clientFiltersDTO{
+			Hostnames: p.GetClientFilters().GetHostnames(),
+			Labels:    p.GetClientFilters().GetLabels(),
+		},
+		ObjectFilters: objectFilters,
+		RPO:           p.GetRpo(),
+		BackupWindow:  p.GetBackupWindow(),
+		Destination:   p.GetDestination(),
+		Type:          p.GetType(),
+		Port:          p.GetPort(),
+		Config:        p.GetConfig(),
+	}
+```
+
+Replace the `storagePolicyInput` struct:
+
+```go
+type storagePolicyInput struct {
+	Name          string           `json:"name"`
+	ClientFilters clientFiltersDTO `json:"client_filters"`
+	Hostname      string           `json:"hostname"`
+	Port          int32            `json:"port"`
+	Config        string           `json:"config"`
+}
+```
+
+with:
+
+```go
+type storagePolicyInput struct {
+	Name          string           `json:"name"`
+	ClientFilters clientFiltersDTO `json:"client_filters"`
+	Port          int32            `json:"port"`
+	Config        string           `json:"config"`
+}
+```
+
+Replace `handleCreateStoragePolicy`'s request-building call:
+
+```go
+	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
+		Name:          in.Name,
+		Type:          "storage",
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Hostname:      in.Hostname,
+		Port:          in.Port,
+		Config:        in.Config,
+	})
+```
+
+with:
+
+```go
+	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
+		Name:          in.Name,
+		Type:          "storage",
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Port:          in.Port,
+		Config:        in.Config,
+	})
+```
+
+Replace `handleUpdateStoragePolicy`'s request-building call:
+
+```go
+	resp, err := s.policy.UpdatePolicy(r.Context(), &pb.UpdatePolicyRequest{
+		Id:            id,
+		Name:          in.Name,
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Hostname:      in.Hostname,
+		Port:          in.Port,
+		Config:        in.Config,
+	})
+```
+
+with:
+
+```go
+	resp, err := s.policy.UpdatePolicy(r.Context(), &pb.UpdatePolicyRequest{
+		Id:            id,
+		Name:          in.Name,
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Port:          in.Port,
+		Config:        in.Config,
+	})
+```
+
+- [ ] **Step 4: Run tests to confirm they pass**
+
+Run: `cd src && go build ./cmd/api-server/... && go test ./cmd/api-server/... -v`
+Expected: PASS, every test in the package (this also re-verifies every backup-policy test, which this task doesn't touch, still passes unchanged).
+
+- [ ] **Step 5: Update `docs/components/api-server.md`**
+
+Replace:
+
+```
+`policy-server` also supports a `"storage"` policy type (`hostname`/`port`/`config`).
+`GET /policies` accepts an optional `?type=backup|storage` query parameter to filter by type;
+without it, every policy of every type is returned, each with `hostname`/`port`/`config` populated
+in the response DTO when applicable (empty/zero for a `"backup"`-typed policy, and vice versa for
+`rpo`/`destination`/`object_filters`). Creating or updating a storage policy uses a separate pair of
+endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage policy's input
+shape (`hostname`/`port`/`config`) shares nothing with a backup policy's
+(`object_filters`/`rpo`/`backup_window`/`destination`) beyond `name`/`client_filters`. `GET
+/policies/{id}` and `DELETE /policies/{id}` are shared across both types — both operations are
+already type-agnostic, looking a policy up or removing it by `id` alone.
+```
+
+with:
+
+```
+`policy-server` also supports a `"storage"` policy type (`port`/`config`).
+`GET /policies` accepts an optional `?type=backup|storage` query parameter to filter by type;
+without it, every policy of every type is returned, each with `port`/`config` populated
+in the response DTO when applicable (zero for a `"backup"`-typed policy, and vice versa for
+`rpo`/`destination`/`object_filters`). Creating or updating a storage policy uses a separate pair of
+endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage policy's input
+shape (`port`/`config`) shares nothing with a backup policy's
+(`object_filters`/`rpo`/`backup_window`/`destination`) beyond `name`/`client_filters` — which is also
+how a storage policy targets a node (there is no separate `hostname` field; set
+`client_filters.hostnames` the same way a backup policy would). `GET
+/policies/{id}` and `DELETE /policies/{id}` are shared across both types — both operations are
+already type-agnostic, looking a policy up or removing it by `id` alone.
+```
+
+- [ ] **Step 6: Update `docs/api/rest-v1.md`**
+
+Replace the `GET /api/v1/policies` example response's storage-policy fields:
+
+```
+      "type": "backup",
+      "hostname": "",
+      "port": 0,
+      "config": ""
+```
+
+with:
+
+```
+      "type": "backup",
+      "port": 0,
+      "config": ""
+```
+
+Replace the `POST /api/v1/storage-policies` section:
+
+```
+Creates a new `"storage"`-typed policy. Body:
+
+```json
+{
+  "name": "east-1-storage",
+  "client_filters": {"hostnames": [], "labels": {}},
+  "hostname": "storage-east-1.internal",
+  "port": 9400,
+  "config": "{\"backend\": \"filesystem\", \"root\": \"/data/storage\"}"
+}
+```
+
+`config` is a JSON string, not a nested object — `policy-server` treats it as opaque, pass-through
+text; the web UI is the one that gives it the `backend`/`root` shape shown above. `201` with the
+created policy on success. `400` if `name` is empty, `hostname` is empty, `port` isn't in `[1,
+65535]`, or `config` isn't well-formed JSON — no file is written when validation fails.
+```
+
+with:
+
+```
+Creates a new `"storage"`-typed policy. Body:
+
+```json
+{
+  "name": "east-1-storage",
+  "client_filters": {"hostnames": ["storage-east-1.internal"], "labels": {}},
+  "port": 9400,
+  "config": "{\"backend\": \"filesystem\", \"root\": \"/data/storage\"}"
+}
+```
+
+`config` is a JSON string, not a nested object — `policy-server` treats it as opaque, pass-through
+text; the web UI is the one that gives it the `backend`/`root` shape shown above. There is no
+`hostname` field — targeting a node is `client_filters.hostnames`, identical to a backup policy.
+`201` with the created policy on success. `400` if `name` is empty, `port` isn't in `[1,
+65535]`, or `config` isn't well-formed JSON — no file is written when validation fails.
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd src && go build ./cmd/api-server/... && go test ./cmd/api-server/...
+git add src/cmd/api-server/policies.go src/cmd/api-server/policies_test.go \
+  docs/components/api-server.md docs/api/rest-v1.md
+git commit -m "$(cat <<'EOF'
+fix(api-server): remove Hostname from storage-policy DTO/input
+
+Follows policy-server's removal of StoragePolicy.Hostname (previous
+commit) -- a storage policy's client_filters is now the only
+targeting mechanism, identical to a backup policy. This code landed
+via a merge of a previously-unmerged branch that implemented the
+original (Hostname-based) design; this brings it in line with the
+client_filters-only decision.
+EOF
+)"
+```
+
+---
+
+## Task 3: `web` — `StorageEditModal`/`StorageView`: "Target hostname" via `client_filters`
+
+**Files:**
+- Modify: `web/src/components/storage/StorageEditModal.vue`
+- Modify: `web/src/components/storage/StorageEditModal.spec.js`
+- Modify: `web/src/views/StorageView.vue`
+- Modify: `web/src/views/StorageView.spec.js`
+- Modify: `docs/components/web.md`
+
+**Interfaces:**
+- Consumes: `policyDTO`/`storagePolicyInput` with no `Hostname` field, `client_filters: {hostnames, labels}` (Task 2).
+- Produces: a `StorageEditModal` that submits `{name, port, config, client_filters: {hostnames: [target], labels: {}}}`; a `StorageView` whose table shows a "Target Hostname" column derived from `client_filters.hostnames[0]`. Nothing downstream in this plan consumes these — `web/src/stores/storagePolicies.js` and its spec are untouched (the store forwards whatever payload it's given without reading a `.hostname` field, so nothing there needs to change).
+
+- [ ] **Step 1: Write the failing tests**
+
+Replace `StorageEditModal.spec.js`'s `'renders empty fields in create mode'`:
+
+```javascript
+  it('renders empty fields in create mode', () => {
+    const wrapper = mount(StorageEditModal, { props: { policy: null } })
+    expect(wrapper.find('[data-test="storage-name-input"]').element.value).toBe('')
+    expect(wrapper.find('[data-test="storage-target-hostname-input"]').element.value).toBe('')
+    expect(wrapper.find('[data-test="storage-port-input"]').element.value).toBe('')
+    expect(wrapper.find('[data-test="storage-path-input"]').element.value).toBe('')
+  })
+```
+
+Replace `'pre-fills fields from the policy prop in edit mode'`:
+
+```javascript
+  it('pre-fills fields from the policy prop in edit mode', () => {
+    const wrapper = mount(StorageEditModal, {
+      props: {
+        policy: {
+          id: 's1',
+          name: 'east-1-storage',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
+          port: 9400,
+          config: '{"backend": "filesystem", "root": "/data/storage"}',
+        },
+      },
+    })
+    expect(wrapper.find('[data-test="storage-name-input"]').element.value).toBe('east-1-storage')
+    expect(wrapper.find('[data-test="storage-target-hostname-input"]').element.value).toBe('storage-east-1.internal')
+    expect(wrapper.find('[data-test="storage-port-input"]').element.value).toBe('9400')
+    expect(wrapper.find('[data-test="storage-path-input"]').element.value).toBe('/data/storage')
+  })
+```
+
+Replace `'emits save with the built payload on valid submit'`:
+
+```javascript
+  it('emits save with the built payload on valid submit', async () => {
+    const wrapper = mount(StorageEditModal, { props: { policy: null } })
+    await wrapper.find('[data-test="storage-name-input"]').setValue('east-1-storage')
+    await wrapper.find('[data-test="storage-target-hostname-input"]').setValue('storage-east-1.internal')
+    await wrapper.find('[data-test="storage-port-input"]').setValue('9400')
+    await wrapper.find('[data-test="storage-path-input"]').setValue('/data/storage')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('save')).toHaveLength(1)
+    expect(wrapper.emitted('save')[0][0]).toEqual({
+      name: 'east-1-storage',
+      port: 9400,
+      config: JSON.stringify({ backend: 'filesystem', root: '/data/storage' }),
+      client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
+    })
+  })
+```
+
+Replace the `hostname`/`config` fixtures in `'preserves unknown config keys when editing and saving'` and `'does not throw and falls back to defaults when config is the literal null'` (both currently set `hostname: 'storage-east-1.internal'` on the `policy` prop — that key is simply dropped, since the modal no longer reads `policy.hostname` at all; these two tests don't assert on the hostname field, so no other change is needed beyond removing that now-meaningless key):
+
+```javascript
+  it('preserves unknown config keys when editing and saving', async () => {
+    const wrapper = mount(StorageEditModal, {
+      props: {
+        policy: {
+          id: 's1',
+          name: 'east-1-storage',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
+          port: 9400,
+          config: '{"backend": "filesystem", "root": "/data/storage", "compression": "zstd"}',
+        },
+      },
+    })
+```
+
+(only the `props.policy` object changes — the rest of that test body is unchanged)
+
+```javascript
+  it('does not throw and falls back to defaults when config is the literal null', () => {
+    const wrapper = mount(StorageEditModal, {
+      props: {
+        policy: {
+          id: 's1',
+          name: 'east-1-storage',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
+          port: 9400,
+          config: 'null',
+        },
+      },
+    })
+```
+
+(same — only `props.policy` changes, assertions below are unchanged)
+
+Replace `'rejects a port outside 1-65535'`:
+
+```javascript
+  it('rejects a port outside 1-65535', async () => {
+    const wrapper = mount(StorageEditModal, { props: { policy: null } })
+    await wrapper.find('[data-test="storage-name-input"]').setValue('x')
+    await wrapper.find('[data-test="storage-target-hostname-input"]').setValue('h')
+    await wrapper.find('[data-test="storage-port-input"]').setValue('70000')
+    await wrapper.find('[data-test="storage-path-input"]').setValue('/data')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.text()).toContain('port')
+  })
+```
+
+Add one new test for the required-target-hostname validation (mirrors the existing blank-fields test, which already covers "some field is empty" generically — this one pins down that target hostname specifically is checked):
+
+```javascript
+  it('requires a target hostname before emitting save', async () => {
+    const wrapper = mount(StorageEditModal, { props: { policy: null } })
+    await wrapper.find('[data-test="storage-name-input"]').setValue('x')
+    await wrapper.find('[data-test="storage-port-input"]').setValue('9400')
+    await wrapper.find('[data-test="storage-path-input"]').setValue('/data')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.text()).toContain('required')
+  })
+```
+
+Replace `StorageView.spec.js`'s `'renders each storage policy in the table'`:
+
+```javascript
+  it('renders each storage policy in the table', () => {
+    const { wrapper } = mountView({
+      list: [
+        {
+          id: 's1',
+          name: 'east-1-storage',
+          client_filters: { hostnames: ['storage-east-1.internal'], labels: {} },
+          port: 9400,
+          config: '{"backend": "filesystem", "root": "/data/storage"}',
+        },
+      ],
+      loading: false,
+      error: null,
+    })
+    expect(wrapper.text()).toContain('east-1-storage')
+    expect(wrapper.text()).toContain('storage-east-1.internal')
+    expect(wrapper.text()).toContain('9400')
+    expect(wrapper.text()).toContain('filesystem')
+  })
+```
+
+Every other `list: [{ id: 's1', name: 'east-1-storage', hostname: 'h', port: 9400, config: '{}' }]`
+fixture in `StorageView.spec.js` (there are four: `'opens the modal in edit mode when a row is
+clicked'`, `'calls update and closes the modal on save in edit mode'`, `'deletes a storage policy
+after confirming'`, `'does not delete when the confirm dialog is dismissed'`) drops the `hostname:
+'h'` key — it's never asserted on directly in those tests (they only check `id`/behavior), so simply
+remove that key from each fixture object, e.g.:
+
+```javascript
+      list: [{ id: 's1', name: 'east-1-storage', port: 9400, config: '{}' }],
+```
+
+`'opens the modal in edit mode when a row is clicked'` additionally asserts the exact `policy` prop
+object passed to the modal — update that expectation the same way:
+
+```javascript
+    expect(wrapper.findComponent({ name: 'StorageEditModal' }).props('policy')).toEqual({
+      id: 's1',
+      name: 'east-1-storage',
+      port: 9400,
+      config: '{}',
+    })
+```
+
+The three `save`-payload fixtures (`'calls create and closes the modal on save in create mode'`,
+`'calls update and closes the modal on save in edit mode'`, `'keeps the modal open and shows the
+server error when create fails'`) already use `client_filters: { hostnames: [], labels: {} }`
+alongside a stray `hostname: 'h'` key — drop the stray key, e.g.:
+
+```javascript
+    const payload = { name: 'new-storage', port: 1, config: '{}', client_filters: { hostnames: [], labels: {} } }
+```
+
+(same edit — remove `hostname: 'h', ` — applies to all three of those payload literals)
+
+- [ ] **Step 2: Run tests to confirm they fail**
+
+Run: `cd web && npx vitest run src/components/storage/StorageEditModal.spec.js src/views/StorageView.spec.js`
+Expected: FAIL — `[data-test="storage-target-hostname-input"]` doesn't exist yet, and the emitted/expected payload shapes don't match the current component's output.
+
+- [ ] **Step 3: Update `StorageEditModal.vue`**
+
+Replace the `form` reactive object:
+
+```javascript
+const form = reactive({
+  name: props.policy?.name || '',
+  hostname: props.policy?.hostname || '',
+  port: props.policy ? String(props.policy.port) : '',
+  storageType: parseConfig(props.policy?.config).backend || 'filesystem',
+  path: parseConfig(props.policy?.config).root || '',
+})
+```
+
+with:
+
+```javascript
+const form = reactive({
+  name: props.policy?.name || '',
+  targetHostname: props.policy?.client_filters?.hostnames?.[0] || '',
+  port: props.policy ? String(props.policy.port) : '',
+  storageType: parseConfig(props.policy?.config).backend || 'filesystem',
+  path: parseConfig(props.policy?.config).root || '',
+})
+```
+
+Replace the `submit` function:
+
+```javascript
+function submit() {
+  errors.message = ''
+  const port = Number(form.port)
+
+  if (!form.name.trim()) {
+    errors.message = 'Name is required.'
+    return
+  }
+  if (!form.hostname.trim()) {
+    errors.message = 'Hostname is required.'
+    return
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    errors.message = 'A valid port between 1 and 65535 is required.'
+    return
+  }
+  if (!form.path.trim()) {
+    errors.message = 'Filesystem path is required.'
+    return
+  }
+
+  emit('save', {
+    name: form.name.trim(),
+    hostname: form.hostname.trim(),
+    port,
+    config: JSON.stringify({
+      ...parseConfig(props.policy?.config),
+      backend: form.storageType,
+      root: form.path.trim(),
+    }),
+    client_filters: { hostnames: [], labels: {} },
+  })
+}
+```
+
+with:
+
+```javascript
+function submit() {
+  errors.message = ''
+  const port = Number(form.port)
+
+  if (!form.name.trim()) {
+    errors.message = 'Name is required.'
+    return
+  }
+  if (!form.targetHostname.trim()) {
+    errors.message = 'Target hostname is required.'
+    return
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    errors.message = 'A valid port between 1 and 65535 is required.'
+    return
+  }
+  if (!form.path.trim()) {
+    errors.message = 'Filesystem path is required.'
+    return
+  }
+
+  emit('save', {
+    name: form.name.trim(),
+    port,
+    config: JSON.stringify({
+      ...parseConfig(props.policy?.config),
+      backend: form.storageType,
+      root: form.path.trim(),
+    }),
+    client_filters: { hostnames: [form.targetHostname.trim()], labels: {} },
+  })
+}
+```
+
+Replace the "Hostname" field in the template:
+
+```html
+        <div>
+          <label class="block font-medium mb-1">Hostname</label>
+          <input data-test="storage-hostname-input" v-model="form.hostname" class="w-full border rounded px-2 py-1" />
+        </div>
+```
+
+with:
+
+```html
+        <div>
+          <label class="block font-medium mb-1">Target Hostname</label>
+          <input data-test="storage-target-hostname-input" v-model="form.targetHostname" class="w-full border rounded px-2 py-1" />
+        </div>
+```
+
+- [ ] **Step 4: Update `StorageView.vue`**
+
+Replace the `storageBackend` helper and add a matching `targetHostname` helper right after it:
+
+```javascript
+function storageBackend(configText) {
+  try {
+    return JSON.parse(configText).backend || '—'
+  } catch {
+    return '—'
+  }
+}
+```
+
+with:
+
+```javascript
+function storageBackend(configText) {
+  try {
+    return JSON.parse(configText).backend || '—'
+  } catch {
+    return '—'
+  }
+}
+
+function targetHostname(clientFilters) {
+  return clientFilters?.hostnames?.[0] || '—'
+}
+```
+
+Replace the `columns` array:
+
+```javascript
+const columns = [
+  { label: 'Name', field: 'name', sortable: true },
+  { label: 'Hostname', field: 'hostname', sortable: true },
+  { label: 'Port', field: 'port', sortable: true },
+  { label: 'Storage Type', field: 'storageType', sortable: false },
+  { label: '', field: 'actions', sortable: false },
+]
+```
+
+with:
+
+```javascript
+const columns = [
+  { label: 'Name', field: 'name', sortable: true },
+  { label: 'Target Hostname', field: 'targetHostname', sortable: false },
+  { label: 'Port', field: 'port', sortable: true },
+  { label: 'Storage Type', field: 'storageType', sortable: false },
+  { label: '', field: 'actions', sortable: false },
+]
+```
+
+Replace the row-rendering template's column dispatch:
+
+```html
+          <span v-else-if="column.field === 'storageType'">{{ storageBackend(row.config) }}</span>
+```
+
+with:
+
+```html
+          <span v-else-if="column.field === 'storageType'">{{ storageBackend(row.config) }}</span>
+          <span v-else-if="column.field === 'targetHostname'">{{ targetHostname(row.client_filters) }}</span>
+```
+
+- [ ] **Step 5: Run tests to confirm they pass**
+
+Run: `cd web && npx vitest run src/components/storage/StorageEditModal.spec.js src/views/StorageView.spec.js`
+Expected: PASS, all tests.
+
+- [ ] **Step 6: Run the full web test suite**
+
+Run: `cd web && npx vitest run`
+Expected: PASS across every spec file (confirms nothing else in the frontend referenced the removed `hostname` field/column).
+
+- [ ] **Step 7: Update `docs/components/web.md`**
+
+Replace:
+
+```
+- `/storage` — every storage policy (name, hostname, port, storage type), with a "New Storage
+  Policy" action and a click-to-edit name column, both opening the same `StorageEditModal` (fields:
+  name, hostname, port, storage type — `filesystem` only today — and, when `filesystem` is selected,
+  a filesystem path). Kept fully separate from `/policies`: its own store
+  (`stores/storagePolicies.js`), its own component folder (`components/storage/`), and no detail or
+  form routes of its own — list and modal only. `/policies` itself now requests only `type=backup`
+  policies, so a storage policy never appears there.
+```
+
+with:
+
+```
+- `/storage` — every storage policy (name, target hostname, port, storage type), with a "New Storage
+  Policy" action and a click-to-edit name column, both opening the same `StorageEditModal` (fields:
+  name, target hostname, port, storage type — `filesystem` only today — and, when `filesystem` is
+  selected, a filesystem path). "Target hostname" submits as `client_filters.hostnames` — the same
+  targeting mechanism `/policies` uses, not a separate field. Kept fully separate from `/policies`:
+  its own store (`stores/storagePolicies.js`), its own component folder (`components/storage/`), and
+  no detail or form routes of its own — list and modal only. `/policies` itself now requests only
+  `type=backup` policies, so a storage policy never appears there.
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+cd web && npx vitest run
+git add web/src/components/storage/StorageEditModal.vue web/src/components/storage/StorageEditModal.spec.js \
+  web/src/views/StorageView.vue web/src/views/StorageView.spec.js docs/components/web.md
+git commit -m "$(cat <<'EOF'
+fix(web): Storage section targets a node via client_filters, not Hostname
+
+StorageEditModal's Hostname field becomes "Target hostname",
+submitting client_filters.hostnames instead of a raw hostname field
+-- following api-server's and policy-server's removal of
+StoragePolicy.Hostname (previous two commits). StorageView's table
+column reads the same client_filters.hostnames[0] for display.
+EOF
+)"
+```
+
+---
+
+## Task 4: `policyclient` — carry `port`/`config` through to `CachedPolicy`
 
 **Files:**
 - Modify: `src/cmd/policyclient/fetch.go`
@@ -568,7 +1433,7 @@ EOF
 
 **Interfaces:**
 - Produces: `CachedPolicy{..., Port int32 \`json:"port,omitempty"\`, Config string \`json:"config,omitempty"\`}`.
-- Consumed by: Task 3 (`agent`'s own `cachedPolicy` mirror gains the identical two fields, read from the same `policies-cache.json`).
+- Consumed by: Task 5 (`agent`'s own `cachedPolicy` mirror gains the identical two fields, read from the same `policies-cache.json`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -793,7 +1658,7 @@ EOF
 
 ---
 
-## Task 3: `agent` — `storage.go`: `storageTask`/`storageTasks` (config parsing)
+## Task 5: `agent` — `storage.go`: `storageTask`/`storageTasks` (config parsing)
 
 **Files:**
 - Modify: `src/cmd/agent/backup.go` (extend `cachedPolicy` mirror struct)
@@ -802,7 +1667,7 @@ EOF
 
 **Interfaces:**
 - Consumes: `readCachedPolicies(policiesCachePath string) ([]cachedPolicy, bool)` (already exists in `backup.go`, unchanged).
-- Produces: `type storageTask struct { ID string; Args []string }`, `func storageTaskID(policyName string) string`, `func storageTasks(policiesCachePath string, logger *slog.Logger) ([]storageTask, bool)`. Task 4 constructs a `storageSupervisor` per `storageTask`, using `Args` directly as the `bwfs` command-line arguments (binary itself is resolved separately, see Task 6).
+- Produces: `type storageTask struct { ID string; Args []string }`, `func storageTaskID(policyName string) string`, `func storageTasks(policiesCachePath string, logger *slog.Logger) ([]storageTask, bool)`. Task 6 constructs a `storageSupervisor` per `storageTask`, using `Args` directly as the `bwfs` command-line arguments (binary itself is resolved separately, see Task 8).
 
 - [ ] **Step 1: Extend `cachedPolicy` in `backup.go`**
 
@@ -1077,7 +1942,7 @@ EOF
 
 ---
 
-## Task 4: `agent` — `storageSupervisor`
+## Task 6: `agent` — `storageSupervisor`
 
 **Files:**
 - Modify: `src/cmd/agent/storage.go`
@@ -1085,7 +1950,7 @@ EOF
 
 **Interfaces:**
 - Consumes: `backoff(failures int) time.Duration`, `backoffBase`/`backoffMax` (package vars, already in `reconcile.go`).
-- Produces: `func newStorageSupervisor(binary string, args []string, logger *slog.Logger, onOutcome func(err error)) *storageSupervisor`, `func (s *storageSupervisor) Start(ctx context.Context)`, `func (s *storageSupervisor) Stop()`, field `s.loopDone chan struct{}` (closed when the supervise loop exits, for tests to synchronize on), field `s.onSpawnForTest func()` (test-only hook). `onOutcome` is called with `nil` immediately after every successful process start (this is this task's notion of "success" — a server process isn't expected to exit on its own), and with a non-nil error only when the process exits unexpectedly (never called for a deliberate `Stop()`). Consumed by Task 5 (`storageManager` constructs one supervisor per task, passing an `onOutcome` closure that calls into `reconcileState.recordOutcome`).
+- Produces: `func newStorageSupervisor(binary string, args []string, logger *slog.Logger, onOutcome func(err error)) *storageSupervisor`, `func (s *storageSupervisor) Start(ctx context.Context)`, `func (s *storageSupervisor) Stop()`, field `s.loopDone chan struct{}` (closed when the supervise loop exits, for tests to synchronize on), field `s.onSpawnForTest func()` (test-only hook). `onOutcome` is called with `nil` immediately after every successful process start (this is this task's notion of "success" — a server process isn't expected to exit on its own), and with a non-nil error only when the process exits unexpectedly (never called for a deliberate `Stop()`). Consumed by Task 7 (`storageManager` constructs one supervisor per task, passing an `onOutcome` closure that calls into `reconcileState.recordOutcome`).
 
 This type is a close copy of the existing `vectorSupervisor` in `vector.go` — read that file's `spawnAndWait`/`superviseLoop`/`Stop` before starting, and preserve its comments' reasoning (documented there) about why `cmd.Start()` happens under the mutex and why `spawnAndWait` sends `SIGTERM` itself instead of relying on `exec.CommandContext`'s default kill-on-cancel. Two differences from `vectorSupervisor`: no `TriggerRestart` (confirmed unnecessary — `bwfs` already hot-reloads its identity cert per-handshake via `mtls.LoadServerCredentials`, unlike Vector), and an `onOutcome` callback so a supervised `bwfs`'s state reaches `agent-state.json`.
 
@@ -1284,7 +2149,7 @@ func (s *storageSupervisor) Start(ctx context.Context) {
 }
 
 // Stop signals the currently-running bwfs process to exit (SIGTERM -- a
-// graceful drain once bwfs's own signal.NotifyContext fix lands, see Task 9)
+// graceful drain once bwfs's own signal.NotifyContext fix lands, see Task 11)
 // and tells the supervise loop not to respawn it.
 func (s *storageSupervisor) Stop() {
 	s.mu.Lock()
@@ -1386,15 +2251,15 @@ EOF
 
 ---
 
-## Task 5: `agent` — `storageManager`
+## Task 7: `agent` — `storageManager`
 
 **Files:**
 - Modify: `src/cmd/agent/storage.go`
 - Modify: `src/cmd/agent/storage_test.go`
 
 **Interfaces:**
-- Consumes: `storageTask{ID, Args}` (Task 3), `newStorageSupervisor(binary, args, logger, onOutcome) *storageSupervisor` (Task 4), `reconcileState.recordOutcome(id string, attemptErr error, attemptTime time.Time)` (already exists in `reconcile.go`).
-- Produces: `func newStorageManager(binary string, logger *slog.Logger) *storageManager`, `func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, tasks []storageTask)`, `func (m *storageManager) StopAll()`. Field `m.supervisors map[string]*storageSupervisor` (test-visible, same package). Consumed by Task 6 (`run()`'s loop calls `.reconcile(...)` each tick) and Task 8 (`main.go` calls `.StopAll()` on shutdown).
+- Consumes: `storageTask{ID, Args}` (Task 5), `newStorageSupervisor(binary, args, logger, onOutcome) *storageSupervisor` (Task 6), `reconcileState.recordOutcome(id string, attemptErr error, attemptTime time.Time)` (already exists in `reconcile.go`).
+- Produces: `func newStorageManager(binary string, logger *slog.Logger) *storageManager`, `func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, tasks []storageTask)`, `func (m *storageManager) StopAll()`. Field `m.supervisors map[string]*storageSupervisor` (test-visible, same package). Consumed by Task 8 (`run()`'s loop calls `.reconcile(...)` each tick) and Task 10 (`main.go` calls `.StopAll()` on shutdown).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1646,7 +2511,7 @@ EOF
 
 ---
 
-## Task 6: `agent` — wire storage supervision into `reconcile.go`'s `run()`
+## Task 8: `agent` — wire storage supervision into `reconcile.go`'s `run()`
 
 **Files:**
 - Modify: `src/cmd/agent/reconcile.go`
@@ -1654,8 +2519,8 @@ EOF
 - Modify: `src/cmd/agent/integration_test.go`
 
 **Interfaces:**
-- Consumes: `storageTask` (Task 3), `storageManager.reconcile(ctx, rs, tasks)` (Task 5).
-- Produces: `run(ctx, logger, cachePath, reconcileInterval, execute, policiesFunc, maxConcurrentBackgroundJobs, onSuccess, storageTasksFunc, storageMgr) error` (two new trailing parameters — `storageTasksFunc func() ([]storageTask, bool)` and `storageMgr *storageManager`; both `nil` fully disables storage supervision, preserving today's exact behavior). Also `resolveExecPath(binary string) string`, extracted from `realExec`. Consumed by Task 8 (`main.go`'s two `run()`/binary-resolution call sites).
+- Consumes: `storageTask` (Task 5), `storageManager.reconcile(ctx, rs, tasks)` (Task 7).
+- Produces: `run(ctx, logger, cachePath, reconcileInterval, execute, policiesFunc, maxConcurrentBackgroundJobs, onSuccess, storageTasksFunc, storageMgr) error` (two new trailing parameters — `storageTasksFunc func() ([]storageTask, bool)` and `storageMgr *storageManager`; both `nil` fully disables storage supervision, preserving today's exact behavior). Also `resolveExecPath(binary string) string`, extracted from `realExec`. Consumed by Task 10 (`main.go`'s two `run()`/binary-resolution call sites).
 
 - [ ] **Step 1: Extract `resolveExecPath` from `realExec`**
 
@@ -1873,15 +2738,15 @@ EOF
 
 ---
 
-## Task 7: `agent` — `list-policies` shows storage tasks
+## Task 9: `agent` — `list-policies` shows storage tasks
 
 **Files:**
 - Modify: `src/cmd/agent/list.go`
 - Modify: `src/cmd/agent/list_test.go`
 
 **Interfaces:**
-- Consumes: `storageTask{ID, Args}` (Task 3), `health(s PolicyState) string`, `formatTime`, `formatError` (all already exist in `list.go`, unchanged).
-- Produces: `renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Policy, storageTasks []storageTask) error` (one new trailing parameter). Consumed by Task 8 (`main.go`'s two call sites).
+- Consumes: `storageTask{ID, Args}` (Task 5), `health(s PolicyState) string`, `formatTime`, `formatError` (all already exist in `list.go`, unchanged).
+- Produces: `renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Policy, storageTasks []storageTask) error` (one new trailing parameter). Consumed by Task 10 (`main.go`'s two call sites).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2009,10 +2874,10 @@ func renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Pol
 - [ ] **Step 4: Update every existing `renderPolicies()` call site**
 
 Run: `cd src && go build ./cmd/agent/...`
-Expected: FAIL, listing every `renderPolicies(...)` call site (in `list_test.go` and `main.go`) still using the old 4-argument arity. In each test call site, append `, nil` for the new `storageTasks` parameter. Leave `main.go` for Task 8.
+Expected: FAIL, listing every `renderPolicies(...)` call site (in `list_test.go` and `main.go`) still using the old 4-argument arity. In each test call site, append `, nil` for the new `storageTasks` parameter. Leave `main.go` for Task 10.
 
 Run: `cd src && go test ./cmd/agent/... -run TestRenderPolicies -v`
-Expected: PASS, all tests including the two new ones (note `main.go` will still fail to build until Task 8 — that's expected and fixed there; if you want a clean build checkpoint here, temporarily append `, nil` to `main.go`'s one `renderPolicies` call too, matching what Task 8 will replace anyway).
+Expected: PASS, all tests including the two new ones (note `main.go` will still fail to build until Task 10 — that's expected and fixed there; if you want a clean build checkpoint here, temporarily append `, nil` to `main.go`'s one `renderPolicies` call too, matching what Task 10 will replace anyway).
 
 - [ ] **Step 5: Commit**
 
@@ -2032,14 +2897,14 @@ EOF
 
 ---
 
-## Task 8: `agent` — wire everything into `main.go`, plus `docs/components/agent.md`
+## Task 10: `agent` — wire everything into `main.go`, plus `docs/components/agent.md`
 
 **Files:**
 - Modify: `src/cmd/agent/main.go`
 - Modify: `docs/components/agent.md`
 
 **Interfaces:**
-- Consumes: `resolveExecPath(binary string) string` (Task 6), `newStorageManager(binary, logger) *storageManager` (Task 5), `storageTasks(policiesCachePath, logger) ([]storageTask, bool)` (Task 3), `run(..., storageTasksFunc, storageMgr)` (Task 6), `renderPolicies(w, cachePath, now, policies, storageTasks)` (Task 7), `storageManager.StopAll()` (Task 5).
+- Consumes: `resolveExecPath(binary string) string` (Task 8), `newStorageManager(binary, logger) *storageManager` (Task 7), `storageTasks(policiesCachePath, logger) ([]storageTask, bool)` (Task 5), `run(..., storageTasksFunc, storageMgr)` (Task 8), `renderPolicies(w, cachePath, now, policies, storageTasks)` (Task 9), `storageManager.StopAll()` (Task 7).
 - Produces: the fully wired `agent serve`/`agent list-policies` binary. Nothing downstream consumes `main.go` — this is the top of the call graph.
 
 - [ ] **Step 1: Update imports**
@@ -2248,7 +3113,7 @@ EOF
 
 ---
 
-## Task 9: `bwfs` graceful shutdown fix, plus `ARCHITECTURE.md`/`CHANGELOG.md`
+## Task 11: `bwfs` graceful shutdown fix, plus `ARCHITECTURE.md`/`CHANGELOG.md`
 
 **Files:**
 - Modify: `src/cmd/bwfs/main.go`
@@ -2521,6 +3386,6 @@ EOF
 
 ## Self-Review Notes
 
-- **Spec coverage:** every section of `docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md` maps to a task — `policy-server` Hostname removal (Task 1), web UI spec update (already done in a prior commit, confirmed unaffected by this plan), `policyclient` cache schema (Task 2), `storage.go`'s task derivation (Task 3), supervisor (Task 4), manager (Task 5), `reconcile.go` integration (Task 6), `list-policies` visibility (Task 7), `main.go` wiring + agent docs (Task 8), `bwfs` fix + remaining docs (Task 9).
+- **Spec coverage:** every section of `docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md` maps to a task — `policy-server` Hostname removal (Task 1), web UI spec update (already done in a prior commit — and, since that spec's implementation turned out to already exist unmerged and has since been merged, the corresponding real-code cleanup is Task 2 `api-server` + Task 3 `web`), `policyclient` cache schema (Task 4), `storage.go`'s task derivation (Task 5), supervisor (Task 6), manager (Task 7), `reconcile.go` integration (Task 8), `list-policies` visibility (Task 9), `main.go` wiring + agent docs (Task 10), `bwfs` fix + remaining docs (Task 11).
 - **Placeholder scan:** no TBD/TODO; every step shows the actual code, not a description of it.
-- **Type consistency:** `storageTask{ID string, Args []string}` (Task 3) is used identically by `storageSupervisor`'s constructor (Task 4, takes `args []string` positionally from `Args`), `storageManager.reconcile` (Task 5, keys its maps by `.ID`, compares `.Args` via `slices.Equal`), `run()`'s `storageTasksFunc func() ([]storageTask, bool)` (Task 6), and `renderPolicies`'s `storageTasks []storageTask` parameter (Task 7) — same field names and types throughout. `onOutcome func(err error)` (Task 4) matches exactly how Task 5 constructs it (`func(err error) { rs.recordOutcome(id, err, time.Now()) }`) and how Task 4's own tests exercise it.
+- **Type consistency:** `storageTask{ID string, Args []string}` (Task 5) is used identically by `storageSupervisor`'s constructor (Task 6, takes `args []string` positionally from `Args`), `storageManager.reconcile` (Task 7, keys its maps by `.ID`, compares `.Args` via `slices.Equal`), `run()`'s `storageTasksFunc func() ([]storageTask, bool)` (Task 8), and `renderPolicies`'s `storageTasks []storageTask` parameter (Task 9) — same field names and types throughout. `onOutcome func(err error)` (Task 6) matches exactly how Task 7 constructs it (`func(err error) { rs.recordOutcome(id, err, time.Now()) }`) and how Task 6's own tests exercise it.
