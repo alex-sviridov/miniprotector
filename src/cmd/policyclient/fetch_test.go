@@ -107,3 +107,37 @@ func TestRunFetch_ErrorPropagates_ExistingCacheUntouched(t *testing.T) {
 	require.NoError(t, readErr)
 	assert.Equal(t, "previous-good-cache", string(data))
 }
+
+func TestRunFetch_StoragePolicyCarriesPortAndConfig(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "policies-cache.json")
+
+	created := timestamppb.New(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	updated := timestamppb.New(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	fake := &fakePolicyServiceClient{resp: &pb.GetPoliciesResponse{
+		Policies: []*pb.Policy{
+			{
+				Id:        "storage-uuid-1",
+				Name:      "east-1-storage",
+				CreatedAt: created,
+				UpdatedAt: updated,
+				Type:      "storage",
+				Port:      9400,
+				Config:    `{"backend": "filesystem", "root": "/data/storage"}`,
+			},
+		},
+	}}
+
+	err := runFetch(context.Background(), fake, cachePath, fetchTestLogger())
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+
+	var got []CachedPolicy
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, "storage", got[0].Type)
+	assert.EqualValues(t, 9400, got[0].Port)
+	assert.JSONEq(t, `{"backend": "filesystem", "root": "/data/storage"}`, got[0].Config)
+}
