@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-28 — agent: supervise bwfs for storage policies
+
+`agent` is now the first consumer of the `"storage"` policy type added earlier today: every
+reconcile tick it derives an ensure-running task (not a scheduled job) for each cached storage
+policy targeting this node, and starts/crash-restarts/stops a `bwfs server` process accordingly —
+`agent list-policies` shows each one alongside the three static policies and backup tasks.
+
+**Breaking change:** `StoragePolicy.Hostname` (`policy-server`) is removed. Targeting which node
+runs a storage policy is now `client_filters` — the same mechanism a backup policy already uses —
+not a separate field; the corresponding proto field numbers are retired (`reserved`), not reused.
+
+Also fixes `bwfs`, the one gRPC server in this repo that never wired `signal.NotifyContext`: a
+`SIGTERM` previously killed it immediately instead of triggering the existing `GracefulStop()`
+path, which matters now that `agent` routinely sends it one.
+
 ## 2026-07-28 — api-server/web: storage policy create/edit support
 
 `api-server`'s `GET /policies` now accepts a `?type=` filter, and two new endpoints —
