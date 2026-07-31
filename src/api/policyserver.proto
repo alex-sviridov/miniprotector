@@ -74,8 +74,11 @@ message Policy {
   // written to the on-disk policy JSON. Populated by both GetPolicies and
   // ListPolicies.
   string type = 10;
-  // storage policy only -- unset/empty for a backup policy.
-  string hostname = 11;
+  // reserved 11 was "hostname" -- removed, targeting a storage policy at a
+  // node is client_filters only now, same as a backup policy; see
+  // docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md
+  reserved 11;
+  reserved "hostname";
   // storage policy only.
   int32 port = 12;
   // storage policy only -- opaque JSON text, verbatim passthrough. Never
@@ -96,7 +99,9 @@ message CreatePolicyRequest {
   // (backup) or below (storage) are valid; mixing fields from both types is
   // rejected.
   string type = 7;
-  string hostname = 8;
+  // reserved 8 was "hostname" -- removed, see Policy.reserved 11 above.
+  reserved 8;
+  reserved "hostname";
   int32 port = 9;
   string config = 10;
 }
@@ -112,10 +117,12 @@ message UpdatePolicyRequest {
   repeated string backup_window = 6;
   string destination = 7;
   // A policy's type is immutable via UpdatePolicy -- there is no type field
-  // here. hostname/port/config are only valid when the policy being updated
-  // is already type "storage"; object_filters/rpo/backup_window/destination
+  // here. port/config are only valid when the policy being updated is
+  // already type "storage"; object_filters/rpo/backup_window/destination
   // are only valid when it's already type "backup".
-  string hostname = 8;
+  // reserved 8 was "hostname" -- removed, see Policy.reserved 11 above.
+  reserved 8;
+  reserved "hostname";
   int32 port = 9;
   string config = 10;
 }

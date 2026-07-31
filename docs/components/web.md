@@ -38,13 +38,14 @@ no data — there's no read-only "guest" mode.
 - `/policies/:id` — one policy's full record (client filters, object filters, backup window)
 - `/policies/new` — create a new policy
 - `/policies/:id/edit` — edit an existing policy
-- `/storage` — every storage policy (name, hostname, port, storage type), with a "New Storage
+- `/storage` — every storage policy (name, target hostname, port, storage type), with a "New Storage
   Policy" action and a click-to-edit name column, both opening the same `StorageEditModal` (fields:
-  name, hostname, port, storage type — `filesystem` only today — and, when `filesystem` is selected,
-  a filesystem path). Kept fully separate from `/policies`: its own store
-  (`stores/storagePolicies.js`), its own component folder (`components/storage/`), and no detail or
-  form routes of its own — list and modal only. `/policies` itself now requests only `type=backup`
-  policies, so a storage policy never appears there.
+  name, target hostname, port, storage type — `filesystem` only today — and, when `filesystem` is
+  selected, a filesystem path). "Target hostname" submits as `client_filters.hostnames` — the same
+  targeting mechanism `/policies` uses, not a separate field. Kept fully separate from `/policies`:
+  its own store (`stores/storagePolicies.js`), its own component folder (`components/storage/`), and
+  no detail or form routes of its own — list and modal only. `/policies` itself now requests only
+  `type=backup` policies, so a storage policy never appears there.
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:

@@ -340,8 +340,6 @@ type Policy struct {
 	// written to the on-disk policy JSON. Populated by both GetPolicies and
 	// ListPolicies.
 	Type string `protobuf:"bytes,10,opt,name=type,proto3" json:"type,omitempty"`
-	// storage policy only -- unset/empty for a backup policy.
-	Hostname string `protobuf:"bytes,11,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	// storage policy only.
 	Port int32 `protobuf:"varint,12,opt,name=port,proto3" json:"port,omitempty"`
 	// storage policy only -- opaque JSON text, verbatim passthrough. Never
@@ -451,13 +449,6 @@ func (x *Policy) GetType() string {
 	return ""
 }
 
-func (x *Policy) GetHostname() string {
-	if x != nil {
-		return x.Hostname
-	}
-	return ""
-}
-
 func (x *Policy) GetPort() int32 {
 	if x != nil {
 		return x.Port
@@ -486,7 +477,6 @@ type CreatePolicyRequest struct {
 	// (backup) or below (storage) are valid; mixing fields from both types is
 	// rejected.
 	Type          string `protobuf:"bytes,7,opt,name=type,proto3" json:"type,omitempty"`
-	Hostname      string `protobuf:"bytes,8,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	Port          int32  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
 	Config        string `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -572,13 +562,6 @@ func (x *CreatePolicyRequest) GetType() string {
 	return ""
 }
 
-func (x *CreatePolicyRequest) GetHostname() string {
-	if x != nil {
-		return x.Hostname
-	}
-	return ""
-}
-
 func (x *CreatePolicyRequest) GetPort() int32 {
 	if x != nil {
 		return x.Port
@@ -604,13 +587,8 @@ type UpdatePolicyRequest struct {
 	Rpo           string          `protobuf:"bytes,5,opt,name=rpo,proto3" json:"rpo,omitempty"`
 	BackupWindow  []string        `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
 	Destination   string          `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
-	// A policy's type is immutable via UpdatePolicy -- there is no type field
-	// here. hostname/port/config are only valid when the policy being updated
-	// is already type "storage"; object_filters/rpo/backup_window/destination
-	// are only valid when it's already type "backup".
-	Hostname      string `protobuf:"bytes,8,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	Port          int32  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
-	Config        string `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
+	Port          int32           `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
+	Config        string          `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -690,13 +668,6 @@ func (x *UpdatePolicyRequest) GetBackupWindow() []string {
 func (x *UpdatePolicyRequest) GetDestination() string {
 	if x != nil {
 		return x.Destination
-	}
-	return ""
-}
-
-func (x *UpdatePolicyRequest) GetHostname() string {
-	if x != nil {
-		return x.Hostname
 	}
 	return ""
 }
@@ -817,7 +788,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\ainclude\x18\x02 \x03(\tR\ainclude\x12\x18\n" +
 	"\aexclude\x18\x03 \x03(\tR\aexclude\x12\x0e\n" +
-	"\x02id\x18\x04 \x01(\tR\x02id\"\xec\x03\n" +
+	"\x02id\x18\x04 \x01(\tR\x02id\"\xe0\x03\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -831,10 +802,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x02id\x18\b \x01(\tR\x02id\x12I\n" +
 	"\x0eclient_filters\x18\t \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12\x12\n" +
 	"\x04type\x18\n" +
-	" \x01(\tR\x04type\x12\x1a\n" +
-	"\bhostname\x18\v \x01(\tR\bhostname\x12\x12\n" +
+	" \x01(\tR\x04type\x12\x12\n" +
 	"\x04port\x18\f \x01(\x05R\x04port\x12\x16\n" +
-	"\x06config\x18\r \x01(\tR\x06config\"\xf3\x02\n" +
+	"\x06config\x18\r \x01(\tR\x06configJ\x04\b\v\x10\fR\bhostname\"\xe7\x02\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
@@ -842,11 +812,10 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x03rpo\x18\x04 \x01(\tR\x03rpo\x12#\n" +
 	"\rbackup_window\x18\x05 \x03(\tR\fbackupWindow\x12 \n" +
 	"\vdestination\x18\x06 \x01(\tR\vdestination\x12\x12\n" +
-	"\x04type\x18\a \x01(\tR\x04type\x12\x1a\n" +
-	"\bhostname\x18\b \x01(\tR\bhostname\x12\x12\n" +
+	"\x04type\x18\a \x01(\tR\x04type\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
-	" \x01(\tR\x06config\"\xef\x02\n" +
+	" \x01(\tR\x06configJ\x04\b\b\x10\tR\bhostname\"\xe3\x02\n" +
 	"\x13UpdatePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12I\n" +
@@ -854,11 +823,10 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x0eobject_filters\x18\x04 \x03(\v2!.policyserverservice.ObjectFilterR\robjectFilters\x12\x10\n" +
 	"\x03rpo\x18\x05 \x01(\tR\x03rpo\x12#\n" +
 	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12 \n" +
-	"\vdestination\x18\a \x01(\tR\vdestination\x12\x1a\n" +
-	"\bhostname\x18\b \x01(\tR\bhostname\x12\x12\n" +
+	"\vdestination\x18\a \x01(\tR\vdestination\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
-	" \x01(\tR\x06config\"%\n" +
+	" \x01(\tR\x06configJ\x04\b\b\x10\tR\bhostname\"%\n" +
 	"\x13DeletePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x16\n" +
 	"\x14DeletePolicyResponse2\xe9\x03\n" +

@@ -42,10 +42,16 @@ type CachedPolicy struct {
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
 	Destination   string         `json:"destination"`
+	// Storage-policy-only fields, zero/empty for a backup policy -- same
+	// additive convention the proto itself uses. Passthrough here; agent
+	// (cmd/agent/storage.go) is what interprets Config.
+	Port   int32  `json:"port,omitempty"`
+	Config string `json:"config,omitempty"`
 	// Derived by policy-server from the subfolder the policy file was
 	// loaded from (e.g. "backup"). Pure passthrough here -- policyclient
 	// itself never branches on it; agent does (see
-	// cmd/agent/backup.go's backupTasks).
+	// cmd/agent/backup.go's backupTasks and cmd/agent/storage.go's
+	// storageTasks).
 	Type string `json:"type"`
 }
 
@@ -126,6 +132,8 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			RPO:           p.GetRpo(),
 			BackupWindow:  p.GetBackupWindow(),
 			Destination:   p.GetDestination(),
+			Port:          p.GetPort(),
+			Config:        p.GetConfig(),
 			Type:          p.GetType(),
 		})
 	}

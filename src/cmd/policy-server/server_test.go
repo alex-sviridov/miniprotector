@@ -229,7 +229,6 @@ func TestGetPolicies_StoragePolicyStillOmitsClientFilters(t *testing.T) {
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
 		"metadata": {"name": "east-1-storage"},
 		"client_filters": {"hostnames": ["storage-east-*"]},
-		"hostname": "storage-east-1.internal",
 		"port": 9400,
 		"config": {"backend": "filesystem"}
 	}`)
@@ -239,7 +238,6 @@ func TestGetPolicies_StoragePolicyStillOmitsClientFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Policies, 1)
 	p := resp.Policies[0]
-	assert.Equal(t, "storage-east-1.internal", p.Hostname)
 	assert.Equal(t, int32(9400), p.Port)
 	assert.JSONEq(t, `{"backend": "filesystem"}`, p.Config)
 	assert.Nil(t, p.ClientFilters)
@@ -278,7 +276,6 @@ func TestListPolicies_FilterByTypeReturnsOnlyMatchingType(t *testing.T) {
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
 		"metadata": {"name": "east-1-storage"},
-		"hostname": "storage-east-1.internal",
 		"port": 9400,
 		"config": {"backend": "filesystem"}
 	}`)
@@ -298,7 +295,6 @@ func TestListPolicies_EmptyTypeReturnsEveryType(t *testing.T) {
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
 		"metadata": {"name": "east-1-storage"},
-		"hostname": "storage-east-1.internal",
 		"port": 9400,
 		"config": {"backend": "filesystem"}
 	}`)

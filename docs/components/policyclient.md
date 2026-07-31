@@ -53,15 +53,26 @@ directly:
     "backup_window": ["0 2 * * *"],
     "destination": "bwfs-east.internal:8080",
     "type": "backup"
+  },
+  {
+    "id": "c2d3e4f5-...",
+    "name": "east-1-storage",
+    "created_at": "2026-07-28T00:00:00Z",
+    "updated_at": "2026-07-28T00:00:00Z",
+    "port": 9400,
+    "config": "{\"backend\": \"filesystem\", \"root\": \"/data/storage\"}",
+    "type": "storage"
   }
 ]
 ```
 
 `type` is derived by `policy-server` from the subfolder the policy file lives in (`policies/backup/`
-today) — pure passthrough data as far as `policyclient` is concerned; see
+or `policies/storage/`) — pure passthrough data as far as `policyclient` is concerned; see
 [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md).
-`agent` is the consumer that actually branches on it (see
-[agent](./agent.md#policy-driven-backup-execution)).
+`port`/`config` are populated only for a `"storage"`-typed policy (zero/empty for `"backup"`), same
+additive convention as the RPC response. `agent` is the consumer that actually branches on `type`
+(see [agent](./agent.md#policy-driven-backup-execution) for backup policies,
+[agent](./agent.md#storage-policy-supervision) for storage ones).
 
 ## Building
 

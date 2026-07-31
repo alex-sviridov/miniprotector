@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -50,7 +52,21 @@ func main() {
 			"StoragePath", arguments.StoragePath,
 			"serverPort", arguments.Port,
 		)
-		backupServer, err := NewBackupServer(ctx, logger, arguments.StoragePath)
+
+		// Every other gRPC server in this repo wires signal.NotifyContext
+		// before starting -- bwfs was the one outlier, meaning
+		// common/connection/server.go's existing GracefulStop() path (on
+		// <-ctx.Done()) was dead code here: a SIGTERM killed bwfs
+		// immediately, hard-terminating any in-flight BackupService/
+		// RestoreService stream instead of letting it finish. This matters
+		// now specifically because agent (see docs/components/agent.md's
+		// "Storage-policy supervision") routinely sends bwfs SIGTERM --
+		// on its own shutdown, and whenever a storage policy is edited or
+		// removed.
+		signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		backupServer, err := NewBackupServer(signalCtx, logger, arguments.StoragePath)
 		if err != nil {
 			logger.Error("Server initialization failed", "error", err)
 			os.Exit(1)
@@ -79,7 +95,7 @@ func main() {
 			logger.Warn("Marked stale in-progress jobs as failed after restart", "count", staleCount)
 		}
 
-		go watchStaleJobs(ctx, backupServer, time.Duration(conf.JobTimeoutSec)*time.Second)
+		go watchStaleJobs(signalCtx, backupServer, time.Duration(conf.JobTimeoutSec)*time.Second)
 
 		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
 		if err != nil {
@@ -103,7 +119,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := connection.StartServer(ctx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
+		if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
 			pb.RegisterBackupServiceServer(s, backupServer)
 			pb.RegisterListServiceServer(s, listSrv)
 			pb.RegisterRestoreServiceServer(s, restoreSrv)

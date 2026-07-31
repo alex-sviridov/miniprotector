@@ -317,7 +317,6 @@ func TestCreatePolicy_StoragePolicyWritesIntoStorageDir(t *testing.T) {
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:     "East 1 Storage",
 		Type:     "storage",
-		Hostname: "storage-east-1.internal",
 		Port:     9400,
 		Config:   `{"backend": "filesystem"}`,
 	})
@@ -325,7 +324,6 @@ func TestCreatePolicy_StoragePolicyWritesIntoStorageDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.Id)
 	assert.Equal(t, "storage", resp.Type)
-	assert.Equal(t, "storage-east-1.internal", resp.Hostname)
 	assert.Equal(t, int32(9400), resp.Port)
 	assert.JSONEq(t, `{"backend": "filesystem"}`, resp.Config)
 
@@ -340,7 +338,6 @@ func TestCreatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
 	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:        "bad",
 		Type:        "storage",
-		Hostname:    "h",
 		Port:        9400,
 		Config:      `{}`,
 		Destination: "bwfs:8080",
@@ -356,9 +353,9 @@ func TestCreatePolicy_BackupTypeWithStorageFieldsRejected(t *testing.T) {
 	srv := newTestWriteServer(t, dir)
 
 	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:     "bad",
-		Type:     "backup",
-		Hostname: "h",
+		Name: "bad",
+		Type: "backup",
+		Port: 9400,
 	})
 
 	st, ok := status.FromError(err)
@@ -370,7 +367,6 @@ func TestUpdatePolicy_StoragePolicyRoundTripsAndTypeStaysImmutable(t *testing.T)
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
 		"metadata": {"name": "east-1"},
-		"hostname": "old-host",
 		"port": 1111,
 		"config": {"a": 1}
 	}`)
@@ -378,17 +374,15 @@ func TestUpdatePolicy_StoragePolicyRoundTripsAndTypeStaysImmutable(t *testing.T)
 	original := srv.cache.Policies()[0]
 
 	resp, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
-		Id:       original.Meta().ID,
-		Name:     "east-1-renamed",
-		Hostname: "new-host",
-		Port:     2222,
-		Config:   `{"a": 2}`,
+		Id:     original.Meta().ID,
+		Name:   "east-1-renamed",
+		Port:   2222,
+		Config: `{"a": 2}`,
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, original.Meta().ID, resp.Id, "id must stay stable across an update")
 	assert.Equal(t, "storage", resp.Type, "type must stay \"storage\" -- UpdatePolicy cannot change it")
-	assert.Equal(t, "new-host", resp.Hostname)
 	assert.Equal(t, int32(2222), resp.Port)
 	assert.JSONEq(t, `{"a": 2}`, resp.Config)
 }
@@ -396,7 +390,7 @@ func TestUpdatePolicy_StoragePolicyRoundTripsAndTypeStaysImmutable(t *testing.T)
 func TestUpdatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
-		"metadata": {"name": "east-1"}, "hostname": "h", "port": 1111, "config": {}
+		"metadata": {"name": "east-1"}, "port": 1111, "config": {}
 	}`)
 	srv := newTestWriteServer(t, dir)
 	original := srv.cache.Policies()[0]
@@ -404,7 +398,6 @@ func TestUpdatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
 	_, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
 		Id:          original.Meta().ID,
 		Name:        "east-1",
-		Hostname:    "h",
 		Port:        1111,
 		Config:      `{}`,
 		Destination: "bwfs:8080",

@@ -33,14 +33,16 @@ Loki (through `log-gateway`'s read-proxy route) and aggregate the result — the
 exception to that rule, documented in
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
-`policy-server` also supports a `"storage"` policy type (`hostname`/`port`/`config`).
+`policy-server` also supports a `"storage"` policy type (`port`/`config`).
 `GET /policies` accepts an optional `?type=backup|storage` query parameter to filter by type;
-without it, every policy of every type is returned, each with `hostname`/`port`/`config` populated
-in the response DTO when applicable (empty/zero for a `"backup"`-typed policy, and vice versa for
+without it, every policy of every type is returned, each with `port`/`config` populated
+in the response DTO when applicable (zero for a `"backup"`-typed policy, and vice versa for
 `rpo`/`destination`/`object_filters`). Creating or updating a storage policy uses a separate pair of
 endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage policy's input
-shape (`hostname`/`port`/`config`) shares nothing with a backup policy's
-(`object_filters`/`rpo`/`backup_window`/`destination`) beyond `name`/`client_filters`. `GET
+shape (`port`/`config`) shares nothing with a backup policy's
+(`object_filters`/`rpo`/`backup_window`/`destination`) beyond `name`/`client_filters` — which is also
+how a storage policy targets a node (there is no separate `hostname` field; set
+`client_filters.hostnames` the same way a backup policy would). `GET
 /policies/{id}` and `DELETE /policies/{id}` are shared across both types — both operations are
 already type-agnostic, looking a policy up or removing it by `id` alone.
 

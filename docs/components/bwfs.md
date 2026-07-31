@@ -35,6 +35,13 @@ On startup, before accepting connections, the server runs a vacuum pass over the
 orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
 
+On `SIGTERM`/`SIGINT`, `bwfs` now shuts down gracefully: `grpc.Server.GracefulStop()` lets any
+in-flight `BackupService`/`ListService`/`RestoreService` call finish before the process exits,
+rather than killing it mid-stream — the same behavior every other gRPC server in this repo already
+had. This matters for [agent](./agent.md#storage-policy-supervision), which supervises a `bwfs
+server` process per storage policy targeting this node and routinely sends it `SIGTERM` (on its own
+shutdown, or when a storage policy is edited/removed).
+
 #### Backup Job Tracking & Completion Verification
 
 Every stream `bwfs` accepts must carry `job-id` gRPC metadata (sent by `brfs` — see

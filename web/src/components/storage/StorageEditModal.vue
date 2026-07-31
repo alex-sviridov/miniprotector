@@ -20,7 +20,7 @@ function parseConfig(configText) {
 
 const form = reactive({
   name: props.policy?.name || '',
-  hostname: props.policy?.hostname || '',
+  targetHostname: props.policy?.client_filters?.hostnames?.[0] || '',
   port: props.policy ? String(props.policy.port) : '',
   storageType: parseConfig(props.policy?.config).backend || 'filesystem',
   path: parseConfig(props.policy?.config).root || '',
@@ -52,8 +52,8 @@ function submit() {
     errors.message = 'Name is required.'
     return
   }
-  if (!form.hostname.trim()) {
-    errors.message = 'Hostname is required.'
+  if (!form.targetHostname.trim()) {
+    errors.message = 'Target hostname is required.'
     return
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -67,14 +67,13 @@ function submit() {
 
   emit('save', {
     name: form.name.trim(),
-    hostname: form.hostname.trim(),
     port,
     config: JSON.stringify({
       ...parseConfig(props.policy?.config),
       backend: form.storageType,
       root: form.path.trim(),
     }),
-    client_filters: { hostnames: [], labels: {} },
+    client_filters: { hostnames: [form.targetHostname.trim()], labels: {} },
   })
 }
 </script>
@@ -93,8 +92,8 @@ function submit() {
           <input data-test="storage-name-input" v-model="form.name" class="w-full border rounded px-2 py-1" />
         </div>
         <div>
-          <label class="block font-medium mb-1">Hostname</label>
-          <input data-test="storage-hostname-input" v-model="form.hostname" class="w-full border rounded px-2 py-1" />
+          <label class="block font-medium mb-1">Target Hostname</label>
+          <input data-test="storage-target-hostname-input" v-model="form.targetHostname" class="w-full border rounded px-2 py-1" />
         </div>
         <div>
           <label class="block font-medium mb-1">Port</label>

@@ -71,9 +71,10 @@ func formatNextRun(t time.Time, now time.Time) string {
 }
 
 // renderPolicies reads cachePath and writes a table of every embedded
-// policy's reconciliation state to w. It never executes a policy — purely
-// a read-only view of what `agent serve` last recorded.
-func renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Policy) error {
+// policy's reconciliation state, plus every supervised storage task's, to
+// w. It never executes a policy or starts a bwfs process — purely a
+// read-only view of what `agent serve` last recorded.
+func renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Policy, storageTasks []storageTask) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
@@ -91,6 +92,20 @@ func renderPolicies(w io.Writer, cachePath string, now time.Time, policies []Pol
 			s.ConsecutiveFailures,
 			formatError(s.LastError),
 			formatNextRun(estimatedNextRun(p, s, now), now),
+		)
+	}
+	// Storage tasks are ensure-running daemons, not scheduled jobs -- there
+	// is no next-run estimate to show, so NEXT RUN is always "-".
+	for _, t := range storageTasks {
+		s := cache[t.ID]
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			t.ID,
+			health(s),
+			formatTime(s.LastSuccessAt),
+			formatTime(s.LastAttemptAt),
+			s.ConsecutiveFailures,
+			formatError(s.LastError),
+			"-",
 		)
 	}
 	return tw.Flush()

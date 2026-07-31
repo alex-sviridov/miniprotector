@@ -63,9 +63,12 @@ the response to that type; empty returns every type, unchanged from before this 
 and [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
 
 A `"backup"` policy describes what to back up and where: `object_filters`, `rpo`, `backup_window`,
-`destination`. A `"storage"` policy describes where a future storage server should run and how it
-should be configured: `hostname`, `port`, and an opaque `config` JSON blob `policy-server` validates
-is well-formed but never interprets — nothing in `policy-server` yet runs anything based on it.
+`destination`. A `"storage"` policy describes how a future storage server should be configured:
+`port` and an opaque `config` JSON blob `policy-server` validates is well-formed but never
+interprets. Targeting which node runs it is `client_filters` — the same mechanism a backup policy
+already uses — not a field specific to this type; see
+[Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md),
+which is the first actual consumer of `storage`-typed policies.
 
 ### Policy files and hot reload
 
@@ -77,8 +80,8 @@ syntactically-valid patterns at load time but otherwise opaque to `policy-server
 [Filesystem Backup Flow](../process/filesystem-backup.md) for how `brfs` applies them), `rpo` (a
 duration string, e.g. `"24h"`), `backup_window` (a list of cron expressions, e.g.
 `["0 2 * * *", "0 20 * * *"]`), and `destination` (a `host:port` string, the target `bwfs` for this
-policy's backups). A `"storage"` policy instead has `hostname`, `port`, and `config` (an opaque JSON
-object, validated as well-formed at load time but never interpreted). `policy-server` also computes
+policy's backups). A `"storage"` policy instead has `port` and `config` (an opaque JSON object,
+validated as well-formed at load time but never interpreted). `policy-server` also computes
 (never reads) a deterministic ID for the policy itself — and, for a `"backup"` policy, one for each
 object filter — derived from the file's name (and each filter's position) — stable across reloads,
 and changes only if the file is renamed or (for a backup policy) its `object_filters` are

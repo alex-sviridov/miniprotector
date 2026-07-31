@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -82,6 +84,11 @@ func main() {
 			logger.Error("vector binary resolution failed", "error", err)
 			os.Exit(1)
 		}
+		bwfsBinary := resolveExecPath("bwfs")
+		storageMgr := newStorageManager(bwfsBinary, logger)
+		storageTasksFunc := func() ([]storageTask, bool) {
+			return storageTasks(policiesCachePath, logger)
+		}
 		hostname, err := hostnameFromBootstrapCert(certsDir)
 		if err != nil {
 			logger.Error("hostname resolution from bootstrap credential failed", "error", err)
@@ -105,6 +112,7 @@ func main() {
 		vectorSup := newVectorSupervisor(vectorBinary, vectorConfigPath, logger)
 		vectorSup.Start(signalCtx)
 		defer vectorSup.Stop()
+		defer storageMgr.StopAll()
 
 		onSuccess := func(policyID string) {
 			if policyID == "operating-refresh" {
@@ -113,14 +121,20 @@ func main() {
 		}
 
 		logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath, "vector_config", vectorConfigPath)
-		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess); err != nil {
+		if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess, storageTasksFunc, storageMgr); err != nil {
 			logger.Error("agent exited with error", "error", err)
 			os.Exit(1)
 		}
 
 	case "list-policies":
 		allPolicies, _ := policiesFunc()
-		if err := renderPolicies(os.Stdout, cachePath, time.Now(), allPolicies); err != nil {
+		// list-policies never executes anything -- a silent logger here
+		// keeps storageTasks' own skip-with-log warnings out of stdout's
+		// table, matching this command's existing read-only, no-noise
+		// character.
+		silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		storageTaskList, _ := storageTasks(policiesCachePath, silentLogger)
+		if err := renderPolicies(os.Stdout, cachePath, time.Now(), allPolicies, storageTaskList); err != nil {
 			fmt.Fprintf(os.Stderr, "list-policies failed: %v\n", err)
 			os.Exit(1)
 		}

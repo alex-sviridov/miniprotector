@@ -94,6 +94,18 @@ Editing that spec directly since it describes unimplemented work:
 - Everything else in that spec (store shape, list view, routing, data flow, testing plan) is
   unchanged.
 
+**Addendum (post-planning discovery):** the paragraph above, and the "Out of scope" bullet
+declaring `api-server` untouched, assumed `2026-07-28-storage-policy-web-ui-design.md` described
+unimplemented work — confirmed at the time by inspecting `src/cmd/api-server/policies.go` on the
+branch this design was written against. That assumption turned out to be false: a complete,
+working implementation of that spec existed on a separate, unmerged branch
+(`storage-policy-web-ui`) the whole time, and has since been merged into `main`. It implements the
+*original* spec — a raw `Hostname` field throughout `api-server`'s `policyDTO`/`storagePolicyInput`
+and the web `StorageEditModal`/`StorageView` — which now needs the same `Hostname`-removal treatment
+described above, applied to real code instead of a planning document. This is handled by the
+implementation plan's Task 2 (`api-server`) and Task 3 (`web`), inserted specifically for this;
+`policy-server`'s removal (this design's original scope) is otherwise unaffected.
+
 ## `policyclient`: cache schema
 
 `CachedPolicy` (`src/cmd/policyclient/fetch.go`) gains two additive fields, populated in

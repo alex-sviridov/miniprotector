@@ -50,7 +50,7 @@ func TestRenderPolicies_MissingCacheShowsNeverRunAndDueNow(t *testing.T) {
 	testPolicies := []Policy{{ID: "bootstrap-refresh", Binary: "certclient", Interval: 24 * time.Hour}}
 
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, time.Now(), testPolicies))
+	require.NoError(t, renderPolicies(&buf, cachePath, time.Now(), testPolicies, nil))
 
 	out := buf.String()
 	assert.Contains(t, out, "bootstrap-refresh")
@@ -70,7 +70,7 @@ func TestRenderPolicies_HealthyPolicyShowsOkAndNotNeverRun(t *testing.T) {
 	}))
 
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies, nil))
 
 	out := buf.String()
 	assert.Contains(t, out, "ok")
@@ -90,7 +90,7 @@ func TestRenderPolicies_FailingPolicyShowsRetryingWithCount(t *testing.T) {
 	}))
 
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies, nil))
 
 	assert.Contains(t, buf.String(), "retrying (3 failures)")
 }
@@ -124,7 +124,7 @@ func TestRenderPolicies_FailingPolicyShowsLastError(t *testing.T) {
 	}))
 
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies, nil))
 
 	assert.Contains(t, buf.String(), "connection refused")
 }
@@ -142,8 +142,43 @@ func TestRenderPolicies_LongLastErrorIsTruncatedInTable(t *testing.T) {
 	}))
 
 	var buf bytes.Buffer
-	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies))
+	require.NoError(t, renderPolicies(&buf, cachePath, now, testPolicies, nil))
 
 	out := buf.String()
 	assert.NotContains(t, out, longErr, "the full 200-char error must not appear verbatim in table output")
+}
+
+func TestRenderPolicies_StorageTaskShowsOkAndDashForNextRun(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+
+	now := time.Now()
+	require.NoError(t, writeCache(cachePath, Cache{
+		"storage:east-1-storage": {LastSuccessAt: &now},
+	}))
+
+	var buf bytes.Buffer
+	require.NoError(t, renderPolicies(&buf, cachePath, now, nil, []storageTask{{ID: "storage:east-1-storage"}}))
+
+	out := buf.String()
+	assert.Contains(t, out, "storage:east-1-storage")
+	assert.Contains(t, out, "ok")
+}
+
+func TestRenderPolicies_StorageTaskCrashLoopingShowsRetryingWithCount(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+
+	now := time.Now()
+	retryAt := now.Add(time.Minute)
+	require.NoError(t, writeCache(cachePath, Cache{
+		"storage:east-1-storage": {LastAttemptAt: &now, ConsecutiveFailures: 4, NextRetryAt: &retryAt, LastError: "bind: address already in use"},
+	}))
+
+	var buf bytes.Buffer
+	require.NoError(t, renderPolicies(&buf, cachePath, now, nil, []storageTask{{ID: "storage:east-1-storage"}}))
+
+	out := buf.String()
+	assert.Contains(t, out, "retrying (4 failures)")
+	assert.Contains(t, out, "bind: address already in use")
 }

@@ -38,6 +38,10 @@ type cachedPolicy struct {
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
 	Destination   string         `json:"destination"`
+	// Storage-policy-only fields, zero/empty for a backup policy -- see
+	// storage.go's storageTasks, the consumer that reads these.
+	Port   int32  `json:"port,omitempty"`
+	Config string `json:"config,omitempty"`
 }
 
 // readCachedPolicies reads policiesCachePath, returning ok=false if the
