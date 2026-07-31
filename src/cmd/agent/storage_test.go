@@ -182,7 +182,11 @@ func TestStorageSupervisor_RestartsOnUnexpectedExitAndRecordsFailure(t *testing.
 	assert.True(t, sawFailure, "at least one crash must be recorded as a failure")
 }
 
-func TestStorageSupervisor_SuccessfulStartRecordsSuccessImmediately(t *testing.T) {
+func TestStorageSupervisor_SuccessfulStartRecordsSuccessAfterStabilityWindow(t *testing.T) {
+	origWindow := storageStabilityWindow
+	storageStabilityWindow = 20 * time.Millisecond
+	defer func() { storageStabilityWindow = origWindow }()
+
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
@@ -194,16 +198,69 @@ func TestStorageSupervisor_SuccessfulStartRecordsSuccessImmediately(t *testing.T
 	defer cancel()
 	sup.Start(ctx)
 
+	// The outcome must not arrive before the (shrunk) stability window has
+	// had a chance to elapse -- proves onOutcome(nil) isn't fired immediately
+	// on spawn anymore.
 	select {
 	case err := <-outcomes:
-		assert.NoError(t, err, "a successful start must record success without waiting for the process to exit")
+		t.Fatalf("onOutcome fired before the stability window elapsed: %v", err)
+	case <-time.After(5 * time.Millisecond):
+	}
+
+	select {
+	case err := <-outcomes:
+		assert.NoError(t, err, "a start that stays up past the stability window must record success")
 	case <-time.After(time.Second):
-		t.Fatal("onOutcome was never called for a successful start")
+		t.Fatal("onOutcome was never called after the stability window elapsed")
 	}
 	sup.Stop()
 }
 
+func TestStorageSupervisor_CrashBeforeStabilityWindowNeverRecordsSuccess(t *testing.T) {
+	origWindow := storageStabilityWindow
+	storageStabilityWindow = 200 * time.Millisecond
+	defer func() { storageStabilityWindow = origWindow }()
+
+	origBase, origMax := backoffBase, backoffMax
+	backoffBase, backoffMax = 10*time.Millisecond, 30*time.Millisecond
+	defer func() { backoffBase, backoffMax = origBase, origMax }()
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	// Exits almost immediately -- well before the 200ms stability window.
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\nsleep 0.01\nexit 1\n"))
+
+	var mu sync.Mutex
+	var outcomes []error
+	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		outcomes = append(outcomes, err)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	sup.Start(ctx)
+
+	select {
+	case <-sup.loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervise loop did not stop after context timeout")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, outcomes, "a persistently crashing bwfs must record at least one outcome")
+	for _, err := range outcomes {
+		assert.Error(t, err, "a process that crashes before the stability window elapses must never be recorded as a success")
+	}
+}
+
 func TestStorageSupervisor_DeliberateStopDoesNotRecordFailure(t *testing.T) {
+	origWindow := storageStabilityWindow
+	storageStabilityWindow = 20 * time.Millisecond
+	defer func() { storageStabilityWindow = origWindow }()
+
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
@@ -219,7 +276,7 @@ func TestStorageSupervisor_DeliberateStopDoesNotRecordFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sup.Start(ctx)
-	time.Sleep(100 * time.Millisecond) // let it start (records one nil outcome)
+	time.Sleep(100 * time.Millisecond) // let it start and clear the (shrunk) stability window, recording one nil outcome
 
 	sup.Stop()
 	select {
@@ -230,9 +287,54 @@ func TestStorageSupervisor_DeliberateStopDoesNotRecordFailure(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
+	require.NotEmpty(t, outcomes, "the process should have stayed up past the stability window and recorded a success before Stop()")
 	for _, err := range outcomes {
 		assert.NoError(t, err, "a deliberate Stop() must never record a failure outcome")
 	}
+}
+
+func TestStorageSupervisor_StopDuringBackoffWaitReturnsPromptly(t *testing.T) {
+	origBase, origMax := backoffBase, backoffMax
+	backoffBase, backoffMax = 10*time.Second, 10*time.Second
+	defer func() { backoffBase, backoffMax = origBase, origMax }()
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\nexit 1\n"))
+
+	failed := make(chan struct{}, 1)
+	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
+		if err != nil {
+			select {
+			case failed <- struct{}{}:
+			default:
+			}
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sup.Start(ctx)
+
+	// Wait until the first crash has been recorded as a failure -- by then
+	// superviseLoop has already passed its shuttingDown check for this
+	// iteration and is heading into (or already sitting in) the 10s backoff
+	// select, exactly the state this fix targets.
+	select {
+	case <-failed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first crash was never recorded as a failure")
+	}
+
+	start := time.Now()
+	sup.Stop()
+
+	select {
+	case <-sup.loopDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Stop() during backoff wait did not stop the supervisor promptly")
+	}
+	assert.Less(t, time.Since(start), 500*time.Millisecond, "Stop() must interrupt the backoff wait, not wait out the full 10s backoff")
 }
 
 // osWriteExecutable writes content to path as an executable file --
@@ -243,6 +345,10 @@ func osWriteExecutable(t *testing.T, path, content string) error {
 }
 
 func TestStorageManager_StartsSupervisorForNewTask(t *testing.T) {
+	origWindow := storageStabilityWindow
+	storageStabilityWindow = 20 * time.Millisecond
+	defer func() { storageStabilityWindow = origWindow }()
+
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))

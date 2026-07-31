@@ -125,14 +125,18 @@ skipped with a logged error, the same fail-safe direction as an unparseable `rpo
 `backup_window` for backup tasks. A matching policy becomes `bwfs <root> server --port <port>`.
 
 Each storage task is supervised independently (`storage:<policy-name>`, mirroring the `backup:`
-prefix convention): a successful start is recorded immediately as success (not "exited
-successfully" — a server isn't expected to exit on its own), an unexpected exit is recorded as a
-failure with the same jittered `backoff()` reconcile.go already uses elsewhere, and a policy that's
-edited (port/path changed) or removed causes the running `bwfs` to be stopped (`SIGTERM`, a graceful
-drain since `bwfs` now honors it — see [bwfs](./bwfs.md)) and, for an edit, a fresh one started with
-the new arguments. `agent list-policies` shows each supervised storage task as an additional row,
-reusing the same STATE/FAILURES/ERROR columns as everything else, with `NEXT RUN` always `-` since
-there's no schedule to estimate.
+prefix convention): a start is recorded as success (not "exited successfully" — a server isn't
+expected to exit on its own) only once the process has stayed running for a short stability window
+(a few seconds) — a crash faster than that never resets the failure count, so a persistently
+crash-looping `bwfs` accumulates failures instead of bouncing back to "1 failure" on every restart.
+An unexpected exit is recorded as a failure with the same jittered `backoff()` reconcile.go already
+uses elsewhere, and a policy that's edited (port/path changed) or removed causes the running `bwfs`
+to be stopped (`SIGTERM`, a graceful drain since `bwfs` now honors it — see [bwfs](./bwfs.md)) and,
+for an edit, a fresh one started with the new arguments; a `Stop()` issued while a supervisor is
+sitting out a crash-backoff wait takes effect immediately rather than waiting out the remaining
+backoff. `agent list-policies` shows each supervised storage task as an additional row, reusing the
+same STATE/FAILURES/ERROR columns as everything else, with `NEXT RUN` always `-` since there's no
+schedule to estimate.
 
 See [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md).
 

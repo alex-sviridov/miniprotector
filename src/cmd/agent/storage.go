@@ -80,6 +80,14 @@ func storageTasks(policiesCachePath string, logger *slog.Logger) ([]storageTask,
 	return tasks, true
 }
 
+// storageStabilityWindow is how long a spawned bwfs must stay running
+// before its start is reported as a success. A process that crashes
+// faster than this never resets the persisted failure count, so a
+// genuine crash loop's failure count climbs instead of bouncing back to
+// "1 failure" on every restart attempt. A var (not const) so tests can
+// shrink it instead of waiting out a real multi-second window.
+var storageStabilityWindow = 3 * time.Second
+
 // storageSupervisor owns the lifecycle of one supervised bwfs server
 // process: a long-running child, not a due/execute/complete Policy, so it
 // gets its own small supervise loop -- modeled directly on vector.go's
@@ -102,21 +110,28 @@ type storageSupervisor struct {
 	// test-only instrumentation, never set in production.
 	onSpawnForTest func()
 
-	// onOutcome is called with nil immediately after every successful
-	// process start (this supervisor's notion of "success" -- a server
-	// isn't expected to exit on its own), and with a non-nil error only
-	// when the process exits unexpectedly. Never called for a deliberate
-	// Stop().
+	// onOutcome is called with nil once a successful process start has
+	// stayed running past storageStabilityWindow (this supervisor's notion
+	// of "success" -- a server isn't expected to exit on its own), and with
+	// a non-nil error only when the process exits unexpectedly. Never
+	// called for a deliberate Stop().
 	onOutcome func(err error)
 
 	// loopDone is closed when superviseLoop returns, giving callers (and
 	// tests) a real signal to synchronize on instead of guessing at a
 	// sleep duration.
 	loopDone chan struct{}
+
+	// stopCh is closed exactly once, by Stop(), so a superviseLoop sitting
+	// in its backoff wait (no live process to signal -- the supervisor is
+	// between crashes) notices Stop() immediately instead of only via ctx
+	// (which Stop() doesn't touch) or waiting out the full backoff.
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 func newStorageSupervisor(binary string, args []string, logger *slog.Logger, onOutcome func(err error)) *storageSupervisor {
-	return &storageSupervisor{binary: binary, args: args, logger: logger, onOutcome: onOutcome}
+	return &storageSupervisor{binary: binary, args: args, logger: logger, onOutcome: onOutcome, stopCh: make(chan struct{})}
 }
 
 // Start launches the supervise loop in its own goroutine and returns
@@ -138,6 +153,7 @@ func (s *storageSupervisor) Stop() {
 	s.shuttingDown = true
 	cmd := s.cmd
 	s.mu.Unlock()
+	s.stopOnce.Do(func() { close(s.stopCh) })
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 	}
@@ -164,16 +180,25 @@ func (s *storageSupervisor) superviseLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.stopCh:
+			return
 		case <-time.After(backoff(failures)):
 		}
 	}
 }
 
 // spawnAndWait starts bwfs and blocks until it exits, calling onOutcome(nil)
-// immediately on a successful start. If ctx is cancelled while bwfs is still
-// running, it is sent SIGTERM -- see vectorSupervisor.spawnAndWait in
-// vector.go for the detailed reasoning behind starting cmd.Start() under
-// the mutex and handling ctx cancellation this way; identical here.
+// only once the process has stayed running past storageStabilityWindow --
+// not immediately on a successful start. A process that crashes faster than
+// that window never reaches onOutcome(nil), so a genuine crash loop's
+// persisted failure count (reset to 0 by any nil outcome, see
+// reconcileState.recordOutcome) climbs instead of bouncing back to "1
+// failure" on every restart attempt; the crash itself is still reported via
+// superviseLoop's own onOutcome(err) call for the exit. If ctx is cancelled
+// while bwfs is still running, it is sent SIGTERM -- see
+// vectorSupervisor.spawnAndWait in vector.go for the detailed reasoning
+// behind starting cmd.Start() under the mutex and handling ctx cancellation
+// this way; identical here.
 func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 	cmd := exec.Command(s.binary, s.args...)
 
@@ -198,9 +223,6 @@ func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 	if s.onSpawnForTest != nil {
 		s.onSpawnForTest()
 	}
-	if s.onOutcome != nil {
-		s.onOutcome(nil)
-	}
 
 	waitDone := make(chan struct{})
 	defer close(waitDone)
@@ -209,6 +231,29 @@ func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 		case <-ctx.Done():
 			_ = cmd.Process.Signal(syscall.SIGTERM)
 		case <-waitDone:
+		}
+	}()
+
+	// Read storageStabilityWindow synchronously here, on the same goroutine
+	// that will go on to close waitDone (via cmd.Wait() below returning and
+	// the deferred close above), rather than inside the goroutine below --
+	// tests shrink this var and restore it only after synchronizing on
+	// loopDone, so a read inside the goroutine (which isn't guaranteed to
+	// have run by the time spawnAndWait returns) would race with that
+	// restore.
+	stabilityWindow := storageStabilityWindow
+	go func() {
+		timer := time.NewTimer(stabilityWindow)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			if s.onOutcome != nil {
+				s.onOutcome(nil)
+			}
+		case <-waitDone:
+			// Process exited before the stability window elapsed -- the
+			// crash is reported by superviseLoop's own onOutcome(err) call
+			// instead, not here.
 		}
 	}()
 
