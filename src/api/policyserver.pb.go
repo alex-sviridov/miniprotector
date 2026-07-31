@@ -340,9 +340,6 @@ type Policy struct {
 	// written to the on-disk policy JSON. Populated by both GetPolicies and
 	// ListPolicies.
 	Type string `protobuf:"bytes,10,opt,name=type,proto3" json:"type,omitempty"`
-	// at a node is client_filters only now, same as a backup
-	// policy; see
-	// docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md
 	// storage policy only.
 	Port int32 `protobuf:"varint,12,opt,name=port,proto3" json:"port,omitempty"`
 	// storage policy only -- opaque JSON text, verbatim passthrough. Never
@@ -791,7 +788,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\ainclude\x18\x02 \x03(\tR\ainclude\x12\x18\n" +
 	"\aexclude\x18\x03 \x03(\tR\aexclude\x12\x0e\n" +
-	"\x02id\x18\x04 \x01(\tR\x02id\"\xd6\x03\n" +
+	"\x02id\x18\x04 \x01(\tR\x02id\"\xe0\x03\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -807,7 +804,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04type\x18\n" +
 	" \x01(\tR\x04type\x12\x12\n" +
 	"\x04port\x18\f \x01(\x05R\x04port\x12\x16\n" +
-	"\x06config\x18\r \x01(\tR\x06configJ\x04\b\v\x10\f\"\xdd\x02\n" +
+	"\x06config\x18\r \x01(\tR\x06configJ\x04\b\v\x10\fR\bhostname\"\xe7\x02\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
@@ -818,7 +815,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04type\x18\a \x01(\tR\x04type\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
-	" \x01(\tR\x06configJ\x04\b\b\x10\t\"\xd9\x02\n" +
+	" \x01(\tR\x06configJ\x04\b\b\x10\tR\bhostname\"\xe3\x02\n" +
 	"\x13UpdatePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12I\n" +
@@ -829,7 +826,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\vdestination\x18\a \x01(\tR\vdestination\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
-	" \x01(\tR\x06configJ\x04\b\b\x10\t\"%\n" +
+	" \x01(\tR\x06configJ\x04\b\b\x10\tR\bhostname\"%\n" +
 	"\x13DeletePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x16\n" +
 	"\x14DeletePolicyResponse2\xe9\x03\n" +

@@ -52,7 +52,7 @@ message Policy {
   string id = 8;
   ClientFilters client_filters = 9;
   string type = 10;
-  reserved 11; // formerly hostname -- removed, see below
+  reserved 11; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 12;
   string config = 13;
 }
@@ -65,7 +65,7 @@ message CreatePolicyRequest {
   repeated string backup_window = 5;
   string destination = 6;
   string type = 7;
-  reserved 8; // formerly hostname -- removed, see below
+  reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
 }
@@ -78,7 +78,7 @@ message UpdatePolicyRequest {
   string rpo = 5;
   repeated string backup_window = 6;
   string destination = 7;
-  reserved 8; // formerly hostname -- removed, see below
+  reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
 }
@@ -125,7 +125,7 @@ certificate — the same requirement every server except `issuer`'s own listener
   `config` is opaque, pass-through JSON text -- `policy-server` validates it's well-formed at load
   and write time but never interprets its contents. There is no separate `hostname` field on a
   storage policy (removed -- see
-  [Design: agent storage-policy supervision](../../docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md));
+  [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md));
   targeting a node is `client_filters` only, identical to a backup policy.
 - Each `object_filters` entry's `include`/`exclude` are opaque, pass-through glob-pattern lists —
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
