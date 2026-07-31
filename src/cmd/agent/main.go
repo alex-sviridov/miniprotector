@@ -120,7 +120,7 @@ func main() {
 
 	case "list-policies":
 		allPolicies, _ := policiesFunc()
-		if err := renderPolicies(os.Stdout, cachePath, time.Now(), allPolicies); err != nil {
+		if err := renderPolicies(os.Stdout, cachePath, time.Now(), allPolicies, nil); err != nil {
 			fmt.Fprintf(os.Stderr, "list-policies failed: %v\n", err)
 			os.Exit(1)
 		}
