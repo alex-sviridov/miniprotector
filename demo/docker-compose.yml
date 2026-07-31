@@ -188,13 +188,13 @@ services:
       - issuer
       - catalog
       - log-gateway
+      - policy-server
     volumes:
       - store-data:/data
       - ./local.conf:/data/local.conf:ro
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
-      - STORAGE_PATH=/data/storage
     restart: unless-stopped
 
 volumes:

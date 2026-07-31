@@ -3,11 +3,10 @@
 A self-contained `docker compose` stack — CA, `issuer`, `catalog`, `policy-server`, and three
 backup-capable nodes (`database`, `webserver`, `store`) — mutually enrolled via mTLS, brought up
 with one script. Unlike [`deploy/control-plane`](../deploy/control-plane/README.md), this never
-touches your host filesystem beyond this directory (except `demo/policy-server/policies/backup/`,
-which you're meant to edit — see "Backup policies" below): every secret and every byte of state
-lives in
-Docker-managed named volumes, and no port is published to the host. Everything is reached via
-`docker compose exec`.
+touches your host filesystem beyond this directory (except `demo/policy-server/policies/`, which
+you're meant to edit — see "Backup policies" and "Storage policy" below): every secret and every
+byte of state lives in Docker-managed named volumes, and no port is published to the host.
+Everything is reached via `docker compose exec`.
 
 ## Bring it up
 
@@ -48,6 +47,16 @@ demonstrating a different way `client_filters` can select clients:
 | `audit-logs` | `database` and `webserver`, by explicit hostname list | `/var/log/audit` |
 | `database-backup` | `database`, by hostname | `/var/lib/dbdata` |
 | `webserver-backup` | any client labeled `role=web` (only `webserver`, here) | `/var/www/html` |
+
+## Storage policy
+
+`store` doesn't run `bwfs`/`catalogsync` unconditionally — like every other node, it just runs
+`agent`, which starts and supervises both processes once it picks up the one storage policy shipped
+in `demo/policy-server/policies/storage/store.json` (targets `store` by hostname, port `8080`, root
+`/data/storage` — matching what every example backup policy's `destination: "store:8080"` expects).
+That pickup happens on `agent`'s next reconcile tick after enrollment, so expect a roughly
+`ReconcileIntervalSec`-long (30s in this demo) delay after `make demo-up` before
+`docker compose -f demo/docker-compose.yml logs -f store` shows either process starting.
 
 Confirm each node resolves the policies meant for it (`catalog`, `policy-server`, and `store` run
 `policy-update` too, like every `agent`-managed node, but match none of these three policies — their

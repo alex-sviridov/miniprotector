@@ -1,10 +1,6 @@
 #!/bin/sh
 set -e
 
-if [ -n "$STORAGE_PATH" ]; then
-    mkdir -p "$STORAGE_PATH"
-fi
-
 # One-time bootstrap (first run, needs MP_CERT_TOKEN) or renew (every
 # subsequent restart) of the long-lived bootstrap credential -- same
 # pattern as deploy/control-plane/catalog/entrypoint.sh.
@@ -14,57 +10,13 @@ else
     ./certclient bootstrap --token "$MP_CERT_TOKEN"
 fi
 
-./agent serve &
-AGENT_PID=$!
-
-# Wait for agent's first operating-refresh to produce client.crt/client.key
-# (due immediately for a never-run policy -- see cmd/agent/reconcile.go's
-# isDue) before starting any workload that needs it.
-timeout=60
-while [ ! -f /data/certs/client.crt ] && [ "$timeout" -gt 0 ]; do
-    sleep 1
-    timeout=$((timeout - 1))
-done
-if [ ! -f /data/certs/client.crt ]; then
-    echo "agent did not produce an operating certificate within 60s" >&2
-    exit 1
-fi
-
-if [ -n "$STORAGE_PATH" ]; then
-    ./bwfs "$STORAGE_PATH" server --port 8080 --debug="${DEBUG:-false}" &
-    BWFS_PID=$!
-
-    # bwfs opens its own database (including setting WAL mode) before it
-    # starts listening -- see cmd/bwfs/main.go, NewBackupServer runs before
-    # connection.StartServer's net.Listen. Waiting for the port to accept a
-    # TCP connection is therefore a reliable signal that catalogsync's
-    # concurrent read-only open of the same SQLite file won't race bwfs's
-    # own database initialization.
-    timeout=30
-    while ! nc -z 127.0.0.1 8080 2>/dev/null && [ "$timeout" -gt 0 ]; do
-        sleep 1
-        timeout=$((timeout - 1))
-    done
-    if ! nc -z 127.0.0.1 8080 2>/dev/null; then
-        echo "bwfs did not start listening within 30s" >&2
-        exit 1
-    fi
-
-    ./catalogsync "$STORAGE_PATH" --debug="${DEBUG:-false}" &
-    CATALOGSYNC_PID=$!
-fi
-
-# Set only now (not before backgrounding) so the shell process -- which
-# never execs away, unlike catalog's entrypoint -- stays this container's
-# PID 1 and keeps receiving TERM directly, with a trap that's still live
-# to forward it to every backgrounded child.
-trap 'kill $AGENT_PID $BWFS_PID $CATALOGSYNC_PID 2>/dev/null || true' TERM
-
-# wait blocks until every backgrounded job exits; it doesn't fail early or
-# re-check liveness if one child dies while others keep running, so a
-# post-startup crash of e.g. bwfs or catalogsync stays silent from
-# docker compose ps's point of view (the container keeps reporting Up).
-# Accepted for a demo lab meant to be watched, not unattended reliability
-# -- the same stance this design already takes for a mid-run crash of
-# either process (see the design spec's Error Handling section).
-wait
+# agent owns everything from here: its own cert renewal, and -- for a node
+# targeted by a "storage" policy (see demo/policy-server/policies/storage/)
+# -- starting and supervising bwfs and catalogsync itself once its reconcile
+# loop picks that policy up. There's nothing left for this script to
+# sequence: agent's own operating-refresh always completes before its
+# policy-update (same tick), so nothing agent-spawned can ever race agent's
+# own cert setup, and bwfs/catalogsync are independent ensure-running tasks
+# agent reconciles on its own -- see docs/superpowers/specs/
+# 2026-07-31-agent-catalogsync-supervision-design.md.
+exec ./agent serve
