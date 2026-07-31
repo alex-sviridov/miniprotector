@@ -85,7 +85,7 @@ func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesBwfsSupervisor(t *testin
 	}]`
 	require.NoError(t, os.WriteFile(policiesCachePath, []byte(cacheJSON), 0o644))
 
-	storageTasksFunc := func() ([]storageTask, bool) { return storageTasks(policiesCachePath, testLogger()) }
+	storageTasksFunc := func() ([]storageTask, bool) { return storageTasks(policiesCachePath, testLogger(), script, script) }
 	mgr := newStorageManager(script, testLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())

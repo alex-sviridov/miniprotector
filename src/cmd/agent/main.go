@@ -85,9 +85,10 @@ func main() {
 			os.Exit(1)
 		}
 		bwfsBinary := resolveExecPath("bwfs")
+		catalogsyncBinary := resolveExecPath("catalogsync")
 		storageMgr := newStorageManager(bwfsBinary, logger)
 		storageTasksFunc := func() ([]storageTask, bool) {
-			return storageTasks(policiesCachePath, logger)
+			return storageTasks(policiesCachePath, logger, bwfsBinary, catalogsyncBinary)
 		}
 		hostname, err := hostnameFromBootstrapCert(certsDir)
 		if err != nil {
@@ -133,7 +134,9 @@ func main() {
 		// table, matching this command's existing read-only, no-noise
 		// character.
 		silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-		storageTaskList, _ := storageTasks(policiesCachePath, silentLogger)
+		bwfsBinary := resolveExecPath("bwfs")
+		catalogsyncBinary := resolveExecPath("catalogsync")
+		storageTaskList, _ := storageTasks(policiesCachePath, silentLogger, bwfsBinary, catalogsyncBinary)
 		if err := renderPolicies(os.Stdout, cachePath, time.Now(), allPolicies, storageTaskList); err != nil {
 			fmt.Fprintf(os.Stderr, "list-policies failed: %v\n", err)
 			os.Exit(1)

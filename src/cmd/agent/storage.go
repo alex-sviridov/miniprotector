@@ -1,10 +1,15 @@
-// storage.go derives agent's "ensure this bwfs server is running" tasks
-// from cached "storage"-type policies. Like backupTasks (backup.go), it
-// relies on policy-server's server-side scoping: ClientFilters.Matches
-// applies in GetPolicies before a policy reaches policies-cache.json,
-// so anything with Type == "storage" in the cache is already scoped to
-// this node. A later task adds process supervision on top of this task
-// derivation. See docs/superpowers/specs/2026-07-28-agent-storage-supervision-design.md.
+// storage.go derives agent's ensure-running tasks from cached "storage"-type
+// policies -- one task to keep a bwfs server running, and one independent
+// task to keep a catalogsync process running against the same root, with no
+// coordination between the two (see docs/superpowers/specs/
+// 2026-07-31-agent-catalogsync-supervision-design.md for why that's safe:
+// catalogsync's read-only sqlite open fails cleanly, not corruptingly, if it
+// ever starts before bwfs has created the database, and just gets
+// crash-restarted like any other transient exec failure). Like backupTasks
+// (backup.go), it relies on policy-server's server-side scoping:
+// ClientFilters.Matches applies in GetPolicies before a policy reaches
+// policies-cache.json, so anything with Type == "storage" in the cache is
+// already scoped to this node.
 package main
 
 import (
@@ -20,20 +25,32 @@ import (
 	"time"
 )
 
-// storageTask is one bwfs server this node should be running, derived from
-// a cached "storage" policy.
+// storageTask is one long-running process this node should be running,
+// derived from a cached "storage" policy -- either the bwfs server itself,
+// or the catalogsync process replicating its catalog, treated as two
+// independent entries with no relationship to each other beyond sharing an
+// ID prefix.
 type storageTask struct {
-	ID   string
-	Args []string
+	ID     string
+	Binary string
+	Args   []string
 }
 
-// storageTaskID is the stable identifier for one storage policy's task in
-// agent-state.json -- mirrors backup.go's "backup:" prefix convention.
+// storageTaskID is the stable identifier for one storage policy's bwfs task
+// in agent-state.json -- mirrors backup.go's "backup:" prefix convention.
 // Like backupTaskID, this assumes policy names are effectively unique
 // (the same pre-existing assumption backup tasks already make; not solved
 // fresh here).
 func storageTaskID(policyName string) string {
 	return fmt.Sprintf("storage:%s", policyName)
+}
+
+// catalogsyncTaskID mirrors storageTaskID's "storage:<name>" convention with
+// a suffix, so the two tasks derived from one storage policy are
+// related-but-distinct IDs in agent-state.json / list-policies -- prune and
+// storageManager.reconcile treat them as two ordinary, independent entries.
+func catalogsyncTaskID(policyName string) string {
+	return storageTaskID(policyName) + ":catalogsync"
 }
 
 // storageConfig is the subset of a storage policy's opaque config this
@@ -43,20 +60,22 @@ type storageConfig struct {
 	Root    string `json:"root"`
 }
 
-// storageTasks derives one ensure-running task per cached "storage" policy,
-// valid at the instant it's called -- callers that need to notice
-// policies-cache.json changing over time (agent serve's reconcile loop)
-// must call this fresh every tick rather than caching its result once.
+// storageTasks derives two ensure-running tasks per cached "storage" policy
+// -- one for bwfs, one for catalogsync -- valid at the instant it's called;
+// callers that need to notice policies-cache.json changing over time
+// (agent serve's reconcile loop) must call this fresh every tick rather than
+// caching its result once.
 //
 // ok=false mirrors backupTasks's contract: it means this tick's read of
 // policiesCachePath failed, and callers must never treat that as "there are
 // zero storage tasks."
 //
 // A policy whose config doesn't parse as a filesystem-backend JSON object,
-// or whose root is empty, is skipped with a logged error -- the same
-// fail-safe "skip, don't block the rest" direction backupTasks already uses
-// for an unparseable rpo or missing backup_window.
-func storageTasks(policiesCachePath string, logger *slog.Logger) ([]storageTask, bool) {
+// or whose root is empty, is skipped entirely (contributing neither task)
+// with a logged error -- the same fail-safe "skip, don't block the rest"
+// direction backupTasks already uses for an unparseable rpo or missing
+// backup_window.
+func storageTasks(policiesCachePath string, logger *slog.Logger, bwfsBinary, catalogsyncBinary string) ([]storageTask, bool) {
 	cachedPolicies, ok := readCachedPolicies(policiesCachePath)
 	if !ok {
 		return nil, false
@@ -72,10 +91,18 @@ func storageTasks(policiesCachePath string, logger *slog.Logger) ([]storageTask,
 			logger.Error("storage policy has unsupported or unparseable config, skipping", "policy", p.Name)
 			continue
 		}
-		tasks = append(tasks, storageTask{
-			ID:   storageTaskID(p.Name),
-			Args: []string{cfg.Root, "server", "--port", strconv.Itoa(int(p.Port))},
-		})
+		tasks = append(tasks,
+			storageTask{
+				ID:     storageTaskID(p.Name),
+				Binary: bwfsBinary,
+				Args:   []string{cfg.Root, "server", "--port", strconv.Itoa(int(p.Port))},
+			},
+			storageTask{
+				ID:     catalogsyncTaskID(p.Name),
+				Binary: catalogsyncBinary,
+				Args:   []string{cfg.Root},
+			},
+		)
 	}
 	return tasks, true
 }
