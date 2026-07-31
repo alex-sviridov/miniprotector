@@ -4,10 +4,12 @@ Node-level agent that reconciles local state against a small, config-driven set 
 It runs three embedded, statically-configured policies — `bootstrap-refresh`, `operating-refresh`,
 and `policy-update` — the first two keep this node's two-tier mTLS credential (see
 [Security Model](../SECURITY.md)) fresh via `certclient`; the third fetches this node's applicable
-backup policies from `policy-server` (see [policy-server](./policy-server.md)) into a local cache
-via `policyclient`. On top of those three, `agent` also derives a dynamic **backup task** for every
-`(cached policy, object_filters path)` pair in that cache, and executes `brfs` for each one on its
-own schedule — see "Policy-driven backup execution" below.
+policies (backup and storage) from `policy-server` (see [policy-server](./policy-server.md)) into a
+local cache via `policyclient`. On top of those three, `agent` derives two kinds of dynamic work
+from that cache: a **backup task** for every `(cached policy, object_filters path)` pair, executed
+via `brfs` on its own schedule (see "Policy-driven backup execution" below), and a supervised
+`bwfs server` process for every cached `"storage"`-typed policy, kept running rather than scheduled
+(see "Storage-policy supervision" below).
 
 ## Usage
 
@@ -106,6 +108,33 @@ live task's backoff/RPO history.
 the three static policies; a task's "NEXT RUN" reflects its next `backup_window` occurrence rather
 than a fixed interval. Each row's `ERROR` column shows the most recent failure's message (truncated
 to 60 characters, `-` if there isn't one), cleared automatically on that policy/task's next success.
+
+## Storage-policy supervision
+
+Every reconcile tick, alongside deriving backup tasks, `agent` also derives one **ensure-running**
+task per cached policy whose `type` is `"storage"` — unlike a backup task (or the three static
+policies), this isn't a due/execute/complete unit: it's "this `bwfs server` process should be
+running," checked and corrected every tick rather than scheduled on an interval. There is no
+per-node targeting check here — `policy-server`'s `GetPolicies` already scoped
+`policies-cache.json` to this node via `client_filters` (the same mechanism a backup policy uses),
+so every `"storage"`-typed policy in the cache is already meant for this node.
+
+A storage policy's `config` is opaque JSON to `policy-server`, but `agent` interprets one shape:
+`{"backend": "filesystem", "root": "/data/storage"}`. Any other or missing `backend` value is
+skipped with a logged error, the same fail-safe direction as an unparseable `rpo` or missing
+`backup_window` for backup tasks. A matching policy becomes `bwfs <root> server --port <port>`.
+
+Each storage task is supervised independently (`storage:<policy-name>`, mirroring the `backup:`
+prefix convention): a successful start is recorded immediately as success (not "exited
+successfully" — a server isn't expected to exit on its own), an unexpected exit is recorded as a
+failure with the same jittered `backoff()` reconcile.go already uses elsewhere, and a policy that's
+edited (port/path changed) or removed causes the running `bwfs` to be stopped (`SIGTERM`, a graceful
+drain since `bwfs` now honors it — see [bwfs](./bwfs.md)) and, for an edit, a fresh one started with
+the new arguments. `agent list-policies` shows each supervised storage task as an additional row,
+reusing the same STATE/FAILURES/ERROR columns as everything else, with `NEXT RUN` always `-` since
+there's no schedule to estimate.
+
+See [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md).
 
 ## Logging and correlation
 
