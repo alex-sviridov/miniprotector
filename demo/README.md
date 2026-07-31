@@ -22,6 +22,10 @@ below.
 
 ## Try it
 
+`store`'s `bwfs`/`catalogsync` take up to `ReconcileIntervalSec` (30s in this demo) to come up after
+`make demo-up` returns — see "Storage policy" below. If the first command fails immediately after
+bringing the stack up, wait a bit and retry.
+
 ```bash
 docker compose -f demo/docker-compose.yml exec database ./brfs /var/lib/dbdata --destination store:8080
 docker compose -f demo/docker-compose.yml exec database ./rwfs list store:8080

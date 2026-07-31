@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -107,22 +108,24 @@ func storageTasks(policiesCachePath string, logger *slog.Logger, bwfsBinary, cat
 	return tasks, true
 }
 
-// storageStabilityWindow is how long a spawned bwfs must stay running
-// before its start is reported as a success. A process that crashes
+// storageStabilityWindow is how long a spawned supervised process must stay
+// running before its start is reported as a success. A process that crashes
 // faster than this never resets the persisted failure count, so a
 // genuine crash loop's failure count climbs instead of bouncing back to
 // "1 failure" on every restart attempt. A var (not const) so tests can
 // shrink it instead of waiting out a real multi-second window.
 var storageStabilityWindow = 3 * time.Second
 
-// storageSupervisor owns the lifecycle of one supervised bwfs server
-// process: a long-running child, not a due/execute/complete Policy, so it
-// gets its own small supervise loop -- modeled directly on vector.go's
-// vectorSupervisor. Two differences: no TriggerRestart (bwfs already
-// hot-reloads its identity cert per-handshake via mtls.LoadServerCredentials,
-// unlike Vector, so a cert-rotation-triggered restart would only add
-// disruption with no benefit), and an onOutcome callback so a supervised
-// bwfs's state reaches agent-state.json via reconcileState.recordOutcome
+// storageSupervisor owns the lifecycle of one supervised process (bwfs
+// server or catalogsync): a long-running child, not a due/execute/complete
+// Policy, so it gets its own small supervise loop -- modeled directly on
+// vector.go's vectorSupervisor. Two differences: no TriggerRestart (unlike
+// Vector, both bwfs and catalogsync already hot-reload their mTLS identity
+// cert on every handshake (bwfs via mtls.LoadServerCredentials's
+// GetCertificate, catalogsync via mtls.LoadClientCredentials's
+// GetClientCertificate), so a cert-rotation-triggered restart would only add
+// disruption with no benefit), and an onOutcome callback so the supervised
+// process's state reaches agent-state.json via reconcileState.recordOutcome
 // (see storageManager in this same file).
 type storageSupervisor struct {
 	binary string
@@ -163,7 +166,7 @@ func newStorageSupervisor(binary string, args []string, logger *slog.Logger, onO
 
 // Start launches the supervise loop in its own goroutine and returns
 // immediately; the loop itself runs until ctx is done, at which point the
-// currently-running bwfs process (if any) is also signalled to exit.
+// currently-running process (if any) is also signalled to exit.
 func (s *storageSupervisor) Start(ctx context.Context) {
 	s.loopDone = make(chan struct{})
 	go func() {
@@ -172,7 +175,7 @@ func (s *storageSupervisor) Start(ctx context.Context) {
 	}()
 }
 
-// Stop signals the currently-running bwfs process to exit (SIGTERM -- a
+// Stop signals the currently-running process to exit (SIGTERM -- a
 // graceful drain once bwfs's own signal.NotifyContext fix lands, see Task 11)
 // and tells the supervise loop not to respawn it.
 func (s *storageSupervisor) Stop() {
@@ -200,7 +203,7 @@ func (s *storageSupervisor) superviseLoop(ctx context.Context) {
 		}
 
 		failures++
-		s.logger.Error("bwfs exited unexpectedly, restarting with backoff", "failures", failures, "error", err)
+		s.logger.Error("supervised process exited unexpectedly, restarting with backoff", "binary", s.binary, "failures", failures, "error", err)
 		if s.onOutcome != nil {
 			s.onOutcome(err)
 		}
@@ -214,7 +217,7 @@ func (s *storageSupervisor) superviseLoop(ctx context.Context) {
 	}
 }
 
-// spawnAndWait starts bwfs and blocks until it exits, calling onOutcome(nil)
+// spawnAndWait starts the process and blocks until it exits, calling onOutcome(nil)
 // only once the process has stayed running past storageStabilityWindow --
 // not immediately on a successful start. A process that crashes faster than
 // that window never reaches onOutcome(nil), so a genuine crash loop's
@@ -222,12 +225,14 @@ func (s *storageSupervisor) superviseLoop(ctx context.Context) {
 // reconcileState.recordOutcome) climbs instead of bouncing back to "1
 // failure" on every restart attempt; the crash itself is still reported via
 // superviseLoop's own onOutcome(err) call for the exit. If ctx is cancelled
-// while bwfs is still running, it is sent SIGTERM -- see
+// while the process is still running, it is sent SIGTERM -- see
 // vectorSupervisor.spawnAndWait in vector.go for the detailed reasoning
 // behind starting cmd.Start() under the mutex and handling ctx cancellation
 // this way; identical here.
 func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 	cmd := exec.Command(s.binary, s.args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
 	s.mu.Lock()
 	err := cmd.Start()
@@ -237,7 +242,7 @@ func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 	if err != nil {
-		return fmt.Errorf("start bwfs: %w", err)
+		return fmt.Errorf("start %s: %w", s.binary, err)
 	}
 	if shuttingDown {
 		// Stop() raced ahead of this spawn: it ran (and saw s.cmd == nil,
@@ -350,7 +355,7 @@ func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, task
 	}
 }
 
-// StopAll stops every currently-supervised bwfs process -- called on agent
+// StopAll stops every currently-supervised process -- called on agent
 // shutdown so none are orphaned.
 func (m *storageManager) StopAll() {
 	m.mu.Lock()

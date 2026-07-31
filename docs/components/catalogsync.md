@@ -8,6 +8,12 @@ service. If `catalog_host` is unset, or the catalog is unreachable at startup, i
 without a `catalog` deployment, and never blocks it from starting just because the catalog is
 temporarily down.
 
+In any deployment using "storage"-typed policies (see [agent](./agent.md#storage-policy-supervision)),
+`catalogsync` is started and supervised by `agent` alongside its paired `bwfs server` — one
+independent ensure-running task per storage policy, crash-restarted on an unexpected exit and sent
+`SIGTERM` (already handled gracefully via `signal.NotifyContext`, see `main.go`) when the policy is
+edited or removed. It can also still be run directly, as described below.
+
 ## Usage
 
 ```
@@ -75,5 +81,6 @@ make catalogsync
 
 - [bwfs](./bwfs.md) — the component whose `file_versions` table this replicates
 - [catalog](./catalog.md) — the service `catalogsync` replicates to
+- [agent](./agent.md#storage-policy-supervision) — starts and supervises this process for a "storage"-typed policy
 - [Catalog Sync Protocol](../protocols/catalog-sync.md)
 - [Architecture](../ARCHITECTURE.md) — system overview

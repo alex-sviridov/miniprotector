@@ -104,7 +104,8 @@ docker compose up -d --no-deps web
 
 cat <<'MSG'
 
-Demo stack is up. Try:
+Demo stack is up. store's bwfs/catalogsync take up to ~30s (one reconcile tick) to start
+after enrollment -- if the brfs command below fails immediately, wait a bit and retry. Try:
   docker compose -f demo/docker-compose.yml exec database ./brfs /var/lib/dbdata --destination store:8080
   docker compose -f demo/docker-compose.yml exec database ./rwfs list store:8080
   docker compose -f demo/docker-compose.yml exec database ./rwfs verify store:8080

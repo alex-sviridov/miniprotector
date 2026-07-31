@@ -36,7 +36,7 @@ FROM timberio/vector:0.46.0-debian AS vector-source
 
 FROM debian:bookworm-slim AS backup-host
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgcc-s1 ca-certificates netcat-openbsd \
+    libgcc-s1 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
