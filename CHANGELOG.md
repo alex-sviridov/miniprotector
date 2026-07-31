@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-07-31 — agent: supervise catalogsync alongside bwfs; demo drops its process-sequencing shell script
+
+`agent` now supervises a `catalogsync` process the same way it already supervises `bwfs` for a
+`"storage"` policy: two fully independent ensure-running tasks per policy, with no ordering or
+coordination between them — a `catalogsync` that starts before `bwfs` has created its database
+simply fails cleanly and gets crash-restarted, like any other transient exec failure.
+
+The demo's `backup-host` containers (`database`, `webserver`, `store`) no longer run a shell script
+that hand-starts and sequences multiple processes around cert-readiness and startup-ordering races;
+both hazards it existed for are gone once `agent` owns the whole lifecycle, so the entrypoint is now
+just "bootstrap a certificate, then run `agent serve`." `store`'s `bwfs`/`catalogsync` now come up
+via a `"storage"` policy (`demo/policy-server/policies/storage/store.json`) instead of an
+env-var-gated branch in that script.
+
 ## 2026-07-28 — agent: supervise bwfs for storage policies
 
 `agent` is now the first consumer of the `"storage"` policy type added earlier today: every
