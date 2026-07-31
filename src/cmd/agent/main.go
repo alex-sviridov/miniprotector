@@ -86,7 +86,7 @@ func main() {
 		}
 		bwfsBinary := resolveExecPath("bwfs")
 		catalogsyncBinary := resolveExecPath("catalogsync")
-		storageMgr := newStorageManager(bwfsBinary, logger)
+		storageMgr := newStorageManager(logger)
 		storageTasksFunc := func() ([]storageTask, bool) {
 			return storageTasks(policiesCachePath, logger, bwfsBinary, catalogsyncBinary)
 		}

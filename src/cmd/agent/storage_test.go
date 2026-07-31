@@ -362,11 +362,11 @@ func TestStorageManager_StartsSupervisorForNewTask(t *testing.T) {
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
 	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
-	mgr := newStorageManager(script, testLogger())
+	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: nil}})
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Binary: script, Args: nil}})
 
 	require.Eventually(t, func() bool {
 		return rs.get("storage:east-1").LastSuccessAt != nil
@@ -381,11 +381,11 @@ func TestStorageManager_StopsSupervisorForRemovedTask(t *testing.T) {
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
 	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
-	mgr := newStorageManager(script, testLogger())
+	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: nil}})
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Binary: script, Args: nil}})
 	require.Eventually(t, func() bool {
 		mgr.mu.Lock()
 		defer mgr.mu.Unlock()
@@ -405,11 +405,11 @@ func TestStorageManager_RestartsSupervisorWhenArgsChange(t *testing.T) {
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
 	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
-	mgr := newStorageManager(script, testLogger())
+	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: []string{"/data/old", "server", "--port", "9400"}}})
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Binary: script, Args: []string{"/data/old", "server", "--port", "9400"}}})
 	require.Eventually(t, func() bool {
 		mgr.mu.Lock()
 		defer mgr.mu.Unlock()
@@ -419,7 +419,7 @@ func TestStorageManager_RestartsSupervisorWhenArgsChange(t *testing.T) {
 	firstSup := mgr.supervisors["storage:east-1"]
 	mgr.mu.Unlock()
 
-	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Args: []string{"/data/new", "server", "--port", "9401"}}})
+	mgr.reconcile(ctx, rs, []storageTask{{ID: "storage:east-1", Binary: script, Args: []string{"/data/new", "server", "--port", "9401"}}})
 
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
@@ -433,11 +433,11 @@ func TestStorageManager_DoesNotDoubleStartAlreadySupervisedTask(t *testing.T) {
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
 	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
-	mgr := newStorageManager(script, testLogger())
+	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	task := storageTask{ID: "storage:east-1", Args: []string{"/data", "server", "--port", "9400"}}
+	task := storageTask{ID: "storage:east-1", Binary: script, Args: []string{"/data", "server", "--port", "9400"}}
 	mgr.reconcile(ctx, rs, []storageTask{task})
 	require.Eventually(t, func() bool {
 		mgr.mu.Lock()
@@ -461,13 +461,13 @@ func TestStorageManager_StopAllStopsEverySupervisor(t *testing.T) {
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
 	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
-	mgr := newStorageManager(script, testLogger())
+	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	mgr.reconcile(ctx, rs, []storageTask{
-		{ID: "storage:a", Args: nil},
-		{ID: "storage:b", Args: nil},
+		{ID: "storage:a", Binary: script, Args: nil},
+		{ID: "storage:b", Binary: script, Args: nil},
 	})
 	require.Eventually(t, func() bool {
 		mgr.mu.Lock()
@@ -491,4 +491,45 @@ func TestStorageManager_StopAllStopsEverySupervisor(t *testing.T) {
 			t.Fatal("StopAll did not stop every supervisor")
 		}
 	}
+}
+
+// TestStorageManager_TasksSuperviseFullyIndependently proves there is no
+// coordination between two tasks derived from the same policy (e.g. bwfs and
+// catalogsync): one crash-looping task's failures never affect its sibling,
+// and the healthy one is never restarted or delayed by the other's backoff.
+func TestStorageManager_TasksSuperviseFullyIndependently(t *testing.T) {
+	origWindow := storageStabilityWindow
+	storageStabilityWindow = 20 * time.Millisecond
+	defer func() { storageStabilityWindow = origWindow }()
+
+	origBase, origMax := backoffBase, backoffMax
+	backoffBase, backoffMax = 10*time.Millisecond, 30*time.Millisecond
+	defer func() { backoffBase, backoffMax = origBase, origMax }()
+
+	dir := t.TempDir()
+	healthyScript := filepath.Join(dir, "fake-bwfs.sh")
+	require.NoError(t, osWriteExecutable(t, healthyScript, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
+	crashingScript := filepath.Join(dir, "fake-catalogsync.sh")
+	require.NoError(t, osWriteExecutable(t, crashingScript, "#!/bin/sh\nexit 1\n"))
+
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	mgr := newStorageManager(testLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr.reconcile(ctx, rs, []storageTask{
+		{ID: "storage:east-1", Binary: healthyScript, Args: nil},
+		{ID: "storage:east-1:catalogsync", Binary: crashingScript, Args: nil},
+	})
+
+	require.Eventually(t, func() bool {
+		return rs.get("storage:east-1").LastSuccessAt != nil
+	}, time.Second, 10*time.Millisecond, "the healthy task must start and stay up")
+
+	require.Eventually(t, func() bool {
+		return rs.get("storage:east-1:catalogsync").ConsecutiveFailures >= 2
+	}, time.Second, 10*time.Millisecond, "the crash-looping task must keep failing and restarting on its own")
+
+	assert.Empty(t, rs.get("storage:east-1").LastError, "the healthy sibling task must never be affected by the other task's failures")
+	mgr.StopAll()
 }

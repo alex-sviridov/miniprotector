@@ -290,9 +290,10 @@ func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
 // storageManager holds one storageSupervisor per current storage task,
 // keyed by task ID, and reconciles that set against agent's latest read of
 // policies-cache.json every tick (see reconcile.go's run(), which calls
-// reconcile once per loop iteration).
+// reconcile once per loop iteration). It has no knowledge of what any given
+// task actually runs -- bwfs, catalogsync, or anything else -- it only ever
+// sees (ID, Binary, Args) tuples and supervises whatever it's handed.
 type storageManager struct {
-	binary string
 	logger *slog.Logger
 
 	mu          sync.Mutex
@@ -300,9 +301,8 @@ type storageManager struct {
 	args        map[string][]string // last-started args, to detect a changed task
 }
 
-func newStorageManager(binary string, logger *slog.Logger) *storageManager {
+func newStorageManager(logger *slog.Logger) *storageManager {
 	return &storageManager{
-		binary:      binary,
 		logger:      logger,
 		supervisors: map[string]*storageSupervisor{},
 		args:        map[string][]string{},
@@ -341,7 +341,7 @@ func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, task
 			continue
 		}
 		id := t.ID
-		sup := newStorageSupervisor(m.binary, t.Args, m.logger, func(err error) {
+		sup := newStorageSupervisor(t.Binary, t.Args, m.logger, func(err error) {
 			rs.recordOutcome(id, err, time.Now())
 		})
 		sup.Start(ctx)
