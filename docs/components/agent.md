@@ -111,34 +111,44 @@ to 60 characters, `-` if there isn't one), cleared automatically on that policy/
 
 ## Storage-policy supervision
 
-Every reconcile tick, alongside deriving backup tasks, `agent` also derives one **ensure-running**
-task per cached policy whose `type` is `"storage"` — unlike a backup task (or the three static
-policies), this isn't a due/execute/complete unit: it's "this `bwfs server` process should be
-running," checked and corrected every tick rather than scheduled on an interval. There is no
-per-node targeting check here — `policy-server`'s `GetPolicies` already scoped
-`policies-cache.json` to this node via `client_filters` (the same mechanism a backup policy uses),
-so every `"storage"`-typed policy in the cache is already meant for this node.
+Every reconcile tick, alongside deriving backup tasks, `agent` also derives two independent
+**ensure-running** tasks per cached policy whose `type` is `"storage"` — unlike a backup task (or
+the three static policies), neither is a due/execute/complete unit: one is "this `bwfs server`
+process should be running," the other is "this `catalogsync` process should be running," each
+checked and corrected every tick rather than scheduled on an interval. There is no per-node
+targeting check here — `policy-server`'s `GetPolicies` already scoped `policies-cache.json` to this
+node via `client_filters` (the same mechanism a backup policy uses), so every `"storage"`-typed
+policy in the cache is already meant for this node.
 
 A storage policy's `config` is opaque JSON to `policy-server`, but `agent` interprets one shape:
 `{"backend": "filesystem", "root": "/data/storage"}`. Any other or missing `backend` value is
-skipped with a logged error, the same fail-safe direction as an unparseable `rpo` or missing
-`backup_window` for backup tasks. A matching policy becomes `bwfs <root> server --port <port>`.
+skipped with a logged error (contributing neither task), the same fail-safe direction as an
+unparseable `rpo` or missing `backup_window` for backup tasks. A matching policy becomes two
+processes: `bwfs <root> server --port <port>` and `catalogsync <root>`.
 
-Each storage task is supervised independently (`storage:<policy-name>`, mirroring the `backup:`
-prefix convention): a start is recorded as success (not "exited successfully" — a server isn't
-expected to exit on its own) only once the process has stayed running for a short stability window
-(a few seconds) — a crash faster than that never resets the failure count, so a persistently
-crash-looping `bwfs` accumulates failures instead of bouncing back to "1 failure" on every restart.
-An unexpected exit is recorded as a failure with the same jittered `backoff()` reconcile.go already
-uses elsewhere, and a policy that's edited (port/path changed) or removed causes the running `bwfs`
-to be stopped (`SIGTERM`, a graceful drain since `bwfs` now honors it — see [bwfs](./bwfs.md)) and,
-for an edit, a fresh one started with the new arguments; a `Stop()` issued while a supervisor is
+The two tasks are supervised entirely independently, with no ordering or coordination between them
+— not even at first startup. `catalogsync` opens `bwfs`'s database read-only
+(`mode=ro`), which fails cleanly rather than corrupting anything if `catalogsync` happens to start
+before `bwfs` has created it; that failure is handled by the same crash-restart-with-backoff path
+described below, no differently than any other transient exec failure.
+
+Each task is supervised under its own ID (`storage:<policy-name>` for `bwfs`,
+`storage:<policy-name>:catalogsync` for `catalogsync`, mirroring the `backup:` prefix convention): a
+start is recorded as success (not "exited successfully" — neither is expected to exit on its own)
+only once the process has stayed running for a short stability window (a few seconds) — a crash
+faster than that never resets the failure count, so a persistently crash-looping process accumulates
+failures instead of bouncing back to "1 failure" on every restart. An unexpected exit is recorded as
+a failure with the same jittered `backoff()` reconcile.go already uses elsewhere, and a policy that's
+edited (port/path changed) or removed causes both running processes to be stopped (`SIGTERM`, a
+graceful drain for `bwfs` — see [bwfs](./bwfs.md) — and for `catalogsync`, which already honors it)
+and, for an edit, fresh ones started with the new arguments; a `Stop()` issued while a supervisor is
 sitting out a crash-backoff wait takes effect immediately rather than waiting out the remaining
-backoff. `agent list-policies` shows each supervised storage task as an additional row, reusing the
+backoff. `agent list-policies` shows each supervised task as its own additional row, reusing the
 same STATE/FAILURES/ERROR columns as everything else, with `NEXT RUN` always `-` since there's no
 schedule to estimate.
 
-See [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md).
+See [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md)
+and [Design: agent catalogsync supervision](../superpowers/specs/2026-07-31-agent-catalogsync-supervision-design.md).
 
 ## Logging and correlation
 

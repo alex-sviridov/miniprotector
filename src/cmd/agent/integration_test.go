@@ -65,7 +65,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 	assert.Contains(t, capturedArgs[4], "backup:daily-db-backup:var-lib-postgres:")
 }
 
-func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesBwfsSupervisor(t *testing.T) {
+func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *testing.T) {
 	origWindow := storageStabilityWindow
 	storageStabilityWindow = 20 * time.Millisecond
 	defer func() { storageStabilityWindow = origWindow }()
@@ -85,6 +85,10 @@ func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesBwfsSupervisor(t *testin
 	}]`
 	require.NoError(t, os.WriteFile(policiesCachePath, []byte(cacheJSON), 0o644))
 
+	// Both binary slots point at the same fake script -- this test proves
+	// the reconcile-loop wiring (both tasks start, both prune together), not
+	// bwfs/catalogsync's real behavior, which is covered by their own
+	// packages.
 	storageTasksFunc := func() ([]storageTask, bool) { return storageTasks(policiesCachePath, testLogger(), script, script) }
 	mgr := newStorageManager(testLogger())
 
@@ -97,17 +101,19 @@ func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesBwfsSupervisor(t *testin
 
 	require.Eventually(t, func() bool {
 		cache, err := readCache(cachePath)
-		return err == nil && cache["storage:east-1-storage"].LastSuccessAt != nil
-	}, time.Second, 10*time.Millisecond, "storage task must start and record success")
+		return err == nil &&
+			cache["storage:east-1-storage"].LastSuccessAt != nil &&
+			cache["storage:east-1-storage:catalogsync"].LastSuccessAt != nil
+	}, time.Second, 10*time.Millisecond, "both the bwfs and catalogsync tasks must start and record success")
 
-	// Remove the policy from the cache -- its task must be pruned from
-	// agent-state.json and its bwfs supervisor stopped.
+	// Remove the policy from the cache -- both tasks must be pruned from
+	// agent-state.json and both supervisors stopped.
 	require.NoError(t, os.WriteFile(policiesCachePath, []byte(`[]`), 0o644))
 
 	require.Eventually(t, func() bool {
 		cache, err := readCache(cachePath)
 		return err == nil && len(cache) == 0
-	}, time.Second, 10*time.Millisecond, "removed storage task must be pruned from agent-state.json")
+	}, time.Second, 10*time.Millisecond, "removed storage tasks must be pruned from agent-state.json")
 
 	cancel()
 	<-done

@@ -93,10 +93,11 @@ applicable backup policies from `policy-server` into a local cache. `agent` also
 backup task per cached policy's object filter (a path plus optional include/exclude glob patterns,
 passed straight through to `brfs`) and executes `brfs` for each one on a schedule gated by
 that policy's `backup_window` and `rpo` — see [agent](components/agent.md#policy-driven-backup-execution).
-`agent` additionally supervises a `bwfs server` process for every cached `"storage"`-typed policy
-targeting this node (ensure-running, not scheduled — see
-[agent](components/agent.md#storage-policy-supervision)), the first actual consumer of the
-`"storage"` policy type. Each policy's (and backup task's, and storage task's) outcome is tracked in
+`agent` additionally supervises a `bwfs server` process and a `catalogsync` process, independently
+of each other, for every cached `"storage"`-typed policy targeting this node (ensure-running, not
+scheduled — see [agent](components/agent.md#storage-policy-supervision)), the first actual consumer
+of the `"storage"` policy type. Each policy's (and backup task's, and storage task's) outcome is
+tracked in
 the same local cache (`agent list-policies` inspects it). See [agent](components/agent.md).
 
 `client-manager` is control plane by role (an admin-facing tool tracking the enrolled-client
@@ -153,9 +154,12 @@ graph TB
     bwfs -->|stores chunks| BackupFS
     bwfs -->|stores metadata| DB
 
-    %% Storage-policy supervision -- agent ensures bwfs is running (not a
-    %% scheduled job, unlike agent's backup tasks above)
+    %% Storage-policy supervision -- agent ensures bwfs and catalogsync are
+    %% each independently running (not a scheduled job, unlike agent's
+    %% backup tasks above; the two supervised processes have no ordering or
+    %% coordination between them)
     bwfsAgent -.->|supervises: start/crash-restart/stop| bwfs
+    bwfsAgent -.->|supervises: start/crash-restart/stop| catalogsync
 
     %% Restore Flow (list/verify implemented)
     bwfs -->|list/restore protocol<br/>network/unix socket, mTLS| rwfs
