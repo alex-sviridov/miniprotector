@@ -17,7 +17,19 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// disabledAtFromProto converts a possibly-nil disabled_at field to
+// time.Time, treating "field not set" as the zero time -- distinct from
+// (*timestamppb.Timestamp).AsTime()'s own nil-safe behavior, which maps a
+// nil Timestamp to the Unix epoch (1970), not Go's zero time.Time (year 1).
+func disabledAtFromProto(ts *timestamppb.Timestamp) time.Time {
+	if ts == nil {
+		return time.Time{}
+	}
+	return ts.AsTime()
+}
 
 // ObjectFilter is the on-disk representation of one policy-server
 // ObjectFilter: a backup root path plus its optional include/exclude glob
@@ -52,7 +64,8 @@ type CachedPolicy struct {
 	// itself never branches on it; agent does (see
 	// cmd/agent/backup.go's backupTasks and cmd/agent/storage.go's
 	// storageTasks).
-	Type string `json:"type"`
+	Type       string    `json:"type"`
+	DisabledAt time.Time `json:"disabled_at,omitempty"`
 }
 
 // policyServiceClient is the subset of pb.PolicyServiceClient runFetch
@@ -135,6 +148,7 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			Port:          p.GetPort(),
 			Config:        p.GetConfig(),
 			Type:          p.GetType(),
+			DisabledAt:    disabledAtFromProto(p.GetDisabledAt()),
 		})
 	}
 	return out

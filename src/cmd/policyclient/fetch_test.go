@@ -141,3 +141,26 @@ func TestRunFetch_StoragePolicyCarriesPortAndConfig(t *testing.T) {
 	assert.EqualValues(t, 9400, got[0].Port)
 	assert.JSONEq(t, `{"backend": "filesystem", "root": "/data/storage"}`, got[0].Config)
 }
+
+func TestRunFetch_DisabledAtRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "policies-cache.json")
+
+	disabledAt := timestamppb.New(time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC))
+	fake := &fakePolicyServiceClient{resp: &pb.GetPoliciesResponse{
+		Policies: []*pb.Policy{
+			{Id: "id-1", Name: "one-shot", Type: "backup", DisabledAt: disabledAt},
+			{Id: "id-2", Name: "ordinary", Type: "backup"},
+		},
+	}}
+
+	require.NoError(t, runFetch(context.Background(), fake, cachePath, fetchTestLogger()))
+
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+	var cached []CachedPolicy
+	require.NoError(t, json.Unmarshal(data, &cached))
+	require.Len(t, cached, 2)
+	assert.Equal(t, disabledAt.AsTime(), cached[0].DisabledAt)
+	assert.True(t, cached[1].DisabledAt.IsZero(), "an unset disabled_at must cache as the zero time, not the Unix epoch")
+}
