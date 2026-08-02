@@ -81,7 +81,7 @@ async function runNow(payload) {
   <div>
     <PageHeader :title="policy?.name || id">
       <template #actions>
-        <BaseButton data-test="policy-edit" variant="secondary" @click="openEdit">Edit</BaseButton>
+        <BaseButton v-if="policy" data-test="policy-edit" variant="secondary" @click="openEdit">Edit</BaseButton>
         <BaseButton data-test="policy-delete" variant="danger" @click="confirmDelete">Delete</BaseButton>
       </template>
     </PageHeader>

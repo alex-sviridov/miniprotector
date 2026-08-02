@@ -56,6 +56,20 @@ describe('BackupPolicyView', () => {
     expect(wrapper.text()).toContain('policy not found')
   })
 
+  it('hides the Edit button while the policy has not loaded yet', () => {
+    const { wrapper } = mountView({ byId: {}, loading: true, error: null })
+    expect(wrapper.find('[data-test="policy-edit"]').exists()).toBe(false)
+  })
+
+  it('shows the Edit button once the policy has loaded', () => {
+    const { wrapper } = mountView({
+      byId: { p1: { id: 'p1', name: 'nightly-db-backup', object_filters: [], client_filters: {} } },
+      loading: false,
+      error: null,
+    })
+    expect(wrapper.find('[data-test="policy-edit"]').exists()).toBe(true)
+  })
+
   it('deletes the policy after confirming and navigates to the list', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { wrapper, policies } = mountView({
