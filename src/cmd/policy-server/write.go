@@ -20,6 +20,7 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var slugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
@@ -81,6 +82,17 @@ func atomicWriteJSON(path string, v any) error {
 
 func fromProtoClientFilters(cf *pb.ClientFilters) ClientFilters {
 	return ClientFilters{Hostnames: cf.GetHostnames(), Labels: cf.GetLabels()}
+}
+
+// disabledAtFromProto converts a possibly-nil disabled_at field to
+// time.Time, treating "field not set" as the zero time -- distinct from
+// (*timestamppb.Timestamp).AsTime()'s own nil-safe behavior, which maps a
+// nil Timestamp to the Unix epoch (1970), not Go's zero time.Time (year 1).
+func disabledAtFromProto(ts *timestamppb.Timestamp) time.Time {
+	if ts == nil {
+		return time.Time{}
+	}
+	return ts.AsTime()
 }
 
 func fromProtoObjectFilters(filters []*pb.ObjectFilter) []ObjectFilter {
@@ -153,7 +165,12 @@ func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, 
 // Cache.Reload assigns them once the caller writes the file and reloads.
 func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, error) {
 	base := PolicyBase{
-		Metadata:      Metadata{Name: req.GetName(), CreatedAt: now, UpdatedAt: now},
+		Metadata: Metadata{
+			Name:       req.GetName(),
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			DisabledAt: disabledAtFromProto(req.GetDisabledAt()),
+		},
 		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
 	}
 	return buildPolicy(req.GetType(), base, req)
@@ -167,7 +184,12 @@ func buildPolicyForUpdate(req *pb.UpdatePolicyRequest, kind string, existingMeta
 		return nil, fmt.Errorf("existing policy has unknown type %q", kind)
 	}
 	base := PolicyBase{
-		Metadata:      Metadata{Name: req.GetName(), CreatedAt: existingMeta.CreatedAt, UpdatedAt: now},
+		Metadata: Metadata{
+			Name:       req.GetName(),
+			CreatedAt:  existingMeta.CreatedAt,
+			UpdatedAt:  now,
+			DisabledAt: disabledAtFromProto(req.GetDisabledAt()),
+		},
 		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
 	}
 	return buildPolicy(kind, base, req)

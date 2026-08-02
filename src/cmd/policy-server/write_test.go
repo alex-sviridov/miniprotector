@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 )
@@ -406,4 +407,73 @@ func TestUpdatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_DisabledAtRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	disabledAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "one-shot",
+		Type:        "backup",
+		Destination: "bwfs:8080",
+		DisabledAt:  timestamppb.New(disabledAt),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.DisabledAt)
+	assert.Equal(t, disabledAt, resp.DisabledAt.AsTime())
+}
+
+func TestCreatePolicy_NoDisabledAtLeavesItUnset(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "ordinary",
+		Type:        "backup",
+		Destination: "bwfs:8080",
+	})
+
+	require.NoError(t, err)
+	assert.Nil(t, resp.DisabledAt, "an omitted disabled_at must stay unset, not become the Unix epoch")
+}
+
+func TestCreatePolicy_PastDisabledAtAcceptedWithoutError(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "already-expired",
+		Type:        "backup",
+		Destination: "bwfs:8080",
+		DisabledAt:  timestamppb.New(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.DisabledAt)
+}
+
+func TestUpdatePolicy_DisabledAtRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "will-be-disabled",
+		Type:        "backup",
+		Destination: "bwfs:8080",
+	})
+	require.NoError(t, err)
+
+	disabledAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	updated, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:          created.Id,
+		Name:        created.Name,
+		Destination: "bwfs:8080",
+		DisabledAt:  timestamppb.New(disabledAt),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, updated.DisabledAt)
+	assert.Equal(t, disabledAt, updated.DisabledAt.AsTime())
 }

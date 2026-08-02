@@ -25,10 +25,11 @@ import (
 var policyIDNamespace = uuid.MustParse("6f1c3a2e-8b4d-4e11-9a7c-2d5f8e0b1c34")
 
 type Metadata struct {
-	ID        string    `json:"-"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"-"`
+	Name       string    `json:"name"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	DisabledAt time.Time `json:"disabled_at,omitempty"`
 }
 
 type ClientFilters struct {

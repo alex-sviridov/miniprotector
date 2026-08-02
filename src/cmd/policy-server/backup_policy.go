@@ -118,6 +118,9 @@ func (p *BackupPolicy) ToProto(includeClientFilters bool) *pb.Policy {
 		Destination:   p.Destination,
 		Type:          p.Type,
 	}
+	if !p.Metadata.DisabledAt.IsZero() {
+		pp.DisabledAt = timestamppb.New(p.Metadata.DisabledAt)
+	}
 	if includeClientFilters {
 		pp.ClientFilters = toProtoClientFilters(p.ClientFilters)
 	}

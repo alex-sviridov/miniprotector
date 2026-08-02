@@ -76,6 +76,9 @@ func (p *StoragePolicy) ToProto(includeClientFilters bool) *pb.Policy {
 		Port:      int32(p.Port),
 		Config:    string(p.Config),
 	}
+	if !p.Metadata.DisabledAt.IsZero() {
+		pp.DisabledAt = timestamppb.New(p.Metadata.DisabledAt)
+	}
 	if includeClientFilters {
 		pp.ClientFilters = toProtoClientFilters(p.ClientFilters)
 	}
