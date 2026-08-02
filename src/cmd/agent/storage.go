@@ -87,6 +87,9 @@ func storageTasks(policiesCachePath string, logger *slog.Logger, bwfsBinary, cat
 		if p.Type != "storage" {
 			continue
 		}
+		if !p.DisabledAt.IsZero() && !p.DisabledAt.After(time.Now()) {
+			continue
+		}
 		var cfg storageConfig
 		if err := json.Unmarshal([]byte(p.Config), &cfg); err != nil || cfg.Backend != "filesystem" || cfg.Root == "" {
 			logger.Error("storage policy has unsupported or unparseable config, skipping", "policy", p.Name)

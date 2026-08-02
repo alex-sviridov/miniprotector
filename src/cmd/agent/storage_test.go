@@ -533,3 +533,19 @@ func TestStorageManager_TasksSuperviseFullyIndependently(t *testing.T) {
 	assert.Empty(t, rs.get("storage:east-1").LastError, "the healthy sibling task must never be affected by the other task's failures")
 	mgr.StopAll()
 }
+
+func TestStorageTasks_SkipsDisabledPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[{
+		"name": "p",
+		"type": "storage",
+		"port": 9400,
+		"config": "{\"backend\": \"filesystem\", \"root\": \"/data/storage\"}",
+		"disabled_at": "2020-01-01T00:00:00Z"
+	}]`)
+
+	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
+
+	assert.True(t, ok, "the file itself was still validly read")
+	assert.Empty(t, tasks)
+}
