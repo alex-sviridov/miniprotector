@@ -168,6 +168,39 @@ func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
 }
 
+// handleCreateAdhocPolicy creates a one-time backup policy: same input
+// shape as POST /api/v1/policies, but backup_window/rpo/disabled_at are
+// always computed from s.adhocPolicyTimeout rather than read from the
+// request body (any caller-supplied values for those three fields are
+// silently ignored) -- backup_window opens every minute so the policy is
+// due as soon as a matched node next polls, rpo equals the timeout so it
+// fires at most once per node, and disabled_at = now+timeout removes the
+// policy (pruning matched nodes' state for it) once every node has had a
+// chance to receive and run it.
+func (s *server) handleCreateAdhocPolicy(w http.ResponseWriter, r *http.Request) {
+	in, err := decodePolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
+		Name:          "adhoc_" + in.Name,
+		Type:          "backup",
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		ObjectFilters: toProtoObjectFiltersInput(in.ObjectFilters),
+		Rpo:           s.adhocPolicyTimeout.String(),
+		BackupWindow:  []string{"* * * * *"},
+		Destination:   in.Destination,
+		DisabledAt:    timestamppb.New(time.Now().UTC().Add(s.adhocPolicyTimeout)),
+	})
+	if err != nil {
+		s.logger.Error("handleCreateAdhocPolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
+}
+
 func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	in, err := decodePolicyInput(r)

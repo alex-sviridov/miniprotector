@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"google.golang.org/grpc"
@@ -54,6 +55,7 @@ type server struct {
 	policy             policyServiceClient
 	loki               lokiQuerier
 	logger             *slog.Logger
+	adhocPolicyTimeout time.Duration
 }
 
 func newServer(cm clientManagerClient, catalog catalogQueryClient, policy policyServiceClient, logger *slog.Logger) *server {
@@ -78,6 +80,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)
 	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
+	mux.HandleFunc("POST /api/v1/policies/adhoc", s.handleCreateAdhocPolicy)
 	mux.HandleFunc("PUT /api/v1/policies/{id}", s.handleUpdatePolicy)
 	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicy)
 	mux.HandleFunc("POST /api/v1/storage-policies", s.handleCreateStoragePolicy)
