@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-02 — api-server: adhoc (one-time) backup policy endpoint
+
+`POST /api/v1/policies/adhoc` creates a one-time backup policy from the same fields as an ordinary
+create (name, client filters, object filters, destination) -- `api-server` composes `backup_window`
+(every minute), `rpo`, and `disabled_at` itself from a new `AdhocPolicyTimeoutSec` config value
+(default 1h), so a caller never hand-crafts those three fields to get a "run once on every matched
+node, then expire" policy. Also fixes a gap the prior `disabled_at` work flagged: `PUT
+/api/v1/policies/{id}` and `PUT /api/v1/storage-policies/{id}` now round-trip `disabled_at` --
+previously any edit through either endpoint silently cleared it.
+
 ## 2026-08-02 — policy-server: generic disabled_at field on every policy type
 
 Policies of any type (`"backup"` or `"storage"`) can now carry a `disabled_at` timestamp. Once it

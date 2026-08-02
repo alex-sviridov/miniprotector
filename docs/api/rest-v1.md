@@ -201,20 +201,45 @@ success. `400` if `name` is empty or slugifies to nothing (no alphanumeric chara
 `include`/`exclude`/hostname entry isn't a syntactically valid glob pattern — no file is written
 when validation fails.
 
+An optional integer `disabled_at` (Unix seconds) may also be included; once that time passes,
+`GetPolicies` stops serving the policy. Omit it (or send `0`) for a policy that's never disabled.
+
 ## `PUT /api/v1/policies/{id}`
 
 Replaces an existing policy's editable fields — same body shape as `POST`, full replacement rather
 than a partial patch. `200` with the updated policy; the `id` and `created_at` never change.
 Reordering or inserting `object_filters` entries changes the affected filters' `id`s. `400` on the
 same validation failures as `POST` (the existing file is left untouched). `404` if `id` doesn't
-match any policy. `disabled_at` is not yet exposed by this REST endpoint -- a policy edited here
-loses any `disabled_at` set via the gRPC API directly, since the REST DTO doesn't round-trip it.
-This must be fixed before a future adhoc-backup endpoint is built on `disabled_at`, since that
-workflow depends on it surviving an ordinary edit.
+match any policy. `disabled_at` round-trips like every other field: since this is a full replacement, an existing
+`disabled_at` survives an edit only if the request echoes it back explicitly (the same way
+`client_filters` already must be) — omitting it (or sending `0`) clears it.
 
 ## `DELETE /api/v1/policies/{id}`
 
 Deletes a policy. `204` on success, `404` if `id` doesn't match any policy.
+
+## `POST /api/v1/policies/adhoc`
+
+Creates a one-time backup policy without composing `backup_window`/`rpo`/`disabled_at` by hand.
+Body — same shape as `POST /api/v1/policies`; `rpo`/`backup_window`/`disabled_at` are accepted for
+compatibility but always ignored:
+
+```json
+{
+  "name": "web-emergency",
+  "client_filters": {"hostnames": ["web-*"]},
+  "object_filters": [{"path": "/var/www"}],
+  "destination": "bwfs-east.internal:8080"
+}
+```
+
+`api-server` prefixes the name with `adhoc_`, sets `backup_window` to `["* * * * *"]` (open every
+minute), and sets `rpo` and `disabled_at` from the configured `AdhocPolicyTimeoutSec` (default
+`3600`/1h) — `rpo` as a duration string equal to the timeout, `disabled_at` as `now + timeout`. Every
+matched node runs the backup exactly once, the next time it polls within that window, and the policy
+disables itself (pruning matched nodes' state for it) once the timeout passes — no follow-up
+`DELETE` required. `201` with the created policy (including `disabled_at`) on success; same
+`400`/malformed-JSON handling as `POST /api/v1/policies`.
 
 ## `POST /api/v1/storage-policies`
 
@@ -240,10 +265,9 @@ text; the web UI is the one that gives it the `backend`/`root` shape shown above
 Replaces an existing storage policy's editable fields — same body shape as `POST`, full replacement
 rather than a partial patch. `200` with the updated policy; `id`, `created_at`, and `type` never
 change. `400` on the same validation failures as `POST`. `404` if `id` doesn't match any policy.
-`disabled_at` is not yet exposed by this REST endpoint -- a policy edited here loses any
-`disabled_at` set via the gRPC API directly, since the REST DTO doesn't round-trip it. This must be
-fixed before a future adhoc-backup endpoint is built on `disabled_at`, since that workflow depends
-on it surviving an ordinary edit.
+`disabled_at` round-trips like every other field: since this is a full replacement, an existing
+`disabled_at` survives an edit only if the request echoes it back explicitly (the same way
+`client_filters` already must be) — omitting it (or sending `0`) clears it.
 
 ## `GET /api/v1/jobs`
 
