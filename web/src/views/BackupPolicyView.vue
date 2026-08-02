@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePoliciesStore } from '../stores/policies'
 import { formatTimestamp } from '../utils/format'
@@ -7,12 +7,16 @@ import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DetailList from '../components/ui/DetailList.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
+import BackupPolicyFormModal from '../components/backup_policies/BackupPolicyFormModal.vue'
 
 const route = useRoute()
 const router = useRouter()
 const policies = usePoliciesStore()
 const id = computed(() => route.params.id)
 const policy = computed(() => policies.byId[id.value])
+
+const showModal = ref(false)
+const serverError = ref('')
 
 onMounted(async () => {
   try {
@@ -42,13 +46,42 @@ async function confirmDelete() {
     router.push({ name: 'policies' })
   }
 }
+
+function openEdit() {
+  serverError.value = ''
+  showModal.value = true
+}
+
+function closeModal() {
+  showModal.value = false
+  serverError.value = ''
+}
+
+async function save(payload) {
+  try {
+    await policies.update(id.value, payload)
+    closeModal()
+  } catch {
+    serverError.value = policies.error
+  }
+}
+
+async function runNow(payload) {
+  try {
+    await policies.runAdhoc(payload)
+    closeModal()
+    router.push({ name: 'jobs' })
+  } catch {
+    serverError.value = policies.error
+  }
+}
 </script>
 
 <template>
   <div>
     <PageHeader :title="policy?.name || id">
       <template #actions>
-        <router-link :to="{ name: 'policy-edit', params: { id } }" class="border rounded px-3 py-1">Edit</router-link>
+        <BaseButton data-test="policy-edit" variant="secondary" @click="openEdit">Edit</BaseButton>
         <BaseButton data-test="policy-delete" variant="danger" @click="confirmDelete">Delete</BaseButton>
       </template>
     </PageHeader>
@@ -65,5 +98,13 @@ async function confirmDelete() {
         </template>
       </DetailList>
     </StatusMessage>
+    <BackupPolicyFormModal
+      v-if="showModal"
+      :policy="policy"
+      :server-error="serverError"
+      @close="closeModal"
+      @save="save"
+      @run-now="runNow"
+    />
   </div>
 </template>
