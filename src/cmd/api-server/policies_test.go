@@ -457,3 +457,92 @@ func TestToPolicyDTO_OmitsDisabledAtWhenUnset(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "disabled_at")
 }
+
+func TestHandleCreatePolicy_SetsDisabledAtWhenProvided(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080", "disabled_at": 1754000000}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	require.NotNil(t, fake.lastCreateReq.GetDisabledAt())
+	assert.Equal(t, int64(1754000000), fake.lastCreateReq.GetDisabledAt().AsTime().Unix())
+}
+
+func TestHandleCreatePolicy_OmittedDisabledAtLeavesItUnset(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Nil(t, fake.lastCreateReq.GetDisabledAt())
+}
+
+func TestHandleUpdatePolicy_EchoesDisabledAtBack(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080", "disabled_at": 1754000000}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	require.NotNil(t, fake.lastUpdateReq.GetDisabledAt())
+	assert.Equal(t, int64(1754000000), fake.lastUpdateReq.GetDisabledAt().AsTime().Unix())
+}
+
+func TestHandleUpdatePolicy_OmittedDisabledAtClearsIt(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	assert.Nil(t, fake.lastUpdateReq.GetDisabledAt(), "full-replace semantics: omitting disabled_at clears it, same as every other optional field")
+}
+
+func TestHandleUpdateStoragePolicy_EchoesDisabledAtBack(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "s1", Type: "storage"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "east-1-storage",
+		"client_filters": {"hostnames": ["storage-east-1.internal"], "labels": {}},
+		"port": 9400,
+		"config": "{}",
+		"disabled_at": 1754000000
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/s1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	require.NotNil(t, fake.lastUpdateReq.GetDisabledAt())
+	assert.Equal(t, int64(1754000000), fake.lastUpdateReq.GetDisabledAt().AsTime().Unix())
+}

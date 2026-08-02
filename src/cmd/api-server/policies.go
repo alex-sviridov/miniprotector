@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type clientFiltersDTO struct {
@@ -108,6 +110,7 @@ type policyInput struct {
 	RPO           string              `json:"rpo"`
 	BackupWindow  []string            `json:"backup_window"`
 	Destination   string              `json:"destination"`
+	DisabledAt    int64               `json:"disabled_at,omitempty"`
 }
 
 func decodePolicyInput(r *http.Request) (policyInput, error) {
@@ -130,6 +133,17 @@ func toProtoObjectFiltersInput(filters []objectFilterInput) []*pb.ObjectFilter {
 	return out
 }
 
+// disabledAtToProto converts an optional unix-seconds REST input value to
+// a proto Timestamp, treating 0 (the zero value of an omitted/absent
+// field) as "not set" -- mirrors write.go's disabledAtFromProto on the
+// policy-server side, which treats a nil Timestamp the same way.
+func disabledAtToProto(unixSeconds int64) *timestamppb.Timestamp {
+	if unixSeconds == 0 {
+		return nil
+	}
+	return timestamppb.New(time.Unix(unixSeconds, 0))
+}
+
 func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	in, err := decodePolicyInput(r)
 	if err != nil {
@@ -144,6 +158,7 @@ func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		Rpo:           in.RPO,
 		BackupWindow:  in.BackupWindow,
 		Destination:   in.Destination,
+		DisabledAt:    disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleCreatePolicy: backend call failed", "error", err)
@@ -168,6 +183,7 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		Rpo:           in.RPO,
 		BackupWindow:  in.BackupWindow,
 		Destination:   in.Destination,
+		DisabledAt:    disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleUpdatePolicy: backend call failed", "error", err)
@@ -182,6 +198,7 @@ type storagePolicyInput struct {
 	ClientFilters clientFiltersDTO `json:"client_filters"`
 	Port          int32            `json:"port"`
 	Config        string           `json:"config"`
+	DisabledAt    int64            `json:"disabled_at,omitempty"`
 }
 
 func decodeStoragePolicyInput(r *http.Request) (storagePolicyInput, error) {
@@ -204,6 +221,7 @@ func (s *server) handleCreateStoragePolicy(w http.ResponseWriter, r *http.Reques
 		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
 		Port:          in.Port,
 		Config:        in.Config,
+		DisabledAt:    disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleCreateStoragePolicy: backend call failed", "error", err)
@@ -226,6 +244,7 @@ func (s *server) handleUpdateStoragePolicy(w http.ResponseWriter, r *http.Reques
 		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
 		Port:          in.Port,
 		Config:        in.Config,
+		DisabledAt:    disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleUpdateStoragePolicy: backend call failed", "error", err)
