@@ -40,8 +40,9 @@ type cachedPolicy struct {
 	Destination   string         `json:"destination"`
 	// Storage-policy-only fields, zero/empty for a backup policy -- see
 	// storage.go's storageTasks, the consumer that reads these.
-	Port   int32  `json:"port,omitempty"`
-	Config string `json:"config,omitempty"`
+	Port       int32     `json:"port,omitempty"`
+	Config     string    `json:"config,omitempty"`
+	DisabledAt time.Time `json:"disabled_at,omitempty"`
 }
 
 // readCachedPolicies reads policiesCachePath, returning ok=false if the
@@ -193,6 +194,9 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 		// skips below: no sound backup task can be built for a policy
 		// this loop doesn't understand how to interpret.
 		if p.Type != "backup" {
+			continue
+		}
+		if !p.DisabledAt.IsZero() && !p.DisabledAt.After(time.Now()) {
 			continue
 		}
 		rpo, err := time.ParseDuration(p.RPO)

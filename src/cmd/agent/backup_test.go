@@ -396,3 +396,41 @@ func TestBackupTasks_TaskArgsIncludeIncludeExcludeFlagsWhenPresent(t *testing.T)
 	assert.Equal(t, "--exclude", task.Args[7])
 	assert.Equal(t, "*.tmp", task.Args[8])
 }
+
+func TestBackupTasks_DisabledAtInPastSkipsPolicyEntirely(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[{
+		"name": "one-shot",
+		"type": "backup",
+		"object_filters": [{"path": "/data"}],
+		"rpo": "5m",
+		"backup_window": ["* * * * *"],
+		"destination": "bwfs:8080",
+		"disabled_at": "2020-01-01T00:00:00Z"
+	}]`)
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+
+	tasks, ok := backupTasks(path, conf)
+
+	assert.True(t, ok, "the file itself was still validly read")
+	assert.Empty(t, tasks)
+}
+
+func TestBackupTasks_FutureDisabledAtDoesNotSkip(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[{
+		"name": "still-active",
+		"type": "backup",
+		"object_filters": [{"path": "/data"}],
+		"rpo": "24h",
+		"backup_window": ["0 2 * * *"],
+		"destination": "bwfs:8080",
+		"disabled_at": "2099-01-01T00:00:00Z"
+	}]`)
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+
+	tasks, ok := backupTasks(path, conf)
+
+	assert.True(t, ok)
+	assert.Len(t, tasks, 1)
+}
