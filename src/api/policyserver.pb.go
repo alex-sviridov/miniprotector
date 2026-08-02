@@ -344,7 +344,12 @@ type Policy struct {
 	Port int32 `protobuf:"varint,12,opt,name=port,proto3" json:"port,omitempty"`
 	// storage policy only -- opaque JSON text, verbatim passthrough. Never
 	// parsed or interpreted by policy-server beyond checking well-formedness.
-	Config        string `protobuf:"bytes,13,opt,name=config,proto3" json:"config,omitempty"`
+	Config string `protobuf:"bytes,13,opt,name=config,proto3" json:"config,omitempty"`
+	// Zero/unset means never disabled. Once this time passes, GetPolicies
+	// stops returning the policy (checked live, not cached); ListPolicies is
+	// unaffected. Generic across every policy type -- policy-server attaches
+	// no meaning to *why* a policy is disabled.
+	DisabledAt    *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -463,6 +468,13 @@ func (x *Policy) GetConfig() string {
 	return ""
 }
 
+func (x *Policy) GetDisabledAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DisabledAt
+	}
+	return nil
+}
+
 type CreatePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -476,9 +488,10 @@ type CreatePolicyRequest struct {
 	// "backup" or "storage" -- required. Determines which of the fields above
 	// (backup) or below (storage) are valid; mixing fields from both types is
 	// rejected.
-	Type          string `protobuf:"bytes,7,opt,name=type,proto3" json:"type,omitempty"`
-	Port          int32  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
-	Config        string `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
+	Type          string                 `protobuf:"bytes,7,opt,name=type,proto3" json:"type,omitempty"`
+	Port          int32                  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
+	Config        string                 `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
+	DisabledAt    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -576,6 +589,13 @@ func (x *CreatePolicyRequest) GetConfig() string {
 	return ""
 }
 
+func (x *CreatePolicyRequest) GetDisabledAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DisabledAt
+	}
+	return nil
+}
+
 type UpdatePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -583,12 +603,13 @@ type UpdatePolicyRequest struct {
 	ClientFilters *ClientFilters         `protobuf:"bytes,3,opt,name=client_filters,json=clientFilters,proto3" json:"client_filters,omitempty"`
 	// Full replacement of object_filters, not a patch -- reordering or
 	// inserting entries changes the affected filters' ids.
-	ObjectFilters []*ObjectFilter `protobuf:"bytes,4,rep,name=object_filters,json=objectFilters,proto3" json:"object_filters,omitempty"`
-	Rpo           string          `protobuf:"bytes,5,opt,name=rpo,proto3" json:"rpo,omitempty"`
-	BackupWindow  []string        `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
-	Destination   string          `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
-	Port          int32           `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
-	Config        string          `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
+	ObjectFilters []*ObjectFilter        `protobuf:"bytes,4,rep,name=object_filters,json=objectFilters,proto3" json:"object_filters,omitempty"`
+	Rpo           string                 `protobuf:"bytes,5,opt,name=rpo,proto3" json:"rpo,omitempty"`
+	BackupWindow  []string               `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
+	Destination   string                 `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
+	Port          int32                  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
+	Config        string                 `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
+	DisabledAt    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -684,6 +705,13 @@ func (x *UpdatePolicyRequest) GetConfig() string {
 		return x.Config
 	}
 	return ""
+}
+
+func (x *UpdatePolicyRequest) GetDisabledAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DisabledAt
+	}
+	return nil
 }
 
 type DeletePolicyRequest struct {
@@ -788,7 +816,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\ainclude\x18\x02 \x03(\tR\ainclude\x12\x18\n" +
 	"\aexclude\x18\x03 \x03(\tR\aexclude\x12\x0e\n" +
-	"\x02id\x18\x04 \x01(\tR\x02id\"\xe0\x03\n" +
+	"\x02id\x18\x04 \x01(\tR\x02id\"\x9d\x04\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -804,7 +832,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04type\x18\n" +
 	" \x01(\tR\x04type\x12\x12\n" +
 	"\x04port\x18\f \x01(\x05R\x04port\x12\x16\n" +
-	"\x06config\x18\r \x01(\tR\x06configJ\x04\b\v\x10\fR\bhostname\"\xe7\x02\n" +
+	"\x06config\x18\r \x01(\tR\x06config\x12;\n" +
+	"\vdisabled_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"disabledAtJ\x04\b\v\x10\fR\bhostname\"\xa4\x03\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
@@ -815,7 +845,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04type\x18\a \x01(\tR\x04type\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
-	" \x01(\tR\x06configJ\x04\b\b\x10\tR\bhostname\"\xe3\x02\n" +
+	" \x01(\tR\x06config\x12;\n" +
+	"\vdisabled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"disabledAtJ\x04\b\b\x10\tR\bhostname\"\xa0\x03\n" +
 	"\x13UpdatePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12I\n" +
@@ -826,7 +858,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\vdestination\x18\a \x01(\tR\vdestination\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
-	" \x01(\tR\x06configJ\x04\b\b\x10\tR\bhostname\"%\n" +
+	" \x01(\tR\x06config\x12;\n" +
+	"\vdisabled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"disabledAtJ\x04\b\b\x10\tR\bhostname\"%\n" +
 	"\x13DeletePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x16\n" +
 	"\x14DeletePolicyResponse2\xe9\x03\n" +
@@ -873,25 +907,28 @@ var file_api_policyserver_proto_depIdxs = []int32{
 	12, // 4: policyserverservice.Policy.updated_at:type_name -> google.protobuf.Timestamp
 	5,  // 5: policyserverservice.Policy.object_filters:type_name -> policyserverservice.ObjectFilter
 	4,  // 6: policyserverservice.Policy.client_filters:type_name -> policyserverservice.ClientFilters
-	4,  // 7: policyserverservice.CreatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
-	5,  // 8: policyserverservice.CreatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
-	4,  // 9: policyserverservice.UpdatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
-	5,  // 10: policyserverservice.UpdatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
-	0,  // 11: policyserverservice.PolicyService.GetPolicies:input_type -> policyserverservice.GetPoliciesRequest
-	2,  // 12: policyserverservice.PolicyService.ListPolicies:input_type -> policyserverservice.ListPoliciesRequest
-	7,  // 13: policyserverservice.PolicyService.CreatePolicy:input_type -> policyserverservice.CreatePolicyRequest
-	8,  // 14: policyserverservice.PolicyService.UpdatePolicy:input_type -> policyserverservice.UpdatePolicyRequest
-	9,  // 15: policyserverservice.PolicyService.DeletePolicy:input_type -> policyserverservice.DeletePolicyRequest
-	1,  // 16: policyserverservice.PolicyService.GetPolicies:output_type -> policyserverservice.GetPoliciesResponse
-	3,  // 17: policyserverservice.PolicyService.ListPolicies:output_type -> policyserverservice.ListPoliciesResponse
-	6,  // 18: policyserverservice.PolicyService.CreatePolicy:output_type -> policyserverservice.Policy
-	6,  // 19: policyserverservice.PolicyService.UpdatePolicy:output_type -> policyserverservice.Policy
-	10, // 20: policyserverservice.PolicyService.DeletePolicy:output_type -> policyserverservice.DeletePolicyResponse
-	16, // [16:21] is the sub-list for method output_type
-	11, // [11:16] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 7: policyserverservice.Policy.disabled_at:type_name -> google.protobuf.Timestamp
+	4,  // 8: policyserverservice.CreatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
+	5,  // 9: policyserverservice.CreatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
+	12, // 10: policyserverservice.CreatePolicyRequest.disabled_at:type_name -> google.protobuf.Timestamp
+	4,  // 11: policyserverservice.UpdatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
+	5,  // 12: policyserverservice.UpdatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
+	12, // 13: policyserverservice.UpdatePolicyRequest.disabled_at:type_name -> google.protobuf.Timestamp
+	0,  // 14: policyserverservice.PolicyService.GetPolicies:input_type -> policyserverservice.GetPoliciesRequest
+	2,  // 15: policyserverservice.PolicyService.ListPolicies:input_type -> policyserverservice.ListPoliciesRequest
+	7,  // 16: policyserverservice.PolicyService.CreatePolicy:input_type -> policyserverservice.CreatePolicyRequest
+	8,  // 17: policyserverservice.PolicyService.UpdatePolicy:input_type -> policyserverservice.UpdatePolicyRequest
+	9,  // 18: policyserverservice.PolicyService.DeletePolicy:input_type -> policyserverservice.DeletePolicyRequest
+	1,  // 19: policyserverservice.PolicyService.GetPolicies:output_type -> policyserverservice.GetPoliciesResponse
+	3,  // 20: policyserverservice.PolicyService.ListPolicies:output_type -> policyserverservice.ListPoliciesResponse
+	6,  // 21: policyserverservice.PolicyService.CreatePolicy:output_type -> policyserverservice.Policy
+	6,  // 22: policyserverservice.PolicyService.UpdatePolicy:output_type -> policyserverservice.Policy
+	10, // 23: policyserverservice.PolicyService.DeletePolicy:output_type -> policyserverservice.DeletePolicyResponse
+	19, // [19:24] is the sub-list for method output_type
+	14, // [14:19] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_api_policyserver_proto_init() }

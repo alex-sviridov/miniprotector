@@ -84,6 +84,11 @@ message Policy {
   // storage policy only -- opaque JSON text, verbatim passthrough. Never
   // parsed or interpreted by policy-server beyond checking well-formedness.
   string config = 13;
+  // Zero/unset means never disabled. Once this time passes, GetPolicies
+  // stops returning the policy (checked live, not cached); ListPolicies is
+  // unaffected. Generic across every policy type -- policy-server attaches
+  // no meaning to *why* a policy is disabled.
+  google.protobuf.Timestamp disabled_at = 14;
 }
 
 message CreatePolicyRequest {
@@ -104,6 +109,7 @@ message CreatePolicyRequest {
   reserved "hostname";
   int32 port = 9;
   string config = 10;
+  google.protobuf.Timestamp disabled_at = 11;
 }
 
 message UpdatePolicyRequest {
@@ -125,6 +131,7 @@ message UpdatePolicyRequest {
   reserved "hostname";
   int32 port = 9;
   string config = 10;
+  google.protobuf.Timestamp disabled_at = 11;
 }
 
 message DeletePolicyRequest {
