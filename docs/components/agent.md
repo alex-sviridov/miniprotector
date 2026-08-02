@@ -98,6 +98,12 @@ A missing or invalid `destination` is not checked in advance — the task is sti
 `brfs` exec simply fails (recorded as an ordinary failure with backoff), the same as any other exec
 failure.
 
+A policy whose `disabled_at` has passed also contributes no tasks -- checked fresh every reconcile
+tick against the current time, so a policy that becomes disabled between two ticks stops being acted
+on at the very next one, without waiting for `policy-update` to refresh the cache. Its existing
+`agent-state.json` entry is removed the same way a deleted policy's already is: it simply stops
+appearing in that tick's task list, which the existing pruning in `reconcile.go` already handles.
+
 A backup task's `agent-state.json` entry is removed automatically once its `(policy, path)` pair no
 longer appears in `policies-cache.json` — checked every reconcile tick, but only acted on when that
 tick's read of the cache file succeeded; a momentarily missing or corrupt cache file never triggers
@@ -125,6 +131,10 @@ A storage policy's `config` is opaque JSON to `policy-server`, but `agent` inter
 skipped with a logged error (contributing neither task), the same fail-safe direction as an
 unparseable `rpo` or missing `backup_window` for backup tasks. A matching policy becomes two
 processes: `bwfs <root> server --port <port>` and `catalogsync <root>`.
+
+A storage policy whose `disabled_at` has passed is skipped the same way, contributing neither the
+`bwfs` nor the `catalogsync` ensure-running task -- an already-running pair is stopped via the same
+path used when the policy is edited or deleted outright.
 
 The two tasks are supervised entirely independently, with no ordering or coordination between them
 — not even at first startup. `catalogsync` opens `bwfs`'s database read-only

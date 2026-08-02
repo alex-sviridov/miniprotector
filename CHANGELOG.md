@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-02 — policy-server: generic disabled_at field on every policy type
+
+Policies of any type (`"backup"` or `"storage"`) can now carry a `disabled_at` timestamp. Once it
+passes, `policy-server`'s `GetPolicies` stops serving that policy and `agent` stops acting on it
+(deriving no backup task, supervising no `bwfs`/`catalogsync` process) -- checked live, no restart or
+manual reload needed. `ListPolicies` still shows a disabled policy for admin visibility. This is a
+generic primitive with no "adhoc" concept baked in anywhere; it's the foundation a future one-time/ad
+hoc backup capability (an ordinary backup policy with a near-future `disabled_at`, composed by a
+planned `api-server` convenience endpoint) will build on.
+
 ## 2026-07-31 — agent: supervise catalogsync alongside bwfs; demo drops its process-sequencing shell script
 
 `agent` now supervises a `catalogsync` process the same way it already supervises `bwfs` for a

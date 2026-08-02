@@ -55,6 +55,7 @@ message Policy {
   reserved 11; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 12;
   string config = 13;
+  google.protobuf.Timestamp disabled_at = 14;
 }
 
 message CreatePolicyRequest {
@@ -68,6 +69,7 @@ message CreatePolicyRequest {
   reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
+  google.protobuf.Timestamp disabled_at = 11;
 }
 
 message UpdatePolicyRequest {
@@ -81,6 +83,7 @@ message UpdatePolicyRequest {
   reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
+  google.protobuf.Timestamp disabled_at = 11;
 }
 
 message DeletePolicyRequest {
@@ -127,6 +130,15 @@ certificate — the same requirement every server except `issuer`'s own listener
   storage policy (removed -- see
   [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md));
   targeting a node is `client_filters` only, identical to a backup policy.
+- `disabled_at` is generic across every policy type -- unset (zero/nil) means never disabled. Once it
+  passes, `GetPolicies` stops returning that policy to any node, checked live against the current
+  time on every call (not cached at load/reload time) -- no `.changed`-touch or restart needed for a
+  policy to disappear once its `disabled_at` arrives. `ListPolicies` is unaffected: it keeps returning
+  every policy regardless of `disabled_at`, since it's the full-visibility admin surface `api-server`
+  proxies. `UpdatePolicy` treats `disabled_at` as full-replace, the same as every other editable
+  field -- an update that omits it clears it, it is not preserved automatically the way `created_at`
+  is. There is no validation rejecting a `disabled_at` already in the past; a policy created or
+  updated that way is simply already inert.
 - Each `object_filters` entry's `include`/`exclude` are opaque, pass-through glob-pattern lists —
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
   applies them, during its own directory walk.

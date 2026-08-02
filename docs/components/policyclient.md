@@ -74,6 +74,10 @@ additive convention as the RPC response. `agent` is the consumer that actually b
 (see [agent](./agent.md#policy-driven-backup-execution) for backup policies,
 [agent](./agent.md#storage-policy-supervision) for storage ones).
 
+`disabled_at` is likewise carried through verbatim to `policies-cache.json` for every policy type --
+`policyclient` itself never interprets it; `agent` is what acts on it (see
+[agent](./agent.md#policy-driven-backup-execution)).
+
 ## Building
 
 ```bash

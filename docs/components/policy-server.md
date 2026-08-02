@@ -104,6 +104,19 @@ calls the same `Reload` directly, in-process, before the RPC responds. An operat
 files on disk and the write RPCs can coexist — both funnel through the same `Reload`/validation
 logic — but there's no locking between them beyond the atomic-rename write itself.
 
+### Disabling a policy without deleting it
+
+Every policy, of any type, can carry a `disabled_at` timestamp -- unset by default, meaning "never
+disabled." Once that time passes, `GetPolicies` stops returning the policy to any matching node
+(checked live against the current time on every call); `ListPolicies` keeps showing it, disabled or
+not, since it's the admin/`api-server` visibility surface. `policy-server` attaches no meaning to
+*why* a policy is disabled -- it's a generic primitive, not an "adhoc" or "temporary" policy concept
+of its own. A one-time backup, for instance, is planned to be nothing more than an ordinary `"backup"`
+policy with an unusually permissive `backup_window` and a near-future `disabled_at`, composed by a
+future `api-server` convenience endpoint -- neither `policy-server` nor `agent` need to know that
+composition happened. See
+[Design: generic disabled_at policy field](../superpowers/specs/2026-08-02-policy-disabled-at-design.md).
+
 ## Configuration Keys
 
 - `policy_server_host` / `policy_server_port` — where `policy-server` listens *(default port:
