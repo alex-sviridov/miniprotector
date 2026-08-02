@@ -95,6 +95,7 @@ func main() {
 	srv := newServer(pb.NewClientManagerServiceClient(cmConn), pb.NewCatalogServiceClient(catalogConn), pb.NewPolicyServiceClient(policyConn), logger)
 	srv.clientManagerAdmin = pb.NewClientManagerAdminServiceClient(cmAdminConn)
 	srv.loki = newCachingLokiClient(newHTTPLokiClient(lokiBaseURL, lokiHTTPClient), 10*time.Second)
+	srv.adhocPolicyTimeout = time.Duration(conf.AdhocPolicyTimeoutSec) * time.Second
 
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)

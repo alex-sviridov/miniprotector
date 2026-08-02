@@ -46,6 +46,12 @@ how a storage policy targets a node (there is no separate `hostname` field; set
 /policies/{id}` and `DELETE /policies/{id}` are shared across both types — both operations are
 already type-agnostic, looking a policy up or removing it by `id` alone.
 
+`POST /policies/adhoc` creates a one-time backup policy from the same fields as an ordinary create
+(`name`/`client_filters`/`object_filters`/`destination`) — `api-server` computes `backup_window`
+(every minute), `rpo`, and `disabled_at` itself from the `AdhocPolicyTimeoutSec` config value, so a
+caller never composes those three fields by hand to get a "run once on every matched node, then
+expire" policy. See [Design: adhoc policy endpoint](../superpowers/specs/2026-08-02-adhoc-policy-endpoint-design.md).
+
 ## Authentication
 
 Every request must present `Authorization: Bearer <token>`, checked against the single
@@ -72,6 +78,10 @@ convention, not a new gap.
 - `policy_server_host` / `policy_server_port` — where to dial `policy-server` *(default port:
   9300)*
 - `log_gateway_host` / `log_gateway_port` — where to dial `log-gateway`'s Loki query-proxy route for `GET /api/v1/jobs*` *(default port: 9400)*
+- `AdhocPolicyTimeoutSec` — how long a `POST /policies/adhoc`-created policy stays active (its `rpo`
+  and how far past `now` its `disabled_at` is set) before disabling itself *(default: 3600)*. Set it
+  comfortably larger than `PolicyFetchIntervalSec` (mesh nodes' policy poll interval, default `900`)
+  so every matched node has a chance to poll and receive the adhoc policy before it expires.
 
 ## Certificates
 

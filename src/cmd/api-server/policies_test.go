@@ -434,3 +434,221 @@ func TestHandleUpdateStoragePolicy_UnknownIDReturns404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+func TestToPolicyDTO_IncludesDisabledAtWhenSet(t *testing.T) {
+	p := &pb.Policy{
+		Id:         "p1",
+		Name:       "adhoc-x",
+		DisabledAt: timestamppb.New(time.Unix(1754000000, 0)),
+	}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, int64(1754000000), dto.DisabledAt)
+}
+
+func TestToPolicyDTO_OmitsDisabledAtWhenUnset(t *testing.T) {
+	p := &pb.Policy{Id: "p1", Name: "nightly"}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, int64(0), dto.DisabledAt)
+	data, err := json.Marshal(dto)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "disabled_at")
+}
+
+func TestHandleCreatePolicy_SetsDisabledAtWhenProvided(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080", "disabled_at": 1754000000}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	require.NotNil(t, fake.lastCreateReq.GetDisabledAt())
+	assert.Equal(t, int64(1754000000), fake.lastCreateReq.GetDisabledAt().AsTime().Unix())
+}
+
+func TestHandleCreatePolicy_OmittedDisabledAtLeavesItUnset(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Nil(t, fake.lastCreateReq.GetDisabledAt())
+}
+
+func TestHandleUpdatePolicy_EchoesDisabledAtBack(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080", "disabled_at": 1754000000}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	require.NotNil(t, fake.lastUpdateReq.GetDisabledAt())
+	assert.Equal(t, int64(1754000000), fake.lastUpdateReq.GetDisabledAt().AsTime().Unix())
+}
+
+func TestHandleUpdatePolicy_OmittedDisabledAtClearsIt(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	assert.Nil(t, fake.lastUpdateReq.GetDisabledAt(), "full-replace semantics: omitting disabled_at clears it, same as every other optional field")
+}
+
+func TestHandleUpdateStoragePolicy_EchoesDisabledAtBack(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "s1", Type: "storage"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "east-1-storage",
+		"client_filters": {"hostnames": ["storage-east-1.internal"], "labels": {}},
+		"port": 9400,
+		"config": "{}",
+		"disabled_at": 1754000000
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/s1", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastUpdateReq)
+	require.NotNil(t, fake.lastUpdateReq.GetDisabledAt())
+	assert.Equal(t, int64(1754000000), fake.lastUpdateReq.GetDisabledAt().AsTime().Unix())
+}
+
+func TestHandleCreateAdhocPolicy_ComposesFieldsAndPrefixesName(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1", Name: "adhoc_web-emergency", Type: "backup"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	srv.adhocPolicyTimeout = time.Hour
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	before := time.Now()
+	body := strings.NewReader(`{
+		"name": "web-emergency",
+		"client_filters": {"hostnames": ["web-*"]},
+		"object_filters": [{"path": "/var/www"}],
+		"destination": "bwfs:8080"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "adhoc_web-emergency", fake.lastCreateReq.GetName())
+	assert.Equal(t, "backup", fake.lastCreateReq.GetType())
+	assert.Equal(t, []string{"* * * * *"}, fake.lastCreateReq.GetBackupWindow())
+	assert.Equal(t, "1h0m0s", fake.lastCreateReq.GetRpo())
+	assert.Equal(t, []string{"web-*"}, fake.lastCreateReq.GetClientFilters().GetHostnames())
+	require.Len(t, fake.lastCreateReq.GetObjectFilters(), 1)
+	assert.Equal(t, "/var/www", fake.lastCreateReq.GetObjectFilters()[0].GetPath())
+	assert.Equal(t, "bwfs:8080", fake.lastCreateReq.GetDestination())
+	require.NotNil(t, fake.lastCreateReq.GetDisabledAt())
+	assert.WithinDuration(t, before.Add(time.Hour), fake.lastCreateReq.GetDisabledAt().AsTime(), 5*time.Second)
+}
+
+func TestHandleCreateAdhocPolicy_IgnoresCallerSuppliedScheduleFields(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	srv.adhocPolicyTimeout = time.Hour
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web-emergency",
+		"destination": "bwfs:8080",
+		"rpo": "5m",
+		"backup_window": ["0 2 * * *"],
+		"disabled_at": 1
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "1h0m0s", fake.lastCreateReq.GetRpo())
+	assert.Equal(t, []string{"* * * * *"}, fake.lastCreateReq.GetBackupWindow())
+	assert.NotEqual(t, int64(1), fake.lastCreateReq.GetDisabledAt().AsTime().Unix())
+}
+
+func TestHandleCreateAdhocPolicy_ReturnsPolicyDTOWithDisabledAt(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "p1", Name: "adhoc_web-emergency", Type: "backup",
+		DisabledAt: timestamppb.New(time.Unix(1754000000, 0)),
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	srv.adhocPolicyTimeout = time.Hour
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader(`{"name": "web-emergency", "destination": "bwfs:8080"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var respBody map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, float64(1754000000), respBody["disabled_at"])
+}
+
+func TestHandleCreateAdhocPolicy_MalformedJSONReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	srv.adhocPolicyTimeout = time.Hour
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader("not json"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastCreateReq)
+}
+
+func TestHandleCreateAdhocPolicy_BackendValidationErrorReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "metadata.name is required")}
+	srv := newServer(nil, nil, fake, testLogger())
+	srv.adhocPolicyTimeout = time.Hour
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader(`{"name": "x"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
