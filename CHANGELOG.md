@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-02 — web: rewrite backup policies view with modal form and Run now action
+
+The backup policies list and detail views now share a single form modal for creating, editing, and immediately running policies. Previously, `/policies/new` and `/policies/:id/edit` were separate full-page routes; now a "New backup" action on the list and "Edit" button on the detail view both open a shared `BackupPolicyFormModal`, reducing duplication and improving maintainability. The modal also offers a "Run now" action — operators can now execute a policy's filters immediately as a one-time ad-hoc backup job (composed with a `disabled_at` auto-set to expire after 1h) and are immediately redirected to `/jobs` to monitor the resulting job's log lines, eliminating a round-trip through the policies list. The old `/policies/new` and `/policies/:id/edit` routes are removed entirely. This change pairs with the new `POST /api/v1/policies/adhoc` endpoint (committed separately today).
+
 ## 2026-08-02 — api-server: adhoc (one-time) backup policy endpoint
 
 `POST /api/v1/policies/adhoc` creates a one-time backup policy from the same fields as an ordinary

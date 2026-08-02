@@ -34,10 +34,8 @@ no data — there's no read-only "guest" mode.
   never split across a page boundary. Sizes render human-readable (KB/MB/...); a "Versions" count
   on multi-version files opens a modal (click anywhere on that row) listing that file's other
   versions.
-- `/policies` — every policy (name, RPO, destination), linking to:
-- `/policies/:id` — one policy's full record (client filters, object filters, backup window)
-- `/policies/new` — create a new policy
-- `/policies/:id/edit` — edit an existing policy
+- `/policies` — every policy (name, RPO, destination), with a "New backup" action and clickable policy names, both opening a shared form modal (fields: name, client filters, object filters, destination). The modal offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after 1h) and immediately redirects to `/jobs` to stream the job's log lines. Linking to:
+- `/policies/:id` — one policy's full record (client filters, object filters, backup window), with Edit and Delete buttons; Edit opens the form modal pre-filled with the policy's current values (both "Save" and "Run now" are available here too)
 - `/storage` — every storage policy (name, target hostname, port, storage type), with a "New Storage
   Policy" action and a click-to-edit name column, both opening the same `StorageEditModal` (fields:
   name, target hostname, port, storage type — `filesystem` only today — and, when `filesystem` is
