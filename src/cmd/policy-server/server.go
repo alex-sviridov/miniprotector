@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
@@ -38,6 +39,12 @@ func NewPolicyServerServer(cache *Cache, policiesDir string, logger *slog.Logger
 	return &policyServerServer{cache: cache, policiesDir: policiesDir, logger: logger}
 }
 
+// isDisabled reports whether m's DisabledAt has been set and has passed as
+// of now. A zero DisabledAt means "never disabled".
+func isDisabled(m Metadata, now time.Time) bool {
+	return !m.DisabledAt.IsZero() && !m.DisabledAt.After(now)
+}
+
 func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesRequest) (*pb.GetPoliciesResponse, error) {
 	hostname, err := mtls.PeerHostname(ctx)
 	if err != nil {
@@ -59,6 +66,9 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 
 	var matched []*pb.Policy
 	for _, p := range s.cache.Policies() {
+		if isDisabled(p.Meta(), time.Now()) {
+			continue
+		}
 		if !p.Matches(hostname, labels) {
 			continue
 		}

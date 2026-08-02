@@ -316,3 +316,48 @@ func TestListPolicies_UnknownTypeReturnsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, resp.Policies)
 }
+
+func TestGetPolicies_ExcludesPolicyPastItsDisabledAt(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "expired.json", `{
+		"metadata": {"name": "expired-policy", "disabled_at": "2020-01-01T00:00:00Z"}
+	}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "active.json", `{
+		"metadata": {"name": "active-policy"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "active-policy", resp.Policies[0].Name)
+}
+
+func TestGetPolicies_IncludesPolicyWithFutureDisabledAt(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "not-yet.json", `{
+		"metadata": {"name": "not-yet-disabled", "disabled_at": "2099-01-01T00:00:00Z"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "not-yet-disabled", resp.Policies[0].Name)
+}
+
+func TestListPolicies_IncludesDisabledPolicies(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "expired.json", `{
+		"metadata": {"name": "expired-policy", "disabled_at": "2020-01-01T00:00:00Z"}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1, "ListPolicies is the admin visibility surface -- it must still show a disabled policy")
+	assert.NotNil(t, resp.Policies[0].DisabledAt)
+}
