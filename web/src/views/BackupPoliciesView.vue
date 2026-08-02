@@ -1,12 +1,17 @@
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { usePoliciesStore } from '../stores/policies'
 import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
+import BackupPolicyFormModal from '../components/backup_policies/BackupPolicyFormModal.vue'
 
+const router = useRouter()
 const policies = usePoliciesStore()
+const showModal = ref(false)
+const serverError = ref('')
 
 onMounted(() => {
   policies.fetchAll()
@@ -15,6 +20,36 @@ onMounted(() => {
 function confirmDelete(id) {
   if (window.confirm('Delete this policy?')) {
     policies.remove(id)
+  }
+}
+
+function openCreate() {
+  serverError.value = ''
+  showModal.value = true
+}
+
+function closeModal() {
+  showModal.value = false
+  serverError.value = ''
+}
+
+async function save(payload) {
+  try {
+    const policy = await policies.create(payload)
+    closeModal()
+    router.push({ name: 'policy-detail', params: { id: policy.id } })
+  } catch {
+    serverError.value = policies.error
+  }
+}
+
+async function runNow(payload) {
+  try {
+    await policies.runAdhoc(payload)
+    closeModal()
+    router.push({ name: 'jobs' })
+  } catch {
+    serverError.value = policies.error
   }
 }
 
@@ -30,9 +65,9 @@ const columns = [
   <div>
     <PageHeader title="Policies">
       <template #actions>
-        <router-link :to="{ name: 'policy-new' }" class="bg-blue-600 text-white rounded px-3 py-1">
-          New Policy
-        </router-link>
+        <BaseButton data-test="policy-new" variant="primary" @click="openCreate">
+          New backup
+        </BaseButton>
       </template>
     </PageHeader>
     <StatusMessage
@@ -62,5 +97,13 @@ const columns = [
         </template>
       </DataTable>
     </StatusMessage>
+    <BackupPolicyFormModal
+      v-if="showModal"
+      :policy="null"
+      :server-error="serverError"
+      @close="closeModal"
+      @save="save"
+      @run-now="runNow"
+    />
   </div>
 </template>
