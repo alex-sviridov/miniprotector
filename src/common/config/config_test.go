@@ -597,3 +597,24 @@ func TestParseConfig_ConnectionTimeOutSecDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 30, conf.ConnectionTimeOutSec)
 }
+
+func TestParseConfig_AdhocPolicyTimeoutSecDefaultsTo3600(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 3600, conf.AdhocPolicyTimeoutSec)
+}
+
+func TestParseConfig_AdhocPolicyTimeoutSecParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nAdhocPolicyTimeoutSec=1800\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 1800, conf.AdhocPolicyTimeoutSec)
+}

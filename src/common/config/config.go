@@ -117,6 +117,7 @@ type Config struct {
 	APIServerToken                   string
 	ClientManagerAdminAPIPort        int
 	ClientManagerAdminAPIHost        string
+	AdhocPolicyTimeoutSec            int
 }
 
 type contextKey string
@@ -163,6 +164,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		LogGatewayPort:                   9400,
 		ClientManagerAdminAPIPort:        9501,
 		ConnectionTimeOutSec:             30,
+		AdhocPolicyTimeoutSec:            3600,
 	}
 	foundFields := make(map[string]bool)
 
@@ -403,6 +405,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.MaxConcurrentBackupJobs = number
 			foundFields["MaxConcurrentBackupJobs"] = true
+		case "AdhocPolicyTimeoutSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid AdhocPolicyTimeoutSec value at line %d: %s", lineNum, value)
+			}
+			config.AdhocPolicyTimeoutSec = number
+			foundFields["AdhocPolicyTimeoutSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}
