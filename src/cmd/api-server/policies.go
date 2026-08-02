@@ -33,6 +33,7 @@ type policyDTO struct {
 	Type          string            `json:"type"`
 	Port          int32             `json:"port"`
 	Config        string            `json:"config"`
+	DisabledAt    int64             `json:"disabled_at,omitempty"`
 }
 
 func toPolicyDTO(p *pb.Policy) policyDTO {
@@ -40,7 +41,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 	for i, f := range p.GetObjectFilters() {
 		objectFilters[i] = objectFilterDTO{ID: f.GetId(), Path: f.GetPath(), Include: f.GetInclude(), Exclude: f.GetExclude()}
 	}
-	return policyDTO{
+	dto := policyDTO{
 		ID:        p.GetId(),
 		Name:      p.GetName(),
 		CreatedAt: p.GetCreatedAt().AsTime().Unix(),
@@ -57,6 +58,10 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		Port:          p.GetPort(),
 		Config:        p.GetConfig(),
 	}
+	if p.GetDisabledAt() != nil {
+		dto.DisabledAt = p.GetDisabledAt().AsTime().Unix()
+	}
+	return dto
 }
 
 func (s *server) handleListPolicies(w http.ResponseWriter, r *http.Request) {

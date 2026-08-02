@@ -434,3 +434,26 @@ func TestHandleUpdateStoragePolicy_UnknownIDReturns404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+func TestToPolicyDTO_IncludesDisabledAtWhenSet(t *testing.T) {
+	p := &pb.Policy{
+		Id:         "p1",
+		Name:       "adhoc-x",
+		DisabledAt: timestamppb.New(time.Unix(1754000000, 0)),
+	}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, int64(1754000000), dto.DisabledAt)
+}
+
+func TestToPolicyDTO_OmitsDisabledAtWhenUnset(t *testing.T) {
+	p := &pb.Policy{Id: "p1", Name: "nightly"}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, int64(0), dto.DisabledAt)
+	data, err := json.Marshal(dto)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "disabled_at")
+}
