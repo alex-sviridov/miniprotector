@@ -72,8 +72,10 @@ which is the first actual consumer of `storage`-typed policies.
 
 ### Policy files and hot reload
 
-Each policy type subfolder's `*.json` file is one policy. Every type shares `metadata` (`name` plus
-operator-set `created_at`/`updated_at`) and `client_filters` (`hostnames` glob list, `labels` map). A
+Each policy type subfolder's `*.json` file is one policy. Every type shares `metadata` (`name`,
+operator-set `created_at`/`updated_at`, and an optional `disabled_at` -- unset by default, see
+[Disabling a policy without deleting it](#disabling-a-policy-without-deleting-it) below) and
+`client_filters` (`hostnames` glob list, `labels` map). A
 `"backup"` policy additionally has `object_filters` (a list of `{"path": "...", "include": [...],
 "exclude": [...]}` entries — `include`/`exclude` are optional glob-pattern lists, validated as
 syntactically-valid patterns at load time but otherwise opaque to `policy-server`; see

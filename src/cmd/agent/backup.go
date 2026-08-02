@@ -48,6 +48,18 @@ type cachedPolicy struct {
 	DisabledAt time.Time `json:"disabled_at,omitempty"`
 }
 
+// disabled reports whether p's DisabledAt has been set and has passed as of
+// now -- the same predicate server.go's isDisabled uses server-side. The
+// check lives here, inside backupTasks/storageTasks themselves, rather than
+// in isDue or reconcile.go -- a disabled policy must contribute zero tasks
+// in the first place, so reconcile.go's existing prune() removes its state
+// the same way a deleted policy's already is, with no dedicated
+// disabled-handling code of its own (see
+// TestRun_DisabledPolicyPrunedViaBackupTasks).
+func (p cachedPolicy) disabled(now time.Time) bool {
+	return !p.DisabledAt.IsZero() && !p.DisabledAt.After(now)
+}
+
 // readCachedPolicies reads policiesCachePath, returning ok=false if the
 // file is missing or unparseable -- distinct from a confirmed-good read
 // that happens to list zero policies (ok=true, nil slice). Callers that
@@ -199,7 +211,7 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 		if p.Type != "backup" {
 			continue
 		}
-		if !p.DisabledAt.IsZero() && !p.DisabledAt.After(time.Now()) {
+		if p.disabled(time.Now()) {
 			continue
 		}
 		rpo, err := time.ParseDuration(p.RPO)

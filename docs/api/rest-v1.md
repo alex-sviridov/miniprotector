@@ -207,7 +207,10 @@ Replaces an existing policy's editable fields — same body shape as `POST`, ful
 than a partial patch. `200` with the updated policy; the `id` and `created_at` never change.
 Reordering or inserting `object_filters` entries changes the affected filters' `id`s. `400` on the
 same validation failures as `POST` (the existing file is left untouched). `404` if `id` doesn't
-match any policy.
+match any policy. `disabled_at` is not yet exposed by this REST endpoint -- a policy edited here
+loses any `disabled_at` set via the gRPC API directly, since the REST DTO doesn't round-trip it.
+This must be fixed before a future adhoc-backup endpoint is built on `disabled_at`, since that
+workflow depends on it surviving an ordinary edit.
 
 ## `DELETE /api/v1/policies/{id}`
 
@@ -237,6 +240,10 @@ text; the web UI is the one that gives it the `backend`/`root` shape shown above
 Replaces an existing storage policy's editable fields — same body shape as `POST`, full replacement
 rather than a partial patch. `200` with the updated policy; `id`, `created_at`, and `type` never
 change. `400` on the same validation failures as `POST`. `404` if `id` doesn't match any policy.
+`disabled_at` is not yet exposed by this REST endpoint -- a policy edited here loses any
+`disabled_at` set via the gRPC API directly, since the REST DTO doesn't round-trip it. This must be
+fixed before a future adhoc-backup endpoint is built on `disabled_at`, since that workflow depends
+on it surviving an ordinary edit.
 
 ## `GET /api/v1/jobs`
 

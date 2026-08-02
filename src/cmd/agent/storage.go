@@ -87,7 +87,7 @@ func storageTasks(policiesCachePath string, logger *slog.Logger, bwfsBinary, cat
 		if p.Type != "storage" {
 			continue
 		}
-		if !p.DisabledAt.IsZero() && !p.DisabledAt.After(time.Now()) {
+		if p.disabled(time.Now()) {
 			continue
 		}
 		var cfg storageConfig

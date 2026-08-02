@@ -477,3 +477,26 @@ func TestUpdatePolicy_DisabledAtRoundTrips(t *testing.T) {
 	require.NotNil(t, updated.DisabledAt)
 	assert.Equal(t, disabledAt, updated.DisabledAt.AsTime())
 }
+
+func TestUpdatePolicy_OmittingDisabledAtClearsIt(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "temp",
+		Type:        "backup",
+		Destination: "bwfs:8080",
+		DisabledAt:  timestamppb.New(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created.DisabledAt)
+
+	updated, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:          created.Id,
+		Name:        created.Name,
+		Destination: "bwfs:8080",
+		// DisabledAt intentionally omitted
+	})
+
+	require.NoError(t, err)
+	assert.Nil(t, updated.DisabledAt, "omitting disabled_at on UpdatePolicy must clear it -- full-replace, same as every other editable field")
+}

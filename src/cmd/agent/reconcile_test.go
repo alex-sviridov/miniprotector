@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -441,6 +442,43 @@ func TestRun_PrunesOrphanedEntryOnConfirmedGoodTick(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, cache, "orphaned")
 	assert.Contains(t, cache, "current")
+}
+
+// TestRun_DisabledPolicyPrunedViaBackupTasks proves the "no dedicated
+// disabled-handling code needed in reconcile.go" architectural claim holds
+// under an actual end-to-end tick: it composes the real backupTasks (which
+// already contributes zero tasks for a disabled policy) with the real
+// run()/prune() path, rather than relying on the generic synthetic-policy
+// prune tests above to stand in for this specific case.
+func TestRun_DisabledPolicyPrunedViaBackupTasks(t *testing.T) {
+	dir := t.TempDir()
+	stateCachePath := filepath.Join(dir, "agent-state.json")
+	policiesCachePath := writeCachedPolicies(t, dir, `[{
+		"name": "one-shot",
+		"type": "backup",
+		"object_filters": [{"id": "aaaaaaaa-1111-1111-1111-111111111111", "path": "/data"}],
+		"rpo": "5m",
+		"backup_window": ["* * * * *"],
+		"destination": "bwfs:8080",
+		"disabled_at": "2020-01-01T00:00:00Z"
+	}]`)
+	taskID := "backup:one-shot:/data:aaaaaaaa"
+	require.NoError(t, writeCache(stateCachePath, Cache{
+		taskID: {ConsecutiveFailures: 0},
+	}))
+
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	fr := &fakeRunner{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	err := run(ctx, testLogger(), stateCachePath, 10*time.Millisecond, fr.run,
+		func() ([]Policy, bool) { return backupTasks(policiesCachePath, conf) }, 2, nil, nil, nil)
+	require.NoError(t, err)
+
+	cache, err := readCache(stateCachePath)
+	require.NoError(t, err)
+	assert.NotContains(t, cache, taskID, "a task derived from a disabled policy must be pruned even though its cache entry pre-dates the policy going disabled")
 }
 
 func TestRun_SkipsPruneWhenPoliciesFuncReportsNotOk(t *testing.T) {

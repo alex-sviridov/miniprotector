@@ -52,7 +52,8 @@ directly:
     "rpo": "24h",
     "backup_window": ["0 2 * * *"],
     "destination": "bwfs-east.internal:8080",
-    "type": "backup"
+    "type": "backup",
+    "disabled_at": "0001-01-01T00:00:00Z"
   },
   {
     "id": "c2d3e4f5-...",
@@ -76,7 +77,9 @@ additive convention as the RPC response. `agent` is the consumer that actually b
 
 `disabled_at` is likewise carried through verbatim to `policies-cache.json` for every policy type --
 `policyclient` itself never interprets it; `agent` is what acts on it (see
-[agent](./agent.md#policy-driven-backup-execution)).
+[agent](./agent.md#policy-driven-backup-execution)). A never-disabled policy's cache entry carries
+the Go zero-time sentinel value `"0001-01-01T00:00:00Z"` for `disabled_at` rather than omitting the
+key -- JSON's `omitempty` doesn't suppress a zero-value `time.Time`, a known and accepted quirk.
 
 ## Building
 
