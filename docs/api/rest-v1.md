@@ -212,7 +212,10 @@ Reordering or inserting `object_filters` entries changes the affected filters' `
 same validation failures as `POST` (the existing file is left untouched). `404` if `id` doesn't
 match any policy. `disabled_at` round-trips like every other field: since this is a full replacement, an existing
 `disabled_at` survives an edit only if the request echoes it back explicitly (the same way
-`client_filters` already must be) — omitting it (or sending `0`) clears it.
+`client_filters` already must be) — omitting it (or sending `0`) clears it. Known limitation: the
+web UI's policy edit form does not currently read or send `disabled_at`, so saving an edit through
+the UI always clears it — including for an adhoc policy edited before it expires, which becomes a
+permanent recurring policy as a result.
 
 ## `DELETE /api/v1/policies/{id}`
 
@@ -237,8 +240,9 @@ compatibility but always ignored:
 minute), and sets `rpo` and `disabled_at` from the configured `AdhocPolicyTimeoutSec` (default
 `3600`/1h) — `rpo` as a duration string equal to the timeout, `disabled_at` as `now + timeout`. Every
 matched node runs the backup exactly once, the next time it polls within that window, and the policy
-disables itself (pruning matched nodes' state for it) once the timeout passes — no follow-up
-`DELETE` required. `201` with the created policy (including `disabled_at`) on success; same
+disables itself (pruning matched nodes' state for it) once the timeout passes, though it still
+appears in `GET /api/v1/policies`/`ListPolicies` until explicitly deleted — `disabled_at` only stops
+execution, not listing. `201` with the created policy (including `disabled_at`) on success; same
 `400`/malformed-JSON handling as `POST /api/v1/policies`.
 
 ## `POST /api/v1/storage-policies`
@@ -267,7 +271,9 @@ rather than a partial patch. `200` with the updated policy; `id`, `created_at`, 
 change. `400` on the same validation failures as `POST`. `404` if `id` doesn't match any policy.
 `disabled_at` round-trips like every other field: since this is a full replacement, an existing
 `disabled_at` survives an edit only if the request echoes it back explicitly (the same way
-`client_filters` already must be) — omitting it (or sending `0`) clears it.
+`client_filters` already must be) — omitting it (or sending `0`) clears it. Same known limitation as
+`PUT /api/v1/policies/{id}` above: the web UI's storage policy edit form doesn't read or send
+`disabled_at`, so an edit made through the UI always clears it.
 
 ## `GET /api/v1/jobs`
 

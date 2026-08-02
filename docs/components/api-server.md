@@ -79,7 +79,9 @@ convention, not a new gap.
   9300)*
 - `log_gateway_host` / `log_gateway_port` — where to dial `log-gateway`'s Loki query-proxy route for `GET /api/v1/jobs*` *(default port: 9400)*
 - `AdhocPolicyTimeoutSec` — how long a `POST /policies/adhoc`-created policy stays active (its `rpo`
-  and how far past `now` its `disabled_at` is set) before disabling itself *(default: 3600)*
+  and how far past `now` its `disabled_at` is set) before disabling itself *(default: 3600)*. Set it
+  comfortably larger than `PolicyFetchIntervalSec` (mesh nodes' policy poll interval, default `900`)
+  so every matched node has a chance to poll and receive the adhoc policy before it expires.
 
 ## Certificates
 

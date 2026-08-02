@@ -410,6 +410,9 @@ func ParseConfig(configPath string) (*Config, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid AdhocPolicyTimeoutSec value at line %d: %s", lineNum, value)
 			}
+			if number <= 0 {
+				return nil, fmt.Errorf("AdhocPolicyTimeoutSec must be positive at line %d: %s", lineNum, value)
+			}
 			config.AdhocPolicyTimeoutSec = number
 			foundFields["AdhocPolicyTimeoutSec"] = true
 		default:
