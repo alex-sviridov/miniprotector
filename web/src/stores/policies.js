@@ -63,5 +63,14 @@ export const usePoliciesStore = defineStore('policies', {
         delete this.byId[id]
       })
     },
+    async runAdhoc(payload) {
+      return withRequest(this, async () => {
+        return apiFetch('/policies/adhoc', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      })
+    },
   },
 })

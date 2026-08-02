@@ -133,4 +133,37 @@ describe('policies store', () => {
     await expect(policies.remove('missing')).rejects.toThrow('policy not found')
     expect(policies.error).toBe('policy not found')
   })
+
+  it('runAdhoc posts to the adhoc endpoint without touching list or byId', async () => {
+    const created = { id: 'adhoc1', name: 'adhoc_oneoff' }
+    apiFetch.mockResolvedValue(created)
+    const policies = usePoliciesStore()
+
+    const input = {
+      name: 'oneoff',
+      client_filters: { hostnames: [], labels: {} },
+      object_filters: [],
+      rpo: '1h',
+      backup_window: [],
+      destination: 'store:8080',
+    }
+    const result = await policies.runAdhoc(input)
+
+    expect(apiFetch).toHaveBeenCalledWith('/policies/adhoc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    expect(result).toEqual(created)
+    expect(policies.list).toEqual([])
+    expect(policies.byId).toEqual({})
+  })
+
+  it('runAdhoc records and rethrows an error on failure', async () => {
+    apiFetch.mockRejectedValue(new Error('destination is required'))
+    const policies = usePoliciesStore()
+
+    await expect(policies.runAdhoc({ name: 'oneoff' })).rejects.toThrow('destination is required')
+    expect(policies.error).toBe('destination is required')
+  })
 })
