@@ -22,6 +22,11 @@ type objectFilterDTO struct {
 	Exclude []string `json:"exclude,omitempty"`
 }
 
+type checkinDTO struct {
+	Hostname   string `json:"hostname"`
+	LastSeenAt int64  `json:"last_seen_at"`
+}
+
 type policyDTO struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
@@ -37,12 +42,17 @@ type policyDTO struct {
 	Port            int32             `json:"port"`
 	Config          string            `json:"config"`
 	DisabledAt      int64             `json:"disabled_at,omitempty"`
+	Checkins        []checkinDTO      `json:"checkins"`
 }
 
 func toPolicyDTO(p *pb.Policy) policyDTO {
 	objectFilters := make([]objectFilterDTO, len(p.GetObjectFilters()))
 	for i, f := range p.GetObjectFilters() {
 		objectFilters[i] = objectFilterDTO{ID: f.GetId(), Path: f.GetPath(), Include: f.GetInclude(), Exclude: f.GetExclude()}
+	}
+	checkins := make([]checkinDTO, len(p.GetCheckins()))
+	for i, c := range p.GetCheckins() {
+		checkins[i] = checkinDTO{Hostname: c.GetHostname(), LastSeenAt: c.GetLastSeenAt().AsTime().Unix()}
 	}
 	dto := policyDTO{
 		ID:        p.GetId(),
@@ -61,6 +71,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		Type:            p.GetType(),
 		Port:            p.GetPort(),
 		Config:          p.GetConfig(),
+		Checkins:        checkins,
 	}
 	if p.GetDisabledAt() != nil {
 		dto.DisabledAt = p.GetDisabledAt().AsTime().Unix()

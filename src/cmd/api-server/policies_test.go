@@ -654,3 +654,31 @@ func TestHandleCreateAdhocPolicy_BackendValidationErrorReturns400(t *testing.T) 
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestToPolicyDTO_IncludesCheckins(t *testing.T) {
+	p := &pb.Policy{
+		Id:   "p1",
+		Name: "nightly",
+		Type: "backup",
+		Checkins: []*pb.PolicyCheckin{
+			{Hostname: "web-01", LastSeenAt: timestamppb.New(time.Unix(1752400000, 0))},
+			{Hostname: "web-02", LastSeenAt: timestamppb.New(time.Unix(1752400010, 0))},
+		},
+	}
+
+	dto := toPolicyDTO(p)
+
+	require.Len(t, dto.Checkins, 2)
+	assert.Equal(t, "web-01", dto.Checkins[0].Hostname)
+	assert.Equal(t, int64(1752400000), dto.Checkins[0].LastSeenAt)
+	assert.Equal(t, "web-02", dto.Checkins[1].Hostname)
+	assert.Equal(t, int64(1752400010), dto.Checkins[1].LastSeenAt)
+}
+
+func TestToPolicyDTO_NoCheckinsYieldsEmptySlice(t *testing.T) {
+	p := &pb.Policy{Id: "p1", Name: "nightly", Type: "backup"}
+
+	dto := toPolicyDTO(p)
+
+	assert.Empty(t, dto.Checkins)
+}
