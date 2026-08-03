@@ -1,14 +1,20 @@
 <!-- web/src/components/backup_policies/BackupPolicyFormModal.vue -->
 <script setup>
 import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
+import { useStoragePoliciesStore } from '../../stores/storagePolicies'
 import RepeatableFieldList from '../ui/RepeatableFieldList.vue'
 import BaseButton from '../ui/BaseButton.vue'
+import BaseField from '../ui/BaseField.vue'
+import BaseInput from '../ui/BaseInput.vue'
+import BaseSelect from '../ui/BaseSelect.vue'
 
 const props = defineProps({
   policy: { type: Object, default: null },
   serverError: { type: String, default: '' },
 })
 const emit = defineEmits(['close', 'save', 'run-now'])
+
+const storagePolicies = useStoragePoliciesStore()
 
 function toFormShape(policy) {
   if (!policy) {
@@ -18,7 +24,7 @@ function toFormShape(policy) {
       object_filters: [],
       rpo: '',
       backup_window: [],
-      destination: '',
+      storage_policy_id: '',
     }
   }
   return {
@@ -34,13 +40,23 @@ function toFormShape(policy) {
     })),
     rpo: policy.rpo,
     backup_window: [...(policy.backup_window || [])],
-    destination: policy.destination,
+    storage_policy_id: policy.storage_policy_id || '',
   }
 }
 
 const form = reactive(toFormShape(props.policy))
 const errors = reactive({ message: '' })
 const formEl = ref(null)
+
+// storageOptionLabel: "(incomplete)" covers a storage policy with no
+// client_filters.hostnames or no port set -- still selectable (an operator
+// may be about to fix it), just not hidden as if it didn't exist.
+function storageOptionLabel(storagePolicy) {
+  const hostname = storagePolicy.client_filters?.hostnames?.[0]
+  const port = storagePolicy.port
+  if (!hostname || !port) return `${storagePolicy.name} (incomplete)`
+  return `${storagePolicy.name} (${hostname}:${port})`
+}
 
 function close() {
   emit('close')
@@ -52,6 +68,9 @@ function onKeydown(event) {
 
 onMounted(() => {
   document.addEventListener('keydown', onKeydown)
+  if (storagePolicies.list.length === 0) {
+    storagePolicies.fetchAll()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -64,7 +83,7 @@ function splitCsv(text) {
 
 function buildPayload() {
   return {
-    name: form.name,
+    name: form.name.trim(),
     client_filters: {
       hostnames: form.client_filters.hostnames.map((h) => h.trim()).filter(Boolean),
       labels: Object.fromEntries(
@@ -82,19 +101,30 @@ function buildPayload() {
       })),
     rpo: form.rpo,
     backup_window: form.backup_window.map((w) => w.trim()).filter(Boolean),
-    destination: form.destination,
+    storage_policy_id: form.storage_policy_id,
   }
 }
 
-function submit() {
+// validate: name is checked in JS (native `required` alone doesn't reject
+// whitespace-only); everything else -- the destination select's `required`
+// and the RPO pattern -- goes through the form's own native validity via
+// reportValidity(), same mechanism this component already relied on.
+function validate() {
   errors.message = ''
-  if (!formEl.value.reportValidity()) return
+  if (!form.name.trim()) {
+    errors.message = 'Name is required.'
+    return false
+  }
+  return formEl.value.reportValidity()
+}
+
+function submit() {
+  if (!validate()) return
   emit('save', buildPayload())
 }
 
 function runNow() {
-  errors.message = ''
-  if (!formEl.value.reportValidity()) return
+  if (!validate()) return
   emit('run-now', buildPayload())
 }
 </script>
@@ -108,10 +138,9 @@ function runNow() {
       </div>
       <p v-if="errors.message || serverError" class="text-red-600 mb-4">{{ errors.message || serverError }}</p>
       <form ref="formEl" @submit.prevent="submit" class="space-y-6">
-        <div>
-          <label class="block font-medium mb-1">Name</label>
-          <input name="name" v-model="form.name" required class="w-full border rounded px-2 py-1" />
-        </div>
+        <BaseField label="Name" required>
+          <BaseInput name="name" v-model="form.name" required />
+        </BaseField>
 
         <div>
           <label class="block font-medium mb-1">Hostnames (glob patterns)</label>
@@ -184,10 +213,15 @@ function runNow() {
           </RepeatableFieldList>
         </div>
 
-        <div>
-          <label class="block font-medium mb-1">RPO</label>
-          <input name="rpo" v-model="form.rpo" placeholder="e.g. 24h" class="w-full border rounded px-2 py-1" />
-        </div>
+        <BaseField label="RPO">
+          <BaseInput
+            name="rpo"
+            v-model="form.rpo"
+            placeholder="e.g. 24h"
+            pattern="\d+(\.\d+)?(ns|us|µs|ms|s|m|h)(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))*"
+            title="A duration like 24h, 30m, or 1h30m"
+          />
+        </BaseField>
 
         <div>
           <label class="block font-medium mb-1">Backup Window (cron expressions)</label>
@@ -203,10 +237,30 @@ function runNow() {
           </RepeatableFieldList>
         </div>
 
-        <div>
-          <label class="block font-medium mb-1">Destination</label>
-          <input name="destination" v-model="form.destination" placeholder="host:port" class="w-full border rounded px-2 py-1" />
-        </div>
+        <BaseField label="Destination" required>
+          <div class="flex gap-2 items-start">
+            <BaseSelect
+              data-test="backup-policy-storage-select"
+              v-model="form.storage_policy_id"
+              required
+              class="flex-1"
+            >
+              <option value="" disabled>Select a storage policy</option>
+              <option v-for="sp in storagePolicies.list" :key="sp.id" :value="sp.id">
+                {{ storageOptionLabel(sp) }}
+              </option>
+            </BaseSelect>
+            <BaseButton
+              type="button"
+              variant="secondary"
+              data-test="backup-policy-storage-reload"
+              :disabled="storagePolicies.loading"
+              @click="storagePolicies.fetchAll()"
+            >
+              {{ storagePolicies.loading ? 'Reloading…' : 'Reload' }}
+            </BaseButton>
+          </div>
+        </BaseField>
 
         <div class="flex gap-2">
           <BaseButton type="submit" variant="primary">

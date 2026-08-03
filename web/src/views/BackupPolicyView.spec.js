@@ -110,7 +110,7 @@ describe('BackupPolicyView', () => {
       object_filters: [],
       rpo: '1h',
       backup_window: [],
-      destination: 'store:8080',
+      storage_policy_id: 'sp1',
     }
     await wrapper.findComponent({ name: 'BackupPolicyFormModal' }).vm.$emit('save', payload)
     await nextTick()
@@ -154,7 +154,7 @@ describe('BackupPolicyView', () => {
       object_filters: [],
       rpo: '1h',
       backup_window: [],
-      destination: 'store:8080',
+      storage_policy_id: 'sp1',
     }
     await wrapper.findComponent({ name: 'BackupPolicyFormModal' }).vm.$emit('run-now', payload)
     await nextTick()
