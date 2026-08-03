@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -95,6 +96,8 @@ func main() {
 			logger.Error("policy watcher stopped", "error", err)
 		}
 	}()
+
+	go runCheckinCleanup(signalCtx, checkins, checkinCleanupInterval, time.Duration(conf.CheckinRetentionSec)*time.Second, logger)
 
 	logger.Info("policy-server started", "port", arguments.Port, "policies_dir", policiesDir)
 
