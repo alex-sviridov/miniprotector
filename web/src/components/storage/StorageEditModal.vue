@@ -2,6 +2,9 @@
 <script setup>
 import { reactive, onMounted, onBeforeUnmount } from 'vue'
 import BaseButton from '../ui/BaseButton.vue'
+import BaseField from '../ui/BaseField.vue'
+import BaseInput from '../ui/BaseInput.vue'
+import BaseSelect from '../ui/BaseSelect.vue'
 
 const props = defineProps({
   policy: { type: Object, default: null },
@@ -87,28 +90,23 @@ function submit() {
       </div>
       <p v-if="errors.message || serverError" class="text-red-600 mb-4">{{ errors.message || serverError }}</p>
       <form @submit.prevent="submit" class="space-y-4">
-        <div>
-          <label class="block font-medium mb-1">Name</label>
-          <input data-test="storage-name-input" v-model="form.name" class="w-full border rounded px-2 py-1" />
-        </div>
-        <div>
-          <label class="block font-medium mb-1">Target Hostname</label>
-          <input data-test="storage-target-hostname-input" v-model="form.targetHostname" class="w-full border rounded px-2 py-1" />
-        </div>
-        <div>
-          <label class="block font-medium mb-1">Port</label>
-          <input data-test="storage-port-input" v-model="form.port" type="number" class="w-full border rounded px-2 py-1" />
-        </div>
-        <div>
-          <label class="block font-medium mb-1">Storage Type</label>
-          <select data-test="storage-type-select" v-model="form.storageType" class="w-full border rounded px-2 py-1">
+        <BaseField label="Name">
+          <BaseInput data-test="storage-name-input" v-model="form.name" />
+        </BaseField>
+        <BaseField label="Target Hostname">
+          <BaseInput data-test="storage-target-hostname-input" v-model="form.targetHostname" />
+        </BaseField>
+        <BaseField label="Port">
+          <BaseInput data-test="storage-port-input" v-model="form.port" type="number" />
+        </BaseField>
+        <BaseField label="Storage Type">
+          <BaseSelect data-test="storage-type-select" v-model="form.storageType">
             <option value="filesystem">filesystem</option>
-          </select>
-        </div>
-        <div v-if="form.storageType === 'filesystem'">
-          <label class="block font-medium mb-1">Filesystem Path</label>
-          <input data-test="storage-path-input" v-model="form.path" class="w-full border rounded px-2 py-1" />
-        </div>
+          </BaseSelect>
+        </BaseField>
+        <BaseField v-if="form.storageType === 'filesystem'" label="Filesystem Path">
+          <BaseInput data-test="storage-path-input" v-model="form.path" />
+        </BaseField>
         <BaseButton type="submit" variant="primary">
           {{ policy ? 'Save Changes' : 'Create Storage Policy' }}
         </BaseButton>
