@@ -7,10 +7,12 @@ import BackupPolicyView from './BackupPolicyView.vue'
 import { usePoliciesStore } from '../stores/policies'
 
 const push = vi.fn()
+const replace = vi.fn()
+let routeQuery = {}
 
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'p1' } }),
-  useRouter: () => ({ push }),
+  useRoute: () => ({ params: { id: 'p1' }, query: routeQuery }),
+  useRouter: () => ({ push, replace }),
 }))
 
 function mountView(state) {
@@ -22,6 +24,8 @@ function mountView(state) {
 describe('BackupPolicyView', () => {
   afterEach(() => {
     push.mockReset()
+    replace.mockReset()
+    routeQuery = {}
     vi.restoreAllMocks()
   })
 
@@ -173,5 +177,38 @@ describe('BackupPolicyView', () => {
     await wrapper.find('[data-test="policy-edit"]').trigger('click')
     await wrapper.findComponent({ name: 'BackupPolicyFormModal' }).vm.$emit('close')
     expect(wrapper.findComponent({ name: 'BackupPolicyFormModal' }).exists()).toBe(false)
+  })
+
+  it('shows both tab buttons once the policy has loaded', () => {
+    const { wrapper } = mountView({
+      byId: { p1: { id: 'p1', name: 'nightly-db-backup', object_filters: [], client_filters: {}, checkins: [] } },
+      loading: false,
+      error: null,
+    })
+    expect(wrapper.find('[data-test="tab-details"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="tab-checkins"]').exists()).toBe(true)
+  })
+
+  it('renders check-ins and wires Refresh to the store on the Checkins tab', async () => {
+    routeQuery = { tab: 'checkins' }
+    const { wrapper, policies } = mountView({
+      byId: {
+        p1: {
+          id: 'p1',
+          name: 'nightly-db-backup',
+          object_filters: [],
+          client_filters: {},
+          checkins: [{ hostname: 'web-01', last_seen_at: 1752400000 }],
+        },
+      },
+      loading: false,
+      error: null,
+      checkinsLoading: false,
+      checkinsError: null,
+    })
+    expect(wrapper.text()).toContain('web-01')
+
+    await wrapper.find('[data-test="checkins-refresh"]').trigger('click')
+    expect(policies.refresh).toHaveBeenCalledWith('p1')
   })
 })

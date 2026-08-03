@@ -7,7 +7,9 @@ import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DetailList from '../components/ui/DetailList.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
+import Tabs from '../components/ui/Tabs.vue'
 import BackupPolicyFormModal from '../components/backup_policies/BackupPolicyFormModal.vue'
+import PolicyCheckins from '../components/policies/PolicyCheckins.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +19,11 @@ const policy = computed(() => policies.byId[id.value])
 
 const showModal = ref(false)
 const serverError = ref('')
+
+const TABS = [
+  { key: 'details', label: 'Details' },
+  { key: 'checkins', label: 'Check-ins' },
+]
 
 onMounted(async () => {
   try {
@@ -86,17 +93,29 @@ async function runNow(payload) {
       </template>
     </PageHeader>
     <StatusMessage :loading="policies.loading" :error="policies.error">
-      <DetailList v-if="policy" :rows="detailRows">
-        <template #objectFilters>
-          <ul>
-            <li v-for="f in policy.object_filters || []" :key="f.id">
-              {{ f.path }}
-              <span v-if="f.include?.length"> include: {{ f.include.join(', ') }}</span>
-              <span v-if="f.exclude?.length"> exclude: {{ f.exclude.join(', ') }}</span>
-            </li>
-          </ul>
+      <Tabs v-if="policy" :tabs="TABS">
+        <template #details>
+          <DetailList :rows="detailRows">
+            <template #objectFilters>
+              <ul>
+                <li v-for="f in policy.object_filters || []" :key="f.id">
+                  {{ f.path }}
+                  <span v-if="f.include?.length"> include: {{ f.include.join(', ') }}</span>
+                  <span v-if="f.exclude?.length"> exclude: {{ f.exclude.join(', ') }}</span>
+                </li>
+              </ul>
+            </template>
+          </DetailList>
         </template>
-      </DetailList>
+        <template #checkins>
+          <PolicyCheckins
+            :checkins="policy.checkins || []"
+            :loading="policies.checkinsLoading"
+            :error="policies.checkinsError"
+            @refresh="policies.refresh(id)"
+          />
+        </template>
+      </Tabs>
     </StatusMessage>
     <BackupPolicyFormModal
       v-if="showModal"
