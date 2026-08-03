@@ -41,6 +41,11 @@ message ObjectFilter {
   string id = 4;
 }
 
+message PolicyCheckin {
+  string hostname = 1;
+  int64 last_seen_at = 2;
+}
+
 message Policy {
   string name = 1;
   google.protobuf.Timestamp created_at = 2;
@@ -57,6 +62,7 @@ message Policy {
   string config = 13;
   google.protobuf.Timestamp disabled_at = 14;
   string storage_policy_id = 15; // backup policy only, required
+  repeated PolicyCheckin checkins = 16; // ListPolicies only, not GetPolicies; one entry per host that has received this policy
 }
 
 message CreatePolicyRequest {
@@ -178,6 +184,11 @@ certificate — the same requirement every server except `issuer`'s own listener
   existed. A `type` value that matches no loaded policy's `Kind()` returns an empty list, not an
   error — there is no closed enum at this layer, `Kind()` is just whatever string the type
   subfolder produced.
+- `Policy.checkins` is populated only by `ListPolicies` -- `GetPolicies`, `CreatePolicy`, and
+  `UpdatePolicy` always leave it empty, the same way `GetPolicies`'s response never echoes back
+  `client_filters`. Each entry is one host's most recent check-in for that policy (`hostname` +
+  `last_seen_at`) -- `GetPolicies` upserts one such row per policy it returns to a caller, on every
+  call. See [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md).
 
 ## See Also
 
@@ -188,3 +199,4 @@ certificate — the same requirement every server except `issuer`'s own listener
 - [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
 - [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md)
 - [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md)
+- [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md)

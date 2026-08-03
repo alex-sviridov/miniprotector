@@ -9,8 +9,9 @@ policies no longer have to be hand-edited on this host. See
 [Design: Policy Management API](../superpowers/specs/2026-07-18-policy-management-api-design.md).
 
 `policy-server` is bootstrapped and certificate-managed exactly like any other node in the mesh
-(`client-manager add`, `agent` + `issuer` refresh) — it holds no database and calls no other
-service. A client's attribute labels are read directly off its presented mTLS certificate: `issuer`
+(`client-manager add`, `agent` + `issuer` refresh) — it calls no other service, but now owns one
+piece of local state: a SQLite database recording check-ins (see
+[Check-in tracking](#check-in-tracking) below). A client's attribute labels are read directly off its presented mTLS certificate: `issuer`
 already embeds a hostname's current `attribute` key/value pairs as a custom X.509 extension on
 every operating certificate it mints.
 
@@ -128,10 +129,32 @@ future `api-server` convenience endpoint -- neither `policy-server` nor `agent` 
 composition happened. See
 [Design: generic disabled_at policy field](../superpowers/specs/2026-08-02-policy-disabled-at-design.md).
 
+### Check-in tracking
+
+Every time `GetPolicies` hands a policy to a host, `policy-server` upserts a row —
+`(policy, hostname, last_seen_at)` — into a local SQLite database at
+`<var-dir>/policy-server.sqlite`. One row exists per `(policy, hostname)` pair: a host re-polling
+the same policy overwrites its own row's timestamp rather than adding a new one, so the table always
+holds each host's *most recent* check-in per policy, not a full history. This covers every policy
+type `GetPolicies` returns (`"backup"` and `"storage"` alike). If the check-in write fails,
+`GetPolicies` fails the whole call — check-in tracking is not best-effort telemetry the caller's
+policies can silently proceed without.
+
+`ListPolicies` attaches each policy's current check-in rows (host + last-seen timestamp) to the
+response; `GetPolicies` never does, the same way it never echoes back `client_filters`.
+
+A background routine ticks every fixed 1 minute and deletes any check-in row whose `last_seen_at` is
+older than `CheckinRetentionSec` (config key, default `86400` = 24h). A host that stops polling a
+policy — decommissioned, or no longer matched — simply ages out of that policy's check-in list once
+its one row passes the retention window. See
+[Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md).
+
 ## Configuration Keys
 
 - `policy_server_host` / `policy_server_port` — where `policy-server` listens *(default port:
   9300)*
+- `CheckinRetentionSec` — how long a check-in row survives with no re-poll before the cleanup
+  routine removes it *(default: 86400)*
 
 ## Building
 
@@ -146,4 +169,5 @@ make policy-server
 - [policyclient](./policyclient.md) — fetches `GetPolicies` on `agent`'s `policy-update` schedule
 - [Policy Server Protocol](../protocols/policy-server.md)
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
+- [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md)
 - [Architecture](../ARCHITECTURE.md)

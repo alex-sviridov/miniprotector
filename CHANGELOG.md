@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-03 — policy-server: check-in tracking and cleanup
+
+`policy-server` now records, in a local SQLite database, the most recent time each host received
+each policy from `GetPolicies` -- one upserted row per `(policy, hostname)` pair, covering both
+backup and storage policy types. A check-in write failure fails the whole `GetPolicies` call rather
+than being silently dropped. `ListPolicies` (and therefore `api-server`'s `GET /api/v1/policies` /
+`GET /api/v1/policies/{id}`) now returns each policy's current check-in list; `GetPolicies` itself
+never echoes it back. A background routine, ticking every fixed 1 minute, purges check-ins older than
+the new `CheckinRetentionSec` config key (default 24h), so a host that stops polling a policy ages out
+of its check-in list on its own.
+
 ## 2026-08-03 — web: destination select and form guardrails on the backup policy modal
 
 `BackupPolicyFormModal.vue`'s destination field is no longer a free-text `host:port` box — it's now a required select populated from `useStoragePoliciesStore()`, listing the operator's configured storage policies by name (with their resolved `hostname:port`, or "(incomplete)" for a storage policy still missing one, shown rather than hidden). Picking an option sets the backup policy's `storage_policy_id` directly; the modal never types or computes a destination itself, closing out the web side of the storage-policy link built server-side today (see the entry directly below). A "Reload" button next to the select re-fetches the storage policies list on demand, and the modal also auto-loads it on mount if the store is still empty, so an operator opening the form fresh doesn't have to remember to visit `/storage` first. The modal picked up basic guardrails along the way -- a non-blank name check, and an RPO input that, when filled in, must match a `time.ParseDuration`-shaped pattern -- and a set of reusable form primitives (`BaseField`, `BaseInput`, `BaseSelect` in `web/src/components/ui/`, built on Vue 3.5's `defineModel()`) that both this modal and `StorageEditModal.vue` now render through, the latter as a pure markup refactor with no behavior change.

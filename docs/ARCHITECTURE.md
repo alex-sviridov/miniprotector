@@ -13,7 +13,7 @@ A backup system with intelligent deduplication and integrity verification.
 | agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, and policy-driven backup execution via `brfs`) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
-| policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels; no database, reads labels from the peer cert | Implemented (`agent` fetches, caches, and now acts on its policies — deriving and running scheduled `brfs` backups via `policyclient`) |
+| policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels, reading labels from the peer cert; tracks per-host check-ins in a local SQLite database | Implemented (`agent` fetches, caches, and now acts on its policies — deriving and running scheduled `brfs` backups via `policyclient`) |
 | log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; gates on a valid operating certificate, forwards the push body unmodified | Implemented (agent bundles, configures, and supervises the Vector process that ships to it) |
 | clientmanager-api | Read-only gRPC daemon exposing `client-manager`'s enrolled-client data (`ListClients`/`GetClient`), sharing its SQLite file the same way `issuer` already does | Implemented |
 | clientmanager-admin-api | CA-admin-equivalent gRPC writes (issue/re-enroll/revoke/unrevoke/description/attribute/SAN) onto the same database, packaged in clientmanager-api's container | Implemented |
@@ -51,6 +51,10 @@ one-shot bootstrap — its image bundles `agent` the same way `catalog`'s does. 
 port (`policy_server_port`, default 9300); `agent` now dials it on a schedule (`policy-update`, via
 `policyclient fetch`) and caches the result locally, and `agent` now acts on that cache directly, deriving and running scheduled `brfs` backups from
 it — see [agent](components/agent.md#policy-driven-backup-execution).
+It also now owns local state -- a SQLite database recording which hosts have checked in for which
+policy and when, purged on a fixed 1-minute cleanup tick -- the first piece of persistent state this
+component has held; it still calls no other service. See
+[policy-server](components/policy-server.md#check-in-tracking).
 
 `clientmanager-api` runs on the CA host alongside `client-manager` and `issuer`, needing the same
 direct filesystem access to the shared `clientmanager.sqlite` file — but unlike `issuer`, it

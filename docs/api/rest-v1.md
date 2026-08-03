@@ -170,13 +170,19 @@ one policy type; omitted returns every type.
       "storage_policy_id": "b2c3d4e5-...",
       "type": "backup",
       "port": 0,
-      "config": ""
+      "config": "",
+      "checkins": [
+        {"hostname": "web-01", "last_seen_at": 1752400500}
+      ]
     }
   ]
 }
 ```
 
 `created_at`/`updated_at` are Unix seconds, matching every other timestamp field in this API.
+`checkins` lists every host that has received this policy from `GetPolicies`, each with its most
+recent check-in time (Unix seconds) -- not a full history, one entry per host. Empty for a policy no
+host has polled yet.
 
 ## `GET /api/v1/policies/{id}`
 
