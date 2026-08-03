@@ -49,6 +49,11 @@ message ObjectFilter {
   string id = 4;
 }
 
+message PolicyCheckin {
+  string hostname = 1;
+  google.protobuf.Timestamp last_seen_at = 2;
+}
+
 message Policy {
   string name = 1;
   google.protobuf.Timestamp created_at = 2;
@@ -95,6 +100,7 @@ message Policy {
   // "backup" policy only, required. References a "storage"-typed Policy.id;
   // destination is resolved from it live on every read.
   string storage_policy_id = 15;
+  repeated PolicyCheckin checkins = 16; // ListPolicies only -- see below
 }
 
 message CreatePolicyRequest {
