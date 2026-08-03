@@ -9,7 +9,6 @@ import StorageEditModal from '../components/storage/StorageEditModal.vue'
 
 const storagePolicies = useStoragePoliciesStore()
 const showModal = ref(false)
-const editingPolicy = ref(null)
 const serverError = ref('')
 
 onMounted(() => {
@@ -29,33 +28,18 @@ function targetHostname(clientFilters) {
 }
 
 function openCreate() {
-  editingPolicy.value = null
-  serverError.value = ''
-  showModal.value = true
-}
-
-function openEdit(row) {
-  // DataTable (vue-good-table-next) clones rows internally and tags the
-  // clone with tracking fields (vgt_id, originalIndex). Look the pristine
-  // object up from the store by id instead of using the augmented clone.
-  editingPolicy.value = storagePolicies.list.find((p) => p.id === row.id) || row
   serverError.value = ''
   showModal.value = true
 }
 
 function closeModal() {
   showModal.value = false
-  editingPolicy.value = null
   serverError.value = ''
 }
 
 async function save(payload) {
   try {
-    if (editingPolicy.value) {
-      await storagePolicies.update(editingPolicy.value.id, payload)
-    } else {
-      await storagePolicies.create(payload)
-    }
+    await storagePolicies.create(payload)
     closeModal()
   } catch {
     serverError.value = storagePolicies.error
@@ -94,14 +78,13 @@ const columns = [
     >
       <DataTable :columns="columns" :rows="storagePolicies.list">
         <template #table-row="{ column, row }">
-          <button
+          <router-link
             v-if="column.field === 'name'"
-            :data-test="`storage-edit-${row.id}`"
+            :to="{ name: 'storage-detail', params: { id: row.id } }"
             class="text-blue-600 hover:underline"
-            @click="openEdit(row)"
           >
             {{ row.name }}
-          </button>
+          </router-link>
           <span v-else-if="column.field === 'storageType'">{{ storageBackend(row.config) }}</span>
           <span v-else-if="column.field === 'targetHostname'">{{ targetHostname(row.client_filters) }}</span>
           <BaseButton
@@ -118,7 +101,7 @@ const columns = [
     </StatusMessage>
     <StorageEditModal
       v-if="showModal"
-      :policy="editingPolicy"
+      :policy="null"
       :server-error="serverError"
       @close="closeModal"
       @save="save"

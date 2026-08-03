@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import StorageView from './StorageView.vue'
 import { useStoragePoliciesStore } from '../stores/storagePolicies'
 
 function mountView(state) {
   const pinia = createTestingPinia({ stubActions: true, initialState: { storagePolicies: state } })
-  const wrapper = mount(StorageView, { global: { plugins: [pinia] } })
+  const wrapper = mount(StorageView, {
+    global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
+  })
   return { wrapper, storagePolicies: useStoragePoliciesStore() }
 }
 
@@ -58,19 +60,14 @@ describe('StorageView', () => {
     expect(wrapper.findComponent({ name: 'StorageEditModal' }).props('policy')).toBeNull()
   })
 
-  it('opens the modal in edit mode when a row is clicked', async () => {
+  it("links each policy's name to its detail page", () => {
     const { wrapper } = mountView({
       list: [{ id: 's1', name: 'east-1-storage', port: 9400, config: '{}' }],
       loading: false,
       error: null,
     })
-    await wrapper.find('[data-test="storage-edit-s1"]').trigger('click')
-    expect(wrapper.findComponent({ name: 'StorageEditModal' }).props('policy')).toEqual({
-      id: 's1',
-      name: 'east-1-storage',
-      port: 9400,
-      config: '{}',
-    })
+    const link = wrapper.findAllComponents(RouterLinkStub).find((l) => l.text() === 'east-1-storage')
+    expect(link.props('to')).toEqual({ name: 'storage-detail', params: { id: 's1' } })
   })
 
   it('calls create and closes the modal on save in create mode', async () => {
@@ -83,23 +80,6 @@ describe('StorageView', () => {
     await nextTick()
 
     expect(storagePolicies.create).toHaveBeenCalledWith(payload)
-    expect(wrapper.findComponent({ name: 'StorageEditModal' }).exists()).toBe(false)
-  })
-
-  it('calls update and closes the modal on save in edit mode', async () => {
-    const { wrapper, storagePolicies } = mountView({
-      list: [{ id: 's1', name: 'east-1-storage', port: 9400, config: '{}' }],
-      loading: false,
-      error: null,
-    })
-    storagePolicies.update.mockResolvedValue({ id: 's1', name: 'renamed' })
-    await wrapper.find('[data-test="storage-edit-s1"]').trigger('click')
-
-    const payload = { name: 'renamed', port: 9400, config: '{}', client_filters: { hostnames: [], labels: {} } }
-    await wrapper.findComponent({ name: 'StorageEditModal' }).vm.$emit('save', payload)
-    await nextTick()
-
-    expect(storagePolicies.update).toHaveBeenCalledWith('s1', payload)
     expect(wrapper.findComponent({ name: 'StorageEditModal' }).exists()).toBe(false)
   })
 
