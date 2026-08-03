@@ -56,6 +56,61 @@ describe('policies store', () => {
     expect(policies.error).toBe('policy not found')
   })
 
+  it('refresh always refetches, bypassing the byId cache', async () => {
+    apiFetch.mockResolvedValueOnce({ id: 'p1', name: 'nightly', checkins: [] })
+    const policies = usePoliciesStore()
+    await policies.fetchOne('p1')
+
+    apiFetch.mockResolvedValueOnce({
+      id: 'p1',
+      name: 'nightly',
+      checkins: [{ hostname: 'web-01', last_seen_at: 123 }],
+    })
+    const result = await policies.refresh('p1')
+
+    expect(apiFetch).toHaveBeenCalledTimes(2)
+    expect(apiFetch).toHaveBeenNthCalledWith(2, '/policies/p1')
+    expect(result.checkins).toEqual([{ hostname: 'web-01', last_seen_at: 123 }])
+    expect(policies.byId.p1).toEqual(result)
+  })
+
+  it('refresh updates the matching list entry when present', async () => {
+    apiFetch.mockResolvedValueOnce({ data: [{ id: 'p1', name: 'nightly' }] })
+    const policies = usePoliciesStore()
+    await policies.fetchAll()
+
+    apiFetch.mockResolvedValueOnce({ id: 'p1', name: 'nightly-renamed' })
+    await policies.refresh('p1')
+
+    expect(policies.list).toEqual([{ id: 'p1', name: 'nightly-renamed' }])
+  })
+
+  it('refresh tracks checkinsLoading separately from loading', async () => {
+    let resolveFetch
+    apiFetch.mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve
+      })
+    )
+    const policies = usePoliciesStore()
+
+    const pending = policies.refresh('p1')
+    expect(policies.checkinsLoading).toBe(true)
+    expect(policies.loading).toBe(false)
+    resolveFetch({ id: 'p1' })
+    await pending
+    expect(policies.checkinsLoading).toBe(false)
+  })
+
+  it('refresh records the error on checkinsError (not error) and rethrows', async () => {
+    apiFetch.mockRejectedValue(new Error('boom'))
+    const policies = usePoliciesStore()
+
+    await expect(policies.refresh('p1')).rejects.toThrow('boom')
+    expect(policies.checkinsError).toBe('boom')
+    expect(policies.error).toBeNull()
+  })
+
   it('create posts the input and adds the result to list and byId', async () => {
     const created = { id: 'p2', name: 'weekly' }
     apiFetch.mockResolvedValue(created)
