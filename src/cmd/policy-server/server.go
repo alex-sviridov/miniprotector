@@ -12,6 +12,7 @@ import (
 	checkinstore "github.com/alex-sviridov/miniprotector/storage/policyserver"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // policyServerServer implements PolicyService: the sole RPC any node calls
@@ -110,6 +111,27 @@ func attachDestination(pp *pb.Policy, cache *Cache) {
 	}
 }
 
+// attachCheckins populates pp.Checkins from store's per-host check-in
+// records for pp's id. Called only by ListPolicies -- GetPolicies never
+// echoes checkins back, the same way it never echoes client_filters. A
+// lookup failure is logged and leaves pp.Checkins empty rather than
+// failing the whole ListPolicies call -- the same "loud skip, don't block
+// the rest" treatment this codebase already gives a single malformed
+// policy file during Cache.Reload.
+func attachCheckins(pp *pb.Policy, store *checkinstore.Store, logger *slog.Logger) {
+	records, err := store.CheckinsForPolicy(pp.GetId())
+	if err != nil {
+		logger.Error("ListPolicies: failed to load checkins", "policy_id", pp.GetId(), "error", err)
+		return
+	}
+	for _, r := range records {
+		pp.Checkins = append(pp.Checkins, &pb.PolicyCheckin{
+			Hostname:   r.Hostname,
+			LastSeenAt: timestamppb.New(r.LastSeenAt),
+		})
+	}
+}
+
 // ListPolicies returns every currently-loaded policy, unfiltered by any
 // caller identity -- the admin surface api-server proxies for browsing and
 // editing the full policy set. Unlike GetPolicies, it is never called by a
@@ -125,6 +147,7 @@ func (s *policyServerServer) ListPolicies(ctx context.Context, req *pb.ListPolic
 		}
 		pp := p.ToProto(true)
 		attachDestination(pp, s.cache)
+		attachCheckins(pp, s.checkins, s.logger)
 		out = append(out, pp)
 	}
 	s.logger.Info("ListPolicies", "type", req.GetType(), "count", len(out))

@@ -477,3 +477,56 @@ func TestListPolicies_ResolvesDestinationFromStoragePolicyId(t *testing.T) {
 	require.Len(t, resp.Policies, 1)
 	assert.Equal(t, "bwfs-east.internal:8080", resp.Policies[0].Destination)
 }
+
+func TestListPolicies_IncludesCheckins(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	checkins := newTestCheckinStore(t)
+	srv := NewPolicyServerServer(c, dir, testLogger(), checkins)
+
+	getResp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, getResp.Policies, 1)
+
+	listResp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, listResp.Policies, 1)
+	require.Len(t, listResp.Policies[0].Checkins, 1)
+	assert.Equal(t, "web-01", listResp.Policies[0].Checkins[0].Hostname)
+	assert.NotNil(t, listResp.Policies[0].Checkins[0].LastSeenAt)
+}
+
+func TestListPolicies_NoCheckinsYieldsEmptyCheckins(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"storage_policy_id": "sp-1"
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Empty(t, resp.Policies[0].Checkins)
+}
+
+func TestGetPolicies_NeverEchoesCheckins(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Empty(t, resp.Policies[0].Checkins, "GetPolicies must not populate checkins, only ListPolicies does")
+}
