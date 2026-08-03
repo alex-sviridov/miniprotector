@@ -165,6 +165,7 @@ func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.
 		Rpo:           "24h",
 		BackupWindow:  []string{"0 2 * * *"},
 		Destination:   "bwfs:8080",
+		StoragePolicyId: "sp-1",
 		Type:          "backup",
 	}
 
@@ -178,6 +179,7 @@ func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.
 	assert.Equal(t, "f1", dto.ObjectFilters[0].ID)
 	assert.Equal(t, "/data", dto.ObjectFilters[0].Path)
 	assert.Equal(t, "backup", dto.Type)
+	assert.Equal(t, "sp-1", dto.StoragePolicyID)
 }
 
 func TestToPolicyDTO_IncludesStorageFields(t *testing.T) {
@@ -201,7 +203,7 @@ func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -210,7 +212,7 @@ func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
 	require.NotNil(t, fake.lastCreateReq)
 	assert.Equal(t, "nightly", fake.lastCreateReq.GetName())
 	assert.Equal(t, "backup", fake.lastCreateReq.GetType())
-	assert.Equal(t, "bwfs:8080", fake.lastCreateReq.GetDestination())
+	assert.Equal(t, "sp-1", fake.lastCreateReq.GetStoragePolicyId())
 }
 
 func TestHandleCreatePolicy_PassesClientAndObjectFiltersThrough(t *testing.T) {
@@ -268,7 +270,7 @@ func TestHandleUpdatePolicy_ReturnsUpdatedPolicy(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	body := strings.NewReader(`{"name": "nightly-renamed", "destination": "bwfs:9090"}`)
+	body := strings.NewReader(`{"name": "nightly-renamed", "storage_policy_id": "sp-2"}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -277,7 +279,7 @@ func TestHandleUpdatePolicy_ReturnsUpdatedPolicy(t *testing.T) {
 	require.NotNil(t, fake.lastUpdateReq)
 	assert.Equal(t, "p1", fake.lastUpdateReq.GetId())
 	assert.Equal(t, "nightly-renamed", fake.lastUpdateReq.GetName())
-	assert.Equal(t, "bwfs:9090", fake.lastUpdateReq.GetDestination())
+	assert.Equal(t, "sp-2", fake.lastUpdateReq.GetStoragePolicyId())
 }
 
 func TestHandleUpdatePolicy_MalformedJSONReturns400(t *testing.T) {
@@ -464,7 +466,7 @@ func TestHandleCreatePolicy_SetsDisabledAtWhenProvided(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080", "disabled_at": 1754000000}`)
+	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1", "disabled_at": 1754000000}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -481,7 +483,7 @@ func TestHandleCreatePolicy_OmittedDisabledAtLeavesItUnset(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -497,7 +499,7 @@ func TestHandleUpdatePolicy_EchoesDisabledAtBack(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080", "disabled_at": 1754000000}`)
+	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1", "disabled_at": 1754000000}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -514,7 +516,7 @@ func TestHandleUpdatePolicy_OmittedDisabledAtClearsIt(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	body := strings.NewReader(`{"name": "nightly", "destination": "bwfs:8080"}`)
+	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1"}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -559,7 +561,7 @@ func TestHandleCreateAdhocPolicy_ComposesFieldsAndPrefixesName(t *testing.T) {
 		"name": "web-emergency",
 		"client_filters": {"hostnames": ["web-*"]},
 		"object_filters": [{"path": "/var/www"}],
-		"destination": "bwfs:8080"
+		"storage_policy_id": "sp-1"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", body)
 	rec := httptest.NewRecorder()
@@ -574,7 +576,7 @@ func TestHandleCreateAdhocPolicy_ComposesFieldsAndPrefixesName(t *testing.T) {
 	assert.Equal(t, []string{"web-*"}, fake.lastCreateReq.GetClientFilters().GetHostnames())
 	require.Len(t, fake.lastCreateReq.GetObjectFilters(), 1)
 	assert.Equal(t, "/var/www", fake.lastCreateReq.GetObjectFilters()[0].GetPath())
-	assert.Equal(t, "bwfs:8080", fake.lastCreateReq.GetDestination())
+	assert.Equal(t, "sp-1", fake.lastCreateReq.GetStoragePolicyId())
 	require.NotNil(t, fake.lastCreateReq.GetDisabledAt())
 	assert.WithinDuration(t, before.Add(time.Hour), fake.lastCreateReq.GetDisabledAt().AsTime(), 5*time.Second)
 }
@@ -588,7 +590,7 @@ func TestHandleCreateAdhocPolicy_IgnoresCallerSuppliedScheduleFields(t *testing.
 
 	body := strings.NewReader(`{
 		"name": "web-emergency",
-		"destination": "bwfs:8080",
+		"storage_policy_id": "sp-1",
 		"rpo": "5m",
 		"backup_window": ["0 2 * * *"],
 		"disabled_at": 1
@@ -614,7 +616,7 @@ func TestHandleCreateAdhocPolicy_ReturnsPolicyDTOWithDisabledAt(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader(`{"name": "web-emergency", "destination": "bwfs:8080"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader(`{"name": "web-emergency", "storage_policy_id": "sp-1"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

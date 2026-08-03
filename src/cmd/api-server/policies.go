@@ -23,19 +23,20 @@ type objectFilterDTO struct {
 }
 
 type policyDTO struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	CreatedAt     int64             `json:"created_at"`
-	UpdatedAt     int64             `json:"updated_at"`
-	ClientFilters clientFiltersDTO  `json:"client_filters"`
-	ObjectFilters []objectFilterDTO `json:"object_filters"`
-	RPO           string            `json:"rpo"`
-	BackupWindow  []string          `json:"backup_window"`
-	Destination   string            `json:"destination"`
-	Type          string            `json:"type"`
-	Port          int32             `json:"port"`
-	Config        string            `json:"config"`
-	DisabledAt    int64             `json:"disabled_at,omitempty"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	CreatedAt       int64             `json:"created_at"`
+	UpdatedAt       int64             `json:"updated_at"`
+	ClientFilters   clientFiltersDTO  `json:"client_filters"`
+	ObjectFilters   []objectFilterDTO `json:"object_filters"`
+	RPO             string            `json:"rpo"`
+	BackupWindow    []string          `json:"backup_window"`
+	Destination     string            `json:"destination"`
+	StoragePolicyID string            `json:"storage_policy_id,omitempty"`
+	Type            string            `json:"type"`
+	Port            int32             `json:"port"`
+	Config          string            `json:"config"`
+	DisabledAt      int64             `json:"disabled_at,omitempty"`
 }
 
 func toPolicyDTO(p *pb.Policy) policyDTO {
@@ -52,13 +53,14 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 			Hostnames: p.GetClientFilters().GetHostnames(),
 			Labels:    p.GetClientFilters().GetLabels(),
 		},
-		ObjectFilters: objectFilters,
-		RPO:           p.GetRpo(),
-		BackupWindow:  p.GetBackupWindow(),
-		Destination:   p.GetDestination(),
-		Type:          p.GetType(),
-		Port:          p.GetPort(),
-		Config:        p.GetConfig(),
+		ObjectFilters:   objectFilters,
+		RPO:             p.GetRpo(),
+		BackupWindow:    p.GetBackupWindow(),
+		Destination:     p.GetDestination(),
+		StoragePolicyID: p.GetStoragePolicyId(),
+		Type:            p.GetType(),
+		Port:            p.GetPort(),
+		Config:          p.GetConfig(),
 	}
 	if p.GetDisabledAt() != nil {
 		dto.DisabledAt = p.GetDisabledAt().AsTime().Unix()
@@ -104,13 +106,13 @@ type objectFilterInput struct {
 }
 
 type policyInput struct {
-	Name          string              `json:"name"`
-	ClientFilters clientFiltersDTO    `json:"client_filters"`
-	ObjectFilters []objectFilterInput `json:"object_filters"`
-	RPO           string              `json:"rpo"`
-	BackupWindow  []string            `json:"backup_window"`
-	Destination   string              `json:"destination"`
-	DisabledAt    int64               `json:"disabled_at,omitempty"`
+	Name            string              `json:"name"`
+	ClientFilters   clientFiltersDTO    `json:"client_filters"`
+	ObjectFilters   []objectFilterInput `json:"object_filters"`
+	RPO             string              `json:"rpo"`
+	BackupWindow    []string            `json:"backup_window"`
+	StoragePolicyID string              `json:"storage_policy_id"`
+	DisabledAt      int64               `json:"disabled_at,omitempty"`
 }
 
 func decodePolicyInput(r *http.Request) (policyInput, error) {
@@ -151,14 +153,14 @@ func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
-		Name:          in.Name,
-		Type:          "backup",
-		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
-		ObjectFilters: toProtoObjectFiltersInput(in.ObjectFilters),
-		Rpo:           in.RPO,
-		BackupWindow:  in.BackupWindow,
-		Destination:   in.Destination,
-		DisabledAt:    disabledAtToProto(in.DisabledAt),
+		Name:           in.Name,
+		Type:           "backup",
+		ClientFilters:  toProtoClientFiltersInput(in.ClientFilters),
+		ObjectFilters:  toProtoObjectFiltersInput(in.ObjectFilters),
+		Rpo:            in.RPO,
+		BackupWindow:   in.BackupWindow,
+		StoragePolicyId: in.StoragePolicyID,
+		DisabledAt:     disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleCreatePolicy: backend call failed", "error", err)
@@ -184,14 +186,14 @@ func (s *server) handleCreateAdhocPolicy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
-		Name:          "adhoc_" + in.Name,
-		Type:          "backup",
-		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
-		ObjectFilters: toProtoObjectFiltersInput(in.ObjectFilters),
-		Rpo:           s.adhocPolicyTimeout.String(),
-		BackupWindow:  []string{"* * * * *"},
-		Destination:   in.Destination,
-		DisabledAt:    timestamppb.New(time.Now().UTC().Add(s.adhocPolicyTimeout)),
+		Name:            "adhoc_" + in.Name,
+		Type:            "backup",
+		ClientFilters:   toProtoClientFiltersInput(in.ClientFilters),
+		ObjectFilters:   toProtoObjectFiltersInput(in.ObjectFilters),
+		Rpo:             s.adhocPolicyTimeout.String(),
+		BackupWindow:    []string{"* * * * *"},
+		StoragePolicyId: in.StoragePolicyID,
+		DisabledAt:      timestamppb.New(time.Now().UTC().Add(s.adhocPolicyTimeout)),
 	})
 	if err != nil {
 		s.logger.Error("handleCreateAdhocPolicy: backend call failed", "error", err)
@@ -209,14 +211,14 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := s.policy.UpdatePolicy(r.Context(), &pb.UpdatePolicyRequest{
-		Id:            id,
-		Name:          in.Name,
-		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
-		ObjectFilters: toProtoObjectFiltersInput(in.ObjectFilters),
-		Rpo:           in.RPO,
-		BackupWindow:  in.BackupWindow,
-		Destination:   in.Destination,
-		DisabledAt:    disabledAtToProto(in.DisabledAt),
+		Id:              id,
+		Name:            in.Name,
+		ClientFilters:   toProtoClientFiltersInput(in.ClientFilters),
+		ObjectFilters:   toProtoObjectFiltersInput(in.ObjectFilters),
+		Rpo:             in.RPO,
+		BackupWindow:    in.BackupWindow,
+		StoragePolicyId: in.StoragePolicyID,
+		DisabledAt:      disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleUpdatePolicy: backend call failed", "error", err)
