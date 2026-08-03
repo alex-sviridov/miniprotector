@@ -118,6 +118,7 @@ type Config struct {
 	ClientManagerAdminAPIPort        int
 	ClientManagerAdminAPIHost        string
 	AdhocPolicyTimeoutSec            int
+	CheckinRetentionSec              int
 }
 
 type contextKey string
@@ -165,6 +166,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		ClientManagerAdminAPIPort:        9501,
 		ConnectionTimeOutSec:             30,
 		AdhocPolicyTimeoutSec:            3600,
+		CheckinRetentionSec:              86400,
 	}
 	foundFields := make(map[string]bool)
 
@@ -415,6 +417,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.AdhocPolicyTimeoutSec = number
 			foundFields["AdhocPolicyTimeoutSec"] = true
+		case "CheckinRetentionSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CheckinRetentionSec value at line %d: %s", lineNum, value)
+			}
+			if number <= 0 {
+				return nil, fmt.Errorf("CheckinRetentionSec must be positive at line %d: %s", lineNum, value)
+			}
+			config.CheckinRetentionSec = number
+			foundFields["CheckinRetentionSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

@@ -628,3 +628,34 @@ func TestParseConfig_AdhocPolicyTimeoutSecRejectsZeroOrNegative(t *testing.T) {
 	_, err := ParseConfig(path)
 	require.Error(t, err)
 }
+
+func TestParseConfig_CheckinRetentionSecDefaultsTo86400(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 86400, conf.CheckinRetentionSec)
+}
+
+func TestParseConfig_CheckinRetentionSecParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nCheckinRetentionSec=3600\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 3600, conf.CheckinRetentionSec)
+}
+
+func TestParseConfig_CheckinRetentionSecRejectsZeroOrNegative(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nCheckinRetentionSec=0\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := ParseConfig(path)
+	require.Error(t, err)
+}
