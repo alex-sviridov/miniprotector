@@ -48,6 +48,61 @@ describe('storagePolicies store', () => {
     expect(second).toEqual(first)
   })
 
+  it('refresh always refetches, bypassing the byId cache', async () => {
+    apiFetch.mockResolvedValueOnce({ id: 's1', name: 'east-1-storage', checkins: [] })
+    const storagePolicies = useStoragePoliciesStore()
+    await storagePolicies.fetchOne('s1')
+
+    apiFetch.mockResolvedValueOnce({
+      id: 's1',
+      name: 'east-1-storage',
+      checkins: [{ hostname: 'storage-east-1', last_seen_at: 456 }],
+    })
+    const result = await storagePolicies.refresh('s1')
+
+    expect(apiFetch).toHaveBeenCalledTimes(2)
+    expect(apiFetch).toHaveBeenNthCalledWith(2, '/policies/s1')
+    expect(result.checkins).toEqual([{ hostname: 'storage-east-1', last_seen_at: 456 }])
+    expect(storagePolicies.byId.s1).toEqual(result)
+  })
+
+  it('refresh updates the matching list entry when present', async () => {
+    apiFetch.mockResolvedValueOnce({ data: [{ id: 's1', name: 'east-1-storage' }] })
+    const storagePolicies = useStoragePoliciesStore()
+    await storagePolicies.fetchAll()
+
+    apiFetch.mockResolvedValueOnce({ id: 's1', name: 'east-1-storage-renamed' })
+    await storagePolicies.refresh('s1')
+
+    expect(storagePolicies.list).toEqual([{ id: 's1', name: 'east-1-storage-renamed' }])
+  })
+
+  it('refresh tracks checkinsLoading separately from loading', async () => {
+    let resolveFetch
+    apiFetch.mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve
+      })
+    )
+    const storagePolicies = useStoragePoliciesStore()
+
+    const pending = storagePolicies.refresh('s1')
+    expect(storagePolicies.checkinsLoading).toBe(true)
+    expect(storagePolicies.loading).toBe(false)
+    resolveFetch({ id: 's1' })
+    await pending
+    expect(storagePolicies.checkinsLoading).toBe(false)
+  })
+
+  it('refresh records the error on checkinsError (not error) and rethrows', async () => {
+    apiFetch.mockRejectedValue(new Error('boom'))
+    const storagePolicies = useStoragePoliciesStore()
+
+    await expect(storagePolicies.refresh('s1')).rejects.toThrow('boom')
+    expect(storagePolicies.checkinsError).toBe('boom')
+    expect(storagePolicies.error).toBeNull()
+  })
+
   it('create posts to /storage-policies and adds the result to list and byId', async () => {
     const created = { id: 's2', name: 'east-2-storage' }
     apiFetch.mockResolvedValue(created)

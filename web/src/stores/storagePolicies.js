@@ -8,6 +8,8 @@ export const useStoragePoliciesStore = defineStore('storagePolicies', {
     byId: {},
     loading: false,
     error: null,
+    checkinsLoading: false,
+    checkinsError: null,
   }),
   actions: {
     async fetchAll() {
@@ -30,6 +32,19 @@ export const useStoragePoliciesStore = defineStore('storagePolicies', {
         this.byId[id] = policy
         return policy
       })
+    },
+    async refresh(id) {
+      return withRequest(
+        this,
+        async () => {
+          const policy = await apiFetch(`/policies/${encodeURIComponent(id)}`)
+          this.byId[id] = policy
+          const idx = this.list.findIndex((p) => p.id === id)
+          if (idx !== -1) this.list[idx] = policy
+          return policy
+        },
+        { loadingKey: 'checkinsLoading', errorKey: 'checkinsError' }
+      )
     },
     async create(input) {
       return withRequest(this, async () => {
