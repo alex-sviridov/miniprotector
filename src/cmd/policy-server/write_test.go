@@ -52,7 +52,7 @@ func newTestWriteServer(t *testing.T, dir string) *policyServerServer {
 	t.Helper()
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
-	return NewPolicyServerServer(c, dir, testLogger())
+	return NewPolicyServerServer(c, dir, testLogger(), newTestCheckinStore(t))
 }
 
 // createTestStoragePolicy creates a real "storage" policy on srv and

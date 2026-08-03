@@ -9,6 +9,9 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
+	checkinstore "github.com/alex-sviridov/miniprotector/storage/policyserver"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // policyServerServer implements PolicyService: the sole RPC any node calls
@@ -21,6 +24,7 @@ type policyServerServer struct {
 	cache       *Cache
 	policiesDir string
 	logger      *slog.Logger
+	checkins    *checkinstore.Store
 
 	// writeMu serializes CreatePolicy/UpdatePolicy/DeletePolicy against each
 	// other. gRPC dispatches each unary RPC to its own goroutine, so without
@@ -35,8 +39,8 @@ type policyServerServer struct {
 	writeMu sync.Mutex
 }
 
-func NewPolicyServerServer(cache *Cache, policiesDir string, logger *slog.Logger) *policyServerServer {
-	return &policyServerServer{cache: cache, policiesDir: policiesDir, logger: logger}
+func NewPolicyServerServer(cache *Cache, policiesDir string, logger *slog.Logger, checkins *checkinstore.Store) *policyServerServer {
+	return &policyServerServer{cache: cache, policiesDir: policiesDir, logger: logger, checkins: checkins}
 }
 
 // isDisabled reports whether m's DisabledAt has been set and has passed as
@@ -64,9 +68,10 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 		return nil, err
 	}
 
+	now := time.Now()
 	var matched []*pb.Policy
 	for _, p := range s.cache.Policies() {
-		if isDisabled(p.Meta(), time.Now()) {
+		if isDisabled(p.Meta(), now) {
 			continue
 		}
 		if !p.Matches(hostname, labels) {
@@ -74,6 +79,10 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 		}
 		pp := p.ToProto(false)
 		attachDestination(pp, s.cache)
+		if err := s.checkins.RecordCheckin(pp.GetId(), hostname, now); err != nil {
+			s.logger.Error("GetPolicies: failed to record check-in", "hostname", hostname, "job_id", jobID, "policy_id", pp.GetId(), "error", err)
+			return nil, status.Error(codes.Internal, "failed to record check-in")
+		}
 		matched = append(matched, pp)
 	}
 

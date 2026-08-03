@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/peer"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	checkinstore "github.com/alex-sviridov/miniprotector/storage/policyserver"
 )
 
 // attributeExtensionOID mirrors cmd/issuer/e2e_test.go's own copy -- the
@@ -76,11 +77,19 @@ func fakeAuthContext(t *testing.T, hostname string, attrs map[string]string) con
 	return metadata.NewIncomingContext(peerCertContext(t, hostname, attrs), metadata.Pairs("job-id", "test-job-id"))
 }
 
+func newTestCheckinStore(t *testing.T) *checkinstore.Store {
+	t.Helper()
+	store, err := checkinstore.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	return store
+}
+
 func newTestServerWithPolicies(t *testing.T, dir string) *policyServerServer {
 	t.Helper()
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
-	return NewPolicyServerServer(c, dir, testLogger())
+	return NewPolicyServerServer(c, dir, testLogger(), newTestCheckinStore(t))
 }
 
 func TestGetPolicies_ReturnsOnlyMatchingPolicies(t *testing.T) {
@@ -192,6 +201,46 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	assert.NotEmpty(t, p.ObjectFilters[0].Id)
 	assert.NotEmpty(t, p.ObjectFilters[1].Id)
 	assert.NotEqual(t, p.ObjectFilters[0].Id, p.ObjectFilters[1].Id)
+}
+
+func TestGetPolicies_RecordsCheckinForEachMatchedPolicy(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	checkins := newTestCheckinStore(t)
+	srv := NewPolicyServerServer(c, dir, testLogger(), checkins)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	policyID := resp.Policies[0].Id
+
+	records, err := checkins.CheckinsForPolicy(policyID)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, "web-01", records[0].Hostname)
+}
+
+func TestGetPolicies_CheckinStoreFailureFailsTheRPC(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	checkins := newTestCheckinStore(t)
+	require.NoError(t, checkins.Close()) // force every subsequent write to fail
+	srv := NewPolicyServerServer(c, dir, testLogger(), checkins)
+
+	_, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	assert.Error(t, err, "a check-in write failure must fail GetPolicies, not be swallowed")
 }
 
 func TestListPolicies_ReturnsAllPoliciesRegardlessOfIdentity(t *testing.T) {

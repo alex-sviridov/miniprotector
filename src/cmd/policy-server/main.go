@@ -19,6 +19,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	checkinstore "github.com/alex-sviridov/miniprotector/storage/policyserver"
 	"google.golang.org/grpc"
 )
 
@@ -66,13 +67,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	varDir, err := config.ResolveVarDir(conf)
+	if err != nil {
+		logger.Error("var directory resolution failed", "error", err)
+		os.Exit(1)
+	}
+	checkins, err := checkinstore.New(varDir)
+	if err != nil {
+		logger.Error("failed to open check-in store", "error", err)
+		os.Exit(1)
+	}
+	defer checkins.Close()
+
 	certsDir, err := config.ResolveCertsDir()
 	if err != nil {
 		logger.Error("certs directory resolution failed", "error", err)
 		os.Exit(1)
 	}
 
-	srv := NewPolicyServerServer(cache, policiesDir, logger)
+	srv := NewPolicyServerServer(cache, policiesDir, logger, checkins)
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
