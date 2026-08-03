@@ -19,7 +19,8 @@ import (
 // to learn which backup policies target it. The caller's identity (hostname
 // and attribute labels) is always derived from the verified mTLS peer
 // certificate -- never a request field -- and matched against the current
-// in-memory policy cache. No database, no other service is consulted.
+// in-memory policy cache. No other service is consulted, though matching
+// itself is recorded as a check-in in the local SQLite database.
 type policyServerServer struct {
 	pb.UnimplementedPolicyServiceServer
 	cache       *Cache

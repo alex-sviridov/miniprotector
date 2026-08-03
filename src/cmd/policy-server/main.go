@@ -3,7 +3,8 @@
 // requesting client's verified hostname and certificate-embedded attribute
 // labels match. It is bootstrapped and certificate-managed exactly like any
 // other node in the mesh (client-manager add, agent + issuer refresh); it
-// holds no database and calls no other service. See
+// calls no other service, but owns one piece of local state: a SQLite
+// database recording check-ins. See
 // docs/components/policy-server.md and
 // docs/superpowers/specs/2026-07-10-policy-server-design.md.
 package main

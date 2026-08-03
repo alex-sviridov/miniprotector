@@ -293,6 +293,32 @@ func TestDeletePolicy_UnknownIDReturnsNotFound(t *testing.T) {
 	assert.Equal(t, codes.NotFound, st.Code())
 }
 
+func TestDeletePolicy_RemovesCheckinRows(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
+	}`)
+	srv := newTestWriteServer(t, dir)
+
+	getResp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, getResp.Policies, 1)
+	policyID := getResp.Policies[0].Id
+
+	records, err := srv.checkins.CheckinsForPolicy(policyID)
+	require.NoError(t, err)
+	require.Len(t, records, 1, "sanity check: a check-in should be recorded before delete")
+
+	_, err = srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: policyID})
+	require.NoError(t, err)
+
+	records, err = srv.checkins.CheckinsForPolicy(policyID)
+	require.NoError(t, err)
+	assert.Empty(t, records, "DeletePolicy must not orphan check-in rows for the deleted policy")
+}
+
 func TestDeletePolicy_LeavesOtherPoliciesIntact(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "placeholder"}`)

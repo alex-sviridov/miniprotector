@@ -347,6 +347,17 @@ func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePol
 		return nil, status.Error(codes.Internal, "failed to reload policies after delete")
 	}
 
+	// The policy file is already gone and the cache already reloaded, so the
+	// delete has effectively succeeded from the caller's perspective -- a
+	// failure here is logged rather than failing the RPC. It's not swept
+	// under the rug forever: DeleteOlderThan's cleanup tick ages these rows
+	// out on its own. Best-effort now prevents a recreated policy that
+	// reuses this deleted one's deterministic id (derived from its
+	// filename) from immediately inheriting its stale check-ins.
+	if err := s.checkins.DeleteForPolicy(req.GetId()); err != nil {
+		s.logger.Error("DeletePolicy: failed to delete check-in rows", "id", req.GetId(), "error", err)
+	}
+
 	s.logger.Info("DeletePolicy", "id", req.GetId(), "path", existing.Path())
 	return &pb.DeletePolicyResponse{}, nil
 }

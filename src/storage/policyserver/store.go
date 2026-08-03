@@ -49,6 +49,14 @@ func (s *Store) DeleteOlderThan(cutoff time.Time) (int64, error) {
 	return res.RowsAffected, res.Error
 }
 
+// DeleteForPolicy removes every check-in row for policyID. Called by
+// DeletePolicy so a recreated policy that reuses a deleted one's
+// deterministic id (derived from its filename) never inherits stale
+// check-ins from the policy it replaced.
+func (s *Store) DeleteForPolicy(policyID string) error {
+	return s.db.Where("policy_id = ?", policyID).Delete(&CheckinRecord{}).Error
+}
+
 func (s *Store) Close() error {
 	sqlDB, err := s.db.DB()
 	if err != nil {
