@@ -32,7 +32,7 @@ func TestParsePolicyFile_StoragePolicyParsesAllFields(t *testing.T) {
 
 func TestParsePolicyFile_SameBasenameInDifferentTypeSubfoldersYieldsDifferentIDs(t *testing.T) {
 	dir := t.TempDir()
-	pathBackup := writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}}`)
+	pathBackup := writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}, "storage_policy_id": "sp-1"}`)
 	pathStorage := writePolicyFile(t, filepath.Join(dir, "storage"), "nightly.json", `{
 		"metadata": {"name": "nightly"}, "port": 1, "config": {}
 	}`)

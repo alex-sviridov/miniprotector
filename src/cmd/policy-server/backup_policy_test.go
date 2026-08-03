@@ -16,7 +16,7 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 		"object_filters": [{"path": "/var/www", "include": ["*.html", "*.css"], "exclude": ["*.tmp"]}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *", "0 20 * * *"],
-		"destination": "bwfs-east.internal:8080"
+		"storage_policy_id": "sp-1"
 	}`)
 
 	got, err := parsePolicyFile(path, "backup")
@@ -35,7 +35,7 @@ func TestParsePolicyFile_ValidPolicyParsesAllFields(t *testing.T) {
 	assert.NotEmpty(t, p.ObjectFilters[0].ID)
 	assert.Equal(t, "24h", p.RPO)
 	assert.Equal(t, []string{"0 2 * * *", "0 20 * * *"}, p.BackupWindow)
-	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
+	assert.Equal(t, "sp-1", p.StoragePolicyID)
 	assert.Equal(t, path, p.SourcePath)
 }
 
@@ -43,7 +43,8 @@ func TestParsePolicyFile_ObjectFiltersAtDifferentIndicesGetDifferentIDs(t *testi
 	dir := t.TempDir()
 	path := writePolicyFile(t, dir, "multi.json", `{
 		"metadata": {"name": "multi"},
-		"object_filters": [{"path": "/a"}, {"path": "/b"}]
+		"object_filters": [{"path": "/a"}, {"path": "/b"}],
+		"storage_policy_id": "sp-1"
 	}`)
 
 	got, err := parsePolicyFile(path, "backup")
@@ -63,7 +64,8 @@ func TestParsePolicyFile_ObjectFiltersWithIdenticalPathGetDistinctIDs(t *testing
 		"object_filters": [
 			{"path": "/var/www", "include": ["*.html"]},
 			{"path": "/var/www", "exclude": ["*.log"]}
-		]
+		],
+		"storage_policy_id": "sp-1"
 	}`)
 
 	got, err := parsePolicyFile(path, "backup")
@@ -78,7 +80,8 @@ func TestParsePolicyFile_ObjectFilterOmitsIncludeExclude(t *testing.T) {
 	dir := t.TempDir()
 	path := writePolicyFile(t, dir, "minimal.json", `{
 		"metadata": {"name": "minimal"},
-		"object_filters": [{"path": "/data"}]
+		"object_filters": [{"path": "/data"}],
+		"storage_policy_id": "sp-1"
 	}`)
 
 	got, err := parsePolicyFile(path, "backup")
@@ -138,7 +141,8 @@ func TestBackupPolicy_ValidateValidPolicyReturnsNil(t *testing.T) {
 			Metadata:      Metadata{Name: "ok"},
 			ClientFilters: ClientFilters{Hostnames: []string{"web-*"}},
 		},
-		ObjectFilters: []ObjectFilter{{Path: "/data", Include: []string{"*.sql"}, Exclude: []string{"*.tmp"}}},
+		ObjectFilters:   []ObjectFilter{{Path: "/data", Include: []string{"*.sql"}, Exclude: []string{"*.tmp"}}},
+		StoragePolicyID: "sp-1",
 	}
 	assert.NoError(t, p.Validate())
 }
@@ -166,4 +170,19 @@ func TestBackupPolicy_ValidateInvalidExcludePatternFails(t *testing.T) {
 		ObjectFilters: []ObjectFilter{{Path: "/data", Exclude: []string{"["}}},
 	}
 	assert.Error(t, p.Validate())
+}
+
+func TestBackupPolicy_ValidateMissingStoragePolicyIDFails(t *testing.T) {
+	p := &BackupPolicy{PolicyBase: PolicyBase{Metadata: Metadata{Name: "x"}}}
+	assert.Error(t, p.Validate())
+}
+
+func TestBackupPolicy_ToProtoSetsStoragePolicyIdAndLeavesDestinationUnset(t *testing.T) {
+	p := &BackupPolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "nightly"}, Type: "backup"},
+		StoragePolicyID: "sp-1",
+	}
+	pp := p.ToProto(false)
+	assert.Equal(t, "sp-1", pp.StoragePolicyId)
+	assert.Empty(t, pp.Destination, "Destination is resolved elsewhere (Cache.ResolveDestination via attachDestination), never set directly by ToProto")
 }

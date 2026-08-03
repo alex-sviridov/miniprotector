@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -86,11 +87,13 @@ func TestGetPolicies_ReturnsOnlyMatchingPolicies(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
-		"client_filters": {"hostnames": ["web-*"]}
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "backup"), "db.json", `{
 		"metadata": {"name": "db-policy"},
-		"client_filters": {"labels": {"role": "db"}}
+		"client_filters": {"labels": {"role": "db"}},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -102,7 +105,7 @@ func TestGetPolicies_ReturnsOnlyMatchingPolicies(t *testing.T) {
 
 func TestGetPolicies_EmptyFiltersMatchEveryone(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "all.json", `{"metadata": {"name": "everyone"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "all.json", `{"metadata": {"name": "everyone"}, "storage_policy_id": "sp-1"}`)
 	srv := newTestServerWithPolicies(t, dir)
 
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "anything", nil), &pb.GetPoliciesRequest{})
@@ -115,7 +118,8 @@ func TestGetPolicies_MatchesOnPeerCertLabels(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "db.json", `{
 		"metadata": {"name": "db-policy"},
-		"client_filters": {"labels": {"role": "db"}}
+		"client_filters": {"labels": {"role": "db"}},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -137,7 +141,8 @@ func TestGetPolicies_MissingJobIDRejected(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
-		"client_filters": {"hostnames": ["web-*"]}
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -147,13 +152,23 @@ func TestGetPolicies_MissingJobIDRejected(t *testing.T) {
 
 func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "full.json", `{
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"client_filters": {"hostnames": ["bwfs-east.internal"]},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
+
+	writePolicyFile(t, filepath.Join(dir, "backup"), "full.json", fmt.Sprintf(`{
 		"metadata": {"name": "full-policy", "created_at": "2026-07-10T00:00:00Z", "updated_at": "2026-07-11T00:00:00Z"},
 		"object_filters": [{"path": "/var/www", "include": ["*.html"], "exclude": ["*.tmp"]}, {"path": "/etc"}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs-east.internal:8080"
-	}`)
+		"storage_policy_id": %q
+	}`, storageID))
 	srv := newTestServerWithPolicies(t, dir)
 
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
@@ -163,7 +178,8 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	assert.Equal(t, "full-policy", p.Name)
 	assert.Equal(t, "24h", p.Rpo)
 	assert.Equal(t, []string{"0 2 * * *"}, p.BackupWindow)
-	assert.Equal(t, "bwfs-east.internal:8080", p.Destination)
+	assert.Equal(t, "bwfs-east.internal:8080", p.Destination, "destination must resolve live from storage_policy_id")
+	assert.Equal(t, storageID, p.StoragePolicyId)
 	require.Len(t, p.ObjectFilters, 2)
 	assert.Equal(t, "/var/www", p.ObjectFilters[0].Path)
 	assert.Equal(t, []string{"*.html"}, p.ObjectFilters[0].Include)
@@ -182,11 +198,13 @@ func TestListPolicies_ReturnsAllPoliciesRegardlessOfIdentity(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
-		"client_filters": {"hostnames": ["web-*"]}
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "backup"), "db.json", `{
 		"metadata": {"name": "db-policy"},
-		"client_filters": {"labels": {"role": "db"}}
+		"client_filters": {"labels": {"role": "db"}},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -199,7 +217,8 @@ func TestListPolicies_IncludesClientFilters(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
-		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}}
+		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -214,7 +233,8 @@ func TestGetPolicies_StillOmitsClientFilters(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
 		"metadata": {"name": "web-policy"},
-		"client_filters": {"hostnames": ["web-*"]}
+		"client_filters": {"hostnames": ["web-*"]},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -246,7 +266,8 @@ func TestGetPolicies_StoragePolicyStillOmitsClientFilters(t *testing.T) {
 func TestGetPolicies_ResponseIncludesType(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
-		"metadata": {"name": "web-policy"}
+		"metadata": {"name": "web-policy"},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -259,7 +280,8 @@ func TestGetPolicies_ResponseIncludesType(t *testing.T) {
 func TestListPolicies_ResponseIncludesType(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
-		"metadata": {"name": "web-policy"}
+		"metadata": {"name": "web-policy"},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -272,7 +294,8 @@ func TestListPolicies_ResponseIncludesType(t *testing.T) {
 func TestListPolicies_FilterByTypeReturnsOnlyMatchingType(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
-		"metadata": {"name": "web-policy"}
+		"metadata": {"name": "web-policy"},
+		"storage_policy_id": "sp-1"
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
 		"metadata": {"name": "east-1-storage"},
@@ -291,7 +314,8 @@ func TestListPolicies_FilterByTypeReturnsOnlyMatchingType(t *testing.T) {
 func TestListPolicies_EmptyTypeReturnsEveryType(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
-		"metadata": {"name": "web-policy"}
+		"metadata": {"name": "web-policy"},
+		"storage_policy_id": "sp-1"
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
 		"metadata": {"name": "east-1-storage"},
@@ -308,7 +332,8 @@ func TestListPolicies_EmptyTypeReturnsEveryType(t *testing.T) {
 func TestListPolicies_UnknownTypeReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
-		"metadata": {"name": "web-policy"}
+		"metadata": {"name": "web-policy"},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -320,10 +345,12 @@ func TestListPolicies_UnknownTypeReturnsEmpty(t *testing.T) {
 func TestGetPolicies_ExcludesPolicyPastItsDisabledAt(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "expired.json", `{
-		"metadata": {"name": "expired-policy", "disabled_at": "2020-01-01T00:00:00Z"}
+		"metadata": {"name": "expired-policy", "disabled_at": "2020-01-01T00:00:00Z"},
+		"storage_policy_id": "sp-1"
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "backup"), "active.json", `{
-		"metadata": {"name": "active-policy"}
+		"metadata": {"name": "active-policy"},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -337,7 +364,8 @@ func TestGetPolicies_ExcludesPolicyPastItsDisabledAt(t *testing.T) {
 func TestGetPolicies_IncludesPolicyWithFutureDisabledAt(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "not-yet.json", `{
-		"metadata": {"name": "not-yet-disabled", "disabled_at": "2099-01-01T00:00:00Z"}
+		"metadata": {"name": "not-yet-disabled", "disabled_at": "2099-01-01T00:00:00Z"},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -351,7 +379,8 @@ func TestGetPolicies_IncludesPolicyWithFutureDisabledAt(t *testing.T) {
 func TestListPolicies_IncludesDisabledPolicies(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "expired.json", `{
-		"metadata": {"name": "expired-policy", "disabled_at": "2020-01-01T00:00:00Z"}
+		"metadata": {"name": "expired-policy", "disabled_at": "2020-01-01T00:00:00Z"},
+		"storage_policy_id": "sp-1"
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -360,4 +389,42 @@ func TestListPolicies_IncludesDisabledPolicies(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Policies, 1, "ListPolicies is the admin visibility surface -- it must still show a disabled policy")
 	assert.NotNil(t, resp.Policies[0].DisabledAt)
+}
+
+func TestGetPolicies_DanglingStoragePolicyIdLeavesDestinationUnset(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "orphan.json", `{
+		"metadata": {"name": "orphan-policy"},
+		"storage_policy_id": "does-not-exist"
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Empty(t, resp.Policies[0].Destination)
+}
+
+func TestListPolicies_ResolvesDestinationFromStoragePolicyId(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"client_filters": {"hostnames": ["bwfs-east.internal"]},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
+
+	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", fmt.Sprintf(`{
+		"metadata": {"name": "nightly"},
+		"storage_policy_id": %q
+	}`, storageID))
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{Type: "backup"})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "bwfs-east.internal:8080", resp.Policies[0].Destination)
 }

@@ -111,8 +111,8 @@ func storageFieldsSet(port int32, config string) bool {
 
 // backupFieldsSet reports whether any backup-only field is non-default --
 // used to reject a request mixing backup fields into a storage policy.
-func backupFieldsSet(objectFilters []*pb.ObjectFilter, rpo string, backupWindow []string, destination string) bool {
-	return len(objectFilters) > 0 || rpo != "" || len(backupWindow) > 0 || destination != ""
+func backupFieldsSet(objectFilters []*pb.ObjectFilter, rpo string, backupWindow []string, storagePolicyID string) bool {
+	return len(objectFilters) > 0 || rpo != "" || len(backupWindow) > 0 || storagePolicyID != ""
 }
 
 // policyFieldsGetter is the subset of pb.CreatePolicyRequest/
@@ -123,7 +123,7 @@ type policyFieldsGetter interface {
 	GetObjectFilters() []*pb.ObjectFilter
 	GetRpo() string
 	GetBackupWindow() []string
-	GetDestination() string
+	GetStoragePolicyId() string
 	GetPort() int32
 	GetConfig() string
 }
@@ -140,15 +140,15 @@ func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, 
 			return nil, fmt.Errorf("a backup policy must not set port/config")
 		}
 		return &BackupPolicy{
-			PolicyBase:    base,
-			ObjectFilters: fromProtoObjectFilters(req.GetObjectFilters()),
-			RPO:           req.GetRpo(),
-			BackupWindow:  req.GetBackupWindow(),
-			Destination:   req.GetDestination(),
+			PolicyBase:      base,
+			ObjectFilters:   fromProtoObjectFilters(req.GetObjectFilters()),
+			RPO:             req.GetRpo(),
+			BackupWindow:    req.GetBackupWindow(),
+			StoragePolicyID: req.GetStoragePolicyId(),
 		}, nil
 	case "storage":
-		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetDestination()) {
-			return nil, fmt.Errorf("a storage policy must not set object_filters/rpo/backup_window/destination")
+		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetStoragePolicyId()) {
+			return nil, fmt.Errorf("a storage policy must not set object_filters/rpo/backup_window/storage_policy_id")
 		}
 		return &StoragePolicy{
 			PolicyBase: base,
@@ -215,6 +215,12 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 		s.logger.Error("CreatePolicy: validation failed", "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	if bp, ok := p.(*BackupPolicy); ok {
+		if sp, found := s.cache.FindByID(bp.StoragePolicyID); !found || sp.Kind() != "storage" {
+			s.logger.Error("CreatePolicy: storage_policy_id does not reference an existing storage policy", "storage_policy_id", bp.StoragePolicyID)
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("storage policy %q not found", bp.StoragePolicyID))
+		}
+	}
 
 	slug := slugify(p.Meta().Name)
 	if slug == "" {
@@ -247,7 +253,9 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 		return nil, status.Error(codes.Internal, "policy not found in cache after create")
 	}
 	s.logger.Info("CreatePolicy", "id", created.Meta().ID, "name", created.Meta().Name, "path", filePath)
-	return created.ToProto(true), nil
+	pp := created.ToProto(true)
+	attachDestination(pp, s.cache)
+	return pp, nil
 }
 
 // UpdatePolicy fully replaces an existing policy's editable fields,
@@ -273,6 +281,12 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 		s.logger.Error("UpdatePolicy: validation failed", "id", req.GetId(), "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	if bp, ok := p.(*BackupPolicy); ok {
+		if sp, found := s.cache.FindByID(bp.StoragePolicyID); !found || sp.Kind() != "storage" {
+			s.logger.Error("UpdatePolicy: storage_policy_id does not reference an existing storage policy", "id", req.GetId(), "storage_policy_id", bp.StoragePolicyID)
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("storage policy %q not found", bp.StoragePolicyID))
+		}
+	}
 
 	if err := atomicWriteJSON(existing.Path(), p); err != nil {
 		s.logger.Error("UpdatePolicy: write failed", "path", existing.Path(), "error", err)
@@ -288,10 +302,28 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 		return nil, status.Error(codes.Internal, "policy not found in cache after update")
 	}
 	s.logger.Info("UpdatePolicy", "id", updated.Meta().ID, "name", updated.Meta().Name, "path", existing.Path())
-	return updated.ToProto(true), nil
+	pp := updated.ToProto(true)
+	attachDestination(pp, s.cache)
+	return pp, nil
+}
+
+// referencingBackupPolicies returns the Meta().Name of every backup policy
+// in policies whose StoragePolicyID equals storagePolicyID -- used by
+// DeletePolicy to block removing a storage policy that's still in use.
+func referencingBackupPolicies(policies []Policy, storagePolicyID string) []string {
+	var names []string
+	for _, p := range policies {
+		if bp, ok := p.(*BackupPolicy); ok && bp.StoragePolicyID == storagePolicyID {
+			names = append(names, bp.Meta().Name)
+		}
+	}
+	return names
 }
 
 // DeletePolicy removes the policy file backing id and reloads the cache.
+// Deleting a "storage" policy is refused, with the names of every
+// referencing backup policy, if any backup policy's storage_policy_id
+// still points at it.
 func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePolicyRequest) (*pb.DeletePolicyResponse, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -299,6 +331,11 @@ func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePol
 	existing, ok := s.cache.FindByID(req.GetId())
 	if !ok {
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("policy %q not found", req.GetId()))
+	}
+	if existing.Kind() == "storage" {
+		if inUse := referencingBackupPolicies(s.cache.Policies(), req.GetId()); len(inUse) > 0 {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("storage policy in use by: %s", strings.Join(inUse, ", ")))
+		}
 	}
 
 	if err := os.Remove(existing.Path()); err != nil {

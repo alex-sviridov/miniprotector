@@ -16,8 +16,8 @@ func testLogger() *slog.Logger {
 
 func TestCache_ReloadLoadsValidPolicies(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
-	writePolicyFile(t, filepath.Join(dir, "backup"), "b.json", `{"metadata": {"name": "policy-b"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "b.json", `{"metadata": {"name": "policy-b"}, "storage_policy_id": "sp-1"}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -28,7 +28,7 @@ func TestCache_ReloadLoadsValidPolicies(t *testing.T) {
 
 func TestCache_ReloadSkipsMalformedFileKeepsGoodOnes(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "good.json", `{"metadata": {"name": "policy-good"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "good.json", `{"metadata": {"name": "policy-good"}, "storage_policy_id": "sp-1"}`)
 	writePolicyFile(t, filepath.Join(dir, "backup"), "bad.json", `not json`)
 
 	c := NewCache()
@@ -41,7 +41,7 @@ func TestCache_ReloadSkipsMalformedFileKeepsGoodOnes(t *testing.T) {
 
 func TestCache_ReloadAllFilesFailKeepsPreviousCache(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "good.json", `{"metadata": {"name": "policy-good"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "good.json", `{"metadata": {"name": "policy-good"}, "storage_policy_id": "sp-1"}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -67,7 +67,7 @@ func TestCache_ReloadEmptyDirectoryYieldsEmptyPolicies(t *testing.T) {
 
 func TestCache_ReloadSkipsUnrecognizedTypeSubfolder(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
 	writePolicyFile(t, filepath.Join(dir, "other"), "b.json", `{"metadata": {"name": "policy-b"}}`)
 
 	c := NewCache()
@@ -82,7 +82,7 @@ func TestCache_ReloadSkipsUnrecognizedTypeSubfolder(t *testing.T) {
 func TestCache_ReloadSkipsFileDirectlyUnderPoliciesDir(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, dir, "stray.json", `{"metadata": {"name": "stray"}}`)
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -102,7 +102,8 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 		},
 		"object_filters": [{"path": "/data/*", "include": ["*.sql"], "exclude": ["*.tmp"]}],
 		"rpo": "1h",
-		"backup_window": ["08:00", "12:00"]
+		"backup_window": ["08:00", "12:00"],
+		"storage_policy_id": "sp-1"
 	}`)
 
 	c := NewCache()
@@ -132,11 +133,12 @@ func TestCache_PoliciesReturnsSnapshotCopy(t *testing.T) {
 	assert.Equal(t, "08:00", bp2.BackupWindow[0], "mutating BackupWindow in returned snapshot must not affect cache")
 	assert.NotEmpty(t, bp2.ObjectFilters[0].ID, "ObjectFilter.ID must survive the snapshot copy")
 	assert.Equal(t, "backup", bp2.Type, "Type must survive the snapshot copy")
+	assert.Equal(t, "sp-1", bp2.StoragePolicyID, "StoragePolicyID must survive the snapshot copy")
 }
 
 func TestCache_FindByIDReturnsMatchingPolicy(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -156,7 +158,7 @@ func TestCache_FindByIDUnknownIDReturnsFalse(t *testing.T) {
 
 func TestCache_FindBySourcePathReturnsMatchingPolicy(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
 
 	c := NewCache()
 	require.NoError(t, c.Reload(dir, testLogger()))
@@ -174,7 +176,7 @@ func TestCache_FindBySourcePathUnknownPathReturnsFalse(t *testing.T) {
 
 func TestCache_ReloadLoadsBackupAndStoragePoliciesTogether(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
 	writePolicyFile(t, filepath.Join(dir, "storage"), "b.json", `{
 		"metadata": {"name": "policy-b"}, "port": 9400, "config": {}
 	}`)
@@ -190,4 +192,41 @@ func TestCache_ReloadLoadsBackupAndStoragePoliciesTogether(t *testing.T) {
 	}
 	assert.Equal(t, "backup", kinds["policy-a"])
 	assert.Equal(t, "storage", kinds["policy-b"])
+}
+
+func TestCache_ResolveDestination_ReturnsHostPortForKnownStoragePolicy(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"client_filters": {"hostnames": ["bwfs-east.internal"]},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
+
+	dest, ok := c.ResolveDestination(storageID)
+	require.True(t, ok)
+	assert.Equal(t, "bwfs-east.internal:8080", dest)
+}
+
+func TestCache_ResolveDestination_UnknownIDReturnsFalse(t *testing.T) {
+	c := NewCache()
+	_, ok := c.ResolveDestination("does-not-exist")
+	assert.False(t, ok)
+}
+
+func TestCache_ResolveDestination_BackupPolicyIDReturnsFalse(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{
+		"metadata": {"name": "policy-a"},
+		"storage_policy_id": "sp-1"
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	backupID := c.Policies()[0].Meta().ID
+
+	_, ok := c.ResolveDestination(backupID)
+	assert.False(t, ok, "an id belonging to a backup policy, not a storage policy, must not resolve")
 }

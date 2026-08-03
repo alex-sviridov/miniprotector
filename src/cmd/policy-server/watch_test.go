@@ -22,7 +22,7 @@ func TestWatchForReload_ReloadsOnChangedFileWrite(t *testing.T) {
 	go watchForReload(ctx, dir, c, testLogger())
 	time.Sleep(50 * time.Millisecond)
 
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".changed"), []byte("1"), 0o644))
 
 	require.Eventually(t, func() bool {
@@ -44,7 +44,7 @@ func TestWatchForReload_ReloadsOnTouchOfExistingChangedFile(t *testing.T) {
 	go watchForReload(ctx, dir, c, testLogger())
 	time.Sleep(50 * time.Millisecond)
 
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "sp-1"}`)
 
 	// Simulate `touch` on an already-existing file: an mtime-only update,
 	// which Linux inotify reports as IN_ATTRIB (fsnotify's Chmod op), not

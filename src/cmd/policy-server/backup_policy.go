@@ -15,7 +15,7 @@ import (
 // BackupPolicy is the "backup" policy type: a set of object filters backed
 // up on a schedule to a destination bwfs. Its on-disk JSON schema (beyond
 // the shared metadata/client_filters PolicyBase already parses) is
-// object_filters, rpo, backup_window, and destination.
+// object_filters, rpo, backup_window, and storage_policy_id.
 type BackupPolicy struct {
 	PolicyBase
 	ObjectFilters []ObjectFilter `json:"object_filters"`
@@ -26,7 +26,10 @@ type BackupPolicy struct {
 	// List of cron expressions (5-field). policy-server never parses or
 	// evaluates these -- opaque pass-through data.
 	BackupWindow []string `json:"backup_window"`
-	Destination  string   `json:"destination"`
+	// References a "storage"-typed Policy.id. destination is resolved from
+	// it live by Cache.ResolveDestination -- never itself stored or set
+	// directly.
+	StoragePolicyID string `json:"storage_policy_id"`
 }
 
 func parseBackupPolicyJSON(data []byte) (Policy, error) {
@@ -39,9 +42,14 @@ func parseBackupPolicyJSON(data []byte) (Policy, error) {
 
 // Validate checks the fields an operator can set on a backup policy,
 // independent of where it came from (a file on disk or a Create/UpdatePolicy
-// RPC request): the fields validateCommon checks, plus every object_filters
+// RPC request): the fields validateCommon checks, every object_filters
 // include/exclude glob pattern must be syntactically valid (path.Match's
-// syntax).
+// syntax), and storage_policy_id must be non-empty. It cannot check that
+// storage_policy_id actually names an existing "storage" policy -- that
+// requires the live cache, which isn't available here (this same method
+// runs during Cache.Reload's per-file, no-cache-yet load path); referential
+// existence is checked separately, only in CreatePolicy/UpdatePolicy where
+// a current cache is actually in scope.
 func (p *BackupPolicy) Validate() error {
 	if err := validateCommon(p.PolicyBase); err != nil {
 		return err
@@ -57,6 +65,9 @@ func (p *BackupPolicy) Validate() error {
 				return fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
 			}
 		}
+	}
+	if p.StoragePolicyID == "" {
+		return fmt.Errorf("storage_policy_id is required")
 	}
 	return nil
 }
@@ -88,11 +99,11 @@ func (p *BackupPolicy) Clone() Policy {
 	backupWindow := make([]string, len(p.BackupWindow))
 	copy(backupWindow, p.BackupWindow)
 	return &BackupPolicy{
-		PolicyBase:    p.PolicyBase.clone(),
-		ObjectFilters: objectFilters,
-		RPO:           p.RPO,
-		BackupWindow:  backupWindow,
-		Destination:   p.Destination,
+		PolicyBase:      p.PolicyBase.clone(),
+		ObjectFilters:   objectFilters,
+		RPO:             p.RPO,
+		BackupWindow:    backupWindow,
+		StoragePolicyID: p.StoragePolicyID,
 	}
 }
 
@@ -101,22 +112,25 @@ func (p *BackupPolicy) Clone() Policy {
 // includeClientFilters is true -- GetPolicies omits it so a matched node
 // never learns another node's targeting rules from a policy that already
 // matched its own identity; ListPolicies and the write RPCs include it for
-// an operator editing the full policy set.
+// an operator editing the full policy set. Destination is deliberately left
+// unset here -- it's resolved from StoragePolicyID by attachDestination
+// (server.go), which every call site producing a pb.Policy invokes right
+// after ToProto.
 func (p *BackupPolicy) ToProto(includeClientFilters bool) *pb.Policy {
 	objectFilters := make([]*pb.ObjectFilter, len(p.ObjectFilters))
 	for i, f := range p.ObjectFilters {
 		objectFilters[i] = &pb.ObjectFilter{Id: f.ID, Path: f.Path, Include: f.Include, Exclude: f.Exclude}
 	}
 	pp := &pb.Policy{
-		Id:            p.Metadata.ID,
-		Name:          p.Metadata.Name,
-		CreatedAt:     timestamppb.New(p.Metadata.CreatedAt),
-		UpdatedAt:     timestamppb.New(p.Metadata.UpdatedAt),
-		ObjectFilters: objectFilters,
-		Rpo:           p.RPO,
-		BackupWindow:  p.BackupWindow,
-		Destination:   p.Destination,
-		Type:          p.Type,
+		Id:              p.Metadata.ID,
+		Name:            p.Metadata.Name,
+		CreatedAt:       timestamppb.New(p.Metadata.CreatedAt),
+		UpdatedAt:       timestamppb.New(p.Metadata.UpdatedAt),
+		ObjectFilters:   objectFilters,
+		Rpo:             p.RPO,
+		BackupWindow:    p.BackupWindow,
+		StoragePolicyId: p.StoragePolicyID,
+		Type:            p.Type,
 	}
 	if !p.Metadata.DisabledAt.IsZero() {
 		pp.DisabledAt = timestamppb.New(p.Metadata.DisabledAt)

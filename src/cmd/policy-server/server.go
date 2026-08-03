@@ -72,7 +72,9 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 		if !p.Matches(hostname, labels) {
 			continue
 		}
-		matched = append(matched, p.ToProto(false))
+		pp := p.ToProto(false)
+		attachDestination(pp, s.cache)
+		matched = append(matched, pp)
 	}
 
 	s.logger.Info("GetPolicies", "hostname", hostname, "job_id", jobID, "matched", len(matched))
@@ -81,6 +83,22 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 
 func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
 	return &pb.ClientFilters{Hostnames: cf.Hostnames, Labels: cf.Labels}
+}
+
+// attachDestination resolves pp.Destination for a backup policy from its
+// StoragePolicyId, using cache's live state. Called right after ToProto at
+// every RPC that returns a pb.Policy (GetPolicies, ListPolicies,
+// CreatePolicy, UpdatePolicy). A dangling reference (unknown id, or an id
+// that no longer names a storage policy -- only reachable by hand-editing
+// policy files outside the write RPCs, since DeletePolicy blocks the
+// alternative) leaves pp.Destination unset rather than erroring.
+func attachDestination(pp *pb.Policy, cache *Cache) {
+	if pp.GetType() != "backup" || pp.GetStoragePolicyId() == "" {
+		return
+	}
+	if dest, ok := cache.ResolveDestination(pp.GetStoragePolicyId()); ok {
+		pp.Destination = dest
+	}
 }
 
 // ListPolicies returns every currently-loaded policy, unfiltered by any
@@ -96,7 +114,9 @@ func (s *policyServerServer) ListPolicies(ctx context.Context, req *pb.ListPolic
 		if req.GetType() != "" && p.Kind() != req.GetType() {
 			continue
 		}
-		out = append(out, p.ToProto(true))
+		pp := p.ToProto(true)
+		attachDestination(pp, s.cache)
+		out = append(out, pp)
 	}
 	s.logger.Info("ListPolicies", "type", req.GetType(), "count", len(out))
 	return &pb.ListPoliciesResponse{Policies: out}, nil

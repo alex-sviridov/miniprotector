@@ -55,22 +55,40 @@ func newTestWriteServer(t *testing.T, dir string) *policyServerServer {
 	return NewPolicyServerServer(c, dir, testLogger())
 }
 
+// createTestStoragePolicy creates a real "storage" policy on srv and
+// returns its id, for tests whose backup policy needs a StoragePolicyId
+// that actually resolves.
+func createTestStoragePolicy(t *testing.T, srv *policyServerServer, hostname string, port int32) string {
+	t.Helper()
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:          "storage-for-" + hostname,
+		Type:          "storage",
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{hostname}},
+		Port:          port,
+		Config:        "{}",
+	})
+	require.NoError(t, err)
+	return resp.Id
+}
+
 func TestCreatePolicy_WritesFileAndReturnsPolicyWithID(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:          "Nightly DB Backup",
-		Type:          "backup",
-		ObjectFilters: []*pb.ObjectFilter{{Path: "/var/lib/postgres"}},
-		Rpo:           "24h",
-		BackupWindow:  []string{"0 2 * * *"},
-		Destination:   "bwfs:8080",
+		Name:            "Nightly DB Backup",
+		Type:            "backup",
+		ObjectFilters:   []*pb.ObjectFilter{{Path: "/var/lib/postgres"}},
+		Rpo:             "24h",
+		BackupWindow:    []string{"0 2 * * *"},
+		StoragePolicyId: storageID,
 	})
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.Id)
 	assert.Equal(t, "Nightly DB Backup", resp.Name)
+	assert.Equal(t, "bwfs:8080", resp.Destination, "destination must resolve from the referenced storage policy")
 	require.Len(t, resp.ObjectFilters, 1)
 	assert.NotEmpty(t, resp.ObjectFilters[0].Id)
 
@@ -84,8 +102,9 @@ func TestCreatePolicy_WritesFileAndReturnsPolicyWithID(t *testing.T) {
 func TestCreatePolicy_SecondCallWithSameNameGetsDistinctFile(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
-	req := &pb.CreatePolicyRequest{Name: "dup", Type: "backup", Destination: "bwfs:8080"}
+	req := &pb.CreatePolicyRequest{Name: "dup", Type: "backup", StoragePolicyId: storageID}
 	first, err := srv.CreatePolicy(context.Background(), req)
 	require.NoError(t, err)
 	second, err := srv.CreatePolicy(context.Background(), req)
@@ -143,6 +162,7 @@ func TestCreatePolicy_InvalidGlobPatternReturnsInvalidArgumentAndWritesNoFile(t 
 func TestCreatePolicy_ConcurrentCreatesForDifferentNamesBothSurvive(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	names := []string{"policy-one", "policy-two"}
 	var wg sync.WaitGroup
@@ -152,9 +172,9 @@ func TestCreatePolicy_ConcurrentCreatesForDifferentNamesBothSurvive(t *testing.T
 		go func(i int, name string) {
 			defer wg.Done()
 			_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-				Name:        name,
-				Type:        "backup",
-				Destination: "bwfs:8080",
+				Name:            name,
+				Type:            "backup",
+				StoragePolicyId: storageID,
 			})
 			errs[i] = err
 		}(i, name)
@@ -177,11 +197,13 @@ func TestCreatePolicy_ConcurrentCreatesForDifferentNamesBothSurvive(t *testing.T
 func TestCreatePolicy_ClientFiltersRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:          "web",
-		Type:          "backup",
-		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-*"}, Labels: map[string]string{"env": "prod"}},
+		Name:            "web",
+		Type:            "backup",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-*"}, Labels: map[string]string{"env": "prod"}},
+		StoragePolicyId: storageID,
 	})
 
 	require.NoError(t, err)
@@ -195,16 +217,17 @@ func TestUpdatePolicy_OverwritesFileKeepsIDAndCreatedAt(t *testing.T) {
 	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{
 		"metadata": {"name": "nightly", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:00Z"},
 		"object_filters": [{"path": "/old"}],
-		"destination": "bwfs:8080"
+		"storage_policy_id": "placeholder"
 	}`)
 	srv := newTestWriteServer(t, dir)
 	original := srv.cache.Policies()[0]
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 9090)
 
 	resp, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
-		Id:            original.Meta().ID,
-		Name:          "nightly-renamed",
-		ObjectFilters: []*pb.ObjectFilter{{Path: "/new"}},
-		Destination:   "bwfs:9090",
+		Id:              original.Meta().ID,
+		Name:            "nightly-renamed",
+		ObjectFilters:   []*pb.ObjectFilter{{Path: "/new"}},
+		StoragePolicyId: storageID,
 	})
 
 	require.NoError(t, err)
@@ -228,7 +251,7 @@ func TestUpdatePolicy_UnknownIDReturnsNotFound(t *testing.T) {
 
 func TestUpdatePolicy_InvalidInputReturnsInvalidArgumentLeavesFileUnchanged(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}, "storage_policy_id": "placeholder"}`)
 	srv := newTestWriteServer(t, dir)
 	original := srv.cache.Policies()[0]
 
@@ -247,7 +270,7 @@ func TestUpdatePolicy_InvalidInputReturnsInvalidArgumentLeavesFileUnchanged(t *t
 
 func TestDeletePolicy_RemovesFileAndReloads(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}, "storage_policy_id": "placeholder"}`)
 	srv := newTestWriteServer(t, dir)
 	original := srv.cache.Policies()[0]
 
@@ -272,8 +295,8 @@ func TestDeletePolicy_UnknownIDReturnsNotFound(t *testing.T) {
 
 func TestDeletePolicy_LeavesOtherPoliciesIntact(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}}`)
-	writePolicyFile(t, filepath.Join(dir, "backup"), "b.json", `{"metadata": {"name": "policy-b"}}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "a.json", `{"metadata": {"name": "policy-a"}, "storage_policy_id": "placeholder"}`)
+	writePolicyFile(t, filepath.Join(dir, "backup"), "b.json", `{"metadata": {"name": "policy-b"}, "storage_policy_id": "placeholder"}`)
 	srv := newTestWriteServer(t, dir)
 	var target Policy
 	for _, p := range srv.cache.Policies() {
@@ -293,8 +316,9 @@ func TestDeletePolicy_LeavesOtherPoliciesIntact(t *testing.T) {
 func TestCreatePolicy_ResponseIncludesBackupType(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
-	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Name: "nightly", Type: "backup"})
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Name: "nightly", Type: "backup", StoragePolicyId: storageID})
 
 	require.NoError(t, err)
 	assert.Equal(t, "backup", resp.Type)
@@ -316,10 +340,10 @@ func TestCreatePolicy_StoragePolicyWritesIntoStorageDir(t *testing.T) {
 	srv := newTestWriteServer(t, dir)
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:     "East 1 Storage",
-		Type:     "storage",
-		Port:     9400,
-		Config:   `{"backend": "filesystem"}`,
+		Name:   "East 1 Storage",
+		Type:   "storage",
+		Port:   9400,
+		Config: `{"backend": "filesystem"}`,
 	})
 
 	require.NoError(t, err)
@@ -337,11 +361,11 @@ func TestCreatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
 	srv := newTestWriteServer(t, dir)
 
 	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "bad",
-		Type:        "storage",
-		Port:        9400,
-		Config:      `{}`,
-		Destination: "bwfs:8080",
+		Name:            "bad",
+		Type:            "storage",
+		Port:            9400,
+		Config:          `{}`,
+		StoragePolicyId: "sp-1",
 	})
 
 	st, ok := status.FromError(err)
@@ -397,11 +421,11 @@ func TestUpdatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
 	original := srv.cache.Policies()[0]
 
 	_, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
-		Id:          original.Meta().ID,
-		Name:        "east-1",
-		Port:        1111,
-		Config:      `{}`,
-		Destination: "bwfs:8080",
+		Id:              original.Meta().ID,
+		Name:            "east-1",
+		Port:            1111,
+		Config:          `{}`,
+		StoragePolicyId: "sp-1",
 	})
 
 	st, ok := status.FromError(err)
@@ -412,13 +436,14 @@ func TestUpdatePolicy_StorageTypeWithBackupFieldsRejected(t *testing.T) {
 func TestCreatePolicy_DisabledAtRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	disabledAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "one-shot",
-		Type:        "backup",
-		Destination: "bwfs:8080",
-		DisabledAt:  timestamppb.New(disabledAt),
+		Name:            "one-shot",
+		Type:            "backup",
+		StoragePolicyId: storageID,
+		DisabledAt:      timestamppb.New(disabledAt),
 	})
 
 	require.NoError(t, err)
@@ -429,11 +454,12 @@ func TestCreatePolicy_DisabledAtRoundTrips(t *testing.T) {
 func TestCreatePolicy_NoDisabledAtLeavesItUnset(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "ordinary",
-		Type:        "backup",
-		Destination: "bwfs:8080",
+		Name:            "ordinary",
+		Type:            "backup",
+		StoragePolicyId: storageID,
 	})
 
 	require.NoError(t, err)
@@ -443,12 +469,13 @@ func TestCreatePolicy_NoDisabledAtLeavesItUnset(t *testing.T) {
 func TestCreatePolicy_PastDisabledAtAcceptedWithoutError(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "already-expired",
-		Type:        "backup",
-		Destination: "bwfs:8080",
-		DisabledAt:  timestamppb.New(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)),
+		Name:            "already-expired",
+		Type:            "backup",
+		StoragePolicyId: storageID,
+		DisabledAt:      timestamppb.New(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)),
 	})
 
 	require.NoError(t, err)
@@ -458,19 +485,20 @@ func TestCreatePolicy_PastDisabledAtAcceptedWithoutError(t *testing.T) {
 func TestUpdatePolicy_DisabledAtRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "will-be-disabled",
-		Type:        "backup",
-		Destination: "bwfs:8080",
+		Name:            "will-be-disabled",
+		Type:            "backup",
+		StoragePolicyId: storageID,
 	})
 	require.NoError(t, err)
 
 	disabledAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	updated, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
-		Id:          created.Id,
-		Name:        created.Name,
-		Destination: "bwfs:8080",
-		DisabledAt:  timestamppb.New(disabledAt),
+		Id:              created.Id,
+		Name:            created.Name,
+		StoragePolicyId: storageID,
+		DisabledAt:      timestamppb.New(disabledAt),
 	})
 
 	require.NoError(t, err)
@@ -481,22 +509,103 @@ func TestUpdatePolicy_DisabledAtRoundTrips(t *testing.T) {
 func TestUpdatePolicy_OmittingDisabledAtClearsIt(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "temp",
-		Type:        "backup",
-		Destination: "bwfs:8080",
-		DisabledAt:  timestamppb.New(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		Name:            "temp",
+		Type:            "backup",
+		StoragePolicyId: storageID,
+		DisabledAt:      timestamppb.New(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created.DisabledAt)
 
 	updated, err := srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
-		Id:          created.Id,
-		Name:        created.Name,
-		Destination: "bwfs:8080",
+		Id:              created.Id,
+		Name:            created.Name,
+		StoragePolicyId: storageID,
 		// DisabledAt intentionally omitted
 	})
 
 	require.NoError(t, err)
 	assert.Nil(t, updated.DisabledAt, "omitting disabled_at on UpdatePolicy must clear it -- full-replace, same as every other editable field")
+}
+
+func TestCreatePolicy_MissingStoragePolicyIdReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{Name: "no-storage", Type: "backup"})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_UnknownStoragePolicyIdReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "orphan",
+		Type:            "backup",
+		StoragePolicyId: "does-not-exist",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestUpdatePolicy_UnknownStoragePolicyIdReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "nightly",
+		Type:            "backup",
+		StoragePolicyId: storageID,
+	})
+	require.NoError(t, err)
+
+	_, err = srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:              created.Id,
+		Name:            "nightly",
+		StoragePolicyId: "does-not-exist",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestDeletePolicy_StoragePolicyInUseByBackupPolicyRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "nightly-db-backup",
+		Type:            "backup",
+		StoragePolicyId: storageID,
+	})
+	require.NoError(t, err)
+
+	_, err = srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: storageID})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "nightly-db-backup")
+	_, statErr := os.Stat(filepath.Join(dir, "storage", "storage-for-bwfs.json"))
+	assert.NoError(t, statErr, "storage policy file must remain when the delete is rejected")
+}
+
+func TestDeletePolicy_UnreferencedStoragePolicySucceeds(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+
+	_, err := srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: storageID})
+
+	require.NoError(t, err)
+	assert.Empty(t, srv.cache.Policies())
 }

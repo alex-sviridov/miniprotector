@@ -19,7 +19,7 @@ func writePolicyFile(t *testing.T, dir, name, content string) string {
 
 func TestParsePolicyFile_SetsTypeFromArgument(t *testing.T) {
 	dir := t.TempDir()
-	path := writePolicyFile(t, dir, "nightly.json", `{"metadata": {"name": "nightly"}}`)
+	path := writePolicyFile(t, dir, "nightly.json", `{"metadata": {"name": "nightly"}, "storage_policy_id": "sp-1"}`)
 
 	p, err := parsePolicyFile(path, "backup")
 	require.NoError(t, err)
@@ -30,7 +30,8 @@ func TestParsePolicyFile_ComputesDeterministicPolicyID(t *testing.T) {
 	dir := t.TempDir()
 	path := writePolicyFile(t, dir, "nightly.json", `{
 		"metadata": {"name": "nightly-web-backup"},
-		"object_filters": [{"path": "/var/www"}]
+		"object_filters": [{"path": "/var/www"}],
+		"storage_policy_id": "sp-1"
 	}`)
 
 	p1, err := parsePolicyFile(path, "backup")
@@ -44,8 +45,8 @@ func TestParsePolicyFile_ComputesDeterministicPolicyID(t *testing.T) {
 
 func TestParsePolicyFile_DifferentFilenamesYieldDifferentPolicyIDs(t *testing.T) {
 	dir := t.TempDir()
-	pathA := writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "same-name"}}`)
-	pathB := writePolicyFile(t, dir, "b.json", `{"metadata": {"name": "same-name"}}`)
+	pathA := writePolicyFile(t, dir, "a.json", `{"metadata": {"name": "same-name"}, "storage_policy_id": "sp-1"}`)
+	pathB := writePolicyFile(t, dir, "b.json", `{"metadata": {"name": "same-name"}, "storage_policy_id": "sp-1"}`)
 
 	pa, err := parsePolicyFile(pathA, "backup")
 	require.NoError(t, err)
