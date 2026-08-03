@@ -156,17 +156,17 @@ func TestHandleGetPolicy_UnknownIDReturns404(t *testing.T) {
 
 func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.T) {
 	p := &pb.Policy{
-		Id:            "p1",
-		Name:          "nightly",
-		CreatedAt:     timestamppb.New(time.Unix(1752400000, 0)),
-		UpdatedAt:     timestamppb.New(time.Unix(1752400010, 0)),
-		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-*"}, Labels: map[string]string{"env": "prod"}},
-		ObjectFilters: []*pb.ObjectFilter{{Id: "f1", Path: "/data", Include: []string{"*.sql"}}},
-		Rpo:           "24h",
-		BackupWindow:  []string{"0 2 * * *"},
-		Destination:   "bwfs:8080",
+		Id:              "p1",
+		Name:            "nightly",
+		CreatedAt:       timestamppb.New(time.Unix(1752400000, 0)),
+		UpdatedAt:       timestamppb.New(time.Unix(1752400010, 0)),
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-*"}, Labels: map[string]string{"env": "prod"}},
+		ObjectFilters:   []*pb.ObjectFilter{{Id: "f1", Path: "/data", Include: []string{"*.sql"}}},
+		Rpo:             "24h",
+		BackupWindow:    []string{"0 2 * * *"},
+		Destination:     "bwfs:8080",
 		StoragePolicyId: "sp-1",
-		Type:          "backup",
+		Type:            "backup",
 	}
 
 	dto := toPolicyDTO(p)

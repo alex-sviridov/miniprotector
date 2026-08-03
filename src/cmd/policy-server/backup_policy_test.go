@@ -135,6 +135,14 @@ func TestParsePolicyFile_InvalidHostnamePatternFails(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestParsePolicyFile_MissingStoragePolicyIdFails(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "bad.json", `{"metadata": {"name": "broken"}}`)
+
+	_, err := parsePolicyFile(path, "backup")
+	assert.Error(t, err)
+}
+
 func TestBackupPolicy_ValidateValidPolicyReturnsNil(t *testing.T) {
 	p := &BackupPolicy{
 		PolicyBase: PolicyBase{

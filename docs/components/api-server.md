@@ -45,8 +45,10 @@ shape (`port`/`config`) shares nothing with a backup policy's
 (`object_filters`/`rpo`/`backup_window`/`storage_policy_id`) beyond `name`/`client_filters` — which is
 also how a storage policy targets a node (there is no separate `hostname` field; set
 `client_filters.hostnames` the same way a backup policy would). `GET
-/policies/{id}` and `DELETE /policies/{id}` are shared across both types — both operations are
-already type-agnostic, looking a policy up or removing it by `id` alone.
+/policies/{id}` and `DELETE /policies/{id}` are shared across both types. `GET /policies/{id}` is
+fully type-agnostic, looking a policy up by `id` alone. `DELETE /policies/{id}` now has
+type-specific behavior for storage policies: `policy-server` rejects the delete with `400` if the
+`id` names a storage policy still referenced by any backup policy.
 
 `POST /policies/adhoc` creates a one-time backup policy from the same fields as an ordinary create
 (`name`/`client_filters`/`object_filters`/`storage_policy_id`) — `api-server` computes `backup_window`

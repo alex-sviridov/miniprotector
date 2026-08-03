@@ -153,8 +153,12 @@ certificate — the same requirement every server except `issuer`'s own listener
   policy's `client_filters.hostnames[0]:port` before responding, so `destination` always reflects
   the referenced storage policy's *current* settings, never a stale copy. It's left unset if the
   reference doesn't resolve (an id that doesn't exist, or no longer names a storage policy) --
-  reachable only by hand-editing policy files outside the write RPCs, since `DeletePolicy` refuses
-  to remove a storage policy still referenced by any backup policy.
+  reachable through the supported API today, not just by hand-editing policy files, since a
+  storage policy targeted purely by labels (no `client_filters.hostnames`) is valid per
+  `StoragePolicy.Validate()`, passes the write-time referential check (which only confirms the
+  storage policy exists and is kind `"storage"`, not that it resolves to a `host:port`), and yields
+  an unresolvable `destination` for any backup policy that references it -- a known, currently
+  accepted limitation (see `backlog.md`).
 - `ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy` are the admin surface `api-server`
   proxies for browsing and editing the full policy set — never called by a mesh node. Unlike
   `GetPolicies`, `ListPolicies`'s response (and `Create`/`UpdatePolicy`'s echoed-back result)

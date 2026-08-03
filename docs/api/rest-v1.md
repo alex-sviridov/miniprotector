@@ -222,7 +222,9 @@ permanent recurring policy as a result.
 
 ## `DELETE /api/v1/policies/{id}`
 
-Deletes a policy. `204` on success, `404` if `id` doesn't match any policy.
+Deletes a policy. `204` on success, `404` if `id` doesn't match any policy, `400` if `id` names a
+storage policy still referenced by at least one backup policy (error message shape:
+`storage policy in use by: <names>`).
 
 ## `POST /api/v1/policies/adhoc`
 

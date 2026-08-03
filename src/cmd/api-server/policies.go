@@ -153,14 +153,14 @@ func (s *server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
-		Name:           in.Name,
-		Type:           "backup",
-		ClientFilters:  toProtoClientFiltersInput(in.ClientFilters),
-		ObjectFilters:  toProtoObjectFiltersInput(in.ObjectFilters),
-		Rpo:            in.RPO,
-		BackupWindow:   in.BackupWindow,
+		Name:            in.Name,
+		Type:            "backup",
+		ClientFilters:   toProtoClientFiltersInput(in.ClientFilters),
+		ObjectFilters:   toProtoObjectFiltersInput(in.ObjectFilters),
+		Rpo:             in.RPO,
+		BackupWindow:    in.BackupWindow,
 		StoragePolicyId: in.StoragePolicyID,
-		DisabledAt:     disabledAtToProto(in.DisabledAt),
+		DisabledAt:      disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleCreatePolicy: backend call failed", "error", err)
