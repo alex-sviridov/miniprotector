@@ -12,5 +12,5 @@
   ],
   "rpo": "1h",
   "backup_window": ["0 * * * *"],
-  "destination": "store:8080"
+  "storage_policy_id": "93dd1442-461e-571f-95f6-21a5022c7af5"
 }
