@@ -326,7 +326,10 @@ type Policy struct {
 	// List of cron expressions (5-field). policy-server never parses or
 	// evaluates these -- opaque pass-through data.
 	BackupWindow []string `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
-	Destination  string   `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
+	// Derived, read-only. For a "backup" policy, resolved live from
+	// storage_policy_id every time this message is produced -- never stored
+	// or settable directly. Unset for a "storage" policy, as before.
+	Destination string `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
 	// policy-server-computed, deterministic from the policy file's name --
 	// stable across reloads, changes only if the file is renamed. Not
 	// present in the on-disk policy JSON schema.
@@ -349,9 +352,12 @@ type Policy struct {
 	// stops returning the policy (checked live, not cached); ListPolicies is
 	// unaffected. Generic across every policy type -- policy-server attaches
 	// no meaning to *why* a policy is disabled.
-	DisabledAt    *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DisabledAt *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
+	// "backup" policy only, required. References a "storage"-typed Policy.id;
+	// destination is resolved from it live on every read.
+	StoragePolicyId string `protobuf:"bytes,15,opt,name=storage_policy_id,json=storagePolicyId,proto3" json:"storage_policy_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Policy) Reset() {
@@ -475,6 +481,13 @@ func (x *Policy) GetDisabledAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Policy) GetStoragePolicyId() string {
+	if x != nil {
+		return x.StoragePolicyId
+	}
+	return ""
+}
+
 type CreatePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -484,16 +497,17 @@ type CreatePolicyRequest struct {
 	ObjectFilters []*ObjectFilter `protobuf:"bytes,3,rep,name=object_filters,json=objectFilters,proto3" json:"object_filters,omitempty"`
 	Rpo           string          `protobuf:"bytes,4,opt,name=rpo,proto3" json:"rpo,omitempty"`
 	BackupWindow  []string        `protobuf:"bytes,5,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
-	Destination   string          `protobuf:"bytes,6,opt,name=destination,proto3" json:"destination,omitempty"`
 	// "backup" or "storage" -- required. Determines which of the fields above
 	// (backup) or below (storage) are valid; mixing fields from both types is
 	// rejected.
-	Type          string                 `protobuf:"bytes,7,opt,name=type,proto3" json:"type,omitempty"`
-	Port          int32                  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
-	Config        string                 `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
-	DisabledAt    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Type       string                 `protobuf:"bytes,7,opt,name=type,proto3" json:"type,omitempty"`
+	Port       int32                  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
+	Config     string                 `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
+	DisabledAt *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
+	// "backup" only, required.
+	StoragePolicyId string `protobuf:"bytes,12,opt,name=storage_policy_id,json=storagePolicyId,proto3" json:"storage_policy_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreatePolicyRequest) Reset() {
@@ -561,13 +575,6 @@ func (x *CreatePolicyRequest) GetBackupWindow() []string {
 	return nil
 }
 
-func (x *CreatePolicyRequest) GetDestination() string {
-	if x != nil {
-		return x.Destination
-	}
-	return ""
-}
-
 func (x *CreatePolicyRequest) GetType() string {
 	if x != nil {
 		return x.Type
@@ -596,6 +603,13 @@ func (x *CreatePolicyRequest) GetDisabledAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *CreatePolicyRequest) GetStoragePolicyId() string {
+	if x != nil {
+		return x.StoragePolicyId
+	}
+	return ""
+}
+
 type UpdatePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -606,12 +620,13 @@ type UpdatePolicyRequest struct {
 	ObjectFilters []*ObjectFilter        `protobuf:"bytes,4,rep,name=object_filters,json=objectFilters,proto3" json:"object_filters,omitempty"`
 	Rpo           string                 `protobuf:"bytes,5,opt,name=rpo,proto3" json:"rpo,omitempty"`
 	BackupWindow  []string               `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
-	Destination   string                 `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
 	Port          int32                  `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
 	Config        string                 `protobuf:"bytes,10,opt,name=config,proto3" json:"config,omitempty"`
 	DisabledAt    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// "backup" only, required.
+	StoragePolicyId string `protobuf:"bytes,12,opt,name=storage_policy_id,json=storagePolicyId,proto3" json:"storage_policy_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *UpdatePolicyRequest) Reset() {
@@ -686,13 +701,6 @@ func (x *UpdatePolicyRequest) GetBackupWindow() []string {
 	return nil
 }
 
-func (x *UpdatePolicyRequest) GetDestination() string {
-	if x != nil {
-		return x.Destination
-	}
-	return ""
-}
-
 func (x *UpdatePolicyRequest) GetPort() int32 {
 	if x != nil {
 		return x.Port
@@ -712,6 +720,13 @@ func (x *UpdatePolicyRequest) GetDisabledAt() *timestamppb.Timestamp {
 		return x.DisabledAt
 	}
 	return nil
+}
+
+func (x *UpdatePolicyRequest) GetStoragePolicyId() string {
+	if x != nil {
+		return x.StoragePolicyId
+	}
+	return ""
 }
 
 type DeletePolicyRequest struct {
@@ -816,7 +831,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\ainclude\x18\x02 \x03(\tR\ainclude\x12\x18\n" +
 	"\aexclude\x18\x03 \x03(\tR\aexclude\x12\x0e\n" +
-	"\x02id\x18\x04 \x01(\tR\x02id\"\x9d\x04\n" +
+	"\x02id\x18\x04 \x01(\tR\x02id\"\xc9\x04\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -834,33 +849,34 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x04port\x18\f \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\r \x01(\tR\x06config\x12;\n" +
 	"\vdisabled_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"disabledAtJ\x04\b\v\x10\fR\bhostname\"\xa4\x03\n" +
+	"disabledAt\x12*\n" +
+	"\x11storage_policy_id\x18\x0f \x01(\tR\x0fstoragePolicyIdJ\x04\b\v\x10\fR\bhostname\"\xc1\x03\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
 	"\x0eobject_filters\x18\x03 \x03(\v2!.policyserverservice.ObjectFilterR\robjectFilters\x12\x10\n" +
 	"\x03rpo\x18\x04 \x01(\tR\x03rpo\x12#\n" +
-	"\rbackup_window\x18\x05 \x03(\tR\fbackupWindow\x12 \n" +
-	"\vdestination\x18\x06 \x01(\tR\vdestination\x12\x12\n" +
+	"\rbackup_window\x18\x05 \x03(\tR\fbackupWindow\x12\x12\n" +
 	"\x04type\x18\a \x01(\tR\x04type\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
 	" \x01(\tR\x06config\x12;\n" +
 	"\vdisabled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"disabledAtJ\x04\b\b\x10\tR\bhostname\"\xa0\x03\n" +
+	"disabledAt\x12*\n" +
+	"\x11storage_policy_id\x18\f \x01(\tR\x0fstoragePolicyIdJ\x04\b\x06\x10\aJ\x04\b\b\x10\tR\vdestinationR\bhostname\"\xbd\x03\n" +
 	"\x13UpdatePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x03 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
 	"\x0eobject_filters\x18\x04 \x03(\v2!.policyserverservice.ObjectFilterR\robjectFilters\x12\x10\n" +
 	"\x03rpo\x18\x05 \x01(\tR\x03rpo\x12#\n" +
-	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12 \n" +
-	"\vdestination\x18\a \x01(\tR\vdestination\x12\x12\n" +
+	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12\x12\n" +
 	"\x04port\x18\t \x01(\x05R\x04port\x12\x16\n" +
 	"\x06config\x18\n" +
 	" \x01(\tR\x06config\x12;\n" +
 	"\vdisabled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"disabledAtJ\x04\b\b\x10\tR\bhostname\"%\n" +
+	"disabledAt\x12*\n" +
+	"\x11storage_policy_id\x18\f \x01(\tR\x0fstoragePolicyIdJ\x04\b\a\x10\bJ\x04\b\b\x10\tR\vdestinationR\bhostname\"%\n" +
 	"\x13DeletePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x16\n" +
 	"\x14DeletePolicyResponse2\xe9\x03\n" +

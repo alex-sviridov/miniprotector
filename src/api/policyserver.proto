@@ -60,6 +60,9 @@ message Policy {
   // List of cron expressions (5-field). policy-server never parses or
   // evaluates these -- opaque pass-through data.
   repeated string backup_window = 6;
+  // Derived, read-only. For a "backup" policy, resolved live from
+  // storage_policy_id every time this message is produced -- never stored
+  // or settable directly. Unset for a "storage" policy, as before.
   string destination = 7;
   // policy-server-computed, deterministic from the policy file's name --
   // stable across reloads, changes only if the file is renamed. Not
@@ -89,6 +92,9 @@ message Policy {
   // unaffected. Generic across every policy type -- policy-server attaches
   // no meaning to *why* a policy is disabled.
   google.protobuf.Timestamp disabled_at = 14;
+  // "backup" policy only, required. References a "storage"-typed Policy.id;
+  // destination is resolved from it live on every read.
+  string storage_policy_id = 15;
 }
 
 message CreatePolicyRequest {
@@ -99,7 +105,11 @@ message CreatePolicyRequest {
   repeated ObjectFilter object_filters = 3;
   string rpo = 4;
   repeated string backup_window = 5;
-  string destination = 6;
+  // reserved 6 was "destination" -- removed, destination is never itself
+  // writable; it's derived from storage_policy_id. See
+  // docs/superpowers/specs/2026-08-03-backup-policy-storage-link-design.md.
+  reserved 6;
+  reserved "destination";
   // "backup" or "storage" -- required. Determines which of the fields above
   // (backup) or below (storage) are valid; mixing fields from both types is
   // rejected.
@@ -110,6 +120,8 @@ message CreatePolicyRequest {
   int32 port = 9;
   string config = 10;
   google.protobuf.Timestamp disabled_at = 11;
+  // "backup" only, required.
+  string storage_policy_id = 12;
 }
 
 message UpdatePolicyRequest {
@@ -121,10 +133,12 @@ message UpdatePolicyRequest {
   repeated ObjectFilter object_filters = 4;
   string rpo = 5;
   repeated string backup_window = 6;
-  string destination = 7;
+  // reserved 7 was "destination" -- removed, see CreatePolicyRequest above.
+  reserved 7;
+  reserved "destination";
   // A policy's type is immutable via UpdatePolicy -- there is no type field
   // here. port/config are only valid when the policy being updated is
-  // already type "storage"; object_filters/rpo/backup_window/destination
+  // already type "storage"; object_filters/rpo/backup_window/storage_policy_id
   // are only valid when it's already type "backup".
   // reserved 8 was "hostname" -- removed, see Policy.reserved 11 above.
   reserved 8;
@@ -132,6 +146,8 @@ message UpdatePolicyRequest {
   int32 port = 9;
   string config = 10;
   google.protobuf.Timestamp disabled_at = 11;
+  // "backup" only, required.
+  string storage_policy_id = 12;
 }
 
 message DeletePolicyRequest {
