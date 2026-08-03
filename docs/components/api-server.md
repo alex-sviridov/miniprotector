@@ -37,20 +37,23 @@ exception to that rule, documented in
 `GET /policies` accepts an optional `?type=backup|storage` query parameter to filter by type;
 without it, every policy of every type is returned, each with `port`/`config` populated
 in the response DTO when applicable (zero for a `"backup"`-typed policy, and vice versa for
-`rpo`/`destination`/`object_filters`). Creating or updating a storage policy uses a separate pair of
+`rpo`/`storage_policy_id`/`object_filters`). A `"backup"` policy's `destination` in the response DTO
+is always derived by `policy-server` from its `storage_policy_id` — it's never itself part of the
+create/update input. Creating or updating a storage policy uses a separate pair of
 endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage policy's input
 shape (`port`/`config`) shares nothing with a backup policy's
-(`object_filters`/`rpo`/`backup_window`/`destination`) beyond `name`/`client_filters` — which is also
-how a storage policy targets a node (there is no separate `hostname` field; set
+(`object_filters`/`rpo`/`backup_window`/`storage_policy_id`) beyond `name`/`client_filters` — which is
+also how a storage policy targets a node (there is no separate `hostname` field; set
 `client_filters.hostnames` the same way a backup policy would). `GET
 /policies/{id}` and `DELETE /policies/{id}` are shared across both types — both operations are
 already type-agnostic, looking a policy up or removing it by `id` alone.
 
 `POST /policies/adhoc` creates a one-time backup policy from the same fields as an ordinary create
-(`name`/`client_filters`/`object_filters`/`destination`) — `api-server` computes `backup_window`
+(`name`/`client_filters`/`object_filters`/`storage_policy_id`) — `api-server` computes `backup_window`
 (every minute), `rpo`, and `disabled_at` itself from the `AdhocPolicyTimeoutSec` config value, so a
 caller never composes those three fields by hand to get a "run once on every matched node, then
-expire" policy. See [Design: adhoc policy endpoint](../superpowers/specs/2026-08-02-adhoc-policy-endpoint-design.md).
+expire" policy. See [Design: adhoc policy endpoint](../superpowers/specs/2026-08-02-adhoc-policy-endpoint-design.md)
+and [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
 
 ## Authentication
 

@@ -48,7 +48,7 @@ message Policy {
   repeated ObjectFilter object_filters = 4;
   string rpo = 5;
   repeated string backup_window = 6;
-  string destination = 7;
+  string destination = 7; // derived, read-only -- see below
   string id = 8;
   ClientFilters client_filters = 9;
   string type = 10;
@@ -56,6 +56,7 @@ message Policy {
   int32 port = 12;
   string config = 13;
   google.protobuf.Timestamp disabled_at = 14;
+  string storage_policy_id = 15; // backup policy only, required
 }
 
 message CreatePolicyRequest {
@@ -64,12 +65,13 @@ message CreatePolicyRequest {
   repeated ObjectFilter object_filters = 3;
   string rpo = 4;
   repeated string backup_window = 5;
-  string destination = 6;
+  reserved 6; reserved "destination"; // removed -- never itself writable, see below
   string type = 7;
   reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
   google.protobuf.Timestamp disabled_at = 11;
+  string storage_policy_id = 12; // backup policy only, required
 }
 
 message UpdatePolicyRequest {
@@ -79,11 +81,12 @@ message UpdatePolicyRequest {
   repeated ObjectFilter object_filters = 4;
   string rpo = 5;
   repeated string backup_window = 6;
-  string destination = 7;
+  reserved 7; reserved "destination"; // removed -- never itself writable, see below
   reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
   google.protobuf.Timestamp disabled_at = 11;
+  string storage_policy_id = 12; // backup policy only, required
 }
 
 message DeletePolicyRequest {
@@ -124,7 +127,8 @@ certificate — the same requirement every server except `issuer`'s own listener
   and
   [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
 - `port`/`config` are only meaningful on a `"storage"`-typed policy -- unset/zero on a
-  `"backup"`-typed one, and vice versa for `object_filters`/`rpo`/`backup_window`/`destination`.
+  `"backup"`-typed one, and vice versa for `object_filters`/`rpo`/`backup_window`/`storage_policy_id`.
+  `destination` is never itself a settable field on either type -- see below.
   `config` is opaque, pass-through JSON text -- `policy-server` validates it's well-formed at load
   and write time but never interprets its contents. There is no separate `hostname` field on a
   storage policy (removed -- see
@@ -143,18 +147,28 @@ certificate — the same requirement every server except `issuer`'s own listener
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
   applies them, during its own directory walk.
 - `rpo` and `backup_window` are opaque, pass-through strings — `policy-server` never parses or
-  evaluates either. `destination` is likewise opaque, pass-through data — `policy-server` never
-  validates or connects to it.
+  evaluates either. `destination` is derived, read-only: a `"backup"` policy instead carries
+  `storage_policy_id`, a required reference to a `"storage"`-typed policy's `id`.
+  `GetPolicies`/`ListPolicies`/`CreatePolicy`/`UpdatePolicy` all resolve it live to that storage
+  policy's `client_filters.hostnames[0]:port` before responding, so `destination` always reflects
+  the referenced storage policy's *current* settings, never a stale copy. It's left unset if the
+  reference doesn't resolve (an id that doesn't exist, or no longer names a storage policy) --
+  reachable only by hand-editing policy files outside the write RPCs, since `DeletePolicy` refuses
+  to remove a storage policy still referenced by any backup policy.
 - `ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy` are the admin surface `api-server`
   proxies for browsing and editing the full policy set — never called by a mesh node. Unlike
   `GetPolicies`, `ListPolicies`'s response (and `Create`/`UpdatePolicy`'s echoed-back result)
   includes `client_filters`. `Create`/`UpdatePolicy` validate the same way `parsePolicyFile` does
   (non-empty `metadata.name`, syntactically valid glob patterns) before writing anything; a write
-  that fails validation returns `INVALID_ARGUMENT` and touches no file. `Update`/`Delete` address a
-  policy by its `id`; `Update` keeps the on-disk filename (and therefore the `id`) unchanged,
-  overwriting only the file's content. Every write reloads `policy-server`'s own in-memory cache
-  synchronously before responding, bypassing the `.changed` sentinel entirely — that remains solely
-  the mechanism for an operator's own manual, possibly multi-file, batch edits.
+  that fails validation returns `INVALID_ARGUMENT` and touches no file. For a `"backup"` policy,
+  both also require `storage_policy_id` to be non-empty and to name a currently-loaded `"storage"`
+  policy, checked against the live cache at write time — something `Validate()` alone can't check,
+  since it never sees the rest of the loaded set. `DeletePolicy` on a `"storage"` policy fails with
+  `INVALID_ARGUMENT`, naming the offending policies, if any `"backup"` policy still references it.
+  `Update`/`Delete` address a policy by its `id`; `Update` keeps the on-disk filename (and therefore
+  the `id`) unchanged, overwriting only the file's content. Every write reloads `policy-server`'s own
+  in-memory cache synchronously before responding, bypassing the `.changed` sentinel entirely — that
+  remains solely the mechanism for an operator's own manual, possibly multi-file, batch edits.
 - `ListPoliciesRequest.type` is an optional filter — `"backup"` or `"storage"` restricts the
   response to that type; empty (the default) returns every type, unchanged from before this field
   existed. A `type` value that matches no loaded policy's `Kind()` returns an empty list, not an
@@ -169,3 +183,4 @@ certificate — the same requirement every server except `issuer`'s own listener
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
 - [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
 - [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md)
+- [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md)
