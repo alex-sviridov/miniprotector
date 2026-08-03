@@ -34,16 +34,18 @@ no data — there's no read-only "guest" mode.
   never split across a page boundary. Sizes render human-readable (KB/MB/...); a "Versions" count
   on multi-version files opens a modal (click anywhere on that row) listing that file's other
   versions.
-- `/policies` — every policy (name, RPO, destination), with a "New backup" action opening a form modal for creating new policies (fields: name, RPO, backup window, client filters, object filters, storage policy) and clickable policy names navigating to each policy's detail view. The modal (`BackupPolicyFormModal` in `components/backup_policies/`) offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after its configured timeout, 1h by default) and redirects to `/jobs`, where the resulting job(s) can be found and opened for their log lines — same modal-plus-detail-page pattern as `/storage` below. Linking to:
+- `/policies` — every policy (name, RPO, destination), with a "New backup" action opening a form modal for creating new policies (fields: name, RPO, backup window, client filters, object filters, destination (a required select over `/storage`'s storage policies, replacing free-text host:port entry)) and clickable policy names navigating to each policy's detail view. The modal (`BackupPolicyFormModal` in `components/backup_policies/`) offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after its configured timeout, 1h by default) and redirects to `/jobs`, where the resulting job(s) can be found and opened for their log lines — same modal-plus-detail-page pattern as `/storage` below. Linking to:
 - `/policies/:id` — one policy's full record (client filters, object filters, backup window), with Edit and Delete buttons; Edit opens `BackupPolicyFormModal` pre-filled with the policy's current values (both "Save" and "Run now" are available here). No separate `/policies/new` or `/policies/:id/edit` routes.
 - `/storage` — every storage policy (name, target hostname, port, storage type), with a "New Storage
   Policy" action and a click-to-edit name column, both opening the same `StorageEditModal` (fields:
   name, target hostname, port, storage type — `filesystem` only today — and, when `filesystem` is
   selected, a filesystem path). "Target hostname" submits as `client_filters.hostnames` — the same
-  targeting mechanism `/policies` uses, not a separate field. Kept fully separate from `/policies`:
-  its own store (`stores/storagePolicies.js`), its own component folder (`components/storage/`), and
-  no detail or form routes of its own — list and modal only. `/policies` itself now requests only
-  `type=backup` policies, so a storage policy never appears there.
+  targeting mechanism `/policies` uses, not a separate field. Its own component folder
+  (`components/storage/`) and no detail or form routes of its own — list and modal only — but its
+  store (`stores/storagePolicies.js`) is no longer read exclusively by `/storage`: `/policies`' form
+  modal also reads it to populate its destination select (see the `/policies` bullet above).
+  `/policies` itself still requests only `type=backup` policies, so a storage policy never appears
+  in its list.
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
