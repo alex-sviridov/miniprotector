@@ -43,7 +43,7 @@ message ObjectFilter {
 
 message PolicyCheckin {
   string hostname = 1;
-  int64 last_seen_at = 2;
+  google.protobuf.Timestamp last_seen_at = 2;
 }
 
 message Policy {
