@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-03 — web: unified policy detail tabs with check-in visibility
+
+Both `/policies/:id` and the new `/storage/:id` now share a `Details`/`Check-ins` tabbed layout,
+built on a reusable `Tabs` component (`components/ui/Tabs.vue`) that syncs the active tab to the
+URL. The `Check-ins` tab (`components/policies/PolicyCheckins.vue`) surfaces the check-in data
+`policy-server`/`api-server` started tracking earlier today -- every host that has received a
+policy, with its most recent check-in time and a manual Refresh button. Storage policies get a
+details page for the first time, closing the gap with backup policies: the `/storage` list's name
+column now navigates there instead of opening the edit modal inline.
+
 ## 2026-08-03 — policy-server: check-in tracking and cleanup
 
 `policy-server` now records, in a local SQLite database, the most recent time each host received
