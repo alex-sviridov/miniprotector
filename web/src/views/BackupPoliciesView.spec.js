@@ -162,4 +162,9 @@ describe('BackupPoliciesView', () => {
     expect(modal.props('serverError')).toBe('destination is required')
     expect(push).not.toHaveBeenCalledWith({ name: 'jobs' })
   })
+
+  it('renders a single-segment breadcrumb', () => {
+    const { wrapper } = mountView({ list: [], loading: false, error: null })
+    expect(wrapper.find('[data-test="breadcrumb"]').text()).toBe('Policies')
+  })
 })

@@ -95,7 +95,10 @@ async function runNow(payload) {
 
 <template>
   <div>
-    <PageHeader :title="policy?.name || id">
+    <PageHeader
+      :title="policy?.name || id"
+      :crumbs="[{ label: 'Policies', to: { name: 'policies' } }, { label: policy?.name || id }]"
+    >
       <template #actions>
         <BaseButton v-if="policy" data-test="policy-edit" variant="secondary" @click="openEdit">Edit</BaseButton>
         <BaseButton data-test="policy-delete" variant="danger" @click="confirmDelete">Delete</BaseButton>

@@ -1,7 +1,7 @@
 // web/src/views/BackupPolicyView.spec.js
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import BackupPolicyView from './BackupPolicyView.vue'
 import { usePoliciesStore } from '../stores/policies'
@@ -257,5 +257,24 @@ describe('BackupPolicyView', () => {
 
     await expect(wrapper.find('[data-test="checkins-refresh"]').trigger('click')).resolves.not.toThrow()
     expect(policies.refresh).toHaveBeenCalledWith('p1')
+  })
+
+  it('renders a breadcrumb back to the policies list once the policy has loaded', () => {
+    const pinia = createTestingPinia({
+      stubActions: true,
+      initialState: {
+        policies: {
+          byId: { p1: { id: 'p1', name: 'nightly-db-backup', object_filters: [], client_filters: {} } },
+          loading: false,
+          error: null,
+        },
+      },
+    })
+    const wrapper = mount(BackupPolicyView, {
+      global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
+    })
+    const crumb = wrapper.find('[data-test="breadcrumb"]')
+    expect(crumb.text()).toBe('Policies / nightly-db-backup')
+    expect(crumb.findComponent(RouterLinkStub).props('to')).toEqual({ name: 'policies' })
   })
 })

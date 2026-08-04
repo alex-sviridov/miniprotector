@@ -63,7 +63,7 @@ const columns = [
 
 <template>
   <div>
-    <PageHeader title="Policies">
+    <PageHeader title="Policies" :crumbs="[{ label: 'Policies' }]">
       <template #actions>
         <BaseButton data-test="policy-new" variant="primary" @click="openCreate">
           New backup
