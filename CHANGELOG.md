@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-04 — web: navigation shell and visual consistency polish
+
+The sidebar now carries a small brand mark and one icon per section, with a clearer accent-bordered
+active state, instead of plain text links on a flat background. Every list and detail page shows a
+breadcrumb trail above its title (`PageHeader`'s new `crumbs` prop), closing the orientation gap on
+pages reached directly rather than via the sidebar. Boolean/state table columns (a client's Revoked
+column, a job's State column) render as a colored badge instead of plain text, and the shared
+`DataTable` component now overrides `vue-good-table-next`'s default theme to match the rest of the
+app's borders and colors. `BaseButton` gained an optional `to` prop so link-styled actions (like
+Clients' "New Client") go through the same component as `<button>`-styled ones, closing the one
+spot that still hardcoded its own Tailwind classes. Same routes, same data, same API — a visual and
+navigational pass, not a new feature.
+
 ## 2026-08-03 — web: unified policy detail tabs with check-in visibility
 
 Both `/policies/:id` and the new `/storage/:id` now share a `Details`/`Check-ins` tabbed layout,
