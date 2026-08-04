@@ -5,6 +5,7 @@ import { formatTimestamp } from '../utils/format'
 import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
 
 const clients = useClientsStore()
 
@@ -29,9 +30,9 @@ const columns = [
   <div>
     <PageHeader title="Clients">
       <template #actions>
-        <router-link :to="{ name: 'client-new' }" class="bg-blue-600 text-white rounded px-3 py-1">
+        <BaseButton :to="{ name: 'client-new' }" variant="primary">
           New Client
-        </router-link>
+        </BaseButton>
       </template>
     </PageHeader>
     <StatusMessage
