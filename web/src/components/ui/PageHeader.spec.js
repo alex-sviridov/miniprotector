@@ -1,6 +1,6 @@
 // web/src/components/ui/PageHeader.spec.js
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import PageHeader from './PageHeader.vue'
 
 describe('PageHeader', () => {
@@ -36,5 +36,25 @@ describe('PageHeader', () => {
   it('does not render an actions wrapper when no actions slot is given', () => {
     const wrapper = mount(PageHeader, { props: { title: 'Clients' } })
     expect(wrapper.find('[data-test="page-header-actions"]').exists()).toBe(false)
+  })
+
+  it('renders no breadcrumb when crumbs is omitted', () => {
+    const wrapper = mount(PageHeader, { props: { title: 'Clients' } })
+    expect(wrapper.find('[data-test="breadcrumb"]').exists()).toBe(false)
+  })
+
+  it('renders breadcrumb segments in order, linking all but the last', () => {
+    const wrapper = mount(PageHeader, {
+      props: {
+        title: 'webserver',
+        crumbs: [{ label: 'Clients', to: { name: 'clients' } }, { label: 'webserver' }],
+      },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    const crumb = wrapper.find('[data-test="breadcrumb"]')
+    expect(crumb.text()).toBe('Clients / webserver')
+    const link = crumb.findComponent(RouterLinkStub)
+    expect(link.props('to')).toEqual({ name: 'clients' })
+    expect(link.text()).toBe('Clients')
   })
 })
