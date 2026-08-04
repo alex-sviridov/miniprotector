@@ -132,6 +132,22 @@ Three places carry the field from wire to `brfs`, all singular → list, no shim
   failure is deliberately left for later — the agent already has the full ordered list cached locally
   in `policies-cache.json`, so that enhancement needs no further `policy-server` change when it lands.
 
+### Further consumers: `api-server` and the web admin views
+
+Two more places carry `destination` end-to-end and are in scope, discovered while planning the exact
+edits:
+
+- `src/cmd/api-server/policies.go`'s `policyDTO.Destination string` (`json:"destination"`), built from
+  `p.GetDestination()` — this must change to `Destinations []string` (`json:"destinations"`) from
+  `p.GetDestinations()` just for the build to keep compiling once the proto field changes; it isn't
+  optional.
+- `web/src/views/BackupPolicyView.vue` (a `DetailList` row showing `policy.value.destination`) and
+  `web/src/views/BackupPoliciesView.vue` (a sortable `DataTable` column bound to `destination`) both
+  read the REST field directly. Neither is required for the Go build, only for the admin UI to keep
+  showing something sensible — both are included in this plan's scope rather than deferred, rendering
+  the list joined (`destinations.join(', ')`), the same pattern the same files already use for
+  `backup_window`/`client_filters.hostnames`.
+
 ## Out of scope
 
 - Any retry/failover logic that actually uses `Destinations[1:]` — `backup.go` only ever reads `[0]`
@@ -166,6 +182,7 @@ Three places carry the field from wire to `brfs`, all singular → list, no shim
 - `docs/components/agent.md` — note destination selection now reads `Destinations[0]` from a list,
   with future entries reserved for later failover.
 - `docs/api/rest-v1.md` — updated response examples (`destination` field → `destinations`).
+- `docs/components/api-server.md` — line ~40's `destination`-in-response-DTO sentence → `destinations`.
 - `README.md` — cross-link updates if the protocol doc's summary line changes.
 - `docs/ARCHITECTURE.md` — no changes; no new component or topology/data-flow change.
 - `CHANGELOG.md` — one dated entry: a backup policy's destination is now a list of `host:port` entries
