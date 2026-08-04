@@ -2,6 +2,7 @@
 defineProps({
   variant: { type: String, default: 'secondary' },
   type: { type: String, default: 'button' },
+  to: { type: [String, Object], default: null },
 })
 
 const VARIANT_CLASSES = {
@@ -12,7 +13,20 @@ const VARIANT_CLASSES = {
 </script>
 
 <template>
-  <button :type="type" class="rounded px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed" :class="VARIANT_CLASSES[variant]">
+  <router-link
+    v-if="to"
+    :to="to"
+    class="inline-block rounded px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+    :class="VARIANT_CLASSES[variant]"
+  >
+    <slot />
+  </router-link>
+  <button
+    v-else
+    :type="type"
+    class="rounded px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+    :class="VARIANT_CLASSES[variant]"
+  >
     <slot />
   </button>
 </template>

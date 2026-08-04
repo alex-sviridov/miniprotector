@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import BaseButton from './BaseButton.vue'
 
 describe('BaseButton', () => {
@@ -30,5 +30,18 @@ describe('BaseButton', () => {
     const wrapper = mount(BaseButton, { attrs: { 'data-test': 'revoke-button', class: 'mt-2' } })
     expect(wrapper.attributes('data-test')).toBe('revoke-button')
     expect(wrapper.classes()).toContain('mt-2')
+  })
+
+  it('renders as a router-link when the to prop is set, keeping the variant classes', () => {
+    const wrapper = mount(BaseButton, {
+      props: { to: { name: 'client-new' }, variant: 'primary' },
+      slots: { default: 'New Client' },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    const link = wrapper.findComponent(RouterLinkStub)
+    expect(link.exists()).toBe(true)
+    expect(link.props('to')).toEqual({ name: 'client-new' })
+    expect(wrapper.classes()).toContain('bg-blue-600')
+    expect(wrapper.find('button').exists()).toBe(false)
   })
 })
