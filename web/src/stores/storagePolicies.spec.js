@@ -48,6 +48,27 @@ describe('storagePolicies store', () => {
     expect(second).toEqual(first)
   })
 
+  it('fetchOne clears a stale checkinsError on a cache miss', async () => {
+    apiFetch.mockResolvedValue({ id: 's1', name: 'east-1-storage' })
+    const storagePolicies = useStoragePoliciesStore()
+    storagePolicies.checkinsError = 'stale error from a previous policy'
+
+    await storagePolicies.fetchOne('s1')
+
+    expect(storagePolicies.checkinsError).toBeNull()
+  })
+
+  it('fetchOne clears a stale checkinsError on a cache hit', async () => {
+    apiFetch.mockResolvedValue({ id: 's1', name: 'east-1-storage' })
+    const storagePolicies = useStoragePoliciesStore()
+    await storagePolicies.fetchOne('s1')
+    storagePolicies.checkinsError = 'stale error from a previous policy'
+
+    await storagePolicies.fetchOne('s1')
+
+    expect(storagePolicies.checkinsError).toBeNull()
+  })
+
   it('refresh always refetches, bypassing the byId cache', async () => {
     apiFetch.mockResolvedValueOnce({ id: 's1', name: 'east-1-storage', checkins: [] })
     const storagePolicies = useStoragePoliciesStore()

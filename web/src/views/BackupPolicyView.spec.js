@@ -123,6 +123,30 @@ describe('BackupPolicyView', () => {
     expect(wrapper.findComponent({ name: 'BackupPolicyFormModal' }).exists()).toBe(false)
   })
 
+  it('refreshes check-ins from the server after a successful save', async () => {
+    const { wrapper, policies } = mountView({
+      byId: { p1: { id: 'p1', name: 'nightly-db-backup', object_filters: [], client_filters: {} } },
+      loading: false,
+      error: null,
+    })
+    policies.update.mockResolvedValue({ id: 'p1', name: 'renamed' })
+    policies.refresh.mockResolvedValue({ id: 'p1', name: 'renamed', checkins: [] })
+    await wrapper.find('[data-test="policy-edit"]').trigger('click')
+
+    const payload = {
+      name: 'renamed',
+      client_filters: { hostnames: [], labels: {} },
+      object_filters: [],
+      rpo: '1h',
+      backup_window: [],
+      storage_policy_id: 'sp1',
+    }
+    await wrapper.findComponent({ name: 'BackupPolicyFormModal' }).vm.$emit('save', payload)
+    await nextTick()
+
+    expect(policies.refresh).toHaveBeenCalledWith('p1')
+  })
+
   it('keeps the modal open and shows the server error when update fails', async () => {
     const { wrapper, policies } = mountView({
       byId: { p1: { id: 'p1', name: 'nightly-db-backup', object_filters: [], client_filters: {} } },
@@ -209,6 +233,29 @@ describe('BackupPolicyView', () => {
     expect(wrapper.text()).toContain('web-01')
 
     await wrapper.find('[data-test="checkins-refresh"]').trigger('click')
+    expect(policies.refresh).toHaveBeenCalledWith('p1')
+  })
+
+  it('does not throw an unhandled rejection when a manual refresh fails', async () => {
+    routeQuery = { tab: 'checkins' }
+    const { wrapper, policies } = mountView({
+      byId: {
+        p1: {
+          id: 'p1',
+          name: 'nightly-db-backup',
+          object_filters: [],
+          client_filters: {},
+          checkins: [],
+        },
+      },
+      loading: false,
+      error: null,
+      checkinsLoading: false,
+      checkinsError: null,
+    })
+    policies.refresh.mockRejectedValue(new Error('boom'))
+
+    await expect(wrapper.find('[data-test="checkins-refresh"]').trigger('click')).resolves.not.toThrow()
     expect(policies.refresh).toHaveBeenCalledWith('p1')
   })
 })

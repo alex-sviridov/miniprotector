@@ -94,6 +94,29 @@ describe('StoragePolicyView', () => {
     expect(storagePolicies.refresh).toHaveBeenCalledWith('s1')
   })
 
+  it('does not throw an unhandled rejection when a manual refresh fails', async () => {
+    routeQuery = { tab: 'checkins' }
+    const { wrapper, storagePolicies } = mountView({
+      byId: {
+        s1: {
+          id: 's1',
+          name: 'east-1-storage',
+          config: '{}',
+          client_filters: {},
+          checkins: [],
+        },
+      },
+      loading: false,
+      error: null,
+      checkinsLoading: false,
+      checkinsError: null,
+    })
+    storagePolicies.refresh.mockRejectedValue(new Error('boom'))
+
+    await expect(wrapper.find('[data-test="checkins-refresh"]').trigger('click')).resolves.not.toThrow()
+    expect(storagePolicies.refresh).toHaveBeenCalledWith('s1')
+  })
+
   it('deletes the policy after confirming and navigates to the storage list', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { wrapper, storagePolicies } = mountView({
@@ -134,6 +157,23 @@ describe('StoragePolicyView', () => {
 
     expect(storagePolicies.update).toHaveBeenCalledWith('s1', payload)
     expect(wrapper.findComponent({ name: 'StorageEditModal' }).exists()).toBe(false)
+  })
+
+  it('refreshes check-ins from the server after a successful save', async () => {
+    const { wrapper, storagePolicies } = mountView({
+      byId: { s1: { id: 's1', name: 'east-1-storage', config: '{}', client_filters: {} } },
+      loading: false,
+      error: null,
+    })
+    storagePolicies.update.mockResolvedValue({ id: 's1', name: 'renamed' })
+    storagePolicies.refresh.mockResolvedValue({ id: 's1', name: 'renamed', checkins: [] })
+    await wrapper.find('[data-test="storage-policy-edit"]').trigger('click')
+
+    const payload = { name: 'renamed', port: 9400, config: '{}', client_filters: { hostnames: [], labels: {} } }
+    await wrapper.findComponent({ name: 'StorageEditModal' }).vm.$emit('save', payload)
+    await nextTick()
+
+    expect(storagePolicies.refresh).toHaveBeenCalledWith('s1')
   })
 
   it('keeps the modal open and shows the server error when update fails', async () => {

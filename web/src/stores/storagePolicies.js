@@ -25,9 +25,11 @@ export const useStoragePoliciesStore = defineStore('storagePolicies', {
     async fetchOne(id) {
       if (this.byId[id]) {
         this.error = null
+        this.checkinsError = null
         return this.byId[id]
       }
       return withRequest(this, async () => {
+        this.checkinsError = null
         const policy = await apiFetch(`/policies/${encodeURIComponent(id)}`)
         this.byId[id] = policy
         return policy

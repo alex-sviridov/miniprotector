@@ -76,8 +76,17 @@ async function save(payload) {
   try {
     await storagePolicies.update(id.value, payload)
     closeModal()
+    storagePolicies.refresh(id.value).catch(() => {})
   } catch {
     serverError.value = storagePolicies.error
+  }
+}
+
+async function refreshCheckins() {
+  try {
+    await storagePolicies.refresh(id.value)
+  } catch {
+    // error already recorded on storagePolicies.checkinsError by the store
   }
 }
 </script>
@@ -102,7 +111,7 @@ async function save(payload) {
             :checkins="policy.checkins || []"
             :loading="storagePolicies.checkinsLoading"
             :error="storagePolicies.checkinsError"
-            @refresh="storagePolicies.refresh(id)"
+            @refresh="refreshCheckins"
           />
         </template>
       </Tabs>

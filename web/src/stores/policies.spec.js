@@ -56,6 +56,27 @@ describe('policies store', () => {
     expect(policies.error).toBe('policy not found')
   })
 
+  it('fetchOne clears a stale checkinsError on a cache miss', async () => {
+    apiFetch.mockResolvedValue({ id: 'p1', name: 'nightly' })
+    const policies = usePoliciesStore()
+    policies.checkinsError = 'stale error from a previous policy'
+
+    await policies.fetchOne('p1')
+
+    expect(policies.checkinsError).toBeNull()
+  })
+
+  it('fetchOne clears a stale checkinsError on a cache hit', async () => {
+    apiFetch.mockResolvedValue({ id: 'p1', name: 'nightly' })
+    const policies = usePoliciesStore()
+    await policies.fetchOne('p1')
+    policies.checkinsError = 'stale error from a previous policy'
+
+    await policies.fetchOne('p1')
+
+    expect(policies.checkinsError).toBeNull()
+  })
+
   it('refresh always refetches, bypassing the byId cache', async () => {
     apiFetch.mockResolvedValueOnce({ id: 'p1', name: 'nightly', checkins: [] })
     const policies = usePoliciesStore()
