@@ -74,4 +74,44 @@ describe('JobsListView', () => {
     const { wrapper } = mountView({ list: [], loading: false, error: null })
     expect(wrapper.find('[data-test="breadcrumb"]').text()).toBe('Jobs')
   })
+
+  it('renders the State column as a green badge for a successful job', () => {
+    const { wrapper } = mountView({
+      list: [
+        {
+          job_id: 'backup:nightly:1752400000',
+          kind: 'backup',
+          source_host: 'database',
+          store_host: 'bwfs-east',
+          started_at: 1752400000,
+          finished_at: 1752400010,
+          state: 'success',
+        },
+      ],
+      loading: false,
+      error: null,
+    })
+    const stateCell = wrapper.findAll('tbody td')[6]
+    expect(stateCell.find('span').classes()).toContain('bg-emerald-50')
+  })
+
+  it('renders the State column as a red badge for a failed job', () => {
+    const { wrapper } = mountView({
+      list: [
+        {
+          job_id: 'backup:nightly:1752400000',
+          kind: 'backup',
+          source_host: 'database',
+          store_host: 'bwfs-east',
+          started_at: 1752400000,
+          finished_at: 1752400010,
+          state: 'failure',
+        },
+      ],
+      loading: false,
+      error: null,
+    })
+    const stateCell = wrapper.findAll('tbody td')[6]
+    expect(stateCell.find('span').classes()).toContain('bg-red-50')
+  })
 })

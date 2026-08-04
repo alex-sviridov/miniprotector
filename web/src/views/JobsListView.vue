@@ -5,12 +5,19 @@ import { formatTimestamp } from '../utils/format'
 import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
+import Badge from '../components/ui/Badge.vue'
 
 const jobs = useJobsStore()
 
 onMounted(() => {
   jobs.fetchAll()
 })
+
+function stateVariant(state) {
+  if (state === 'success') return 'ok'
+  if (state === 'failure') return 'bad'
+  return 'neutral'
+}
 
 const columns = [
   { label: 'Job ID', field: 'job_id', sortable: true },
@@ -41,6 +48,9 @@ const columns = [
           >
             {{ row.job_id }}
           </router-link>
+          <Badge v-else-if="column.field === 'state'" :variant="stateVariant(row.state)">
+            {{ row.state }}
+          </Badge>
           <span v-else>{{ formattedRow[column.field] }}</span>
         </template>
       </DataTable>

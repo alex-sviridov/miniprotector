@@ -60,4 +60,24 @@ describe('ClientsListView', () => {
     const { wrapper } = mountView({ list: [], loading: false, error: null })
     expect(wrapper.find('[data-test="breadcrumb"]').text()).toBe('Clients')
   })
+
+  it('renders the Revoked column as a red badge when the client is revoked', () => {
+    const { wrapper } = mountView({
+      list: [{ hostname: 'legacy', revoked: true, last_seen_at: 0 }],
+      loading: false,
+      error: null,
+    })
+    const revokedCell = wrapper.findAll('tbody td')[1]
+    expect(revokedCell.find('span').classes()).toContain('bg-red-50')
+  })
+
+  it('renders the Revoked column as a green badge when the client is not revoked', () => {
+    const { wrapper } = mountView({
+      list: [{ hostname: 'active-host', revoked: false, last_seen_at: 0 }],
+      loading: false,
+      error: null,
+    })
+    const revokedCell = wrapper.findAll('tbody td')[1]
+    expect(revokedCell.find('span').classes()).toContain('bg-emerald-50')
+  })
 })

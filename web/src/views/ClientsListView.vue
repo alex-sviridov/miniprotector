@@ -6,6 +6,7 @@ import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
+import Badge from '../components/ui/Badge.vue'
 
 const clients = useClientsStore()
 
@@ -50,6 +51,9 @@ const columns = [
           >
             {{ row.hostname }}
           </router-link>
+          <Badge v-else-if="column.field === 'revoked'" :variant="row.revoked ? 'bad' : 'ok'">
+            {{ formattedRow[column.field] }}
+          </Badge>
           <span v-else>{{ formattedRow[column.field] }}</span>
         </template>
       </DataTable>
