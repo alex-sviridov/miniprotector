@@ -178,4 +178,9 @@ describe('CatalogView', () => {
     const { wrapper } = mountView({ error: 'boom' })
     expect(wrapper.text()).toContain('boom')
   })
+
+  it('renders a single-segment breadcrumb', () => {
+    const { wrapper } = mountView({})
+    expect(wrapper.find('[data-test="breadcrumb"]').text()).toBe('Catalog')
+  })
 })

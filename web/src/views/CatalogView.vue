@@ -3,6 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { useCatalogStore } from '../stores/catalog'
 import { formatBytes, formatTimestamp } from '../utils/format'
 import { groupEntriesByFile } from '../utils/catalogGrouping'
+import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -46,7 +47,7 @@ const columns = [
 
 <template>
   <div>
-    <h1 class="text-xl font-semibold mb-4">Catalog</h1>
+    <PageHeader title="Catalog" :crumbs="[{ label: 'Catalog' }]" />
     <form @submit.prevent="submit" class="flex gap-2 mb-4">
       <input v-model="form.sourceHost" placeholder="source host" class="border rounded px-2 py-1" />
       <input v-model="form.storeHost" placeholder="store host" class="border rounded px-2 py-1" />
