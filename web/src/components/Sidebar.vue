@@ -27,11 +27,23 @@ const NAV_ITEMS = [
         v-for="item in NAV_ITEMS"
         :key="item.name"
         :to="{ name: item.name }"
-        class="flex items-center gap-2.5 pl-3 pr-2.5 py-1.5 rounded text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
-        active-class="bg-slate-800 text-white border-l-4 border-blue-500 pl-2"
+        v-slot="{ isActive, href, navigate }"
+        custom
       >
-        <component :is="item.icon" class="w-4 h-4 shrink-0" />
-        {{ item.label }}
+        <a
+          :href="href"
+          data-test="nav-link"
+          class="flex items-center gap-2.5 pr-2.5 py-1.5 rounded text-sm"
+          :class="
+            isActive
+              ? 'bg-slate-800 text-white border-l-4 border-blue-500 pl-2'
+              : 'text-slate-300 hover:bg-slate-800 hover:text-white pl-3'
+          "
+          @click="navigate"
+        >
+          <component :is="item.icon" class="w-4 h-4 shrink-0" />
+          {{ item.label }}
+        </a>
       </router-link>
     </div>
   </nav>

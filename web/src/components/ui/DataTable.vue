@@ -33,7 +33,7 @@ function handleRowClick({ row }) {
 </template>
 
 <style scoped>
-:deep(.vgt-wrap) {
+.vgt-wrap {
   border: 1px solid #e2e8f0;
   border-radius: 0.5rem;
   overflow: hidden;

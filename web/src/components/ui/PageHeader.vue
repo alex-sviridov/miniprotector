@@ -7,7 +7,12 @@ defineProps({
 </script>
 
 <template>
-  <nav v-if="crumbs && crumbs.length" data-test="breadcrumb" class="flex gap-1 text-xs text-gray-400 mb-1">
+  <nav
+    v-if="crumbs && crumbs.length"
+    data-test="breadcrumb"
+    aria-label="Breadcrumb"
+    class="flex gap-1 text-xs text-gray-400 mb-1"
+  >
     <template v-for="(crumb, index) in crumbs" :key="index">
       <router-link v-if="crumb.to" :to="crumb.to" class="hover:underline hover:text-gray-600">
         {{ crumb.label }}

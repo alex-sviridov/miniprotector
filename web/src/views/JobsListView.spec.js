@@ -95,6 +95,26 @@ describe('JobsListView', () => {
     expect(stateCell.find('span').classes()).toContain('bg-emerald-50')
   })
 
+  it('renders the State column as a neutral badge for an in-progress job', () => {
+    const { wrapper } = mountView({
+      list: [
+        {
+          job_id: 'backup:nightly:1752400000',
+          kind: 'backup',
+          source_host: 'database',
+          store_host: 'bwfs-east',
+          started_at: 1752400000,
+          finished_at: null,
+          state: 'in_progress',
+        },
+      ],
+      loading: false,
+      error: null,
+    })
+    const stateCell = wrapper.findAll('tbody td')[6]
+    expect(stateCell.find('span').classes()).toContain('bg-gray-100')
+  })
+
   it('renders the State column as a red badge for a failed job', () => {
     const { wrapper } = mountView({
       list: [

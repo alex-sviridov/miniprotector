@@ -67,7 +67,7 @@ no data — there's no read-only "guest" mode.
   (`job_id`, `event`, `status`, etc.) collapsed behind a click — a line that isn't valid JSON
   falls back to plain text
 
-Every page's header now shows a breadcrumb trail (e.g. "Policies / nightly-db-backup") above the
+Every list and detail page's header now shows a breadcrumb trail (e.g. "Policies / nightly-db-backup") above the
 title via `PageHeader`'s `crumbs` prop, and the sidebar (`Sidebar.vue`) carries a small brand mark
 plus one icon per section (`components/icons/`, hand-authored inline SVG — no icon package
 dependency). Boolean/state table columns (a client's Revoked column, a job's State column) render

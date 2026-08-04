@@ -16,7 +16,7 @@ const VARIANT_CLASSES = {
   <router-link
     v-if="to"
     :to="to"
-    class="inline-block rounded px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+    class="inline-block rounded px-3 py-1"
     :class="VARIANT_CLASSES[variant]"
   >
     <slot />

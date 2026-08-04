@@ -11,7 +11,10 @@ const VARIANT_CLASSES = {
 </script>
 
 <template>
-  <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold" :class="VARIANT_CLASSES[variant]">
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
+    :class="VARIANT_CLASSES[variant] || VARIANT_CLASSES.neutral"
+  >
     <slot />
   </span>
 </template>
