@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import ClientFormView from './ClientFormView.vue'
 import { useClientsStore } from '../stores/clients'
@@ -12,7 +12,9 @@ vi.mock('vue-router', () => ({
 
 function mountView(state) {
   const pinia = createTestingPinia({ stubActions: true, initialState: { clients: state } })
-  const wrapper = mount(ClientFormView, { global: { plugins: [pinia] } })
+  const wrapper = mount(ClientFormView, {
+    global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
+  })
   return { wrapper, clients: useClientsStore() }
 }
 
@@ -76,5 +78,14 @@ describe('ClientFormView', () => {
     expect(wrapper.text()).toContain('client node-1 already enrolled')
     expect(wrapper.find('input[name="hostname"]').element.value).toBe('node-1')
     expect(push).not.toHaveBeenCalled()
+  })
+
+  it('renders the page title and a breadcrumb back to the clients list', () => {
+    const { wrapper } = mountView({ error: null })
+    expect(wrapper.find('h1').text()).toBe('New Client')
+    const crumb = wrapper.find('[data-test="breadcrumb"]')
+    expect(crumb.text()).toBe('Clients / New Client')
+    const link = crumb.findComponent(RouterLinkStub)
+    expect(link.props('to')).toEqual({ name: 'clients' })
   })
 })

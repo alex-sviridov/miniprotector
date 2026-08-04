@@ -55,4 +55,9 @@ describe('ClientsListView', () => {
     const link = wrapper.findAllComponents(RouterLinkStub).find((l) => l.text() === 'New Client')
     expect(link.props('to')).toEqual({ name: 'client-new' })
   })
+
+  it('renders a single-segment breadcrumb', () => {
+    const { wrapper } = mountView({ list: [], loading: false, error: null })
+    expect(wrapper.find('[data-test="breadcrumb"]').text()).toBe('Clients')
+  })
 })

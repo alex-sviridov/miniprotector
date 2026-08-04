@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useClientsStore } from '../stores/clients'
 import RepeatableFieldList from '../components/ui/RepeatableFieldList.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
 
 const router = useRouter()
 const clients = useClientsStore()
@@ -23,7 +24,7 @@ async function submit() {
 
 <template>
   <div>
-    <h1 class="text-xl font-semibold mb-4">New Client</h1>
+    <PageHeader title="New Client" :crumbs="[{ label: 'Clients', to: { name: 'clients' } }, { label: 'New Client' }]" />
     <p v-if="clients.error" class="text-red-600 mb-4">{{ clients.error }}</p>
     <form @submit.prevent="submit" class="space-y-6 max-w-2xl">
       <div>

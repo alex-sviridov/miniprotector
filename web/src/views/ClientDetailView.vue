@@ -105,7 +105,7 @@ const detailRows = computed(() => {
 
 <template>
   <div>
-    <PageHeader :title="hostname" />
+    <PageHeader :title="hostname" :crumbs="[{ label: 'Clients', to: { name: 'clients' } }, { label: hostname }]" />
     <StatusMessage :loading="clients.loading" :error="clients.error">
       <template v-if="client">
         <div v-if="showToken" data-test="token-banner" class="bg-yellow-50 border border-yellow-400 rounded p-3 mb-4">

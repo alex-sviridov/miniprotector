@@ -28,7 +28,7 @@ const columns = [
 
 <template>
   <div>
-    <PageHeader title="Clients">
+    <PageHeader title="Clients" :crumbs="[{ label: 'Clients' }]">
       <template #actions>
         <BaseButton :to="{ name: 'client-new' }" variant="primary">
           New Client
