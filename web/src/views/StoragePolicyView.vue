@@ -93,7 +93,10 @@ async function refreshCheckins() {
 
 <template>
   <div>
-    <PageHeader :title="policy?.name || id">
+    <PageHeader
+      :title="policy?.name || id"
+      :crumbs="[{ label: 'Storage', to: { name: 'storage' } }, { label: policy?.name || id }]"
+    >
       <template #actions>
         <BaseButton v-if="policy" data-test="storage-policy-edit" variant="secondary" @click="openEdit">
           Edit

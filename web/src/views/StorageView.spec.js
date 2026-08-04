@@ -136,4 +136,9 @@ describe('StorageView', () => {
 
     expect(storagePolicies.remove).not.toHaveBeenCalled()
   })
+
+  it('renders a single-segment breadcrumb', () => {
+    const { wrapper } = mountView({ list: [], loading: false, error: null })
+    expect(wrapper.find('[data-test="breadcrumb"]').text()).toBe('Storage')
+  })
 })

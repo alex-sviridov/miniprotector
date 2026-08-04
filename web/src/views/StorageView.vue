@@ -63,7 +63,7 @@ const columns = [
 
 <template>
   <div>
-    <PageHeader title="Storage">
+    <PageHeader title="Storage" :crumbs="[{ label: 'Storage' }]">
       <template #actions>
         <BaseButton data-test="storage-new" variant="primary" @click="openCreate">
           New Storage Policy

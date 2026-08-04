@@ -1,7 +1,7 @@
 // web/src/views/StoragePolicyView.spec.js
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import StoragePolicyView from './StoragePolicyView.vue'
 import { useStoragePoliciesStore } from '../stores/storagePolicies'
@@ -205,5 +205,24 @@ describe('StoragePolicyView', () => {
     await wrapper.find('[data-test="storage-policy-edit"]').trigger('click')
     await wrapper.findComponent({ name: 'StorageEditModal' }).vm.$emit('close')
     expect(wrapper.findComponent({ name: 'StorageEditModal' }).exists()).toBe(false)
+  })
+
+  it('renders a breadcrumb back to the storage list once the policy has loaded', () => {
+    const pinia = createTestingPinia({
+      stubActions: true,
+      initialState: {
+        storagePolicies: {
+          byId: { s1: { id: 's1', name: 'east-1-storage', config: '{}', client_filters: {} } },
+          loading: false,
+          error: null,
+        },
+      },
+    })
+    const wrapper = mount(StoragePolicyView, {
+      global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
+    })
+    const crumb = wrapper.find('[data-test="breadcrumb"]')
+    expect(crumb.text()).toBe('Storage / east-1-storage')
+    expect(crumb.findComponent(RouterLinkStub).props('to')).toEqual({ name: 'storage' })
   })
 })
