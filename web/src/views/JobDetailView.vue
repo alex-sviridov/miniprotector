@@ -17,7 +17,7 @@ onMounted(async () => {
 
 <template>
   <div>
-    <PageHeader :title="jobId" />
+    <PageHeader :title="jobId" :crumbs="[{ label: 'Jobs', to: { name: 'jobs' } }, { label: jobId }]" />
     <StatusMessage
       :loading="jobs.logsLoading"
       :error="jobs.logsError"

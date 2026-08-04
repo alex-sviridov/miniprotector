@@ -25,7 +25,7 @@ const columns = [
 
 <template>
   <div>
-    <PageHeader title="Jobs" />
+    <PageHeader title="Jobs" :crumbs="[{ label: 'Jobs' }]" />
     <StatusMessage
       :loading="jobs.loading"
       :error="jobs.error"

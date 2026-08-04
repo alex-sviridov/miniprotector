@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import JobDetailView from './JobDetailView.vue'
 import { useJobsStore } from '../stores/jobs'
@@ -47,5 +47,18 @@ describe('JobDetailView', () => {
   it('shows the store error message on failure', () => {
     const { wrapper } = mountView({ logs: [], logsLoading: false, logsError: 'boom' })
     expect(wrapper.text()).toContain('boom')
+  })
+
+  it('renders a breadcrumb back to the jobs list', () => {
+    const pinia = createTestingPinia({
+      stubActions: true,
+      initialState: { jobs: { logs: [], logsLoading: false, logsError: null } },
+    })
+    const wrapper = mount(JobDetailView, {
+      global: { plugins: [pinia], stubs: { RouterLink: RouterLinkStub } },
+    })
+    const crumb = wrapper.find('[data-test="breadcrumb"]')
+    expect(crumb.text()).toBe('Jobs / backup:nightly:1752400000')
+    expect(crumb.findComponent(RouterLinkStub).props('to')).toEqual({ name: 'jobs' })
   })
 })
