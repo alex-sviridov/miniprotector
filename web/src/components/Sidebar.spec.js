@@ -14,4 +14,14 @@ describe('Sidebar', () => {
       { name: 'jobs' },
     ])
   })
+
+  it('renders a brand header and an icon before each nav label', () => {
+    const wrapper = mount(Sidebar, { global: { stubs: { RouterLink: RouterLinkStub } } })
+    expect(wrapper.text()).toContain('Miniprotector')
+    const links = wrapper.findAllComponents(RouterLinkStub)
+    expect(links).toHaveLength(5)
+    links.forEach((link) => {
+      expect(link.find('svg').exists()).toBe(true)
+    })
+  })
 })
