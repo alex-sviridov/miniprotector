@@ -49,4 +49,30 @@ describe('DataTable', () => {
     })
     expect(wrapper.find('a[href="/x/a"]').exists()).toBe(true)
   })
+
+  it('does not render checkboxes by default', () => {
+    const wrapper = mount(DataTable, { props: { columns, rows } })
+    expect(wrapper.find('td.vgt-checkbox-col').exists()).toBe(false)
+  })
+
+  it('renders row checkboxes when selectable is true', () => {
+    const wrapper = mount(DataTable, { props: { columns, rows, selectable: true } })
+    expect(wrapper.findAll('tbody tr th.vgt-checkbox-col input[type="checkbox"]')).toHaveLength(2)
+  })
+
+  it('emits selection-change with the selected row objects', async () => {
+    const wrapper = mount(DataTable, { props: { columns, rows, selectable: true } })
+    // Access the internal vue-good-table component and trigger checkbox click handler
+    const vgtComponent = wrapper.findComponent({ name: 'vue-good-table' })
+    const processedRows = vgtComponent.vm.processedRows
+    if (processedRows && processedRows[0] && processedRows[0].children) {
+      processedRows[0].children[0].vgtSelected = true
+    }
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('selection-change')).toBeTruthy()
+    const lastCall = wrapper.emitted('selection-change').at(-1)[0]
+    expect(lastCall).toHaveLength(1)
+    expect(lastCall[0]).toMatchObject({ id: 1, name: 'a' })
+  })
 })

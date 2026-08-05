@@ -1,18 +1,29 @@
 <!-- web/src/components/ui/DataTable.vue -->
 <script setup>
 import { VueGoodTable } from 'vue-good-table-next'
+import { computed } from 'vue'
 import 'vue-good-table-next/dist/vue-good-table-next.css'
 
-defineProps({
+const props = defineProps({
   columns: { type: Array, required: true },
   rows: { type: Array, required: true },
   searchEnabled: { type: Boolean, default: true },
   perPage: { type: Number, default: 25 },
+  selectable: { type: Boolean, default: false },
 })
-const emit = defineEmits(['row-click'])
+const emit = defineEmits(['row-click', 'selection-change'])
+
+const selectOptions = computed(() => ({
+  enabled: props.selectable,
+  selectOnCheckboxOnly: true,
+}))
 
 function handleRowClick({ row }) {
   emit('row-click', row)
+}
+
+function handleSelectionChange({ selectedRows }) {
+  emit('selection-change', selectedRows)
 }
 </script>
 
@@ -22,7 +33,9 @@ function handleRowClick({ row }) {
     :rows="rows"
     :search-options="{ enabled: searchEnabled, placeholder: 'Search...' }"
     :pagination-options="{ enabled: true, perPage }"
+    :select-options="selectOptions"
     @row-click="handleRowClick"
+    @selected-rows-change="handleSelectionChange"
   >
     <template #table-row="props">
       <slot name="table-row" v-bind="props">
