@@ -68,6 +68,7 @@ func createTestStoragePolicy(t *testing.T, srv *policyServerServer, hostname str
 		Config:        "{}",
 	})
 	require.NoError(t, err)
+	require.NoError(t, srv.checkins.RecordCheckin(resp.Id, hostname, time.Now()))
 	return resp.Id
 }
 
@@ -88,7 +89,7 @@ func TestCreatePolicy_WritesFileAndReturnsPolicyWithID(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.Id)
 	assert.Equal(t, "Nightly DB Backup", resp.Name)
-	assert.Equal(t, "bwfs:8080", resp.Destination, "destination must resolve from the referenced storage policy")
+	assert.Equal(t, []string{"bwfs:8080"}, resp.Destinations, "destinations must resolve from the referenced storage policy's checkins")
 	require.Len(t, resp.ObjectFilters, 1)
 	assert.NotEmpty(t, resp.ObjectFilters[0].Id)
 
@@ -233,7 +234,7 @@ func TestUpdatePolicy_OverwritesFileKeepsIDAndCreatedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, original.Meta().ID, resp.Id, "id must stay stable across an update")
 	assert.Equal(t, "nightly-renamed", resp.Name)
-	assert.Equal(t, "bwfs:9090", resp.Destination)
+	assert.Equal(t, []string{"bwfs:9090"}, resp.Destinations)
 	assert.Equal(t, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), resp.CreatedAt.AsTime())
 	assert.NotEqual(t, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), resp.UpdatedAt.AsTime())
 }

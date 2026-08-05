@@ -124,22 +124,3 @@ func (c *Cache) FindBySourcePath(path string) (Policy, bool) {
 	}
 	return nil, false
 }
-
-// ResolveDestination looks up storagePolicyID among the currently-loaded
-// policies and, if it names a "storage" policy, returns its "host:port"
-// computed from that policy's ClientFilters.Hostnames[0] and Port. ok is
-// false if storagePolicyID doesn't resolve to a storage policy at all --
-// unknown id, an id belonging to a non-storage policy, or a storage policy
-// with no hostname set. Used by attachDestination (server.go) to resolve a
-// backup policy's Destination live on every read.
-func (c *Cache) ResolveDestination(storagePolicyID string) (string, bool) {
-	p, ok := c.FindByID(storagePolicyID)
-	if !ok || p.Kind() != "storage" {
-		return "", false
-	}
-	sp, ok := p.(*StoragePolicy)
-	if !ok || len(sp.ClientFilters.Hostnames) == 0 {
-		return "", false
-	}
-	return fmt.Sprintf("%s:%d", sp.ClientFilters.Hostnames[0], sp.Port), true
-}

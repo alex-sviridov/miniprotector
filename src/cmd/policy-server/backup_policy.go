@@ -26,9 +26,9 @@ type BackupPolicy struct {
 	// List of cron expressions (5-field). policy-server never parses or
 	// evaluates these -- opaque pass-through data.
 	BackupWindow []string `json:"backup_window"`
-	// References a "storage"-typed Policy.id. destination is resolved from
-	// it live by Cache.ResolveDestination -- never itself stored or set
-	// directly.
+	// References a "storage"-typed Policy.id. destinations is resolved from
+	// its checkin list live by attachDestination (server.go) -- never
+	// itself stored or set directly.
 	StoragePolicyID string `json:"storage_policy_id"`
 }
 
@@ -112,10 +112,10 @@ func (p *BackupPolicy) Clone() Policy {
 // includeClientFilters is true -- GetPolicies omits it so a matched node
 // never learns another node's targeting rules from a policy that already
 // matched its own identity; ListPolicies and the write RPCs include it for
-// an operator editing the full policy set. Destination is deliberately left
-// unset here -- it's resolved from StoragePolicyID by attachDestination
-// (server.go), which every call site producing a pb.Policy invokes right
-// after ToProto.
+// an operator editing the full policy set. Destinations is deliberately
+// left unset here -- it's resolved from StoragePolicyID's checkin list by
+// attachDestination (server.go), which every call site producing a
+// pb.Policy invokes right after ToProto.
 func (p *BackupPolicy) ToProto(includeClientFilters bool) *pb.Policy {
 	objectFilters := make([]*pb.ObjectFilter, len(p.ObjectFilters))
 	for i, f := range p.ObjectFilters {

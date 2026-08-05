@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -80,7 +81,7 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 			continue
 		}
 		pp := p.ToProto(false)
-		attachDestination(pp, s.cache)
+		attachDestination(pp, s.cache, s.checkins)
 		if err := s.checkins.RecordCheckin(pp.GetId(), hostname, now); err != nil {
 			s.logger.Error("GetPolicies: failed to record check-in", "hostname", hostname, "job_id", jobID, "policy_id", pp.GetId(), "error", err)
 			return nil, status.Error(codes.Internal, "failed to record check-in")
@@ -96,19 +97,31 @@ func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
 	return &pb.ClientFilters{Hostnames: cf.Hostnames, Labels: cf.Labels}
 }
 
-// attachDestination resolves pp.Destination for a backup policy from its
-// StoragePolicyId, using cache's live state. Called right after ToProto at
-// every RPC that returns a pb.Policy (GetPolicies, ListPolicies,
-// CreatePolicy, UpdatePolicy). A dangling reference (unknown id, or an id
-// that no longer names a storage policy -- only reachable by hand-editing
-// policy files outside the write RPCs, since DeletePolicy blocks the
-// alternative) leaves pp.Destination unset rather than erroring.
-func attachDestination(pp *pb.Policy, cache *Cache) {
+// attachDestination resolves pp.Destinations for a backup policy from its
+// StoragePolicyId's checkin list, using cache's live state and checkins'
+// live check-in records. Called right after ToProto at every RPC that
+// returns a pb.Policy (GetPolicies, ListPolicies, CreatePolicy,
+// UpdatePolicy). A dangling reference (unknown id, or an id that no longer
+// names a storage policy), or a storage policy with no checkins yet, leaves
+// pp.Destinations empty rather than erroring.
+func attachDestination(pp *pb.Policy, cache *Cache, checkins *checkinstore.Store) {
 	if pp.GetType() != "backup" || pp.GetStoragePolicyId() == "" {
 		return
 	}
-	if dest, ok := cache.ResolveDestination(pp.GetStoragePolicyId()); ok {
-		pp.Destination = dest
+	p, ok := cache.FindByID(pp.GetStoragePolicyId())
+	if !ok || p.Kind() != "storage" {
+		return
+	}
+	sp, ok := p.(*StoragePolicy)
+	if !ok {
+		return
+	}
+	records, err := checkins.CheckinsForPolicy(pp.GetStoragePolicyId())
+	if err != nil {
+		return
+	}
+	for _, r := range records {
+		pp.Destinations = append(pp.Destinations, fmt.Sprintf("%s:%d", r.Hostname, sp.Port))
 	}
 }
 
@@ -147,7 +160,7 @@ func (s *policyServerServer) ListPolicies(ctx context.Context, req *pb.ListPolic
 			continue
 		}
 		pp := p.ToProto(true)
-		attachDestination(pp, s.cache)
+		attachDestination(pp, s.cache, s.checkins)
 		attachCheckins(pp, s.checkins, s.logger)
 		out = append(out, pp)
 	}

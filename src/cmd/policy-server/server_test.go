@@ -179,6 +179,7 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 		"storage_policy_id": %q
 	}`, storageID))
 	srv := newTestServerWithPolicies(t, dir)
+	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-east.internal", time.Now()))
 
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
 	require.NoError(t, err)
@@ -187,7 +188,7 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 	assert.Equal(t, "full-policy", p.Name)
 	assert.Equal(t, "24h", p.Rpo)
 	assert.Equal(t, []string{"0 2 * * *"}, p.BackupWindow)
-	assert.Equal(t, "bwfs-east.internal:8080", p.Destination, "destination must resolve live from storage_policy_id")
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, p.Destinations, "destinations must resolve live from storage_policy_id's checkins")
 	assert.Equal(t, storageID, p.StoragePolicyId)
 	require.Len(t, p.ObjectFilters, 2)
 	assert.Equal(t, "/var/www", p.ObjectFilters[0].Path)
@@ -440,7 +441,7 @@ func TestListPolicies_IncludesDisabledPolicies(t *testing.T) {
 	assert.NotNil(t, resp.Policies[0].DisabledAt)
 }
 
-func TestGetPolicies_DanglingStoragePolicyIdLeavesDestinationUnset(t *testing.T) {
+func TestGetPolicies_DanglingStoragePolicyIdLeavesDestinationsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "orphan.json", `{
 		"metadata": {"name": "orphan-policy"},
@@ -451,10 +452,10 @@ func TestGetPolicies_DanglingStoragePolicyIdLeavesDestinationUnset(t *testing.T)
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Policies, 1)
-	assert.Empty(t, resp.Policies[0].Destination)
+	assert.Empty(t, resp.Policies[0].Destinations)
 }
 
-func TestListPolicies_ResolvesDestinationFromStoragePolicyId(t *testing.T) {
+func TestListPolicies_ResolvesDestinationsFromStoragePolicyCheckins(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
 		"metadata": {"name": "east-storage"},
@@ -471,11 +472,65 @@ func TestListPolicies_ResolvesDestinationFromStoragePolicyId(t *testing.T) {
 		"storage_policy_id": %q
 	}`, storageID))
 	srv := newTestServerWithPolicies(t, dir)
+	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-east.internal", time.Now()))
 
 	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{Type: "backup"})
 	require.NoError(t, err)
 	require.Len(t, resp.Policies, 1)
-	assert.Equal(t, "bwfs-east.internal:8080", resp.Policies[0].Destination)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, resp.Policies[0].Destinations)
+}
+
+func TestGetPolicies_MultipleCheckinsAllAppearOrderedFreshestFirst(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"client_filters": {"hostnames": ["bwfs-*"]},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
+
+	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", fmt.Sprintf(`{
+		"metadata": {"name": "nightly"},
+		"storage_policy_id": %q
+	}`, storageID))
+	srv := newTestServerWithPolicies(t, dir)
+
+	older := time.Now().Add(-time.Hour)
+	newer := time.Now()
+	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-1", older))
+	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-2", newer))
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, []string{"bwfs-2:8080", "bwfs-1:8080"}, resp.Policies[0].Destinations, "the most recently checked-in host must come first")
+}
+
+func TestGetPolicies_StoragePolicyWithNoCheckinsYieldsEmptyDestinations(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"client_filters": {"hostnames": ["bwfs-*"]},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
+
+	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", fmt.Sprintf(`{
+		"metadata": {"name": "nightly"},
+		"storage_policy_id": %q
+	}`, storageID))
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Empty(t, resp.Policies[0].Destinations, "a storage policy nobody has checked in against yet must yield no destinations")
 }
 
 func TestListPolicies_IncludesCheckins(t *testing.T) {

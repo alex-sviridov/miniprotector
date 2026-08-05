@@ -185,12 +185,12 @@ func TestBackupPolicy_ValidateMissingStoragePolicyIDFails(t *testing.T) {
 	assert.Error(t, p.Validate())
 }
 
-func TestBackupPolicy_ToProtoSetsStoragePolicyIdAndLeavesDestinationUnset(t *testing.T) {
+func TestBackupPolicy_ToProtoSetsStoragePolicyIdAndLeavesDestinationsUnset(t *testing.T) {
 	p := &BackupPolicy{
 		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "nightly"}, Type: "backup"},
 		StoragePolicyID: "sp-1",
 	}
 	pp := p.ToProto(false)
 	assert.Equal(t, "sp-1", pp.StoragePolicyId)
-	assert.Empty(t, pp.Destination, "Destination is resolved elsewhere (Cache.ResolveDestination via attachDestination), never set directly by ToProto")
+	assert.Empty(t, pp.Destinations, "Destinations is resolved elsewhere (attachDestination in server.go via checkinstore), never set directly by ToProto")
 }

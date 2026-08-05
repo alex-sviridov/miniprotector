@@ -65,10 +65,11 @@ message Policy {
   // List of cron expressions (5-field). policy-server never parses or
   // evaluates these -- opaque pass-through data.
   repeated string backup_window = 6;
-  // Derived, read-only. For a "backup" policy, resolved live from
-  // storage_policy_id every time this message is produced -- never stored
-  // or settable directly. Unset for a "storage" policy, as before.
-  string destination = 7;
+  // reserved 7 was "destination" -- removed, replaced by the repeated
+  // destinations field below. See
+  // docs/superpowers/specs/2026-08-04-backup-destination-checkin-list-design.md.
+  reserved 7;
+  reserved "destination";
   // policy-server-computed, deterministic from the policy file's name --
   // stable across reloads, changes only if the file is renamed. Not
   // present in the on-disk policy JSON schema.
@@ -101,6 +102,11 @@ message Policy {
   // destination is resolved from it live on every read.
   string storage_policy_id = 15;
   repeated PolicyCheckin checkins = 16; // ListPolicies only -- see below
+  // "backup" policy only. Derived, read-only: one "host:port" entry per
+  // live checkin against storage_policy_id, freshest checkin first. Empty
+  // if the storage policy has no checkins yet or storage_policy_id is
+  // dangling. Unset for a "storage" policy, as before.
+  repeated string destinations = 17;
 }
 
 message CreatePolicyRequest {

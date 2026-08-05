@@ -254,7 +254,7 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	}
 	s.logger.Info("CreatePolicy", "id", created.Meta().ID, "name", created.Meta().Name, "path", filePath)
 	pp := created.ToProto(true)
-	attachDestination(pp, s.cache)
+	attachDestination(pp, s.cache, s.checkins)
 	return pp, nil
 }
 
@@ -303,7 +303,7 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 	}
 	s.logger.Info("UpdatePolicy", "id", updated.Meta().ID, "name", updated.Meta().Name, "path", existing.Path())
 	pp := updated.ToProto(true)
-	attachDestination(pp, s.cache)
+	attachDestination(pp, s.cache, s.checkins)
 	return pp, nil
 }
 

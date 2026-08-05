@@ -378,10 +378,6 @@ type Policy struct {
 	// List of cron expressions (5-field). policy-server never parses or
 	// evaluates these -- opaque pass-through data.
 	BackupWindow []string `protobuf:"bytes,6,rep,name=backup_window,json=backupWindow,proto3" json:"backup_window,omitempty"`
-	// Derived, read-only. For a "backup" policy, resolved live from
-	// storage_policy_id every time this message is produced -- never stored
-	// or settable directly. Unset for a "storage" policy, as before.
-	Destination string `protobuf:"bytes,7,opt,name=destination,proto3" json:"destination,omitempty"`
 	// policy-server-computed, deterministic from the policy file's name --
 	// stable across reloads, changes only if the file is renamed. Not
 	// present in the on-disk policy JSON schema.
@@ -409,8 +405,13 @@ type Policy struct {
 	// destination is resolved from it live on every read.
 	StoragePolicyId string           `protobuf:"bytes,15,opt,name=storage_policy_id,json=storagePolicyId,proto3" json:"storage_policy_id,omitempty"`
 	Checkins        []*PolicyCheckin `protobuf:"bytes,16,rep,name=checkins,proto3" json:"checkins,omitempty"` // ListPolicies only -- see below
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// "backup" policy only. Derived, read-only: one "host:port" entry per
+	// live checkin against storage_policy_id, freshest checkin first. Empty
+	// if the storage policy has no checkins yet or storage_policy_id is
+	// dangling. Unset for a "storage" policy, as before.
+	Destinations  []string `protobuf:"bytes,17,rep,name=destinations,proto3" json:"destinations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Policy) Reset() {
@@ -485,13 +486,6 @@ func (x *Policy) GetBackupWindow() []string {
 	return nil
 }
 
-func (x *Policy) GetDestination() string {
-	if x != nil {
-		return x.Destination
-	}
-	return ""
-}
-
 func (x *Policy) GetId() string {
 	if x != nil {
 		return x.Id
@@ -544,6 +538,13 @@ func (x *Policy) GetStoragePolicyId() string {
 func (x *Policy) GetCheckins() []*PolicyCheckin {
 	if x != nil {
 		return x.Checkins
+	}
+	return nil
+}
+
+func (x *Policy) GetDestinations() []string {
+	if x != nil {
+		return x.Destinations
 	}
 	return nil
 }
@@ -895,7 +896,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\rPolicyCheckin\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12<\n" +
 	"\flast_seen_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"lastSeenAt\"\x89\x05\n" +
+	"lastSeenAt\"\x9e\x05\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -904,8 +905,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12H\n" +
 	"\x0eobject_filters\x18\x04 \x03(\v2!.policyserverservice.ObjectFilterR\robjectFilters\x12\x10\n" +
 	"\x03rpo\x18\x05 \x01(\tR\x03rpo\x12#\n" +
-	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12 \n" +
-	"\vdestination\x18\a \x01(\tR\vdestination\x12\x0e\n" +
+	"\rbackup_window\x18\x06 \x03(\tR\fbackupWindow\x12\x0e\n" +
 	"\x02id\x18\b \x01(\tR\x02id\x12I\n" +
 	"\x0eclient_filters\x18\t \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12\x12\n" +
 	"\x04type\x18\n" +
@@ -915,7 +915,8 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\vdisabled_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"disabledAt\x12*\n" +
 	"\x11storage_policy_id\x18\x0f \x01(\tR\x0fstoragePolicyId\x12>\n" +
-	"\bcheckins\x18\x10 \x03(\v2\".policyserverservice.PolicyCheckinR\bcheckinsJ\x04\b\v\x10\fR\bhostname\"\xc1\x03\n" +
+	"\bcheckins\x18\x10 \x03(\v2\".policyserverservice.PolicyCheckinR\bcheckins\x12\"\n" +
+	"\fdestinations\x18\x11 \x03(\tR\fdestinationsJ\x04\b\a\x10\bJ\x04\b\v\x10\fR\vdestinationR\bhostname\"\xc1\x03\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
