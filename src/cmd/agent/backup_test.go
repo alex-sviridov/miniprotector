@@ -105,7 +105,7 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 		],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs-east:8080"
+		"destinations": ["bwfs-east:8080"]
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
@@ -130,7 +130,7 @@ func TestBackupTasks_ObjectFiltersSharingPathGetDistinctTaskIDs(t *testing.T) {
 		],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs:8080"
+		"destinations": ["bwfs:8080"]
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
@@ -152,7 +152,7 @@ func TestBackupTasks_TaskArgsMatchBrfsShape(t *testing.T) {
 		"object_filters": [{"path": "/var/lib/postgres"}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs-east:8080"
+		"destinations": ["bwfs-east:8080"]
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
@@ -179,7 +179,7 @@ func TestBackupTasks_DueRequiresBothWindowOpenAndRpoElapsed(t *testing.T) {
 		"object_filters": [{"path": "/data"}],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs:8080"
+		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 	tasks, ok := backupTasks(path, conf)
@@ -209,7 +209,7 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 		],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs:8080"
+		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 	tasks, ok := backupTasks(path, conf)
@@ -241,7 +241,7 @@ func TestBackupTasks_UnparseableRpoSkipsPolicyEntirely(t *testing.T) {
 		"object_filters": [{"path": "/data"}],
 		"rpo": "not-a-duration",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs:8080"
+		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 	tasks, ok := backupTasks(path, conf)
@@ -257,7 +257,7 @@ func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
 		"object_filters": [{"path": "/data"}],
 		"rpo": "1h",
 		"backup_window": ["not a cron expression"],
-		"destination": "bwfs:8080"
+		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 	tasks, ok := backupTasks(path, conf)
@@ -273,7 +273,7 @@ func TestBackupTasks_NonBackupTypeSkipsPolicyEntirely(t *testing.T) {
 		"object_filters": [{"path": "/data"}],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs:8080"
+		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 	tasks, ok := backupTasks(path, conf)
@@ -290,7 +290,7 @@ func TestBackupTasks_MixedTypesOnlyBackupTypeProducesTasks(t *testing.T) {
 			"object_filters": [{"path": "/data"}],
 			"rpo": "1h",
 			"backup_window": ["0 2 * * *"],
-			"destination": "bwfs:8080"
+			"destinations": ["bwfs:8080"]
 		},
 		{
 			"name": "other-policy",
@@ -298,7 +298,7 @@ func TestBackupTasks_MixedTypesOnlyBackupTypeProducesTasks(t *testing.T) {
 			"object_filters": [{"path": "/other"}],
 			"rpo": "1h",
 			"backup_window": ["0 2 * * *"],
-			"destination": "bwfs:8080"
+			"destinations": ["bwfs:8080"]
 		}
 	]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
@@ -333,7 +333,7 @@ func TestBackupTasks_JobIDFieldMatchesArgsFlag(t *testing.T) {
 		ObjectFilters: []ObjectFilter{{Path: "/srv/web"}},
 		RPO:           "1h",
 		BackupWindow:  []string{"* * * * *"},
-		Destination:   "bwfs:9000",
+		Destinations:  []string{"bwfs:9000"},
 	}}
 	data, err := json.Marshal(cached)
 	require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(cachePath, []byte(`[{
 		"name": "p", "type": "backup", "object_filters": [{"path": "/data"}], "rpo": "1h",
-		"backup_window": ["0 2 * * *"], "destination": "bwfs:8080"
+		"backup_window": ["0 2 * * *"], "destinations": ["bwfs:8080"]
 	}]`), 0o644))
 	tasks, ok := backupTasks(cachePath, conf)
 	require.True(t, ok)
@@ -377,7 +377,7 @@ func TestBackupTasks_TaskArgsIncludeIncludeExcludeFlagsWhenPresent(t *testing.T)
 		"object_filters": [{"path": "/var/www", "include": ["*.html", "*.css"], "exclude": ["*.tmp"]}],
 		"rpo": "1h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs:8080"
+		"destinations": ["bwfs:8080"]
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
@@ -405,7 +405,7 @@ func TestBackupTasks_DisabledAtInPastSkipsPolicyEntirely(t *testing.T) {
 		"object_filters": [{"path": "/data"}],
 		"rpo": "5m",
 		"backup_window": ["* * * * *"],
-		"destination": "bwfs:8080",
+		"destinations": ["bwfs:8080"],
 		"disabled_at": "2020-01-01T00:00:00Z"
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
@@ -424,7 +424,7 @@ func TestBackupTasks_FutureDisabledAtDoesNotSkip(t *testing.T) {
 		"object_filters": [{"path": "/data"}],
 		"rpo": "24h",
 		"backup_window": ["0 2 * * *"],
-		"destination": "bwfs:8080",
+		"destinations": ["bwfs:8080"],
 		"disabled_at": "2099-01-01T00:00:00Z"
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}

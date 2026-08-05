@@ -34,7 +34,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 		"object_filters": [{"path": "/var/lib/postgres"}],
 		"rpo": "1h",
 		"backup_window": ["* * * * *"],
-		"destination": "bwfs-east.internal:8080"
+		"destinations": ["bwfs-east.internal:8080"]
 	}]`
 	require.NoError(t, os.WriteFile(policiesCachePath, []byte(cacheJSON), 0o644))
 

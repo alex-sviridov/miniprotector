@@ -37,7 +37,7 @@ type cachedPolicy struct {
 	ObjectFilters []ObjectFilter `json:"object_filters"`
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
-	Destination   string         `json:"destination"`
+	Destinations  []string       `json:"destinations"`
 	// Storage-policy-only fields, zero/empty for a backup policy -- see
 	// storage.go's storageTasks, the consumer that reads these.
 	Port   int32  `json:"port,omitempty"`
@@ -191,8 +191,10 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 // schedule at all, contributes no tasks -- there is no sound due-check
 // that could be built for it, so skipping entirely (rather than running
 // on a guess) is the fail-safe choice. A missing/invalid destination is
-// not checked here: the task is still built, and simply fails at brfs
-// exec time like any other exec failure (see reconcile.go).
+// not checked here: the task is still built with an empty --destination
+// (Destinations[0] of an empty list), and simply fails at brfs exec time
+// like any other exec failure (see reconcile.go). Only Destinations[0] is
+// ever used -- retrying the rest of the list on failure is future work.
 func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool) {
 	grace := time.Duration(conf.BackupWindowGraceSec) * time.Second
 
@@ -223,7 +225,11 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 			continue
 		}
 
-		policyName, destination := p.Name, p.Destination
+		policyName := p.Name
+		var destination string
+		if len(p.Destinations) > 0 {
+			destination = p.Destinations[0]
+		}
 		for _, filter := range p.ObjectFilters {
 			jobID := backupJobID(policyName, filter.Path, filter.ID, time.Now())
 			args := []string{filter.Path, "--destination", destination, "--job-id", jobID}
