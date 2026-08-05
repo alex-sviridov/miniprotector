@@ -299,3 +299,72 @@ func TestListEntries_MalformedMetadataStillReturnsEntryWithEmptyDecodedFields(t 
 	require.Len(t, resp.GetEntries(), 1)
 	assert.Equal(t, "", resp.GetEntries()[0].GetPath())
 }
+
+func TestListEntries_FiltersByReceivedAtRange(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+	}))
+
+	included, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{
+		ReceivedAfter: time.Now().Add(-1 * time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+	assert.Len(t, included.GetEntries(), 1)
+
+	excluded, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{
+		ReceivedAfter: time.Now().Add(1 * time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+	assert.Len(t, excluded.GetEntries(), 0)
+}
+
+func TestListEntries_FiltersBySourceHostsAndJobNames(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{
+		SourceHosts: []string{"database"},
+		JobNames:    []string{"nightly-db"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "obj-1", resp.GetEntries()[0].GetObjectId())
+}
+
+func TestListClientFacets_ReturnsGroupedCounts(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListClientFacets(context.Background(), &pb.ListFacetsRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 2)
+
+	byName := map[string]int64{}
+	for _, f := range resp.GetFacets() {
+		byName[f.GetName()] = f.GetCount()
+	}
+	assert.Equal(t, int64(2), byName["database"])
+	assert.Equal(t, int64(1), byName["webserver"])
+}
+
+func TestListJobFacets_ReturnsGroupedCounts(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:ef567890:2", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListJobFacets(context.Background(), &pb.ListFacetsRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 1)
+	assert.Equal(t, "nightly-db", resp.GetFacets()[0].GetName())
+	assert.Equal(t, int64(2), resp.GetFacets()[0].GetCount())
+}

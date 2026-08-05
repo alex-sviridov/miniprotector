@@ -70,11 +70,15 @@ func decodeSourceHost(metadata []byte) string {
 
 func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequest) (*pb.ListEntriesResponse, error) {
 	records, hasMore, err := s.store.ListEntries(catalogstore.ListEntriesFilter{
-		StoreNode:     req.GetStoreHost(),
-		SourceHost:    req.GetSourceHost(),
-		Pattern:       req.GetPattern(),
-		Limit:         int(req.GetLimit()),
-		StartingAfter: req.GetStartingAfter(),
+		StoreNode:      req.GetStoreHost(),
+		SourceHost:     req.GetSourceHost(),
+		Pattern:        req.GetPattern(),
+		Limit:          int(req.GetLimit()),
+		StartingAfter:  req.GetStartingAfter(),
+		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
+		SourceHosts:    req.GetSourceHosts(),
+		JobNames:       req.GetJobNames(),
 	})
 	if err != nil {
 		s.logger.Error("ListEntries: query failed", "error", err)
@@ -115,4 +119,51 @@ func toProtoEntry(rec catalogstore.EntryRecord) *pb.Entry {
 		entry.ModTime = fi.Mtime()
 	}
 	return entry
+}
+
+// unixOrZero converts a unix-seconds timestamp to time.Time, leaving the
+// zero time.Time{} (rather than the Unix epoch) when ts is 0 -- 0 means
+// "no bound" on a ListEntriesRequest/ListFacetsRequest date field, and
+// ListEntriesFilter/FacetFilter treat a zero time.Time as unbounded.
+func unixOrZero(ts int64) time.Time {
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(ts, 0)
+}
+
+func (s *catalogServer) ListClientFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
+	facets, err := s.store.ListClientFacets(catalogstore.FacetFilter{
+		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
+		Pattern:        req.GetPattern(),
+		JobNames:       req.GetJobNames(),
+	})
+	if err != nil {
+		s.logger.Error("ListClientFacets: query failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "list client facets: %v", err)
+	}
+	return &pb.ListFacetsResponse{Facets: toProtoFacets(facets)}, nil
+}
+
+func (s *catalogServer) ListJobFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
+	facets, err := s.store.ListJobFacets(catalogstore.FacetFilter{
+		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
+		Pattern:        req.GetPattern(),
+		SourceHosts:    req.GetSourceHosts(),
+	})
+	if err != nil {
+		s.logger.Error("ListJobFacets: query failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "list job facets: %v", err)
+	}
+	return &pb.ListFacetsResponse{Facets: toProtoFacets(facets)}, nil
+}
+
+func toProtoFacets(facets []catalogstore.Facet) []*pb.Facet {
+	out := make([]*pb.Facet, len(facets))
+	for i, f := range facets {
+		out[i] = &pb.Facet{Name: f.Name, Count: f.Count, LastSeen: f.LastSeen.Unix()}
+	}
+	return out
 }
