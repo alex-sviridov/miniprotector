@@ -533,6 +533,41 @@ func TestGetPolicies_StoragePolicyWithNoCheckinsYieldsEmptyDestinations(t *testi
 	assert.Empty(t, resp.Policies[0].Destinations, "a storage policy nobody has checked in against yet must yield no destinations")
 }
 
+// TestListPolicies_CheckinStoreFailureLeavesDestinationsEmptyRatherThanFailing
+// exercises attachDestination's checkins.CheckinsForPolicy error branch.
+// ListPolicies (unlike GetPolicies, which also writes a check-in row on the
+// same store and so would itself fail) never calls RecordCheckin, so closing
+// the store forces exactly the read failure attachDestination guards against
+// without also tripping some other error path.
+func TestListPolicies_CheckinStoreFailureLeavesDestinationsEmptyRatherThanFailing(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"client_filters": {"hostnames": ["bwfs-*"]},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
+
+	writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", fmt.Sprintf(`{
+		"metadata": {"name": "nightly"},
+		"storage_policy_id": %q
+	}`, storageID))
+	require.NoError(t, c.Reload(dir, testLogger()))
+
+	checkins := newTestCheckinStore(t)
+	require.NoError(t, checkins.RecordCheckin(storageID, "bwfs-east.internal", time.Now()))
+	require.NoError(t, checkins.Close()) // force every subsequent read to fail
+	srv := NewPolicyServerServer(c, dir, testLogger(), checkins)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{Type: "backup"})
+	require.NoError(t, err, "a checkin lookup failure must be logged, not fail the RPC")
+	require.Len(t, resp.Policies, 1)
+	assert.Empty(t, resp.Policies[0].Destinations, "a checkin lookup failure must leave Destinations empty rather than erroring")
+}
+
 func TestListPolicies_IncludesCheckins(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{

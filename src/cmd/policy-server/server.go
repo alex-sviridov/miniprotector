@@ -81,7 +81,7 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 			continue
 		}
 		pp := p.ToProto(false)
-		attachDestination(pp, s.cache, s.checkins)
+		attachDestination(pp, s.cache, s.checkins, s.logger)
 		if err := s.checkins.RecordCheckin(pp.GetId(), hostname, now); err != nil {
 			s.logger.Error("GetPolicies: failed to record check-in", "hostname", hostname, "job_id", jobID, "policy_id", pp.GetId(), "error", err)
 			return nil, status.Error(codes.Internal, "failed to record check-in")
@@ -103,8 +103,9 @@ func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
 // returns a pb.Policy (GetPolicies, ListPolicies, CreatePolicy,
 // UpdatePolicy). A dangling reference (unknown id, or an id that no longer
 // names a storage policy), or a storage policy with no checkins yet, leaves
-// pp.Destinations empty rather than erroring.
-func attachDestination(pp *pb.Policy, cache *Cache, checkins *checkinstore.Store) {
+// pp.Destinations empty rather than erroring. A checkin lookup failure is
+// logged and also leaves pp.Destinations empty rather than failing the RPC.
+func attachDestination(pp *pb.Policy, cache *Cache, checkins *checkinstore.Store, logger *slog.Logger) {
 	if pp.GetType() != "backup" || pp.GetStoragePolicyId() == "" {
 		return
 	}
@@ -118,6 +119,7 @@ func attachDestination(pp *pb.Policy, cache *Cache, checkins *checkinstore.Store
 	}
 	records, err := checkins.CheckinsForPolicy(pp.GetStoragePolicyId())
 	if err != nil {
+		logger.Error("attachDestination: failed to load checkins", "storage_policy_id", pp.GetStoragePolicyId(), "error", err)
 		return
 	}
 	for _, r := range records {
@@ -160,7 +162,7 @@ func (s *policyServerServer) ListPolicies(ctx context.Context, req *pb.ListPolic
 			continue
 		}
 		pp := p.ToProto(true)
-		attachDestination(pp, s.cache, s.checkins)
+		attachDestination(pp, s.cache, s.checkins, s.logger)
 		attachCheckins(pp, s.checkins, s.logger)
 		out = append(out, pp)
 	}
