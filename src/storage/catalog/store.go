@@ -156,6 +156,151 @@ func jobNamesWhere(q *gorm.DB, names []string) *gorm.DB {
 	return q.Where(strings.Join(conds, " OR "), args...)
 }
 
+// FacetFilter narrows a ListClientFacets/ListJobFacets aggregate query. A
+// zero-valued filter matches every entry, no date bound.
+type FacetFilter struct {
+	ReceivedAfter  time.Time
+	ReceivedBefore time.Time
+	Pattern        string
+	SourceHosts    []string // ignored by ListClientFacets -- its own dimension
+	JobNames       []string // ignored by ListJobFacets -- its own dimension
+}
+
+// Facet is one aggregated row: a distinct client hostname or policy name,
+// how many matching entries it has, and the most recent one.
+type Facet struct {
+	Name     string    `gorm:"column:name"`
+	Count    int64     `gorm:"column:count"`
+	LastSeen time.Time `gorm:"column:last_seen"`
+}
+
+func (f FacetFilter) applyCommon(q *gorm.DB) *gorm.DB {
+	if !f.ReceivedAfter.IsZero() {
+		q = q.Where("received_at >= ?", f.ReceivedAfter)
+	}
+	if !f.ReceivedBefore.IsZero() {
+		q = q.Where("received_at <= ?", f.ReceivedBefore)
+	}
+	if f.Pattern != "" {
+		q = q.Where("object_id LIKE ?", "%"+f.Pattern+"%")
+	}
+	return q
+}
+
+// ListClientFacets groups entries matching filter by source_host, dropping
+// rows where source_host is empty (a decodeSourceHost failure at sync time
+// -- see cmd/catalog/server.go) rather than surfacing a blank-named facet.
+// filter.SourceHosts is ignored: a client facet list is never narrowed by
+// its own dimension's current selection.
+func (s *Store) ListClientFacets(filter FacetFilter) ([]Facet, error) {
+	q := s.db.Model(&EntryRecord{}).
+		Select("source_host AS name, COUNT(*) AS count, MAX(received_at) AS last_seen").
+		Where("source_host != ''").
+		Group("source_host")
+	q = filter.applyCommon(q)
+	if len(filter.JobNames) > 0 {
+		q = jobNamesWhere(q, filter.JobNames)
+	}
+
+	var rows []struct {
+		Name     string
+		Count    int64
+		LastSeen string
+	}
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	facets := make([]Facet, len(rows))
+	for i, r := range rows {
+		var lastSeen time.Time
+		if r.LastSeen != "" {
+			// Parse the Go time.Time string format (e.g., "2026-08-05 12:31:01.436907763 +0000 UTC m=+0.024020914")
+			// Split on the space before the timezone to get just the datetime part
+			parts := strings.SplitN(r.LastSeen, " +", 2)
+			if len(parts) < 1 {
+				parts = strings.SplitN(r.LastSeen, " -", 2)
+			}
+			datetimePart := parts[0]
+
+			var err error
+			lastSeen, err = time.Parse("2006-01-02 15:04:05.999999999", datetimePart)
+			if err != nil {
+				return nil, fmt.Errorf("parse last_seen time: %w", err)
+			}
+		}
+		facets[i] = Facet{
+			Name:     r.Name,
+			Count:    r.Count,
+			LastSeen: lastSeen,
+		}
+	}
+	return facets, nil
+}
+
+// ListJobFacets groups entries matching filter by the policy name embedded
+// in job_id. Grouping happens in Go, not SQL -- job_id's colon-delimited
+// format isn't fixed-width, matching this codebase's existing preference
+// for decoding a similar composite ID in Go (cmd/bwfs/list.go's
+// parseFileID) over a SQL substr/instr split. filter.SourceHosts is
+// applied (it narrows which entries are considered); filter.JobNames is
+// ignored: a job facet list is never narrowed by its own dimension's
+// current selection.
+func (s *Store) ListJobFacets(filter FacetFilter) ([]Facet, error) {
+	q := s.db.Model(&EntryRecord{}).Select("job_id, received_at")
+	q = filter.applyCommon(q)
+	if len(filter.SourceHosts) > 0 {
+		q = q.Where("source_host IN ?", filter.SourceHosts)
+	}
+
+	var rows []struct {
+		JobID      string
+		ReceivedAt time.Time
+	}
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	byName := make(map[string]*Facet)
+	var order []string
+	for _, r := range rows {
+		name := policyNameFromJobID(r.JobID)
+		if name == "" {
+			continue
+		}
+		f, ok := byName[name]
+		if !ok {
+			f = &Facet{Name: name}
+			byName[name] = f
+			order = append(order, name)
+		}
+		f.Count++
+		if r.ReceivedAt.After(f.LastSeen) {
+			f.LastSeen = r.ReceivedAt
+		}
+	}
+
+	facets := make([]Facet, 0, len(order))
+	for _, name := range order {
+		facets = append(facets, *byName[name])
+	}
+	return facets, nil
+}
+
+// policyNameFromJobID extracts the policy-name segment of a backup job_id
+// (e.g. "nightly-db" from "backup:nightly-db:var-lib:abcd1234:..." -- see
+// cmd/agent/backup.go's backupJobID). Returns "" for anything that isn't a
+// "backup:"-prefixed job_id, or has fewer than two segments -- never
+// errors, mirroring cmd/bwfs/list.go's parseFileID tolerance for
+// malformed/foreign IDs.
+func policyNameFromJobID(jobID string) string {
+	parts := strings.SplitN(jobID, ":", 3)
+	if len(parts) < 2 || parts[0] != "backup" {
+		return ""
+	}
+	return parts[1]
+}
+
 func (s *Store) Close() error {
 	sqlDB, err := s.db.DB()
 	if err != nil {

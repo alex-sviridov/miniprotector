@@ -295,3 +295,120 @@ func TestNew_CreatesIndexesOnReceivedAtAndJobID(t *testing.T) {
 	assert.Contains(t, joined, "received_at")
 	assert.Contains(t, joined, "job_id")
 }
+
+func TestPolicyNameFromJobID(t *testing.T) {
+	assert.Equal(t, "nightly-db", policyNameFromJobID("backup:nightly-db:var-lib:abcd1234:1752400000"))
+	assert.Equal(t, "", policyNameFromJobID("operating-refresh:1752400000"))
+	assert.Equal(t, "", policyNameFromJobID("backup"))
+	assert.Equal(t, "", policyNameFromJobID(""))
+}
+
+func TestListClientFacets_GroupsByHostWithCountAndLastSeen(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListClientFacets(FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, facets, 2)
+
+	byName := map[string]Facet{}
+	for _, f := range facets {
+		byName[f.Name] = f
+	}
+	assert.Equal(t, int64(2), byName["database"].Count)
+	assert.Equal(t, int64(1), byName["webserver"].Count)
+}
+
+func TestListClientFacets_ExcludesEmptySourceHost(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "database", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListClientFacets(FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "database", facets[0].Name)
+}
+
+func TestListClientFacets_NarrowedByJobNames(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListClientFacets(FacetFilter{JobNames: []string{"nightly-db"}})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "database", facets[0].Name)
+}
+
+func TestListJobFacets_GroupsByPolicyNameAcrossManyRuns(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:ef567890:2", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:weekly-full:root:fedcba98:3", ObjectID: "obj-3", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListJobFacets(FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, facets, 2)
+
+	byName := map[string]Facet{}
+	for _, f := range facets {
+		byName[f.Name] = f
+	}
+	assert.Equal(t, int64(2), byName["nightly-db"].Count)
+	assert.Equal(t, int64(1), byName["weekly-full"].Count)
+}
+
+func TestListJobFacets_ExcludesNonBackupJobKind(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "operating-refresh:1752400000", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListJobFacets(FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "nightly-db", facets[0].Name)
+}
+
+func TestListJobFacets_NarrowedBySourceHosts(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListJobFacets(FacetFilter{SourceHosts: []string{"database"}})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "nightly-db", facets[0].Name)
+}
