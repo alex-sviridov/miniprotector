@@ -116,6 +116,10 @@ Query parameters (all optional):
 | `source_host` | string | Exact match on the real originating (backed-up) host |
 | `store_host` | string | Exact match on the `bwfs` node that replicated the entry |
 | `pattern` | string | Substring match against the entry's underlying object ID (which embeds the original file path) |
+| `received_after` | int, unix seconds | Only entries received at or after this time |
+| `received_before` | int, unix seconds | Only entries received at or before this time |
+| `source_hosts` | comma-separated strings | OR-matched, additive to `source_host` |
+| `job_names` | comma-separated strings | OR-matched against the policy name embedded in the entry's `job_id` |
 | `limit` | int, 1–500 | Page size, default 100 |
 | `starting_after` | int | Continue from this entry `id` (from a previous page's last entry) |
 
@@ -144,6 +148,36 @@ Query parameters (all optional):
 ```
 
 `400` if `limit` isn't an integer in `[1, 500]`, or `starting_after` isn't a non-negative integer.
+
+## `GET /api/v1/catalog/clients`
+
+Returns the distinct client (source host) facets matching the given filters, each with a count and
+last-seen timestamp. Not paginated — a fleet's distinct client count is expected to stay in the
+dozens. Query parameters: `received_after`, `received_before`, `pattern`, `job_names` (comma-separated)
+— note there is no `source_hosts` parameter here, since a client facet list is never narrowed by its
+own dimension.
+
+```json
+{
+  "data": [
+    {"name": "database", "count": 42, "last_seen": 1752400010}
+  ]
+}
+```
+
+## `GET /api/v1/catalog/jobs`
+
+Same shape as `/catalog/clients`, grouped by policy name instead of client host. Query parameters:
+`received_after`, `received_before`, `pattern`, `source_hosts` (comma-separated) — no `job_names`
+parameter, for the same own-dimension reason.
+
+```json
+{
+  "data": [
+    {"name": "nightly-db", "count": 7, "last_seen": 1752400010}
+  ]
+}
+```
 
 ## `GET /api/v1/policies`
 

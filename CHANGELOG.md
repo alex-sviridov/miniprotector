@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-05 — catalog: date-range and job/policy filtering with cross-filtering
+
+The catalog UI and API grow two new filter dimensions — a date range (on `received_at`) and
+job/policy (matched by the policy name embedded in `job_id`) — alongside the existing client and
+path filters. `CatalogService` gains `ListClientFacets`/`ListJobFacets`, two aggregate RPCs that
+back new `GET /api/v1/catalog/clients`/`GET /api/v1/catalog/jobs` endpoints and full cross-filtering
+between clients and policies in the web filter bar: each facet list excludes its own dimension, so
+selecting a client narrows the policy list and vice versa without ever narrowing itself out. All
+proto/API additions are additive; the web catalog view's filter bar and store internals are
+rewritten (no external consumers), now defaulting to and auto-fetching the last 7 days on load.
+
 ## 2026-08-04 — policy-server: resolve backup destinations from storage checkins
 
 A backup policy's destination was resolved from `client_filters.hostnames[0]` — a glob-matching

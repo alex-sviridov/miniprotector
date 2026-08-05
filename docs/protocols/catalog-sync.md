@@ -10,6 +10,8 @@ rather than by `catalogsync` — see [ListEntries](#listentries) below.
 service CatalogService {
   rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
+  rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
 }
 ```
 
@@ -67,6 +69,10 @@ message ListEntriesRequest {
   int32  limit           = 3; // 1..500, default 100
   int64  starting_after  = 4; // last-seen entry ID from a previous page; 0 = first page
   string source_host    = 5; // exact match against the real originating (backed-up) host; empty = all
+  int64  received_after  = 6; // unix seconds; 0 = no lower bound, filters on received_at
+  int64  received_before = 7; // unix seconds; 0 = no upper bound, filters on received_at
+  repeated string source_hosts = 8; // OR-matched; empty = no filter, additive to source_host
+  repeated string job_names    = 9; // OR-matched against the policy name embedded in job_id
 }
 
 message ListEntriesResponse {
@@ -108,9 +114,45 @@ message Entry {
   interpret that blob's contents rather than just persisting it (`source_host` is decoded once,
   at sync time, not on every `ListEntries` call — see [Identity](#identity)).
 
+## ListClientFacets / ListJobFacets
+
+Two read-only aggregate RPCs backing the web catalog view's faceted filter panels — for
+[api-server](../components/api-server.md)'s `GET /api/v1/catalog/clients` and
+`GET /api/v1/catalog/jobs`. Both share one request/response shape:
+
+```protobuf
+message Facet {
+  string name       = 1; // hostname, or policy name
+  int64  count       = 2; // matching entries in the current scope
+  int64  last_seen   = 3; // unix seconds, max(received_at) in scope
+}
+
+message ListFacetsRequest {
+  int64  received_after  = 1;
+  int64  received_before = 2;
+  string pattern         = 3;
+  repeated string source_hosts = 4; // ignored by ListClientFacets (own dimension)
+  repeated string job_names    = 5; // ignored by ListJobFacets (own dimension)
+}
+
+message ListFacetsResponse {
+  repeated Facet facets = 1;
+}
+```
+
+`ListClientFacets` groups by `source_host`; `ListJobFacets` groups by the policy name embedded in
+`job_id` (the second colon-delimited segment of a `backup:<policyName>:...` job_id — see
+[Identity](#identity)'s `job_id` convention). Each RPC ignores its own dimension's `source_hosts`/
+`job_names` field on the request: a facet list is never narrowed by its own current selection, so
+a caller can implement cross-filtering (client selection narrows the policy list and vice versa)
+by passing the *other* dimension's active selection. Rows with an empty grouping key (an
+undecoded `source_host`, or a `job_id` that isn't `backup:`-prefixed) are dropped rather than
+surfaced as a blank-named facet.
+
 ## See Also
 
 - [catalog](../components/catalog.md)
 - [catalogsync](../components/catalogsync.md)
 - [api-server](../components/api-server.md) — calls `ListEntries`, the only intended caller today
-- [REST API v1](../api/rest-v1.md) — the `GET /api/v1/catalog` endpoint backed by `ListEntries`
+- [REST API v1](../api/rest-v1.md) — `GET /api/v1/catalog` (`ListEntries`), `GET /api/v1/catalog/clients`
+  (`ListClientFacets`), and `GET /api/v1/catalog/jobs` (`ListJobFacets`)
