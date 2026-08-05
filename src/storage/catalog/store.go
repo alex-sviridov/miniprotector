@@ -191,49 +191,45 @@ func (f FacetFilter) applyCommon(q *gorm.DB) *gorm.DB {
 // rows where source_host is empty (a decodeSourceHost failure at sync time
 // -- see cmd/catalog/server.go) rather than surfacing a blank-named facet.
 // filter.SourceHosts is ignored: a client facet list is never narrowed by
-// its own dimension's current selection.
+// its own dimension's current selection. Grouping happens in Go, not SQL,
+// following the same pattern as ListJobFacets to avoid non-portable time
+// string parsing and aggregate function quirks with different database drivers.
 func (s *Store) ListClientFacets(filter FacetFilter) ([]Facet, error) {
 	q := s.db.Model(&EntryRecord{}).
-		Select("source_host AS name, COUNT(*) AS count, MAX(received_at) AS last_seen").
-		Where("source_host != ''").
-		Group("source_host")
+		Select("source_host, received_at").
+		Where("source_host != ''")
 	q = filter.applyCommon(q)
 	if len(filter.JobNames) > 0 {
 		q = jobNamesWhere(q, filter.JobNames)
 	}
 
 	var rows []struct {
-		Name     string
-		Count    int64
-		LastSeen string
+		SourceHost string
+		ReceivedAt time.Time
 	}
 	if err := q.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
-	facets := make([]Facet, len(rows))
-	for i, r := range rows {
-		var lastSeen time.Time
-		if r.LastSeen != "" {
-			// Parse the Go time.Time string format (e.g., "2026-08-05 12:31:01.436907763 +0000 UTC m=+0.024020914")
-			// Split on the space before the timezone to get just the datetime part
-			parts := strings.SplitN(r.LastSeen, " +", 2)
-			if len(parts) < 1 {
-				parts = strings.SplitN(r.LastSeen, " -", 2)
-			}
-			datetimePart := parts[0]
+	byName := make(map[string]*Facet)
+	var order []string
+	for _, r := range rows {
+		name := r.SourceHost
+		f, ok := byName[name]
+		if !ok {
+			f = &Facet{Name: name}
+			byName[name] = f
+			order = append(order, name)
+		}
+		f.Count++
+		if r.ReceivedAt.After(f.LastSeen) {
+			f.LastSeen = r.ReceivedAt
+		}
+	}
 
-			var err error
-			lastSeen, err = time.Parse("2006-01-02 15:04:05.999999999", datetimePart)
-			if err != nil {
-				return nil, fmt.Errorf("parse last_seen time: %w", err)
-			}
-		}
-		facets[i] = Facet{
-			Name:     r.Name,
-			Count:    r.Count,
-			LastSeen: lastSeen,
-		}
+	facets := make([]Facet, 0, len(order))
+	for _, name := range order {
+		facets = append(facets, *byName[name])
 	}
 	return facets, nil
 }

@@ -308,11 +308,13 @@ func TestListClientFacets_GroupsByHostWithCountAndLastSeen(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
+	before := time.Now().Add(-1 * time.Second)
 	require.NoError(t, store.EnsureEntries([]Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "database", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", SourceHost: "webserver", StoreCreatedAt: time.Now()},
 	}))
+	after := time.Now().Add(1 * time.Second)
 
 	facets, err := store.ListClientFacets(FacetFilter{})
 	require.NoError(t, err)
@@ -324,6 +326,15 @@ func TestListClientFacets_GroupsByHostWithCountAndLastSeen(t *testing.T) {
 	}
 	assert.Equal(t, int64(2), byName["database"].Count)
 	assert.Equal(t, int64(1), byName["webserver"].Count)
+
+	// Verify LastSeen timestamps are real and reasonably recent
+	assert.False(t, byName["database"].LastSeen.IsZero(), "database LastSeen should not be zero")
+	assert.True(t, byName["database"].LastSeen.After(before), "database LastSeen should be after test start")
+	assert.True(t, byName["database"].LastSeen.Before(after), "database LastSeen should be before test end")
+
+	assert.False(t, byName["webserver"].LastSeen.IsZero(), "webserver LastSeen should not be zero")
+	assert.True(t, byName["webserver"].LastSeen.After(before), "webserver LastSeen should be after test start")
+	assert.True(t, byName["webserver"].LastSeen.Before(after), "webserver LastSeen should be before test end")
 }
 
 func TestListClientFacets_ExcludesEmptySourceHost(t *testing.T) {
