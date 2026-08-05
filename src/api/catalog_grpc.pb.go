@@ -21,6 +21,8 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	CatalogService_SyncFileVersions_FullMethodName = "/catalogservice.CatalogService/SyncFileVersions"
 	CatalogService_ListEntries_FullMethodName      = "/catalogservice.CatalogService/ListEntries"
+	CatalogService_ListClientFacets_FullMethodName = "/catalogservice.CatalogService/ListClientFacets"
+	CatalogService_ListJobFacets_FullMethodName    = "/catalogservice.CatalogService/ListJobFacets"
 )
 
 // CatalogServiceClient is the client API for CatalogService service.
@@ -29,6 +31,8 @@ const (
 type CatalogServiceClient interface {
 	SyncFileVersions(ctx context.Context, in *SyncRequest, opts ...grpc.CallOption) (*SyncResponse, error)
 	ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error)
+	ListClientFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error)
+	ListJobFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error)
 }
 
 type catalogServiceClient struct {
@@ -59,12 +63,34 @@ func (c *catalogServiceClient) ListEntries(ctx context.Context, in *ListEntriesR
 	return out, nil
 }
 
+func (c *catalogServiceClient) ListClientFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFacetsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_ListClientFacets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) ListJobFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFacetsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_ListJobFacets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CatalogServiceServer is the server API for CatalogService service.
 // All implementations must embed UnimplementedCatalogServiceServer
 // for forward compatibility.
 type CatalogServiceServer interface {
 	SyncFileVersions(context.Context, *SyncRequest) (*SyncResponse, error)
 	ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error)
+	ListClientFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error)
+	ListJobFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error)
 	mustEmbedUnimplementedCatalogServiceServer()
 }
 
@@ -80,6 +106,12 @@ func (UnimplementedCatalogServiceServer) SyncFileVersions(context.Context, *Sync
 }
 func (UnimplementedCatalogServiceServer) ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEntries not implemented")
+}
+func (UnimplementedCatalogServiceServer) ListClientFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListClientFacets not implemented")
+}
+func (UnimplementedCatalogServiceServer) ListJobFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListJobFacets not implemented")
 }
 func (UnimplementedCatalogServiceServer) mustEmbedUnimplementedCatalogServiceServer() {}
 func (UnimplementedCatalogServiceServer) testEmbeddedByValue()                        {}
@@ -138,6 +170,42 @@ func _CatalogService_ListEntries_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CatalogService_ListClientFacets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFacetsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).ListClientFacets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_ListClientFacets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).ListClientFacets(ctx, req.(*ListFacetsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_ListJobFacets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFacetsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).ListJobFacets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_ListJobFacets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).ListJobFacets(ctx, req.(*ListFacetsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CatalogService_ServiceDesc is the grpc.ServiceDesc for CatalogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -152,6 +220,14 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListEntries",
 			Handler:    _CatalogService_ListEntries_Handler,
+		},
+		{
+			MethodName: "ListClientFacets",
+			Handler:    _CatalogService_ListClientFacets_Handler,
+		},
+		{
+			MethodName: "ListJobFacets",
+			Handler:    _CatalogService_ListJobFacets_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -192,8 +192,15 @@ type ListEntriesRequest struct {
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                                      // 1..500, default 100
 	StartingAfter int64                  `protobuf:"varint,4,opt,name=starting_after,json=startingAfter,proto3" json:"starting_after,omitempty"` // last-seen entry ID from a previous page; 0 = first page
 	SourceHost    string                 `protobuf:"bytes,5,opt,name=source_host,json=sourceHost,proto3" json:"source_host,omitempty"`           // exact match against the real originating (backed-up) host; empty = all
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// New, additive -- old singular fields (1-5) keep their current exact-match
+	// behavior; the new repeated fields are OR-matched, combined with
+	// everything else via AND, same as the old fields.
+	ReceivedAfter  int64    `protobuf:"varint,6,opt,name=received_after,json=receivedAfter,proto3" json:"received_after,omitempty"`    // unix seconds; 0 = no lower bound
+	ReceivedBefore int64    `protobuf:"varint,7,opt,name=received_before,json=receivedBefore,proto3" json:"received_before,omitempty"` // unix seconds; 0 = no upper bound
+	SourceHosts    []string `protobuf:"bytes,8,rep,name=source_hosts,json=sourceHosts,proto3" json:"source_hosts,omitempty"`           // OR-matched; empty = no filter
+	JobNames       []string `protobuf:"bytes,9,rep,name=job_names,json=jobNames,proto3" json:"job_names,omitempty"`                    // OR-matched against the policy name embedded in job_id
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ListEntriesRequest) Reset() {
@@ -259,6 +266,34 @@ func (x *ListEntriesRequest) GetSourceHost() string {
 		return x.SourceHost
 	}
 	return ""
+}
+
+func (x *ListEntriesRequest) GetReceivedAfter() int64 {
+	if x != nil {
+		return x.ReceivedAfter
+	}
+	return 0
+}
+
+func (x *ListEntriesRequest) GetReceivedBefore() int64 {
+	if x != nil {
+		return x.ReceivedBefore
+	}
+	return 0
+}
+
+func (x *ListEntriesRequest) GetSourceHosts() []string {
+	if x != nil {
+		return x.SourceHosts
+	}
+	return nil
+}
+
+func (x *ListEntriesRequest) GetJobNames() []string {
+	if x != nil {
+		return x.JobNames
+	}
+	return nil
 }
 
 type ListEntriesResponse struct {
@@ -462,6 +497,186 @@ func (x *Entry) GetSourceHost() string {
 	return ""
 }
 
+type Facet struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                          // hostname, or policy name
+	Count         int64                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`                       // matching entries in the current scope
+	LastSeen      int64                  `protobuf:"varint,3,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"` // unix seconds, max(received_at) in scope
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Facet) Reset() {
+	*x = Facet{}
+	mi := &file_api_catalog_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Facet) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Facet) ProtoMessage() {}
+
+func (x *Facet) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Facet.ProtoReflect.Descriptor instead.
+func (*Facet) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Facet) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Facet) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *Facet) GetLastSeen() int64 {
+	if x != nil {
+		return x.LastSeen
+	}
+	return 0
+}
+
+type ListFacetsRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ReceivedAfter  int64                  `protobuf:"varint,1,opt,name=received_after,json=receivedAfter,proto3" json:"received_after,omitempty"`
+	ReceivedBefore int64                  `protobuf:"varint,2,opt,name=received_before,json=receivedBefore,proto3" json:"received_before,omitempty"`
+	Pattern        string                 `protobuf:"bytes,3,opt,name=pattern,proto3" json:"pattern,omitempty"`
+	SourceHosts    []string               `protobuf:"bytes,4,rep,name=source_hosts,json=sourceHosts,proto3" json:"source_hosts,omitempty"` // ignored by ListClientFacets (own dimension)
+	JobNames       []string               `protobuf:"bytes,5,rep,name=job_names,json=jobNames,proto3" json:"job_names,omitempty"`          // ignored by ListJobFacets (own dimension)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListFacetsRequest) Reset() {
+	*x = ListFacetsRequest{}
+	mi := &file_api_catalog_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFacetsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFacetsRequest) ProtoMessage() {}
+
+func (x *ListFacetsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFacetsRequest.ProtoReflect.Descriptor instead.
+func (*ListFacetsRequest) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ListFacetsRequest) GetReceivedAfter() int64 {
+	if x != nil {
+		return x.ReceivedAfter
+	}
+	return 0
+}
+
+func (x *ListFacetsRequest) GetReceivedBefore() int64 {
+	if x != nil {
+		return x.ReceivedBefore
+	}
+	return 0
+}
+
+func (x *ListFacetsRequest) GetPattern() string {
+	if x != nil {
+		return x.Pattern
+	}
+	return ""
+}
+
+func (x *ListFacetsRequest) GetSourceHosts() []string {
+	if x != nil {
+		return x.SourceHosts
+	}
+	return nil
+}
+
+func (x *ListFacetsRequest) GetJobNames() []string {
+	if x != nil {
+		return x.JobNames
+	}
+	return nil
+}
+
+type ListFacetsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Facets        []*Facet               `protobuf:"bytes,1,rep,name=facets,proto3" json:"facets,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFacetsResponse) Reset() {
+	*x = ListFacetsResponse{}
+	mi := &file_api_catalog_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFacetsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFacetsResponse) ProtoMessage() {}
+
+func (x *ListFacetsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFacetsResponse.ProtoReflect.Descriptor instead.
+func (*ListFacetsResponse) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ListFacetsResponse) GetFacets() []*Facet {
+	if x != nil {
+		return x.Facets
+	}
+	return nil
+}
+
 var File_api_catalog_proto protoreflect.FileDescriptor
 
 const file_api_catalog_proto_rawDesc = "" +
@@ -477,7 +692,7 @@ const file_api_catalog_proto_rawDesc = "" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"I\n" +
 	"\vSyncRequest\x12:\n" +
 	"\aentries\x18\x01 \x03(\v2 .catalogservice.FileVersionEntryR\aentries\"\x0e\n" +
-	"\fSyncResponse\"\xab\x01\n" +
+	"\fSyncResponse\"\xbb\x02\n" +
 	"\x12ListEntriesRequest\x12\x1d\n" +
 	"\n" +
 	"store_host\x18\x01 \x01(\tR\tstoreHost\x12\x18\n" +
@@ -485,7 +700,11 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12%\n" +
 	"\x0estarting_after\x18\x04 \x01(\x03R\rstartingAfter\x12\x1f\n" +
 	"\vsource_host\x18\x05 \x01(\tR\n" +
-	"sourceHost\"a\n" +
+	"sourceHost\x12%\n" +
+	"\x0ereceived_after\x18\x06 \x01(\x03R\rreceivedAfter\x12'\n" +
+	"\x0freceived_before\x18\a \x01(\x03R\x0ereceivedBefore\x12!\n" +
+	"\fsource_hosts\x18\b \x03(\tR\vsourceHosts\x12\x1b\n" +
+	"\tjob_names\x18\t \x03(\tR\bjobNames\"a\n" +
 	"\x13ListEntriesResponse\x12/\n" +
 	"\aentries\x18\x01 \x03(\v2\x15.catalogservice.EntryR\aentries\x12\x19\n" +
 	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xef\x02\n" +
@@ -507,10 +726,24 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\x05group\x18\f \x01(\rR\x05group\x12\x19\n" +
 	"\bmod_time\x18\r \x01(\x03R\amodTime\x12\x1f\n" +
 	"\vsource_host\x18\x0e \x01(\tR\n" +
-	"sourceHost2\xb7\x01\n" +
+	"sourceHost\"N\n" +
+	"\x05Facet\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x03R\x05count\x12\x1b\n" +
+	"\tlast_seen\x18\x03 \x01(\x03R\blastSeen\"\xbd\x01\n" +
+	"\x11ListFacetsRequest\x12%\n" +
+	"\x0ereceived_after\x18\x01 \x01(\x03R\rreceivedAfter\x12'\n" +
+	"\x0freceived_before\x18\x02 \x01(\x03R\x0ereceivedBefore\x12\x18\n" +
+	"\apattern\x18\x03 \x01(\tR\apattern\x12!\n" +
+	"\fsource_hosts\x18\x04 \x03(\tR\vsourceHosts\x12\x1b\n" +
+	"\tjob_names\x18\x05 \x03(\tR\bjobNames\"C\n" +
+	"\x12ListFacetsResponse\x12-\n" +
+	"\x06facets\x18\x01 \x03(\v2\x15.catalogservice.FacetR\x06facets2\xea\x02\n" +
 	"\x0eCatalogService\x12M\n" +
 	"\x10SyncFileVersions\x12\x1b.catalogservice.SyncRequest\x1a\x1c.catalogservice.SyncResponse\x12V\n" +
-	"\vListEntries\x12\".catalogservice.ListEntriesRequest\x1a#.catalogservice.ListEntriesResponseB\tZ\a./protob\x06proto3"
+	"\vListEntries\x12\".catalogservice.ListEntriesRequest\x1a#.catalogservice.ListEntriesResponse\x12Y\n" +
+	"\x10ListClientFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12V\n" +
+	"\rListJobFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponseB\tZ\a./protob\x06proto3"
 
 var (
 	file_api_catalog_proto_rawDescOnce sync.Once
@@ -524,7 +757,7 @@ func file_api_catalog_proto_rawDescGZIP() []byte {
 	return file_api_catalog_proto_rawDescData
 }
 
-var file_api_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_api_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_api_catalog_proto_goTypes = []any{
 	(*FileVersionEntry)(nil),    // 0: catalogservice.FileVersionEntry
 	(*SyncRequest)(nil),         // 1: catalogservice.SyncRequest
@@ -532,19 +765,27 @@ var file_api_catalog_proto_goTypes = []any{
 	(*ListEntriesRequest)(nil),  // 3: catalogservice.ListEntriesRequest
 	(*ListEntriesResponse)(nil), // 4: catalogservice.ListEntriesResponse
 	(*Entry)(nil),               // 5: catalogservice.Entry
+	(*Facet)(nil),               // 6: catalogservice.Facet
+	(*ListFacetsRequest)(nil),   // 7: catalogservice.ListFacetsRequest
+	(*ListFacetsResponse)(nil),  // 8: catalogservice.ListFacetsResponse
 }
 var file_api_catalog_proto_depIdxs = []int32{
 	0, // 0: catalogservice.SyncRequest.entries:type_name -> catalogservice.FileVersionEntry
 	5, // 1: catalogservice.ListEntriesResponse.entries:type_name -> catalogservice.Entry
-	1, // 2: catalogservice.CatalogService.SyncFileVersions:input_type -> catalogservice.SyncRequest
-	3, // 3: catalogservice.CatalogService.ListEntries:input_type -> catalogservice.ListEntriesRequest
-	2, // 4: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
-	4, // 5: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	6, // 2: catalogservice.ListFacetsResponse.facets:type_name -> catalogservice.Facet
+	1, // 3: catalogservice.CatalogService.SyncFileVersions:input_type -> catalogservice.SyncRequest
+	3, // 4: catalogservice.CatalogService.ListEntries:input_type -> catalogservice.ListEntriesRequest
+	7, // 5: catalogservice.CatalogService.ListClientFacets:input_type -> catalogservice.ListFacetsRequest
+	7, // 6: catalogservice.CatalogService.ListJobFacets:input_type -> catalogservice.ListFacetsRequest
+	2, // 7: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
+	4, // 8: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
+	8, // 9: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
+	8, // 10: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
+	7, // [7:11] is the sub-list for method output_type
+	3, // [3:7] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_api_catalog_proto_init() }
@@ -558,7 +799,7 @@ func file_api_catalog_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_catalog_proto_rawDesc), len(file_api_catalog_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

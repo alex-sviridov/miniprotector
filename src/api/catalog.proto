@@ -7,6 +7,8 @@ option go_package = "./proto";
 service CatalogService {
   rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
+  rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
 }
 
 message FileVersionEntry {
@@ -30,6 +32,13 @@ message ListEntriesRequest {
   int32  limit           = 3; // 1..500, default 100
   int64  starting_after  = 4; // last-seen entry ID from a previous page; 0 = first page
   string source_host    = 5; // exact match against the real originating (backed-up) host; empty = all
+  // New, additive -- old singular fields (1-5) keep their current exact-match
+  // behavior; the new repeated fields are OR-matched, combined with
+  // everything else via AND, same as the old fields.
+  int64  received_after  = 6; // unix seconds; 0 = no lower bound
+  int64  received_before = 7; // unix seconds; 0 = no upper bound
+  repeated string source_hosts = 8; // OR-matched; empty = no filter
+  repeated string job_names    = 9; // OR-matched against the policy name embedded in job_id
 }
 
 message ListEntriesResponse {
@@ -53,4 +62,22 @@ message Entry {
   uint32 group     = 12; // Unix GID (or Windows SID hash) — numeric, no name resolution
   int64  mod_time   = 13;
   string source_host = 14; // the real originating (backed-up) host, derived from Metadata at sync time
+}
+
+message Facet {
+  string name       = 1; // hostname, or policy name
+  int64  count       = 2; // matching entries in the current scope
+  int64  last_seen   = 3; // unix seconds, max(received_at) in scope
+}
+
+message ListFacetsRequest {
+  int64  received_after  = 1;
+  int64  received_before = 2;
+  string pattern         = 3;
+  repeated string source_hosts = 4; // ignored by ListClientFacets (own dimension)
+  repeated string job_names    = 5; // ignored by ListJobFacets (own dimension)
+}
+
+message ListFacetsResponse {
+  repeated Facet facets = 1;
 }
