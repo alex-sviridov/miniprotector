@@ -3,27 +3,62 @@ import { apiFetch } from '../api/client'
 import { withRequest } from './helpers'
 
 const MAX_PAGE_LIMIT = 500
+const DEFAULT_RANGE_SECONDS = 7 * 24 * 60 * 60
 
 function buildQuery(filters, startingAfter, limit) {
   const params = new URLSearchParams()
-  if (filters.sourceHost) params.set('source_host', filters.sourceHost)
-  if (filters.storeHost) params.set('store_host', filters.storeHost)
+  if (filters.receivedAfter) params.set('received_after', String(filters.receivedAfter))
+  if (filters.receivedBefore) params.set('received_before', String(filters.receivedBefore))
+  if (filters.sourceHosts?.length) params.set('source_hosts', filters.sourceHosts.join(','))
+  if (filters.jobNames?.length) params.set('job_names', filters.jobNames.join(','))
   if (filters.pattern) params.set('pattern', filters.pattern)
   if (startingAfter !== undefined) params.set('starting_after', String(startingAfter))
   params.set('limit', String(limit))
   return params.toString()
 }
 
+// buildFacetQuery mirrors buildQuery but excludes `exclude` (the facet's
+// own dimension -- 'sourceHosts' for the clients facet, 'jobNames' for the
+// jobs facet) so a facet list is never narrowed by its own current
+// selection.
+function buildFacetQuery(filters, exclude) {
+  const params = new URLSearchParams()
+  if (filters.receivedAfter) params.set('received_after', String(filters.receivedAfter))
+  if (filters.receivedBefore) params.set('received_before', String(filters.receivedBefore))
+  if (filters.pattern) params.set('pattern', filters.pattern)
+  if (exclude !== 'sourceHosts' && filters.sourceHosts?.length) {
+    params.set('source_hosts', filters.sourceHosts.join(','))
+  }
+  if (exclude !== 'jobNames' && filters.jobNames?.length) {
+    params.set('job_names', filters.jobNames.join(','))
+  }
+  return params.toString()
+}
+
 export const useCatalogStore = defineStore('catalog', {
-  state: () => ({
-    filters: { sourceHost: '', storeHost: '', pattern: '' },
-    entries: [],
-    loading: false,
-    error: null,
-  }),
+  state: () => {
+    const now = Math.floor(Date.now() / 1000)
+    return {
+      filters: {
+        pattern: '',
+        receivedAfter: now - DEFAULT_RANGE_SECONDS,
+        receivedBefore: now,
+        sourceHosts: [],
+        jobNames: [],
+      },
+      entries: [],
+      loading: false,
+      error: null,
+      clientFacets: [],
+      clientFacetsLoading: false,
+      clientFacetsError: null,
+      jobFacets: [],
+      jobFacetsLoading: false,
+      jobFacetsError: null,
+    }
+  },
   actions: {
-    async search(filters) {
-      this.filters = { ...filters }
+    async search() {
       try {
         await withRequest(this, async () => {
           const collected = []
@@ -42,6 +77,28 @@ export const useCatalogStore = defineStore('catalog', {
         // stale results rather than leaving a previous search's rows on screen.
         this.entries = []
       }
+    },
+    async fetchClientFacets() {
+      await withRequest(
+        this,
+        async () => {
+          const qs = buildFacetQuery(this.filters, 'sourceHosts')
+          const body = await apiFetch(`/catalog/clients?${qs}`)
+          this.clientFacets = body.data
+        },
+        { rethrow: false, loadingKey: 'clientFacetsLoading', errorKey: 'clientFacetsError' }
+      )
+    },
+    async fetchJobFacets() {
+      await withRequest(
+        this,
+        async () => {
+          const qs = buildFacetQuery(this.filters, 'jobNames')
+          const body = await apiFetch(`/catalog/jobs?${qs}`)
+          this.jobFacets = body.data
+        },
+        { rethrow: false, loadingKey: 'jobFacetsLoading', errorKey: 'jobFacetsError' }
+      )
     },
   },
 })
