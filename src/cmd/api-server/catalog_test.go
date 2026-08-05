@@ -94,3 +94,63 @@ func TestHandleListCatalog_LimitOutOfRangeReturns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestHandleListCatalog_PassesNewFilterQueryParamsThrough(t *testing.T) {
+	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?received_after=1000&received_before=2000&source_hosts=database,webserver&job_names=nightly-db,weekly-full", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastReq)
+	assert.Equal(t, int64(1000), fake.lastReq.GetReceivedAfter())
+	assert.Equal(t, int64(2000), fake.lastReq.GetReceivedBefore())
+	assert.Equal(t, []string{"database", "webserver"}, fake.lastReq.GetSourceHosts())
+	assert.Equal(t, []string{"nightly-db", "weekly-full"}, fake.lastReq.GetJobNames())
+}
+
+func TestHandleListCatalog_OmittedNewFiltersLeaveFieldsZero(t *testing.T) {
+	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastReq)
+	assert.Equal(t, int64(0), fake.lastReq.GetReceivedAfter())
+	assert.Nil(t, fake.lastReq.GetSourceHosts())
+}
+
+func TestHandleListCatalog_InvalidReceivedAfterReturns400(t *testing.T) {
+	fake := &fakeCatalogQueryClient{}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?received_after=not-a-number", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListCatalog_NegativeReceivedBeforeReturns400(t *testing.T) {
+	fake := &fakeCatalogQueryClient{}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?received_before=-5", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

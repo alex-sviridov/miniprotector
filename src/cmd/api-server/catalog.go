@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 )
@@ -71,12 +72,27 @@ func (s *server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
 		startingAfter = parsed
 	}
 
+	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
+		return
+	}
+	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
+		return
+	}
+
 	resp, err := s.catalog.ListEntries(r.Context(), &pb.ListEntriesRequest{
-		SourceHost:    q.Get("source_host"),
-		StoreHost:     q.Get("store_host"),
-		Pattern:       q.Get("pattern"),
-		Limit:         int32(limit),
-		StartingAfter: startingAfter,
+		SourceHost:     q.Get("source_host"),
+		StoreHost:      q.Get("store_host"),
+		Pattern:        q.Get("pattern"),
+		Limit:          int32(limit),
+		StartingAfter:  startingAfter,
+		ReceivedAfter:  receivedAfter,
+		ReceivedBefore: receivedBefore,
+		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
+		JobNames:       splitCommaParam(q.Get("job_names")),
 	})
 	if err != nil {
 		s.logger.Error("handleListCatalog: backend call failed", "error", err)
@@ -89,4 +105,34 @@ func (s *server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
 		entries[i] = toEntryDTO(e)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": entries, "has_more": resp.GetHasMore()})
+}
+
+// parseUnixParam parses an optional unix-seconds query param. An empty
+// string is "unset" (returns 0, true); anything else must be a
+// non-negative integer.
+func parseUnixParam(raw string) (int64, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, false
+	}
+	return parsed, true
+}
+
+// splitCommaParam splits a comma-separated query param into a slice,
+// dropping empty segments; an empty input yields nil (no filter).
+func splitCommaParam(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
