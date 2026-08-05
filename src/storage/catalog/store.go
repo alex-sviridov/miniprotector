@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -72,11 +73,15 @@ func (s *Store) Count() (int64, error) {
 // ListEntriesFilter narrows and paginates a ListEntries query. A
 // zero-valued filter matches every entry, newest first, first page.
 type ListEntriesFilter struct {
-	StoreNode     string // exact match against the sending bwfs node; "" = all store nodes
-	SourceHost    string // exact match against the real originating host; "" = all source hosts
-	Pattern       string // substring match against object_id; "" = no filter
-	Limit         int    // clamped to [1, 500]; 0 or negative defaults to 100
-	StartingAfter int64  // last-seen entry ID from a previous page; 0 = first page
+	StoreNode      string    // exact match against the sending bwfs node; "" = all store nodes
+	SourceHost     string    // exact match against the real originating host; "" = all source hosts
+	Pattern        string    // substring match against object_id; "" = no filter
+	Limit          int       // clamped to [1, 500]; 0 or negative defaults to 100
+	StartingAfter  int64     // last-seen entry ID from a previous page; 0 = first page
+	ReceivedAfter  time.Time // zero value = no lower bound
+	ReceivedBefore time.Time // zero value = no upper bound
+	SourceHosts    []string  // OR-matched; empty = no filter, additive to SourceHost
+	JobNames       []string  // OR-matched against the policy name embedded in job_id
 }
 
 const (
@@ -111,6 +116,18 @@ func (s *Store) ListEntries(filter ListEntriesFilter) ([]EntryRecord, bool, erro
 	if filter.StartingAfter > 0 {
 		q = q.Where("id < ?", filter.StartingAfter)
 	}
+	if !filter.ReceivedAfter.IsZero() {
+		q = q.Where("received_at >= ?", filter.ReceivedAfter)
+	}
+	if !filter.ReceivedBefore.IsZero() {
+		q = q.Where("received_at <= ?", filter.ReceivedBefore)
+	}
+	if len(filter.SourceHosts) > 0 {
+		q = q.Where("source_host IN ?", filter.SourceHosts)
+	}
+	if len(filter.JobNames) > 0 {
+		q = jobNamesWhere(q, filter.JobNames)
+	}
 
 	var entries []EntryRecord
 	// Fetch one extra row to detect hasMore without a separate COUNT query.
@@ -123,6 +140,20 @@ func (s *Store) ListEntries(filter ListEntriesFilter) ([]EntryRecord, bool, erro
 		entries = entries[:limit]
 	}
 	return entries, hasMore, nil
+}
+
+// jobNamesWhere adds an OR of job_id LIKE 'backup:<name>:%' conditions, one
+// per name -- job_id has no column for the policy name, so this is the
+// only way to filter on it (see policyNameFromJobID in facets.go for the
+// matching Go-side parse used by ListJobFacets).
+func jobNamesWhere(q *gorm.DB, names []string) *gorm.DB {
+	conds := make([]string, len(names))
+	args := make([]interface{}, len(names))
+	for i, name := range names {
+		conds[i] = "job_id LIKE ?"
+		args[i] = "backup:" + name + ":%"
+	}
+	return q.Where(strings.Join(conds, " OR "), args...)
 }
 
 func (s *Store) Close() error {

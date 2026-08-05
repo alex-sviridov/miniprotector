@@ -11,7 +11,7 @@ import "time"
 type EntryRecord struct {
 	ID             int64  `gorm:"primaryKey;autoIncrement"`
 	StoreNode      string `gorm:"uniqueIndex:idx_store_job_object"`
-	JobID          string `gorm:"uniqueIndex:idx_store_job_object"`
+	JobID          string `gorm:"uniqueIndex:idx_store_job_object;index"`
 	ObjectID       string `gorm:"uniqueIndex:idx_store_job_object"`
 	Metadata       []byte
 	Ctime          int64
@@ -21,5 +21,5 @@ type EntryRecord struct {
 	// Metadata at sync time -- distinct from StoreNode, the bwfs node that
 	// sent the batch. Indexed so ListEntries can filter on it directly.
 	SourceHost string `gorm:"index"`
-	ReceivedAt time.Time
+	ReceivedAt time.Time `gorm:"index"`
 }

@@ -1,7 +1,9 @@
 package catalog
 
 import (
+	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,4 +201,97 @@ func TestListEntries_LimitDefaultsAndCaps(t *testing.T) {
 	entries, _, err = store.ListEntries(ListEntriesFilter{Limit: 10000})
 	require.NoError(t, err)
 	assert.Len(t, entries, 1) // capped at 500, still well above the 1 row present
+}
+
+func TestListEntries_FiltersByReceivedAtRange(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+	}))
+
+	included, _, err := store.ListEntries(ListEntriesFilter{ReceivedAfter: time.Now().Add(-1 * time.Hour)})
+	require.NoError(t, err)
+	assert.Len(t, included, 1)
+
+	excluded, _, err := store.ListEntries(ListEntriesFilter{ReceivedAfter: time.Now().Add(1 * time.Hour)})
+	require.NoError(t, err)
+	assert.Len(t, excluded, 0)
+
+	includedBefore, _, err := store.ListEntries(ListEntriesFilter{ReceivedBefore: time.Now().Add(1 * time.Hour)})
+	require.NoError(t, err)
+	assert.Len(t, includedBefore, 1)
+
+	excludedBefore, _, err := store.ListEntries(ListEntriesFilter{ReceivedBefore: time.Now().Add(-1 * time.Hour)})
+	require.NoError(t, err)
+	assert.Len(t, excludedBefore, 0)
+}
+
+func TestListEntries_FiltersBySourceHostsMultiValue(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", SourceHost: "mail", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, _, err := store.ListEntries(ListEntriesFilter{SourceHosts: []string{"database", "mail"}})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	var hosts []string
+	for _, e := range entries {
+		hosts = append(hosts, e.SourceHost)
+	}
+	assert.ElementsMatch(t, []string{"database", "mail"}, hosts)
+}
+
+func TestListEntries_FiltersByJobNamesMultiValue(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1752400000", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:1752400010", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:weekly-full:root:fedcba98:1752400020", ObjectID: "obj-3", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, _, err := store.ListEntries(ListEntriesFilter{JobNames: []string{"nightly-db", "weekly-full"}})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	var objIDs []string
+	for _, e := range entries {
+		objIDs = append(objIDs, e.ObjectID)
+	}
+	assert.ElementsMatch(t, []string{"obj-1", "obj-3"}, objIDs)
+}
+
+func TestNew_CreatesIndexesOnReceivedAtAndJobID(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	sqlDB, err := store.db.DB()
+	require.NoError(t, err)
+
+	rows, err := sqlDB.Query(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='entry_records'`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var indexDefs []string
+	for rows.Next() {
+		var def sql.NullString
+		require.NoError(t, rows.Scan(&def))
+		if def.Valid {
+			indexDefs = append(indexDefs, def.String)
+		}
+	}
+	joined := strings.Join(indexDefs, "\n")
+	assert.Contains(t, joined, "received_at")
+	assert.Contains(t, joined, "job_id")
 }
