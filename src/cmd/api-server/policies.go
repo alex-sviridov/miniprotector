@@ -36,7 +36,7 @@ type policyDTO struct {
 	ObjectFilters   []objectFilterDTO `json:"object_filters"`
 	RPO             string            `json:"rpo"`
 	BackupWindow    []string          `json:"backup_window"`
-	Destination     string            `json:"destination"`
+	Destinations    []string          `json:"destinations"`
 	StoragePolicyID string            `json:"storage_policy_id,omitempty"`
 	Type            string            `json:"type"`
 	Port            int32             `json:"port"`
@@ -66,7 +66,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		ObjectFilters:   objectFilters,
 		RPO:             p.GetRpo(),
 		BackupWindow:    p.GetBackupWindow(),
-		Destination:     p.GetDestination(),
+		Destinations:    p.GetDestinations(),
 		StoragePolicyID: p.GetStoragePolicyId(),
 		Type:            p.GetType(),
 		Port:            p.GetPort(),

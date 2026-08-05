@@ -59,7 +59,7 @@ func (f *fakePolicyServiceClient) DeletePolicy(ctx context.Context, in *pb.Delet
 
 func TestHandleListPolicies_ReturnsDataEnvelope(t *testing.T) {
 	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{
-		Policies: []*pb.Policy{{Id: "p1", Name: "nightly", Destination: "bwfs:8080"}},
+		Policies: []*pb.Policy{{Id: "p1", Name: "nightly", Destinations: []string{"bwfs:8080"}}},
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
@@ -164,7 +164,7 @@ func TestToPolicyDTO_ConvertsTimestampsToUnixSecondsAndClientFilters(t *testing.
 		ObjectFilters:   []*pb.ObjectFilter{{Id: "f1", Path: "/data", Include: []string{"*.sql"}}},
 		Rpo:             "24h",
 		BackupWindow:    []string{"0 2 * * *"},
-		Destination:     "bwfs:8080",
+		Destinations:    []string{"bwfs:8080"},
 		StoragePolicyId: "sp-1",
 		Type:            "backup",
 	}
@@ -198,7 +198,7 @@ func TestToPolicyDTO_IncludesStorageFields(t *testing.T) {
 }
 
 func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
-	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1", Name: "nightly", Destination: "bwfs:8080"}}
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1", Name: "nightly", Destinations: []string{"bwfs:8080"}}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
