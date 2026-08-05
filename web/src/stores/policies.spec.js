@@ -221,7 +221,7 @@ describe('policies store', () => {
       object_filters: [],
       rpo: '1h',
       backup_window: [],
-      destination: 'store:8080',
+      destinations: ['store:8080'],
     }
     const result = await policies.runAdhoc(input)
 

@@ -9,14 +9,16 @@ policy's live checkin records instead of `client_filters.hostnames[0]`, closing 
 below. See
 [Design: backup destination from checkin list](docs/superpowers/specs/2026-08-04-backup-destination-checkin-list-design.md).
 
-**Frontend angle (2026-08-03, `backup-policy-form-improvements` final review):** the same gap is
-now visible from `BackupPolicyFormModal.vue`'s destination select — an "(incomplete)" storage
-policy (missing a hostname) is deliberately still selectable, by design (see
-`docs/superpowers/specs/2026-08-03-backup-policy-form-improvements-design.md`), but nothing in the
-form warns an operator that picking one produces a backup policy whose `destination` resolves to
-empty; the failure only surfaces later, as a failed backup job. A check-in mechanism (above) would
-fix this at the root; short of that, the form could show an inline warning when the selected
-storage policy is incomplete.
+**Frontend angle (2026-08-03, `backup-policy-form-improvements` final review, updated 2026-08-05):**
+`BackupPolicyFormModal.vue`'s destination select still labels a storage policy `"(incomplete)"` based
+on whether `client_filters.hostnames[0]` is set — a signal that mattered when hostnames drove
+resolution and is stale now that destinations resolve from checkins instead. The remaining real gap is
+different: a storage policy nobody has checked in against yet (freshly created, or every checkin aged
+past `CheckinRetentionSec`) still resolves to an empty `destinations` list for any backup policy
+pointed at it, and the form gives no warning when an operator picks one. Fixing this at the root would
+mean the form querying checkin state per storage policy (not yet exposed to the response shape used to
+populate this select); short of that, retargeting or dropping the `"(incomplete)"` heuristic and/or
+adding an inline warning are both worth reconsidering.
 
 **Related gap, same failure shape:** an empty `rpo` (or empty `backup_window`) also makes a backup
 policy silently never run — `agent` skips a policy it can't parse a schedule for

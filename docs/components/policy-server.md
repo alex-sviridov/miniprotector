@@ -71,6 +71,14 @@ every time `policy-server` returns the policy, so a storage node checking in und
 simply staying alive) keeps every backup policy linked to it current with no re-save needed. See
 [Design: backup destination from checkin list](../superpowers/specs/2026-08-04-backup-destination-checkin-list-design.md).
 
+A `"storage"` policy describes how a future storage server should be configured: `port` and an opaque
+`config` JSON blob `policy-server` validates is well-formed but never interprets. Targeting which node
+runs it is `client_filters` — the same mechanism a backup policy already uses — not a field specific
+to this type; see
+[Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md),
+which is the first actual consumer of `storage`-typed policies. See
+[Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
+
 ### Policy files and hot reload
 
 Each policy type subfolder's `*.json` file is one policy. Every type shares `metadata` (`name`,

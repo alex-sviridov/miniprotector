@@ -17,7 +17,7 @@ narrative connecting them.
    cached policies of type `"backup"` (a `"storage"` type also exists, but `agent` skips it — it
    contributes zero backup tasks). When a task is due (its
    `backup_window` is open and its `rpo` has elapsed), `agent` execs `brfs <path> --destination
-   <destination> --job-id <id>`, adding `--include <patterns>` and/or `--exclude <patterns>` only
+   <destinations[0]> --job-id <id>`, adding `--include <patterns>` and/or `--exclude <patterns>` only
    when the object filter actually carries them.
 4. `brfs` walks `path`, applying `--exclude` first (pruning a matched directory's entire subtree,
    omitting a matched file) and `--include` second (a files-only whitelist — directories are never

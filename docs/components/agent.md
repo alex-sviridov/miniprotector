@@ -94,9 +94,11 @@ orphaned — the resulting `bwfs` job simply never completes, the same outcome a
 crashed `brfs`.
 
 A policy with an unparseable `rpo`, or no valid `backup_window` entry at all, contributes no tasks.
-A missing or invalid `destinations[0]` is not checked in advance — the task is still created, and its
-`brfs` exec simply fails (recorded as an ordinary failure with backoff), the same as any other exec
-failure. Only `destinations[0]` is ever used; retrying the rest of the list is not implemented.
+A policy whose `destinations` is empty (its storage policy has no live checkins yet, or
+`storage_policy_id` is dangling) likewise contributes no task, for any of its object filters — rather
+than exec'ing `brfs` with an empty `--destination`, which would silently default to `localhost`
+instead of failing loudly. Each skip is logged with the policy and would-be job id. Only
+`destinations[0]` is ever used; retrying the rest of the list is not implemented.
 
 A policy whose `disabled_at` has passed also contributes no tasks -- checked fresh every reconcile
 tick against the current time, so a policy that becomes disabled between two ticks stops being acted

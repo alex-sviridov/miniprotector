@@ -46,18 +46,6 @@ func main() {
 	cachePath := filepath.Join(varDir, "agent-state.json")
 	policiesCachePath := filepath.Join(varDir, "policies-cache.json")
 
-	// policiesFunc combines the three static policies with the dynamic
-	// backup tasks derived from policies-cache.json -- called fresh every
-	// reconcile tick (not resolved once here) so agent serve notices
-	// policy-update's cache changing over time without needing a restart.
-	// ok is false whenever backupTasks's own read of policies-cache.json
-	// failed this tick -- see reconcile.go's prune, which must not treat a
-	// failed read as "every backup task was removed."
-	policiesFunc := func() ([]Policy, bool) {
-		tasks, ok := backupTasks(policiesCachePath, conf)
-		return append(policies(conf), tasks...), ok
-	}
-
 	switch arguments.Action {
 	case "serve":
 		if err := os.MkdirAll(varDir, 0o755); err != nil {
@@ -72,6 +60,18 @@ func main() {
 
 		logger, logfile := logging.NewLogger(ctx)
 		defer logfile.Close()
+
+		// policiesFunc combines the three static policies with the dynamic
+		// backup tasks derived from policies-cache.json -- called fresh every
+		// reconcile tick (not resolved once here) so agent serve notices
+		// policy-update's cache changing over time without needing a restart.
+		// ok is false whenever backupTasks's own read of policies-cache.json
+		// failed this tick -- see reconcile.go's prune, which must not treat a
+		// failed read as "every backup task was removed."
+		policiesFunc := func() ([]Policy, bool) {
+			tasks, ok := backupTasks(policiesCachePath, logger, conf)
+			return append(policies(conf), tasks...), ok
+		}
 
 		certsDir, err := config.ResolveCertsDir()
 		if err != nil {
@@ -128,12 +128,13 @@ func main() {
 		}
 
 	case "list-policies":
-		allPolicies, _ := policiesFunc()
 		// list-policies never executes anything -- a silent logger here
-		// keeps storageTasks' own skip-with-log warnings out of stdout's
-		// table, matching this command's existing read-only, no-noise
-		// character.
+		// keeps backupTasks'/storageTasks' own skip-with-log warnings out of
+		// stdout's table, matching this command's existing read-only,
+		// no-noise character.
 		silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		backupTaskList, _ := backupTasks(policiesCachePath, silentLogger, conf)
+		allPolicies := append(policies(conf), backupTaskList...)
 		bwfsBinary := resolveExecPath("bwfs")
 		catalogsyncBinary := resolveExecPath("catalogsync")
 		storageTaskList, _ := storageTasks(policiesCachePath, silentLogger, bwfsBinary, catalogsyncBinary)

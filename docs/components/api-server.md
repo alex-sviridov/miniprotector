@@ -39,10 +39,9 @@ without it, every policy of every type is returned, each with `port`/`config` po
 in the response DTO when applicable (zero for a `"backup"`-typed policy, and vice versa for
 `rpo`/`storage_policy_id`/`object_filters`). A `"backup"` policy's `destinations` in the response DTO
 is always derived by `policy-server`, live from its `storage_policy_id`'s checkin records — it's
-never itself part of the
-create/update input. Creating or updating a storage policy uses a separate pair of
-endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage policy's input
-shape (`port`/`config`) shares nothing with a backup policy's
+never itself part of the create/update input. Creating or updating a storage policy uses a separate
+pair of endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage
+policy's input shape (`port`/`config`) shares nothing with a backup policy's
 (`object_filters`/`rpo`/`backup_window`/`storage_policy_id`) beyond `name`/`client_filters` — which is
 also how a storage policy targets a node (there is no separate `hostname` field; set
 `client_filters.hostnames` the same way a backup policy would). `GET

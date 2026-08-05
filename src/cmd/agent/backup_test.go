@@ -109,7 +109,7 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 
 	require.True(t, ok)
 	require.Len(t, tasks, 2)
@@ -134,7 +134,7 @@ func TestBackupTasks_ObjectFiltersSharingPathGetDistinctTaskIDs(t *testing.T) {
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 
 	require.True(t, ok)
 	require.Len(t, tasks, 2)
@@ -156,7 +156,7 @@ func TestBackupTasks_TaskArgsMatchBrfsShape(t *testing.T) {
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 
 	require.True(t, ok)
 	require.Len(t, tasks, 1)
@@ -182,7 +182,7 @@ func TestBackupTasks_DueRequiresBothWindowOpenAndRpoElapsed(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 	require.True(t, ok)
 	require.Len(t, tasks, 1)
 	task := tasks[0]
@@ -212,7 +212,7 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 	require.True(t, ok)
 	require.Len(t, tasks, 2)
 
@@ -244,7 +244,7 @@ func TestBackupTasks_UnparseableRpoSkipsPolicyEntirely(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 	assert.True(t, ok, "the file itself was still validly read")
 	assert.Empty(t, tasks)
 }
@@ -260,7 +260,7 @@ func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 	assert.True(t, ok)
 	assert.Empty(t, tasks)
 }
@@ -276,7 +276,7 @@ func TestBackupTasks_NonBackupTypeSkipsPolicyEntirely(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 	assert.True(t, ok, "the file itself was still validly read")
 	assert.Empty(t, tasks, "a cached policy whose type isn't \"backup\" must contribute zero tasks")
 }
@@ -302,7 +302,7 @@ func TestBackupTasks_MixedTypesOnlyBackupTypeProducesTasks(t *testing.T) {
 		}
 	]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 	require.True(t, ok)
 	require.Len(t, tasks, 1)
 	assert.Contains(t, tasks[0].ID, "backup-policy")
@@ -310,7 +310,7 @@ func TestBackupTasks_MixedTypesOnlyBackupTypeProducesTasks(t *testing.T) {
 
 func TestBackupTasks_MissingCacheFileReturnsOkFalseWithNoTasks(t *testing.T) {
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(filepath.Join(t.TempDir(), "does-not-exist.json"), conf)
+	tasks, ok := backupTasks(filepath.Join(t.TempDir(), "does-not-exist.json"), testLogger(), conf)
 	assert.False(t, ok)
 	assert.Empty(t, tasks)
 }
@@ -319,7 +319,7 @@ func TestBackupTasks_CorruptCacheFileReturnsOkFalseWithNoTasks(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `not json`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 	assert.False(t, ok)
 	assert.Empty(t, tasks)
 }
@@ -340,7 +340,7 @@ func TestBackupTasks_JobIDFieldMatchesArgsFlag(t *testing.T) {
 	require.NoError(t, os.WriteFile(cachePath, data, 0o644))
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(cachePath, conf)
+	tasks, ok := backupTasks(cachePath, testLogger(), conf)
 	require.True(t, ok)
 	require.Len(t, tasks, 1)
 
@@ -359,12 +359,12 @@ func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
 		"name": "p", "type": "backup", "object_filters": [{"path": "/data"}], "rpo": "1h",
 		"backup_window": ["0 2 * * *"], "destinations": ["bwfs:8080"]
 	}]`), 0o644))
-	tasks, ok := backupTasks(cachePath, conf)
+	tasks, ok := backupTasks(cachePath, testLogger(), conf)
 	require.True(t, ok)
 	require.Len(t, tasks, 1)
 
 	require.NoError(t, os.WriteFile(cachePath, []byte(`[]`), 0o644))
-	tasks, ok = backupTasks(cachePath, conf)
+	tasks, ok = backupTasks(cachePath, testLogger(), conf)
 	assert.True(t, ok, "an empty-but-valid file is still a confirmed-good read")
 	assert.Empty(t, tasks)
 }
@@ -381,7 +381,7 @@ func TestBackupTasks_TaskArgsIncludeIncludeExcludeFlagsWhenPresent(t *testing.T)
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 
 	require.True(t, ok)
 	require.Len(t, tasks, 1)
@@ -397,6 +397,28 @@ func TestBackupTasks_TaskArgsIncludeIncludeExcludeFlagsWhenPresent(t *testing.T)
 	assert.Equal(t, "*.tmp", task.Args[8])
 }
 
+func TestBackupTasks_EmptyDestinationsSkipsTaskAndLogsError(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCachedPolicies(t, dir, `[{
+		"name": "orphan-policy",
+		"type": "backup",
+		"object_filters": [{"path": "/data"}],
+		"rpo": "1h",
+		"backup_window": ["0 2 * * *"],
+		"destinations": []
+	}]`)
+	conf := &config.Config{BackupWindowGraceSec: 3600}
+	logger, buf := testLoggerWithBuffer()
+
+	tasks, ok := backupTasks(path, logger, conf)
+
+	require.True(t, ok, "the file itself was still validly read")
+	assert.Empty(t, tasks, "a policy with no resolved destinations must contribute no task")
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "no resolved destination")
+	assert.Contains(t, logOutput, "orphan-policy")
+}
+
 func TestBackupTasks_DisabledAtInPastSkipsPolicyEntirely(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
@@ -410,7 +432,7 @@ func TestBackupTasks_DisabledAtInPastSkipsPolicyEntirely(t *testing.T) {
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 
 	assert.True(t, ok, "the file itself was still validly read")
 	assert.Empty(t, tasks)
@@ -429,7 +451,7 @@ func TestBackupTasks_FutureDisabledAtDoesNotSkip(t *testing.T) {
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 
-	tasks, ok := backupTasks(path, conf)
+	tasks, ok := backupTasks(path, testLogger(), conf)
 
 	assert.True(t, ok)
 	assert.Len(t, tasks, 1)

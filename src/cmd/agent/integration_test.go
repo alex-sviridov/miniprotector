@@ -48,7 +48,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 		return nil
 	}
 
-	policiesFunc := func() ([]Policy, bool) { return backupTasks(policiesCachePath, conf) }
+	policiesFunc := func() ([]Policy, bool) { return backupTasks(policiesCachePath, testLogger(), conf) }
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()

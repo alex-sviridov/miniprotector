@@ -51,7 +51,7 @@ directly:
     ],
     "rpo": "24h",
     "backup_window": ["0 2 * * *"],
-    "destination": "bwfs-east.internal:8080",
+    "destinations": ["bwfs-east.internal:8080"],
     "type": "backup",
     "disabled_at": "0001-01-01T00:00:00Z"
   },

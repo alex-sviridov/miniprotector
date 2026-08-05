@@ -56,7 +56,7 @@ async function runNow(payload) {
 const columns = [
   { label: 'Name', field: 'name', sortable: true },
   { label: 'RPO', field: 'rpo', sortable: true },
-  { label: 'Destination', field: 'destinations', sortable: true },
+  { label: 'Destination', field: 'destinations', sortable: false },
   { label: '', field: 'actions', sortable: false },
 ]
 </script>

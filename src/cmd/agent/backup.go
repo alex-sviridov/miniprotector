@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -190,12 +191,17 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 // A policy with an unparseable rpo, or with no valid backup_window
 // schedule at all, contributes no tasks -- there is no sound due-check
 // that could be built for it, so skipping entirely (rather than running
-// on a guess) is the fail-safe choice. A missing/invalid destination is
-// not checked here: the task is still built with an empty --destination
-// (Destinations[0] of an empty list), and simply fails at brfs exec time
-// like any other exec failure (see reconcile.go). Only Destinations[0] is
-// ever used -- retrying the rest of the list on failure is future work.
-func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool) {
+// on a guess) is the fail-safe choice.
+//
+// A policy whose Destinations is empty (its storage policy has no live
+// checkins yet, or storage_policy_id is dangling) contributes no task for
+// any of its object filters -- rather than exec'ing brfs with an empty
+// --destination, which common.ParseDestination would silently resolve to
+// localhost instead of failing loudly. Each skip is logged with the policy
+// and would-be job id so the gap is visible without needing to reproduce a
+// misdirected backup first. Only Destinations[0] is ever used -- retrying
+// the rest of the list on failure is future work.
+func backupTasks(policiesCachePath string, logger *slog.Logger, conf *config.Config) ([]Policy, bool) {
 	grace := time.Duration(conf.BackupWindowGraceSec) * time.Second
 
 	cachedPolicies, ok := readCachedPolicies(policiesCachePath)
@@ -232,6 +238,12 @@ func backupTasks(policiesCachePath string, conf *config.Config) ([]Policy, bool)
 		}
 		for _, filter := range p.ObjectFilters {
 			jobID := backupJobID(policyName, filter.Path, filter.ID, time.Now())
+			if destination == "" {
+				logger.Error("backup task has no resolved destination, skipping",
+					"policy", backupTaskID(policyName, filter.Path, filter.ID),
+					"job_id", jobID)
+				continue
+			}
 			args := []string{filter.Path, "--destination", destination, "--job-id", jobID}
 			if len(filter.Include) > 0 {
 				args = append(args, "--include", strings.Join(filter.Include, ","))
