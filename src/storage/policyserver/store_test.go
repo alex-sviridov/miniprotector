@@ -61,16 +61,18 @@ func TestCheckinsForPolicy_ScopesByPolicyID(t *testing.T) {
 	assert.Equal(t, "host-a", records[0].Hostname)
 }
 
-func TestCheckinsForPolicy_OrderedByHostname(t *testing.T) {
+func TestCheckinsForPolicy_OrderedByLastSeenAtDescending(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.RecordCheckin("policy-1", "zebra", time.Now()))
-	require.NoError(t, store.RecordCheckin("policy-1", "apple", time.Now()))
+	older := time.Now().Add(-time.Hour).Truncate(time.Second)
+	newer := time.Now().Truncate(time.Second)
+	require.NoError(t, store.RecordCheckin("policy-1", "apple", older))
+	require.NoError(t, store.RecordCheckin("policy-1", "zebra", newer))
 
 	records, err := store.CheckinsForPolicy("policy-1")
 	require.NoError(t, err)
 	require.Len(t, records, 2)
-	assert.Equal(t, "apple", records[0].Hostname)
-	assert.Equal(t, "zebra", records[1].Hostname)
+	assert.Equal(t, "zebra", records[0].Hostname, "the most recently checked-in host must come first")
+	assert.Equal(t, "apple", records[1].Hostname)
 }
 
 func TestCheckinsForPolicy_UnknownPolicyReturnsEmpty(t *testing.T) {

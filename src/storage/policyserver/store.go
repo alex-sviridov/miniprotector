@@ -33,12 +33,13 @@ func (s *Store) RecordCheckin(policyID, hostname string, at time.Time) error {
 }
 
 // CheckinsForPolicy returns every host that has checked in for policyID,
-// ordered by hostname, each already holding its most recent check-in time
-// (see CheckinRecord). Returns an empty slice, not an error, for a policyID
-// with no check-ins.
+// ordered by LastSeenAt descending (freshest first) -- the single source of
+// truth for checkin order; nothing downstream re-sorts. Each record already
+// holds its most recent check-in time (see CheckinRecord). Returns an empty
+// slice, not an error, for a policyID with no check-ins.
 func (s *Store) CheckinsForPolicy(policyID string) ([]CheckinRecord, error) {
 	var out []CheckinRecord
-	err := s.db.Where("policy_id = ?", policyID).Order("hostname").Find(&out).Error
+	err := s.db.Where("policy_id = ?", policyID).Order("last_seen_at DESC").Find(&out).Error
 	return out, err
 }
 
