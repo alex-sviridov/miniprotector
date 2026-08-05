@@ -122,7 +122,8 @@ func parseUnixParam(raw string) (int64, bool) {
 }
 
 // splitCommaParam splits a comma-separated query param into a slice,
-// dropping empty segments; an empty input yields nil (no filter).
+// trimming surrounding whitespace from each segment and dropping empty
+// segments; an empty input yields nil (no filter).
 func splitCommaParam(raw string) []string {
 	if raw == "" {
 		return nil
@@ -130,6 +131,7 @@ func splitCommaParam(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
+		p = strings.TrimSpace(p)
 		if p != "" {
 			out = append(out, p)
 		}

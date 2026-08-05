@@ -191,9 +191,21 @@ func (f FacetFilter) applyCommon(q *gorm.DB) *gorm.DB {
 // rows where source_host is empty (a decodeSourceHost failure at sync time
 // -- see cmd/catalog/server.go) rather than surfacing a blank-named facet.
 // filter.SourceHosts is ignored: a client facet list is never narrowed by
-// its own dimension's current selection. Grouping happens in Go, not SQL,
-// following the same pattern as ListJobFacets to avoid non-portable time
-// string parsing and aggregate function quirks with different database drivers.
+// its own dimension's current selection.
+//
+// Aggregation happens in Go, not SQL, following the same pattern as
+// ListJobFacets: an earlier version used SQL-side MAX(received_at) and
+// parsed the result via Go's non-portable time.Time string format, which
+// crashed on any host with a negative UTC timezone offset (time.Parse
+// couldn't handle the locale-dependent zone suffix). Scanning the raw,
+// non-aggregated (source_host, received_at) rows and aggregating in Go
+// avoids that string-parsing entirely, at the accepted cost of loading
+// every matching row into memory per call rather than letting SQLite do
+// the GROUP BY -- acceptable at this catalog's expected scale, and
+// consistent with this package's stated preference for simple, portable
+// code over premature optimization (see storage/CLAUDE.md). Revisit with
+// a SQL-side strftime()-based approach if this ever becomes a measured hot
+// path.
 func (s *Store) ListClientFacets(filter FacetFilter) ([]Facet, error) {
 	q := s.db.Model(&EntryRecord{}).
 		Select("source_host, received_at").

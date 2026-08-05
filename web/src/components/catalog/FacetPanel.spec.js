@@ -50,4 +50,30 @@ describe('FacetPanel', () => {
     const wrapper = mountPanel({ error: 'boom' })
     expect(wrapper.text()).toContain('boom')
   })
+
+  it('narrows visible rows using its own local search input', async () => {
+    const wrapper = mountPanel()
+    const search = wrapper.find('input[placeholder="Filter by name…"]')
+    await search.setValue('web')
+    await wrapper.vm.$nextTick()
+
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('webserver')
+  })
+
+  it('preserves a selection hidden by the local search filter when toggling a visible row', async () => {
+    const wrapper = mountPanel({ selected: ['database', 'webserver'] })
+    const search = wrapper.find('input[placeholder="Filter by name…"]')
+    await search.setValue('web')
+    await wrapper.vm.$nextTick()
+
+    const vgtComponent = wrapper.findComponent({ name: 'vue-good-table' })
+    const row = vgtComponent.vm.processedRows[0].children[0]
+    vgtComponent.vm.onCheckboxClicked(row, 0, {})
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('update:selected')).toBeTruthy()
+    expect(wrapper.emitted('update:selected').at(-1)[0]).toContain('database')
+  })
 })

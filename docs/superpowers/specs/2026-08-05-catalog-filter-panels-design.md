@@ -210,8 +210,10 @@ Composition API, `<script setup>` throughout, matching the existing store/view s
 
 **State** (`stores/catalog.js`): `filters` grows from `{ sourceHost, storeHost, pattern }` to
 `{ receivedAfter, receivedBefore, sourceHosts: [], jobNames: [], pattern }`, with
-`receivedAfter`/`receivedBefore` defaulting to "last 7 days" at store creation — `storeHost` (the
-bwfs-node filter) is unused by this design and stays as-is, unrelated to client/job filtering. Two new
+`receivedAfter`/`receivedBefore` defaulting to "last 7 days" at store creation. The old free-text
+`storeHost` (bwfs-node) filter input is removed from the UI as part of this rewrite — the underlying
+`store_host` API/proto field is untouched and still usable by other callers, but the new three-row
+bar has no UI control for it. Two new
 actions, `fetchClientFacets()`/`fetchJobFacets()`, each building their query from `filters` *excluding
 their own dimension* (mirrors the store-layer exclusion above) via a `buildFacetQuery` helper
 alongside the existing `buildQuery` (`catalog.js:7-15`).
@@ -231,12 +233,20 @@ pattern than to the current catalog page's empty-state-first behavior.
 
 - File-attribute filters (size, owner/group, mode) and better path matching (prefix/glob) — both
   raised during design but deferred; only date range and job/policy are being added this round.
-- Any change to `storeHost`/bwfs-node filtering — untouched by this design.
+- Any change to the `store_host` API/proto field itself — untouched. Its UI input is removed as part
+  of the filter-bar rewrite (see "State" above), a deliberate simplification matching the approved
+  three-row design, not an oversight.
 - Retroactively backfilling `ReceivedAt`/`JobID` index creation performance on an already-large
   existing table — `AutoMigrate`'s `CREATE INDEX` cost on first deploy is accepted as-is, no
   online-migration tooling added.
 - Making `ListEntries`' new repeated fields replace the old singular `source_host`/`pattern` fields —
   both old and new coexist; no deprecation in this pass.
+- Restoring SQL-side `GROUP BY`/`MAX()` aggregation for `ListClientFacets` -- a
+  timezone-crash fix found during final review moved it to the same Go-side
+  row-scan-and-aggregate pattern `ListJobFacets` already used, trading a full
+  per-call row scan for avoiding non-portable time-string parsing. Accepted
+  at this catalog's expected scale; revisit if `/catalog/clients` becomes a
+  measured hot path.
 
 ## Testing plan
 

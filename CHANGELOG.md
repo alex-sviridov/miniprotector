@@ -11,7 +11,9 @@ back new `GET /api/v1/catalog/clients`/`GET /api/v1/catalog/jobs` endpoints and 
 between clients and policies in the web filter bar: each facet list excludes its own dimension, so
 selecting a client narrows the policy list and vice versa without ever narrowing itself out. All
 proto/API additions are additive; the web catalog view's filter bar and store internals are
-rewritten (no external consumers), now defaulting to and auto-fetching the last 7 days on load.
+rewritten (no external consumers), now defaulting to and auto-fetching the last 7 days on load. The
+old free-text store-host filter input is also removed from the catalog page — the underlying API
+field is untouched, just no longer exposed in this UI.
 
 ## 2026-08-04 — policy-server: resolve backup destinations from storage checkins
 

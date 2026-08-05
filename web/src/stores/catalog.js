@@ -55,10 +55,14 @@ export const useCatalogStore = defineStore('catalog', {
       jobFacets: [],
       jobFacetsLoading: false,
       jobFacetsError: null,
+      _searchToken: 0,
+      _clientFacetsToken: 0,
+      _jobFacetsToken: 0,
     }
   },
   actions: {
     async search() {
+      const token = ++this._searchToken
       try {
         await withRequest(this, async () => {
           const collected = []
@@ -66,36 +70,39 @@ export const useCatalogStore = defineStore('catalog', {
           for (;;) {
             const qs = buildQuery(this.filters, startingAfter, MAX_PAGE_LIMIT)
             const body = await apiFetch(`/catalog?${qs}`)
+            if (token !== this._searchToken) return // superseded by a newer search
             collected.push(...body.data)
             if (!body.has_more || body.data.length === 0) break
             startingAfter = body.data[body.data.length - 1].id
           }
-          this.entries = collected
+          if (token === this._searchToken) this.entries = collected
         })
       } catch {
         // withRequest already recorded this.error; discard any partial or
         // stale results rather than leaving a previous search's rows on screen.
-        this.entries = []
+        if (token === this._searchToken) this.entries = []
       }
     },
     async fetchClientFacets() {
+      const token = ++this._clientFacetsToken
       await withRequest(
         this,
         async () => {
           const qs = buildFacetQuery(this.filters, 'sourceHosts')
           const body = await apiFetch(`/catalog/clients?${qs}`)
-          this.clientFacets = body.data
+          if (token === this._clientFacetsToken) this.clientFacets = body.data
         },
         { rethrow: false, loadingKey: 'clientFacetsLoading', errorKey: 'clientFacetsError' }
       )
     },
     async fetchJobFacets() {
+      const token = ++this._jobFacetsToken
       await withRequest(
         this,
         async () => {
           const qs = buildFacetQuery(this.filters, 'jobNames')
           const body = await apiFetch(`/catalog/jobs?${qs}`)
-          this.jobFacets = body.data
+          if (token === this._jobFacetsToken) this.jobFacets = body.data
         },
         { rethrow: false, loadingKey: 'jobFacetsLoading', errorKey: 'jobFacetsError' }
       )

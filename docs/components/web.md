@@ -24,16 +24,18 @@ no data — there's no read-only "guest" mode.
   revoke/unrevoke, re-enroll (shows a fresh one-time token), and inline add/remove editing of
   description, attributes, and SANs, each gated by its own "Update" button that enables only once
   that section has a pending change
-- `/catalog` — catalog entries, filterable by real source host, store host (the `bwfs` node that
-  replicated the entry), and a path-pattern substring; at least one filter must be filled in before
-  Search is enabled, since the catalog has no natural bound the way `/jobs`' 24h window does. On
-  search, every matching page is fetched (the catalog API is cursor-paginated) before entries are
-  grouped into one row per distinct file (source host + path) and handed to a client-side
+- `/catalog` — catalog entries, filterable by date range (received time, default last 7 days),
+  client (source host), job/policy, and a path-pattern substring, shown as a three-row filter bar:
+  a date-range row (backed by `@vuepic/vue-datepicker`, a new dependency), a clients/job-policy row
+  (each opening a searchable, checkbox-selectable list scoped to the other active filters — picking
+  a client narrows the policy list and vice versa), and a path row. All filters and results fetch
+  automatically as they change (debounced on the path input) — there's no Search button or gating
+  requirement. Every matching page is fetched (the catalog API is cursor-paginated) before entries
+  are grouped into one row per distinct file (source host + path) and handed to a client-side
   sortable/paginated table (`vue-good-table-next`) — grouping over the complete result set means a
-  file's versions are
-  never split across a page boundary. Sizes render human-readable (KB/MB/...); a "Versions" count
-  on multi-version files opens a modal (click anywhere on that row) listing that file's other
-  versions.
+  file's versions are never split across a page boundary. Sizes render human-readable (KB/MB/...);
+  a "Versions" count on multi-version files opens a modal (click anywhere on that row) listing that
+  file's other versions.
 - `/policies` — every policy (name, RPO, destination), with a "New backup" action opening a form modal for creating new policies (fields: name, RPO, backup window, client filters, object filters, destination (a required select over `/storage`'s storage policies, replacing free-text host:port entry)) and clickable policy names navigating to each policy's detail view. The modal (`BackupPolicyFormModal` in `components/backup_policies/`) offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after its configured timeout, 1h by default) and redirects to `/jobs`, where the resulting job(s) can be found and opened for their log lines — same modal-plus-detail-page pattern as `/storage` below. Linking to:
 - `/policies/:id` — one policy's full record, in two tabs built on a reusable `Tabs` component
   (`components/ui/Tabs.vue`, active tab synced to `?tab=details`/`?tab=checkins` so either can be

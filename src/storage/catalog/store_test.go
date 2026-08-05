@@ -271,6 +271,30 @@ func TestListEntries_FiltersByJobNamesMultiValue(t *testing.T) {
 	assert.ElementsMatch(t, []string{"obj-1", "obj-3"}, objIDs)
 }
 
+func TestListEntries_JobNamesCombinedWithSourceHost(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:weekly-full:root:fedcba98:2", ObjectID: "obj-2", SourceHost: "database", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd5678:3", ObjectID: "obj-3", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, _, err := store.ListEntries(ListEntriesFilter{
+		SourceHost: "database",
+		JobNames:   []string{"nightly-db", "weekly-full"},
+	})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	var objIDs []string
+	for _, e := range entries {
+		objIDs = append(objIDs, e.ObjectID)
+	}
+	assert.ElementsMatch(t, []string{"obj-1", "obj-2"}, objIDs)
+}
+
 func TestNew_CreatesIndexesOnReceivedAtAndJobID(t *testing.T) {
 	store, err := New(t.TempDir())
 	require.NoError(t, err)

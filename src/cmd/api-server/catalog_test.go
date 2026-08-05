@@ -126,6 +126,21 @@ func TestHandleListCatalog_PassesNewFilterQueryParamsThrough(t *testing.T) {
 	assert.Equal(t, []string{"nightly-db", "weekly-full"}, fake.lastReq.GetJobNames())
 }
 
+func TestHandleListCatalog_CommaParamsTrimWhitespace(t *testing.T) {
+	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?source_hosts=database,%20webserver", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastReq)
+	assert.Equal(t, []string{"database", "webserver"}, fake.lastReq.GetSourceHosts())
+}
+
 func TestHandleListCatalog_OmittedNewFiltersLeaveFieldsZero(t *testing.T) {
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())

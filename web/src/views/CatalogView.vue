@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useCatalogStore } from '../stores/catalog'
 import { formatBytes, formatTimestamp } from '../utils/format'
 import { groupEntriesByFile } from '../utils/catalogGrouping'
@@ -54,6 +54,7 @@ watch(
     }, 300)
   }
 )
+onUnmounted(() => clearTimeout(pathDebounce))
 watch(
   () => [catalog.filters.receivedAfter, catalog.filters.receivedBefore],
   () => {

@@ -83,6 +83,39 @@ describe('catalog store', () => {
       expect(catalog.loading).toBe(false)
     })
 
+    it('discards a stale response that resolves after a later search was issued (last-issued wins, not last-completed)', async () => {
+      let resolveFirst
+      let resolveSecond
+      apiFetch
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveFirst = resolve
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveSecond = resolve
+            })
+        )
+      const catalog = useCatalogStore()
+
+      const firstSearch = catalog.search()
+      const secondSearch = catalog.search()
+
+      // The second (last-issued) call resolves first...
+      resolveSecond({ data: [{ id: 'second' }], has_more: false })
+      await secondSearch
+
+      // ...and the first (stale) call resolves after -- it must not clobber
+      // the second call's results.
+      resolveFirst({ data: [{ id: 'first' }], has_more: false })
+      await firstSearch
+
+      expect(catalog.entries).toEqual([{ id: 'second' }])
+    })
+
     it('sets loading true while the fetch loop is in flight', async () => {
       let resolveFirst
       apiFetch.mockReturnValue(
