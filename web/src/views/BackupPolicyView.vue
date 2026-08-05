@@ -37,7 +37,7 @@ const detailRows = computed(() => {
   if (!policy.value) return []
   return [
     { key: 'rpo', label: 'RPO', value: policy.value.rpo },
-    { key: 'destination', label: 'Destination', value: policy.value.destination },
+    { key: 'destination', label: 'Destination', value: (policy.value.destinations || []).join(', ') || '—' },
     { key: 'backupWindow', label: 'Backup Window', value: (policy.value.backup_window || []).join(', ') || '—' },
     { key: 'hostnames', label: 'Hostnames', value: (policy.value.client_filters?.hostnames || []).join(', ') || '—' },
     { key: 'labels', label: 'Labels', value: JSON.stringify(policy.value.client_filters?.labels || {}) },

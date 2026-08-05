@@ -41,7 +41,7 @@ describe('BackupPolicyView', () => {
           id: 'p1',
           name: 'nightly-db-backup',
           rpo: '1h',
-          destination: 'store:8080',
+          destinations: ['store:8080', 'store-2:9000'],
           client_filters: { hostnames: ['database'], labels: {} },
           object_filters: [{ id: 'f1', path: '/var/lib/dbdata', include: [], exclude: [] }],
           backup_window: ['0 * * * *'],
@@ -53,6 +53,7 @@ describe('BackupPolicyView', () => {
     expect(wrapper.text()).toContain('nightly-db-backup')
     expect(wrapper.text()).toContain('1h')
     expect(wrapper.text()).toContain('/var/lib/dbdata')
+    expect(wrapper.text()).toContain('store:8080, store-2:9000')
   })
 
   it('shows the store error message on a 404', () => {

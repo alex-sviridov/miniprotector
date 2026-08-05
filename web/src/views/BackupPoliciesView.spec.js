@@ -32,13 +32,14 @@ describe('BackupPoliciesView', () => {
 
   it('renders each policy with a link to its detail page', () => {
     const { wrapper } = mountView({
-      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destination: 'store:8080' }],
+      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destinations: ['store:8080'] }],
       loading: false,
       error: null,
     })
     expect(wrapper.text()).toContain('nightly-db-backup')
     const link = wrapper.findAllComponents(RouterLinkStub).find((l) => l.text() === 'nightly-db-backup')
     expect(link.props('to')).toEqual({ name: 'policy-detail', params: { id: 'p1' } })
+    expect(wrapper.text()).toContain('store:8080')
   })
 
   it('shows the store error message when present', () => {
@@ -54,7 +55,7 @@ describe('BackupPoliciesView', () => {
   it('deletes a policy after confirming', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { wrapper, policies } = mountView({
-      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destination: 'store:8080' }],
+      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destinations: ['store:8080'] }],
       loading: false,
       error: null,
     })
@@ -65,7 +66,7 @@ describe('BackupPoliciesView', () => {
   it('does not delete when the confirm dialog is dismissed', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     const { wrapper, policies } = mountView({
-      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destination: 'store:8080' }],
+      list: [{ id: 'p1', name: 'nightly-db-backup', rpo: '1h', destinations: ['store:8080'] }],
       loading: false,
       error: null,
     })
