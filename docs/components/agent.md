@@ -78,7 +78,7 @@ A backup task is due when **both**:
   `BackupWindowGraceSec`, and hasn't closed yet), **and**
 - the path's last successful backup is older than the policy's `rpo` (or it has never succeeded).
 
-When due, `agent` execs `brfs <path> --destination <destination> --job-id
+When due, `agent` execs `brfs <path> --destination <destinations[0]> --job-id
 backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>`, appending `--include <patterns>`
 and/or `--exclude <patterns>` (comma-joined) only when the object filter that produced this task
 actually carries them — the explicit job-id lets an operator correlate a `bwfs` job record back to
@@ -94,9 +94,9 @@ orphaned — the resulting `bwfs` job simply never completes, the same outcome a
 crashed `brfs`.
 
 A policy with an unparseable `rpo`, or no valid `backup_window` entry at all, contributes no tasks.
-A missing or invalid `destination` is not checked in advance — the task is still created, and its
+A missing or invalid `destinations[0]` is not checked in advance — the task is still created, and its
 `brfs` exec simply fails (recorded as an ordinary failure with backoff), the same as any other exec
-failure.
+failure. Only `destinations[0]` is ever used; retrying the rest of the list is not implemented.
 
 A policy whose `disabled_at` has passed also contributes no tasks -- checked fresh every reconcile
 tick against the current time, so a policy that becomes disabled between two ticks stops being acted

@@ -53,7 +53,7 @@ message Policy {
   repeated ObjectFilter object_filters = 4;
   string rpo = 5;
   repeated string backup_window = 6;
-  string destination = 7; // derived, read-only -- see below
+  reserved 7; reserved "destination"; // removed -- replaced by destinations, see below
   string id = 8;
   ClientFilters client_filters = 9;
   string type = 10;
@@ -63,6 +63,7 @@ message Policy {
   google.protobuf.Timestamp disabled_at = 14;
   string storage_policy_id = 15; // backup policy only, required
   repeated PolicyCheckin checkins = 16; // ListPolicies only, not GetPolicies; one entry per host that has received this policy
+  repeated string destinations = 17; // backup policy only, derived, read-only -- see below
 }
 
 message CreatePolicyRequest {
@@ -134,7 +135,7 @@ certificate — the same requirement every server except `issuer`'s own listener
   [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
 - `port`/`config` are only meaningful on a `"storage"`-typed policy -- unset/zero on a
   `"backup"`-typed one, and vice versa for `object_filters`/`rpo`/`backup_window`/`storage_policy_id`.
-  `destination` is never itself a settable field on either type -- see below.
+  `destinations` is never itself a settable field on either type -- see below.
   `config` is opaque, pass-through JSON text -- `policy-server` validates it's well-formed at load
   and write time but never interprets its contents. There is no separate `hostname` field on a
   storage policy (removed -- see
@@ -153,18 +154,19 @@ certificate — the same requirement every server except `issuer`'s own listener
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
   applies them, during its own directory walk.
 - `rpo` and `backup_window` are opaque, pass-through strings — `policy-server` never parses or
-  evaluates either. `destination` is derived, read-only: a `"backup"` policy instead carries
+  evaluates either. `destinations` is derived, read-only: a `"backup"` policy instead carries
   `storage_policy_id`, a required reference to a `"storage"`-typed policy's `id`.
-  `GetPolicies`/`ListPolicies`/`CreatePolicy`/`UpdatePolicy` all resolve it live to that storage
-  policy's `client_filters.hostnames[0]:port` before responding, so `destination` always reflects
-  the referenced storage policy's *current* settings, never a stale copy. It's left unset if the
-  reference doesn't resolve (an id that doesn't exist, or no longer names a storage policy) --
-  reachable through the supported API today, not just by hand-editing policy files, since a
-  storage policy targeted purely by labels (no `client_filters.hostnames`) is valid per
-  `StoragePolicy.Validate()`, passes the write-time referential check (which only confirms the
-  storage policy exists and is kind `"storage"`, not that it resolves to a `host:port`), and yields
-  an unresolvable `destination` for any backup policy that references it -- a known, currently
-  accepted limitation (see `backlog.md`).
+  `GetPolicies`/`ListPolicies`/`CreatePolicy`/`UpdatePolicy` all resolve it live, on every response,
+  from that storage policy's checkin records (see [Design: backup destination from checkin
+  list](../superpowers/specs/2026-08-04-backup-destination-checkin-list-design.md)) — one
+  `"host:port"` entry per host that has checked in against the storage policy, combined with its
+  `port`, ordered freshest-checked-in-first. This is a real, client-confirmed list of storage
+  servers, not a static `client_filters.hostnames` guess: a storage policy targeted purely by labels
+  (no `client_filters.hostnames`) now still resolves correctly once any matching node checks in,
+  closing the gap the previous hostname-pattern-based resolution had. `destinations` is empty if the
+  reference doesn't resolve (an id that doesn't exist, or no longer names a storage policy) or if the
+  referenced storage policy has no checkins yet (a brand-new one, or one every check-in for has aged
+  past `CheckinRetentionSec`).
 - `ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy` are the admin surface `api-server`
   proxies for browsing and editing the full policy set — never called by a mesh node. Unlike
   `GetPolicies`, `ListPolicies`'s response (and `Create`/`UpdatePolicy`'s echoed-back result)

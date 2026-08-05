@@ -166,7 +166,7 @@ one policy type; omitted returns every type.
       ],
       "rpo": "24h",
       "backup_window": ["0 2 * * *", "0 20 * * *"],
-      "destination": "bwfs-east.internal:8080",
+      "destinations": ["bwfs-east.internal:8080"],
       "storage_policy_id": "b2c3d4e5-...",
       "type": "backup",
       "port": 0,
@@ -207,8 +207,8 @@ Creates a new policy. Body:
 success. `400` if `name` is empty or slugifies to nothing (no alphanumeric characters), any
 `include`/`exclude`/hostname entry isn't a syntactically valid glob pattern, `storage_policy_id` is
 empty, or `storage_policy_id` doesn't name an existing storage policy — no file is written when
-validation fails. The response's `destination` is always derived from `storage_policy_id`, never
-something this body sets directly.
+validation fails. The response's `destinations` is always derived live from `storage_policy_id`'s
+checkin records, never something this body sets directly.
 
 An optional integer `disabled_at` (Unix seconds) may also be included; once that time passes,
 `GetPolicies` stops serving the policy. Omit it (or send `0`) for a policy that's never disabled.

@@ -65,16 +65,11 @@ and [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy
 
 A `"backup"` policy describes what to back up and, via `storage_policy_id`, where: `object_filters`,
 `rpo`, `backup_window`, and a required reference to a `"storage"`-typed policy's `id`. Its
-`destination` (the resolved `host:port` `bwfs` target) is never itself stored or settable — it's
-computed live from the referenced storage policy every time `policy-server` returns the policy, so
-editing that storage policy's `client_filters.hostnames`/`port` updates every backup policy linked to
-it with no re-save needed. A `"storage"` policy describes how a future storage server should be
-configured: `port` and an opaque `config` JSON blob `policy-server` validates is well-formed but
-never interprets. Targeting which node runs it is `client_filters` — the same mechanism a backup
-policy already uses — not a field specific to this type; see
-[Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md),
-which is the first actual consumer of `storage`-typed policies. See
-[Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
+`destinations` (one `"host:port"` entry per storage server, freshest-checked-in-first) is never
+itself stored or settable — it's computed live from the referenced storage policy's checkin records
+every time `policy-server` returns the policy, so a storage node checking in under a new hostname (or
+simply staying alive) keeps every backup policy linked to it current with no re-save needed. See
+[Design: backup destination from checkin list](../superpowers/specs/2026-08-04-backup-destination-checkin-list-design.md).
 
 ### Policy files and hot reload
 
@@ -88,9 +83,10 @@ syntactically-valid patterns at load time but otherwise opaque to `policy-server
 [Filesystem Backup Flow](../process/filesystem-backup.md) for how `brfs` applies them), `rpo` (a
 duration string, e.g. `"24h"`), `backup_window` (a list of cron expressions, e.g.
 `["0 2 * * *", "0 20 * * *"]`), and `storage_policy_id` (the `id` of a `"storage"`-typed policy --
-required). `destination`, unlike every other backup-policy field, is never read from the on-disk
-JSON: it's computed at read time from the storage policy `storage_policy_id` names. A `"storage"`
-policy instead has `port` and `config` (an opaque JSON object,
+required). `destinations`, unlike every other backup-policy field, is never read from the on-disk JSON: it's
+computed at read time from the checkin records against the storage policy `storage_policy_id` names,
+ordered freshest-checked-in-first (`storage/policyserver`'s `CheckinsForPolicy` query, not re-sorted
+downstream). A `"storage"` policy instead has `port` and `config` (an opaque JSON object,
 validated as well-formed at load time but never interpreted). `policy-server` also computes
 (never reads) a deterministic ID for the policy itself — and, for a `"backup"` policy, one for each
 object filter — derived from the file's name (and each filter's position) — stable across reloads,

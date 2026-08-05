@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-04 — policy-server: resolve backup destinations from storage checkins
+
+A backup policy's destination was resolved from `client_filters.hostnames[0]` — a glob-matching
+pattern meant for targeting, not an address — silently breaking for any storage policy with a
+wildcard or more than one matching host. It's now resolved from the storage policy's live checkin
+list instead: one `host:port` entry per host that has actually checked in against it, ordered
+freshest-first. `Policy.destination` (a single string) is replaced outright by `Policy.destinations`
+(a list) across the wire, `policyclient`'s on-disk cache, `agent` (which uses the first entry when
+execing `brfs`), `api-server`'s REST responses, and the web admin views — a breaking change with no
+compatibility shim, since every consumer is inside this repo.
+
 ## 2026-08-04 — web: navigation shell and visual consistency polish
 
 The sidebar now carries a small brand mark and one icon per section, with a clearer accent-bordered

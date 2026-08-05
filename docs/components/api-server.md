@@ -37,8 +37,9 @@ exception to that rule, documented in
 `GET /policies` accepts an optional `?type=backup|storage` query parameter to filter by type;
 without it, every policy of every type is returned, each with `port`/`config` populated
 in the response DTO when applicable (zero for a `"backup"`-typed policy, and vice versa for
-`rpo`/`storage_policy_id`/`object_filters`). A `"backup"` policy's `destination` in the response DTO
-is always derived by `policy-server` from its `storage_policy_id` — it's never itself part of the
+`rpo`/`storage_policy_id`/`object_filters`). A `"backup"` policy's `destinations` in the response DTO
+is always derived by `policy-server`, live from its `storage_policy_id`'s checkin records — it's
+never itself part of the
 create/update input. Creating or updating a storage policy uses a separate pair of
 endpoints, `POST /storage-policies` and `PUT /storage-policies/{id}`, since a storage policy's input
 shape (`port`/`config`) shares nothing with a backup policy's
