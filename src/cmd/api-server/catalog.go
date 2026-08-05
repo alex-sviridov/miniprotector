@@ -136,3 +136,77 @@ func splitCommaParam(raw string) []string {
 	}
 	return out
 }
+
+type facetDTO struct {
+	Name     string `json:"name"`
+	Count    int64  `json:"count"`
+	LastSeen int64  `json:"last_seen"`
+}
+
+func toFacetDTO(f *pb.Facet) facetDTO {
+	return facetDTO{Name: f.GetName(), Count: f.GetCount(), LastSeen: f.GetLastSeen()}
+}
+
+func (s *server) handleListCatalogClients(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
+		return
+	}
+	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
+		return
+	}
+
+	resp, err := s.catalog.ListClientFacets(r.Context(), &pb.ListFacetsRequest{
+		ReceivedAfter:  receivedAfter,
+		ReceivedBefore: receivedBefore,
+		Pattern:        q.Get("pattern"),
+		JobNames:       splitCommaParam(q.Get("job_names")),
+	})
+	if err != nil {
+		s.logger.Error("handleListCatalogClients: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+
+	facets := make([]facetDTO, len(resp.GetFacets()))
+	for i, f := range resp.GetFacets() {
+		facets[i] = toFacetDTO(f)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": facets})
+}
+
+func (s *server) handleListCatalogJobs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
+		return
+	}
+	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
+		return
+	}
+
+	resp, err := s.catalog.ListJobFacets(r.Context(), &pb.ListFacetsRequest{
+		ReceivedAfter:  receivedAfter,
+		ReceivedBefore: receivedBefore,
+		Pattern:        q.Get("pattern"),
+		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
+	})
+	if err != nil {
+		s.logger.Error("handleListCatalogJobs: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+
+	facets := make([]facetDTO, len(resp.GetFacets()))
+	for i, f := range resp.GetFacets() {
+		facets[i] = toFacetDTO(f)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": facets})
+}

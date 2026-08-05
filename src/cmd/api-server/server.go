@@ -33,9 +33,11 @@ type clientManagerAdminClient interface {
 }
 
 // catalogQueryClient is the subset of pb.CatalogServiceClient the catalog
-// handler (Task 10) needs.
+// handlers (Tasks 5-6) need.
 type catalogQueryClient interface {
 	ListEntries(ctx context.Context, in *pb.ListEntriesRequest, opts ...grpc.CallOption) (*pb.ListEntriesResponse, error)
+	ListClientFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error)
+	ListJobFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error)
 }
 
 // policyServiceClient is the subset of pb.PolicyServiceClient the policies
@@ -77,6 +79,8 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/attributes", s.handleUpdateAttributes)
 	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/sans", s.handleUpdateSANs)
 	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
+	mux.HandleFunc("GET /api/v1/catalog/clients", s.handleListCatalogClients)
+	mux.HandleFunc("GET /api/v1/catalog/jobs", s.handleListCatalogJobs)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)
 	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
