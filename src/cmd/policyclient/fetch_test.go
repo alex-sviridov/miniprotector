@@ -53,7 +53,7 @@ func TestRunFetch_Success_WritesCacheFile(t *testing.T) {
 				},
 				Rpo:          "24h",
 				BackupWindow: []string{"0 2 * * *"},
-				Destination:  "bwfs-east.internal:8080",
+				Destinations: []string{"bwfs-east.internal:8080"},
 				Type:         "backup",
 			},
 		},
@@ -78,7 +78,7 @@ func TestRunFetch_Success_WritesCacheFile(t *testing.T) {
 	}, got[0].ObjectFilters)
 	assert.Equal(t, "24h", got[0].RPO)
 	assert.Equal(t, []string{"0 2 * * *"}, got[0].BackupWindow)
-	assert.Equal(t, "bwfs-east.internal:8080", got[0].Destination)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, got[0].Destinations)
 	assert.Equal(t, "backup", got[0].Type)
 }
 

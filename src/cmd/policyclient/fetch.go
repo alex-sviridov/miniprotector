@@ -53,7 +53,7 @@ type CachedPolicy struct {
 	ObjectFilters []ObjectFilter `json:"object_filters"`
 	RPO           string         `json:"rpo"`
 	BackupWindow  []string       `json:"backup_window"`
-	Destination   string         `json:"destination"`
+	Destinations  []string       `json:"destinations"`
 	// Storage-policy-only fields, zero/empty for a backup policy -- same
 	// additive convention the proto itself uses. Passthrough here; agent
 	// (cmd/agent/storage.go) is what interprets Config.
@@ -144,7 +144,7 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			ObjectFilters: filters,
 			RPO:           p.GetRpo(),
 			BackupWindow:  p.GetBackupWindow(),
-			Destination:   p.GetDestination(),
+			Destinations:  p.GetDestinations(),
 			Port:          p.GetPort(),
 			Config:        p.GetConfig(),
 			Type:          p.GetType(),
