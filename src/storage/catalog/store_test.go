@@ -279,7 +279,7 @@ func TestListEntries_JobNamesCombinedWithSourceHost(t *testing.T) {
 	require.NoError(t, store.EnsureEntries([]Entry{
 		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "backup:weekly-full:root:fedcba98:2", ObjectID: "obj-2", SourceHost: "database", StoreCreatedAt: time.Now()},
-		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd5678:3", ObjectID: "obj-3", SourceHost: "webserver", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:weekly-full:var-lib:abcd5678:3", ObjectID: "obj-3", SourceHost: "webserver", StoreCreatedAt: time.Now()},
 	}))
 
 	entries, _, err := store.ListEntries(ListEntriesFilter{
