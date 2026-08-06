@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-06 — e2e: add client lifecycle test (revoke/reissue, policy, job, catalog)
+
+Adds `TestE2E_ClientLifecycle` alongside the existing demo-web-UI smoke test: revokes and reissues
+an enrolled client's certificate (confirming `certclient operating-refresh` is refused while
+revoked and succeeds again after unrevoke), creates a 1-minute recurring backup policy, and
+confirms both a real backup job (`GET /api/v1/jobs`) and its replicated catalog entry
+(`GET /api/v1/catalog`) appear. Runs against the already-running demo lab, same precondition as the
+original smoke test. `make test-e2e`'s timeout grows from 30s to 120s to accommodate the new test's
+real reconcile/policy-fetch/catalog-sync wait times.
+
 ## 2026-08-05 — catalog: date-range and job/policy filtering with cross-filtering
 
 The catalog UI and API grow two new filter dimensions — a date range (on `received_at`) and
