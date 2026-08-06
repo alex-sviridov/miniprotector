@@ -95,6 +95,7 @@ make test
 # Run go vet
 make lint
 
-# Run e2e smoke test against the running demo lab (run `make demo-up` first)
+# Run e2e tests against the running demo lab (run `make demo-up` first) -- takes ~1-2 minutes and
+# mutates the demo lab (revokes/reissues a client cert, creates and deletes a policy)
 make test-e2e
 ```

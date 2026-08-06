@@ -126,6 +126,7 @@ func TestE2E_ClientLifecycle(t *testing.T) {
 			"rpo":               "1m",
 			"backup_window":     []string{"* * * * *"},
 			"storage_policy_id": storagePolicyID,
+			"disabled_at":       time.Now().Add(10 * time.Minute).Unix(),
 		})
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
 		var created struct {
@@ -142,6 +143,7 @@ func TestE2E_ClientLifecycle(t *testing.T) {
 	})
 
 	t.Run("catalog_entry_appears_for_backup", func(t *testing.T) {
+		require.NotEmpty(t, policyName, "prior subtest never created a policy")
 		waitForCatalogEntry(t, hostname, policyName)
 	})
 }
