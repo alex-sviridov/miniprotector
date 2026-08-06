@@ -140,6 +140,10 @@ func TestE2E_ClientLifecycle(t *testing.T) {
 
 		waitForBackupJob(t, hostname, policyName, createdAt)
 	})
+
+	t.Run("catalog_entry_appears_for_backup", func(t *testing.T) {
+		waitForCatalogEntry(t, hostname, policyName)
+	})
 }
 
 // fetchStoragePolicyID looks up an existing storage-typed policy by name
@@ -196,4 +200,31 @@ func waitForBackupJob(t *testing.T, sourceHost, policyName string, since int64) 
 		time.Sleep(5 * time.Second)
 	}
 	t.Fatalf("no successful backup job for source_host=%s policy=%s within 90s", sourceHost, policyName)
+}
+
+// waitForCatalogEntry polls GET /api/v1/catalog until at least one entry
+// tied to jobName appears for sourceHost, or fails the test after a 30s
+// timeout -- catalog replication (catalogsync) polls every
+// CatalogSyncPollIntervalSec (5s) once the backup job has already
+// completed successfully.
+func waitForCatalogEntry(t *testing.T, sourceHost, jobName string) {
+	t.Helper()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		resp := apiRequest(t, http.MethodGet, fmt.Sprintf(
+			"/api/v1/catalog?source_host=%s&job_names=%s", sourceHost, jobName), nil)
+		var catalogResp struct {
+			Data []struct {
+				ID int64 `json:"id"`
+			} `json:"data"`
+		}
+		decodeJSON(t, resp, &catalogResp)
+
+		if len(catalogResp.Data) > 0 {
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Fatalf("no catalog entry for source_host=%s job_names=%s within 30s", sourceHost, jobName)
 }
