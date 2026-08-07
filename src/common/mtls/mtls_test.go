@@ -296,6 +296,184 @@ func writeTestCertsDir(t *testing.T, ca *x509.Certificate, serverIdentity tls.Ce
 	return dir
 }
 
+// writeSelfSignedIdentity writes a minimal, self-signed EC cert/key pair to
+// certFile/keyFile inside dir, valid until notAfter. cachedIdentity's tests
+// exercise Get() directly and never perform a real TLS handshake, so no CA
+// chain is needed -- just a well-formed, parseable pair.
+func writeSelfSignedIdentity(t *testing.T, dir, certFile, keyFile string, notAfter time.Time) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "cache-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     notAfter,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, certFile), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644))
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, keyFile), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
+}
+
+func TestCachedIdentity_FirstGetLoadsFromDisk(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cert, err := cache.Get()
+	require.NoError(t, err)
+	assert.NotEmpty(t, cert.Certificate)
+}
+
+func TestCachedIdentity_FirstLoadFailurePropagates(t *testing.T) {
+	dir := t.TempDir()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	_, err := cache.Get()
+	assert.Error(t, err, "with no prior successful load, a load failure must propagate")
+}
+
+func TestCachedIdentity_WithinTTLServesFromMemoryWithoutDiskIO(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	// Corrupt the files on disk. If Get() touched disk again, this would
+	// either error (corrupt content) or return a different certificate.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, identCertFile), []byte("not a cert"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, identKeyFile), []byte("not a key"), 0o600))
+
+	fakeNow = fakeNow.Add(30 * time.Second) // still within the 60s TTL
+	second, err := cache.Get()
+	require.NoError(t, err)
+	assert.Equal(t, first.Certificate, second.Certificate, "within the TTL window, Get() must not re-read disk")
+}
+
+func TestCachedIdentity_TTLElapsedButMtimeUnchanged_SkipsReparsing(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	crtPath := filepath.Join(dir, identCertFile)
+	keyPath := filepath.Join(dir, identKeyFile)
+	crtInfo, err := os.Stat(crtPath)
+	require.NoError(t, err)
+	keyInfo, err := os.Stat(keyPath)
+	require.NoError(t, err)
+
+	// Corrupt the content but restore the original mtimes -- proves the
+	// unchanged-mtime path trusts mtime and genuinely skips reparsing,
+	// rather than happening to reparse identical bytes back to the same
+	// result. If it *did* reparse, this corrupted content would error.
+	require.NoError(t, os.WriteFile(crtPath, []byte("not a cert"), 0o644))
+	require.NoError(t, os.Chtimes(crtPath, crtInfo.ModTime(), crtInfo.ModTime()))
+	require.NoError(t, os.WriteFile(keyPath, []byte("not a key"), 0o600))
+	require.NoError(t, os.Chtimes(keyPath, keyInfo.ModTime(), keyInfo.ModTime()))
+
+	fakeNow = fakeNow.Add(90 * time.Second) // past the 60s TTL
+	second, err := cache.Get()
+	require.NoError(t, err, "mtime unchanged, so Get() must not attempt to reparse the (corrupted) content")
+	assert.Equal(t, first.Certificate, second.Certificate)
+}
+
+func TestCachedIdentity_MtimeChanged_Reloads(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(2*time.Hour))
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future, future))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identKeyFile), future, future))
+
+	fakeNow = fakeNow.Add(90 * time.Second)
+	second, err := cache.Get()
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Certificate, second.Certificate, "a genuinely rotated file must be picked up once the TTL has elapsed")
+}
+
+func TestCachedIdentity_TTLCappedByCertExpiration(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Now()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, start.Add(10*time.Second)) // expires well inside the 60s TTL
+
+	fakeNow := start
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	// Rotate to a fresh, longer-lived cert, advancing the clock only 20s --
+	// past the certificate's own 10s NotAfter, but well within a flat 60s
+	// TTL. If validUntil were capped only at now()+60s, this would still
+	// serve the already-expired cached cert.
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, start.Add(time.Hour))
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future, future))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identKeyFile), future, future))
+
+	fakeNow = start.Add(20 * time.Second)
+	second, err := cache.Get()
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Certificate, second.Certificate, "validUntil must be capped at the cached cert's own NotAfter, not just now()+60s")
+}
+
+func TestCachedIdentity_ReloadFailureWithExistingCache_FallsBackAndRetriesNextCall(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	// Corrupt content AND change mtime, so a reload is actually attempted
+	// and fails.
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, identCertFile), []byte("not a cert"), 0o644))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future, future))
+
+	fakeNow = fakeNow.Add(90 * time.Second)
+	second, err := cache.Get()
+	require.NoError(t, err, "a reload failure must fall back to the last known-good identity, not fail the caller")
+	assert.Equal(t, first.Certificate, second.Certificate)
+
+	// Restore a valid, genuinely different cert. Because validUntil was
+	// left unadvanced by the failed reload, the very next call must retry
+	// immediately rather than waiting out another TTL window.
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(2*time.Hour))
+	future2 := time.Now().Add(2 * time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future2, future2))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identKeyFile), future2, future2))
+
+	third, err := cache.Get() // fakeNow unchanged since the previous call
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Certificate, third.Certificate, "a failed reload must not advance validUntil, so the next call retries immediately")
+}
+
 func peerConfig(caPool *x509.CertPool, peerCert tls.Certificate) *tls.Config {
 	return &tls.Config{
 		Certificates: []tls.Certificate{peerCert},
