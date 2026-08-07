@@ -232,10 +232,13 @@ func serverTLSConfig(certsDir string) (*tls.Config, error) {
 
 // serverTLSConfigForTier is serverTLSConfig, parameterized on which
 // credential tier the listener accepts from its peers.
+// serverTLSConfigForTier is serverTLSConfig, parameterized on which
+// credential tier the listener accepts from its peers.
 func serverTLSConfigForTier(certsDir string, tier requiredTier) (*tls.Config, error) {
+	cache := newCachedIdentity(certsDir, identCertFile, identKeyFile)
 	// Fail fast at build time if certsDir is missing/broken, rather than
-	// only on the first handshake.
-	if _, err := loadIdentityCert(certsDir); err != nil {
+	// only on the first handshake. This also warms the cache.
+	if _, err := cache.Get(); err != nil {
 		return nil, err
 	}
 	caPool, err := loadCAPool(certsDir)
@@ -244,7 +247,7 @@ func serverTLSConfigForTier(certsDir string, tier requiredTier) (*tls.Config, er
 	}
 	return &tls.Config{
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert, err := loadIdentityCert(certsDir)
+			cert, err := cache.Get()
 			if err != nil {
 				return nil, err
 			}
@@ -359,8 +362,9 @@ func LoadIssuerServerCredentials(certsDir string) (credentials.TransportCredenti
 // LoadServerCredentials wraps into gRPC transport credentials -- for a
 // server built directly on net/http.Server (like log-gateway) instead of
 // gRPC. Same tier enforcement (rejects a bootstrap/issuer-caller peer
-// cert) and the same per-handshake certificate reload every gRPC server's
-// credentials already get from serverTLSConfigForTier.
+// cert) and the same cached, TTL-and-expiry-bounded certificate reload
+// every gRPC server's credentials already get from serverTLSConfigForTier
+// -- see cachedIdentity.
 func ServerTLSConfig(certsDir string) (*tls.Config, error) {
 	return serverTLSConfigForTier(certsDir, requireOperatingTier)
 }
