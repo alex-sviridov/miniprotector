@@ -294,7 +294,10 @@ func verifyChainOnly(caPool *x509.CertPool) func([][]byte, [][]*x509.Certificate
 }
 
 func clientTLSConfigWithIdentity(certsDir, certFile, keyFile, host string) (*tls.Config, error) {
-	if _, err := loadIdentityCertFiles(certsDir, certFile, keyFile); err != nil {
+	cache := newCachedIdentity(certsDir, certFile, keyFile)
+	// Fail fast at build time if certsDir is missing/broken, rather than
+	// only on the first dial. This also warms the cache.
+	if _, err := cache.Get(); err != nil {
 		return nil, err
 	}
 	caPool, err := loadCAPool(certsDir)
@@ -303,7 +306,7 @@ func clientTLSConfigWithIdentity(certsDir, certFile, keyFile, host string) (*tls
 	}
 
 	getClientCert := func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-		cert, err := loadIdentityCertFiles(certsDir, certFile, keyFile)
+		cert, err := cache.Get()
 		if err != nil {
 			return nil, err
 		}
@@ -372,8 +375,9 @@ func ServerTLSConfig(certsDir string) (*tls.Config, error) {
 // HTTP client built directly on net/http (e.g. api-server dialing
 // log-gateway's query_range proxy route) instead of gRPC. Presents the
 // standard client.crt/client.key identity; same hostname/chain
-// verification rules as LoadClientCredentials, including per-handshake
-// certificate reload via GetClientCertificate.
+// verification rules as LoadClientCredentials, including the same cached,
+// TTL-and-expiry-bounded certificate reload via GetClientCertificate -- see
+// cachedIdentity.
 func ClientTLSConfig(certsDir, host string) (*tls.Config, error) {
 	return clientTLSConfig(certsDir, host)
 }
