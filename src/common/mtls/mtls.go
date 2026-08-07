@@ -12,6 +12,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc/credentials"
 )
@@ -92,6 +94,112 @@ func loadIdentityCertFiles(certsDir, certFile, keyFile string) (tls.Certificate,
 
 func loadIdentityCert(certsDir string) (tls.Certificate, error) {
 	return loadIdentityCertFiles(certsDir, identCertFile, identKeyFile)
+}
+
+// identityCacheTTL bounds how long cachedIdentity trusts an in-memory
+// identity before re-checking disk. See
+// docs/superpowers/specs/2026-08-07-mtls-credential-caching-design.md.
+const identityCacheTTL = 60 * time.Second
+
+// cachedIdentity caches a parsed tls.Certificate in memory, re-reading from
+// disk only once its validity window has elapsed -- capped at
+// identityCacheTTL or the certificate's own NotAfter, whichever is sooner --
+// and even then only re-parsing if the underlying files' mtimes actually
+// changed. This replaces a full disk read-and-parse on every single TLS
+// handshake with, in the common case, a single mutex-guarded memory read.
+//
+// Works identically whether the process that rewrites certFile/keyFile is
+// this same process (issuer's self-mint) or a different one (agent execing
+// certclient operating-refresh) -- it only ever observes the filesystem,
+// never assumes a push from the writer.
+type cachedIdentity struct {
+	certsDir, certFile, keyFile string
+	now                         func() time.Time // time.Now in production; injectable for tests
+
+	mu         sync.Mutex
+	loaded     bool
+	cert       tls.Certificate
+	crtModTime time.Time
+	keyModTime time.Time
+	validUntil time.Time
+}
+
+func newCachedIdentity(certsDir, certFile, keyFile string) *cachedIdentity {
+	return &cachedIdentity{
+		certsDir: certsDir,
+		certFile: certFile,
+		keyFile:  keyFile,
+		now:      time.Now,
+	}
+}
+
+// Get returns the cached identity, refreshing it from disk first if the
+// cache's validity window has elapsed. On a reload failure, it falls back
+// to the last known-good identity (if any) rather than failing the caller,
+// and deliberately leaves validUntil unadvanced so the very next call
+// retries -- self-healing without ever failing a live handshake on a
+// transient disk error.
+func (c *cachedIdentity) Get() (tls.Certificate, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := c.now()
+	if c.loaded && now.Before(c.validUntil) {
+		return c.cert, nil
+	}
+
+	crtPath := filepath.Join(c.certsDir, c.certFile)
+	keyPath := filepath.Join(c.certsDir, c.keyFile)
+
+	if c.loaded {
+		crtInfo, crtErr := os.Stat(crtPath)
+		keyInfo, keyErr := os.Stat(keyPath)
+		if crtErr == nil && keyErr == nil &&
+			crtInfo.ModTime().Equal(c.crtModTime) && keyInfo.ModTime().Equal(c.keyModTime) {
+			c.validUntil = c.nextValidUntil(now)
+			return c.cert, nil
+		}
+	}
+
+	cert, err := tls.LoadX509KeyPair(crtPath, keyPath)
+	if err != nil {
+		if c.loaded {
+			return c.cert, nil
+		}
+		return tls.Certificate{}, err
+	}
+	crtInfo, err := os.Stat(crtPath)
+	if err != nil {
+		if c.loaded {
+			return c.cert, nil
+		}
+		return tls.Certificate{}, err
+	}
+	keyInfo, err := os.Stat(keyPath)
+	if err != nil {
+		if c.loaded {
+			return c.cert, nil
+		}
+		return tls.Certificate{}, err
+	}
+
+	c.cert = cert
+	c.crtModTime = crtInfo.ModTime()
+	c.keyModTime = keyInfo.ModTime()
+	c.loaded = true
+	c.validUntil = c.nextValidUntil(now)
+	return c.cert, nil
+}
+
+// nextValidUntil caps the cache's validity window at c.cert's own
+// expiration, so a near-expiry certificate gets re-checked sooner than a
+// fresh one -- never serving a certificate past its own NotAfter.
+func (c *cachedIdentity) nextValidUntil(now time.Time) time.Time {
+	ttl := now.Add(identityCacheTTL)
+	if c.cert.Leaf != nil && c.cert.Leaf.NotAfter.Before(ttl) {
+		return c.cert.Leaf.NotAfter
+	}
+	return ttl
 }
 
 func loadCAPool(certsDir string) (*x509.CertPool, error) {
