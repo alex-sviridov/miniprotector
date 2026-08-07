@@ -9,10 +9,12 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,6 +109,68 @@ func dial(addr string, cfg *tls.Config) error {
 	return err
 }
 
+// dialAndCapturePeerCert dials addr directly via tls.Dial (rather than the
+// error-only dial() helper) so the caller can inspect the certificate the
+// peer actually presented during this specific handshake -- the only way to
+// distinguish "GetCertificate/GetClientCertificate consults the cache on
+// every call" from "captured a certificate once at config-build time and
+// never looked again".
+func dialAndCapturePeerCert(t *testing.T, addr string, cfg *tls.Config) *x509.Certificate {
+	t.Helper()
+	conn, err := tls.Dial("tcp", addr, cfg)
+	require.NoError(t, err)
+	defer conn.Close()
+	state := conn.ConnectionState()
+	require.NotEmpty(t, state.PeerCertificates, "handshake must have completed and presented at least one peer certificate")
+	return state.PeerCertificates[0]
+}
+
+// startPeerCapturingListener is startListener, plus it records the first
+// PeerCertificate presented by each client that completes a handshake --
+// used by client-side rotation tests to inspect what the client actually
+// presented, since the client itself has no ConnectionState of its own peer
+// cert to inspect.
+func startPeerCapturingListener(t *testing.T, cfg *tls.Config) (addr string, captured func() []*x509.Certificate) {
+	t.Helper()
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+
+	var mu sync.Mutex
+	var certs []*x509.Certificate
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				tlsConn := c.(*tls.Conn)
+				if err := tlsConn.Handshake(); err != nil {
+					return
+				}
+				state := tlsConn.ConnectionState()
+				if len(state.PeerCertificates) > 0 {
+					mu.Lock()
+					certs = append(certs, state.PeerCertificates[0])
+					mu.Unlock()
+				}
+				c.Write([]byte("ok"))
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String(), func() []*x509.Certificate {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]*x509.Certificate, len(certs))
+		copy(out, certs)
+		return out
+	}
+}
+
 func TestHandshake_LoopbackHostSkipsHostnameCheck(t *testing.T) {
 	addr := startTestServer(t, fixtureCertsDir)
 	for _, host := range []string{"localhost", "127.0.0.1"} {
@@ -155,51 +219,42 @@ func copyCertsDir(t *testing.T, src string) string {
 	return dst
 }
 
-func TestServerTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
+func TestServerTLSConfig_CachesCertificateWithinTTL(t *testing.T) {
 	dir := copyCertsDir(t, fixtureCertsDir)
 	addr := startTestServer(t, dir)
 
 	clientCfg, err := clientTLSConfig(fixtureCertsDir, "bwfs.internal")
 	require.NoError(t, err)
 
-	// Baseline: valid cert on disk, handshake succeeds.
+	// Baseline: valid cert on disk, handshake succeeds and warms the cache.
 	require.NoError(t, dial(addr, clientCfg))
 
 	// Corrupt the server's identity cert on disk without restarting the
-	// listener. If GetCertificate were caching the cert captured when
-	// serverTLSConfig was built instead of re-reading, this would still
-	// succeed.
+	// listener. Before caching, GetCertificate re-read on every handshake
+	// and this dial would now fail; the cache is still within its TTL
+	// window, so it serves the in-memory copy instead of touching disk.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), []byte("not a cert"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), []byte("not a key"), 0o600))
-	assert.Error(t, dial(addr, clientCfg))
-
-	// Restore a valid cert — proves this is a live re-read, not a one-time
-	// failure that got cached.
-	copyFile(t, fixtureCertsDir+"/client.crt", filepath.Join(dir, "client.crt"))
-	copyFile(t, fixtureCertsDir+"/client.key", filepath.Join(dir, "client.key"))
-	assert.NoError(t, dial(addr, clientCfg))
+	assert.NoError(t, dial(addr, clientCfg), "a corrupted file within the cache TTL must not affect a live handshake")
 }
 
-func TestClientTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
+func TestClientTLSConfig_CachesCertificateWithinTTL(t *testing.T) {
 	dir := copyCertsDir(t, fixtureCertsDir)
 	cfg, err := clientTLSConfig(dir, "bwfs.internal")
 	require.NoError(t, err)
 
 	addr := startTestServer(t, fixtureCertsDir)
 
-	// Baseline succeeds.
+	// Baseline succeeds and warms the cache.
 	require.NoError(t, dial(addr, cfg))
 
-	// Corrupt the client's identity cert on disk. The test server requires
-	// and verifies client certs, so a stale-cached client cert would still
-	// dial successfully if GetClientCertificate weren't re-reading.
+	// Corrupt the client's identity cert on disk. Before caching,
+	// GetClientCertificate re-read on every dial and this would now fail;
+	// the cache is still within its TTL window, so it presents the
+	// in-memory copy instead.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), []byte("not a cert"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), []byte("not a key"), 0o600))
-	assert.Error(t, dial(addr, cfg))
-
-	copyFile(t, fixtureCertsDir+"/client.crt", filepath.Join(dir, "client.crt"))
-	copyFile(t, fixtureCertsDir+"/client.key", filepath.Join(dir, "client.key"))
-	assert.NoError(t, dial(addr, cfg))
+	assert.NoError(t, dial(addr, cfg), "a corrupted file within the cache TTL must not affect a live dial")
 }
 
 func TestLoadClientCredentialsWithIdentity_Success(t *testing.T) {
@@ -294,6 +349,248 @@ func writeTestCertsDir(t *testing.T, ca *x509.Certificate, serverIdentity tls.Ce
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
 
 	return dir
+}
+
+// writeIdentityToDir overwrites dir's client.crt/client.key (but leaves
+// ca.crt untouched) with identity -- used to simulate an on-disk rotation
+// against an existing certsDir built by writeTestCertsDir, without minting a
+// brand new CA/dir pair.
+func writeIdentityToDir(t *testing.T, dir string, identity tls.Certificate) {
+	t.Helper()
+	var chainPEM []byte
+	for _, der := range identity.Certificate {
+		chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), chainPEM, 0o600))
+
+	ecKey, ok := identity.PrivateKey.(*ecdsa.PrivateKey)
+	require.True(t, ok)
+	keyDER, err := x509.MarshalECPrivateKey(ecKey)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
+}
+
+// genAndWriteIdentity is writeSelfSignedIdentity's logic factored out as a
+// plain error-returning function with no *testing.T dependency, so it can
+// safely be called from a goroutine spawned by a test (testify's
+// require.*/FailNow must only ever be called from the goroutine running the
+// test function itself -- see TestCachedIdentity_ConcurrentGetIsRaceFree,
+// which rotates identities from a background goroutine).
+func genAndWriteIdentity(dir, certFile, keyFile string, notAfter time.Time) error {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "cache-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     notAfter,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, certFile), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		return err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, keyFile), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
+}
+
+// writeSelfSignedIdentity writes a minimal, self-signed EC cert/key pair to
+// certFile/keyFile inside dir, valid until notAfter. cachedIdentity's tests
+// exercise Get() directly and never perform a real TLS handshake, so no CA
+// chain is needed -- just a well-formed, parseable pair.
+func writeSelfSignedIdentity(t *testing.T, dir, certFile, keyFile string, notAfter time.Time) {
+	t.Helper()
+	require.NoError(t, genAndWriteIdentity(dir, certFile, keyFile, notAfter))
+}
+
+func TestCachedIdentity_FirstGetLoadsFromDisk(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cert, err := cache.Get()
+	require.NoError(t, err)
+	assert.NotEmpty(t, cert.Certificate)
+}
+
+func TestCachedIdentity_FirstLoadFailurePropagates(t *testing.T) {
+	dir := t.TempDir()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	_, err := cache.Get()
+	assert.Error(t, err, "with no prior successful load, a load failure must propagate")
+}
+
+func TestCachedIdentity_WithinTTLServesFromMemoryWithoutDiskIO(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	// Corrupt the files on disk. If Get() touched disk again, this would
+	// either error (corrupt content) or return a different certificate.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, identCertFile), []byte("not a cert"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, identKeyFile), []byte("not a key"), 0o600))
+
+	fakeNow = fakeNow.Add(30 * time.Second) // still within the 60s TTL
+	second, err := cache.Get()
+	require.NoError(t, err)
+	assert.Equal(t, first.Certificate, second.Certificate, "within the TTL window, Get() must not re-read disk")
+}
+
+func TestCachedIdentity_TTLElapsedButMtimeUnchanged_SkipsReparsing(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	crtPath := filepath.Join(dir, identCertFile)
+	keyPath := filepath.Join(dir, identKeyFile)
+	crtInfo, err := os.Stat(crtPath)
+	require.NoError(t, err)
+	keyInfo, err := os.Stat(keyPath)
+	require.NoError(t, err)
+
+	// Corrupt the content but restore the original mtimes -- proves the
+	// unchanged-mtime path trusts mtime and genuinely skips reparsing,
+	// rather than happening to reparse identical bytes back to the same
+	// result. If it *did* reparse, this corrupted content would error.
+	require.NoError(t, os.WriteFile(crtPath, []byte("not a cert"), 0o644))
+	require.NoError(t, os.Chtimes(crtPath, crtInfo.ModTime(), crtInfo.ModTime()))
+	require.NoError(t, os.WriteFile(keyPath, []byte("not a key"), 0o600))
+	require.NoError(t, os.Chtimes(keyPath, keyInfo.ModTime(), keyInfo.ModTime()))
+
+	fakeNow = fakeNow.Add(90 * time.Second) // past the 60s TTL
+	second, err := cache.Get()
+	require.NoError(t, err, "mtime unchanged, so Get() must not attempt to reparse the (corrupted) content")
+	assert.Equal(t, first.Certificate, second.Certificate)
+}
+
+func TestCachedIdentity_MtimeChanged_Reloads(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(2*time.Hour))
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future, future))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identKeyFile), future, future))
+
+	fakeNow = fakeNow.Add(90 * time.Second)
+	second, err := cache.Get()
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Certificate, second.Certificate, "a genuinely rotated file must be picked up once the TTL has elapsed")
+}
+
+func TestCachedIdentity_TTLCappedByCertExpiration(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Now()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, start.Add(10*time.Second)) // expires well inside the 60s TTL
+
+	fakeNow := start
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	// Rotate to a fresh, longer-lived cert, advancing the clock only 20s --
+	// past the certificate's own 10s NotAfter, but well within a flat 60s
+	// TTL. If validUntil were capped only at now()+60s, this would still
+	// serve the already-expired cached cert.
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, start.Add(time.Hour))
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future, future))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identKeyFile), future, future))
+
+	fakeNow = start.Add(20 * time.Second)
+	second, err := cache.Get()
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Certificate, second.Certificate, "validUntil must be capped at the cached cert's own NotAfter, not just now()+60s")
+}
+
+func TestCachedIdentity_ReloadFailureWithExistingCache_FallsBackAndRetriesNextCall(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	fakeNow := time.Now()
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+
+	// Corrupt content AND change mtime, so a reload is actually attempted
+	// and fails.
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, identCertFile), []byte("not a cert"), 0o644))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future, future))
+
+	fakeNow = fakeNow.Add(90 * time.Second)
+	second, err := cache.Get()
+	require.NoError(t, err, "a reload failure must fall back to the last known-good identity, not fail the caller")
+	assert.Equal(t, first.Certificate, second.Certificate)
+
+	// Restore a valid, genuinely different cert. Because validUntil was
+	// left unadvanced by the failed reload, the very next call must retry
+	// immediately rather than waiting out another TTL window.
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(2*time.Hour))
+	future2 := time.Now().Add(2 * time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future2, future2))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identKeyFile), future2, future2))
+
+	third, err := cache.Get() // fakeNow unchanged since the previous call
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Certificate, third.Certificate, "a failed reload must not advance validUntil, so the next call retries immediately")
+}
+
+func TestCachedIdentity_ReloadFailureAfterExpiry_PropagatesError(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Now()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, start.Add(10*time.Second)) // expires well inside the 60s TTL
+
+	fakeNow := start
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	cache.now = func() time.Time { return fakeNow }
+
+	first, err := cache.Get()
+	require.NoError(t, err)
+	require.NotEmpty(t, first.Certificate)
+
+	// Corrupt content AND change mtime, so a reload is actually attempted
+	// and fails.
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, identCertFile), []byte("not a cert"), 0o644))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, identCertFile), future, future))
+
+	// Advance past both the cached cert's own NotAfter (start+10s) and its
+	// validUntil. With the cert already expired, the failed reload must not
+	// silently fall back to serving it -- it must propagate an error.
+	fakeNow = start.Add(20 * time.Second)
+	_, err = cache.Get()
+	assert.Error(t, err, "a reload failure must not fall back to an already-expired cached certificate")
 }
 
 func peerConfig(caPool *x509.CertPool, peerCert tls.Certificate) *tls.Config {
@@ -416,7 +713,7 @@ func TestClientTLSConfig_Success(t *testing.T) {
 	cfg, err := ClientTLSConfig(fixtureCertsDir, "bwfs.internal")
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.NotNil(t, cfg.GetClientCertificate, "must present this node's identity via GetClientCertificate for cert-reload-on-handshake, same as clientTLSConfig")
+	assert.NotNil(t, cfg.GetClientCertificate, "must present this node's identity via GetClientCertificate, same as clientTLSConfig")
 }
 
 func TestClientTLSConfig_MissingCAFile(t *testing.T) {
@@ -427,4 +724,178 @@ func TestClientTLSConfig_MissingCAFile(t *testing.T) {
 
 	_, err := ClientTLSConfig(dir, "bwfs.internal")
 	assert.Error(t, err)
+}
+
+// TestServerTLSConfig_PicksUpRotatedCertificateAfterTTL proves the server
+// side actually consults cachedIdentity on every handshake rather than
+// capturing a certificate once at config-build time: it inspects the
+// concrete certificate presented on the wire (not just "did the dial
+// succeed", which TestServerTLSConfig_CachesCertificateWithinTTL already
+// covers), before and after a rotation that crosses the cache TTL.
+func TestServerTLSConfig_PicksUpRotatedCertificateAfterTTL(t *testing.T) {
+	ca, caKey := generateTestCA(t)
+	firstIdentity := generateTestLeaf(t, ca, caKey, "tier-test-server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, nil)
+	dir := writeTestCertsDir(t, ca, firstIdentity)
+
+	fakeNow := time.Now()
+	cfg, err := serverTLSConfigForTierWithClock(dir, requireOperatingTier, func() time.Time { return fakeNow })
+	require.NoError(t, err)
+	addr := startListener(t, cfg)
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+	clientCert := generateTestLeaf(t, ca, caKey, "peer", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil)
+	clientCfg := peerConfig(caPool, clientCert)
+
+	firstLeaf, err := x509.ParseCertificate(firstIdentity.Certificate[0])
+	require.NoError(t, err)
+	firstPresented := dialAndCapturePeerCert(t, addr, clientCfg)
+	assert.Equal(t, firstLeaf.Raw, firstPresented.Raw, "first dial must present the initial identity")
+
+	// Mint a second identity signed by the SAME CA, so chain trust is
+	// unaffected -- this isolates "did the cache pick up the new cert" from
+	// "does chain verification still work".
+	secondIdentity := generateTestLeaf(t, ca, caKey, "tier-test-server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, nil)
+	writeIdentityToDir(t, dir, secondIdentity)
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "client.crt"), future, future))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "client.key"), future, future))
+
+	fakeNow = fakeNow.Add(90 * time.Second) // past the 60s TTL
+
+	secondLeaf, err := x509.ParseCertificate(secondIdentity.Certificate[0])
+	require.NoError(t, err)
+	secondPresented := dialAndCapturePeerCert(t, addr, clientCfg)
+	assert.Equal(t, secondLeaf.Raw, secondPresented.Raw, "second dial after the TTL must present the rotated identity")
+	assert.NotEqual(t, firstPresented.Raw, secondPresented.Raw)
+}
+
+// TestClientTLSConfig_PicksUpRotatedCertificateAfterTTL is
+// TestServerTLSConfig_PicksUpRotatedCertificateAfterTTL's mirror for the
+// client (GetClientCertificate) side: it inspects, via a peer-capturing test
+// server, the concrete client certificate presented on the wire before and
+// after a rotation that crosses the cache TTL.
+func TestClientTLSConfig_PicksUpRotatedCertificateAfterTTL(t *testing.T) {
+	ca, caKey := generateTestCA(t)
+	firstIdentity := generateTestLeaf(t, ca, caKey, "client-rotation-test", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil)
+	dir := writeTestCertsDir(t, ca, firstIdentity)
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+	serverIdentity := generateTestLeaf(t, ca, caKey, "server-for-rotation-test", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, nil)
+	serverCfg := &tls.Config{
+		Certificates: []tls.Certificate{serverIdentity},
+		ClientCAs:    caPool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+	}
+	addr, capturedCerts := startPeerCapturingListener(t, serverCfg)
+
+	fakeNow := time.Now()
+	clientCfg, err := clientTLSConfigWithIdentityAndClock(dir, "client.crt", "client.key", "localhost", func() time.Time { return fakeNow })
+	require.NoError(t, err)
+
+	require.NoError(t, dial(addr, clientCfg))
+
+	firstLeaf, err := x509.ParseCertificate(firstIdentity.Certificate[0])
+	require.NoError(t, err)
+	certs := capturedCerts()
+	require.Len(t, certs, 1)
+	assert.Equal(t, firstLeaf.Raw, certs[0].Raw, "first dial must present the initial identity")
+
+	// Mint a second identity signed by the SAME CA, so chain trust is
+	// unaffected.
+	secondIdentity := generateTestLeaf(t, ca, caKey, "client-rotation-test", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil)
+	writeIdentityToDir(t, dir, secondIdentity)
+	future := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "client.crt"), future, future))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "client.key"), future, future))
+
+	fakeNow = fakeNow.Add(90 * time.Second) // past the 60s TTL
+
+	require.NoError(t, dial(addr, clientCfg))
+
+	secondLeaf, err := x509.ParseCertificate(secondIdentity.Certificate[0])
+	require.NoError(t, err)
+	certs = capturedCerts()
+	require.Len(t, certs, 2)
+	assert.Equal(t, secondLeaf.Raw, certs[1].Raw, "second dial after the TTL must present the rotated identity")
+	assert.NotEqual(t, certs[0].Raw, certs[1].Raw)
+}
+
+// TestCachedIdentity_ConcurrentGetIsRaceFree hammers a single cachedIdentity
+// with many concurrent Get() callers while another goroutine concurrently
+// rotates the underlying files a few times. It asserts nothing about which
+// specific certificate a given Get() call sees -- concurrent rotations make
+// that inherently racy at the application level -- only that every call
+// returns a well-formed certificate with no error, and, when run with
+// `go test -race`, that the race detector finds nothing. This is the
+// permanent, committed form of the ad-hoc concurrency probe the final
+// whole-branch review ran by hand.
+func TestCachedIdentity_ConcurrentGetIsRaceFree(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedIdentity(t, dir, identCertFile, identKeyFile, time.Now().Add(time.Hour))
+
+	cache := newCachedIdentity(dir, identCertFile, identKeyFile)
+	// A real, fast-moving clock (not a fake one) so the cache's TTL window
+	// actually elapses partway through the test, forcing readers and the
+	// rotator to race on real reload attempts rather than only ever hitting
+	// the within-TTL fast path.
+	cache.now = time.Now
+
+	const numReaders = 25
+	const readIterations = 200
+	const numRotations = 5
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, numReaders*readIterations)
+
+	for i := 0; i < numReaders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < readIterations; j++ {
+				cert, err := cache.Get()
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(cert.Certificate) == 0 {
+					errCh <- fmt.Errorf("Get() returned an empty certificate")
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Deliberately does not use t/require: testify's FailNow (which
+		// require.* calls on failure) must only be invoked from the
+		// goroutine running the test function itself, never from a
+		// goroutine spawned by the test -- so file-write errors here are
+		// reported through errCh instead, same as the readers above.
+		for r := 0; r < numRotations; r++ {
+			time.Sleep(time.Millisecond)
+			if err := genAndWriteIdentity(dir, identCertFile, identKeyFile, time.Now().Add(time.Hour)); err != nil {
+				errCh <- fmt.Errorf("rotation write failed: %w", err)
+				return
+			}
+			now := time.Now()
+			if err := os.Chtimes(filepath.Join(dir, identCertFile), now, now); err != nil {
+				errCh <- fmt.Errorf("rotation chtimes failed: %w", err)
+				return
+			}
+			if err := os.Chtimes(filepath.Join(dir, identKeyFile), now, now); err != nil {
+				errCh <- fmt.Errorf("rotation chtimes failed: %w", err)
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("concurrent Get() failed: %v", err)
+	}
 }

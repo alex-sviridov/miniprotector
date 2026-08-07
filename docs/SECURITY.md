@@ -37,6 +37,14 @@ lie in.
 additive, parameterized on which cert/key filenames to load — which is what makes the two-tier
 credential model below possible without touching every existing caller's code path.
 
+Each node's own identity cert/key pair is cached in memory rather than re-read from disk on every
+connection: `GetCertificate`/`GetClientCertificate` re-check the files at most once every 60
+seconds (sooner if the cached certificate is close to its own expiry), and only actually reload
+when the files' modification time has changed. A locally-rotated identity therefore takes effect
+within at most 60 seconds instead of instantly. This has no bearing on revocation, which is
+enforced separately and centrally — see below — since a cached identity is still just a certificate
+the peer verifies independently, on its own merits, on every single handshake.
+
 ## The two-tier credential model
 
 Every enrolled node holds **two** distinct certificates in the same certs directory

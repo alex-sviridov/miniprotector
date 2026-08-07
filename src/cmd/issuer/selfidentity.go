@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/alex-sviridov/miniprotector/common/atomicfile"
 )
 
 func mintSelfIdentity(hostname, certsDir, rootFile string, mint mintAndSignFunc, ttlSec int) error {
@@ -46,24 +48,63 @@ func mintSelfIdentity(hostname, certsDir, rootFile string, mint mintAndSignFunc,
 		return fmt.Errorf("mint and sign self identity: %w", err)
 	}
 
-	if err := os.MkdirAll(certsDir, 0o700); err != nil {
-		return fmt.Errorf("create certs dir: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(certsDir, "ca.crt"), rootPEM, 0o644); err != nil {
-		return fmt.Errorf("write ca.crt: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(certsDir, "client.crt"), chainPEM, 0o644); err != nil {
-		return fmt.Errorf("write client.crt: %w", err)
-	}
-
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		return fmt.Errorf("marshal key: %w", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(filepath.Join(certsDir, "client.key"), keyPEM, 0o600); err != nil {
-		return fmt.Errorf("write client.key: %w", err)
+
+	// atomicfile.Write's own MkdirAll uses 0o755; create certsDir with the
+	// tighter 0o700 first (it holds client.key) -- MkdirAll is a no-op on an
+	// already-existing directory, so this mode wins.
+	if err := os.MkdirAll(certsDir, 0o700); err != nil {
+		return fmt.Errorf("create certs dir: %w", err)
+	}
+	if err := atomicfile.Write(filepath.Join(certsDir, "ca.crt"), rootPEM); err != nil {
+		return fmt.Errorf("write ca.crt: %w", err)
 	}
 
+	// mtls.go's GetCertificate caches client.crt/client.key in memory,
+	// reloading from disk at most once every 60s (or sooner if the cached
+	// cert is close to its own expiry) -- but the two must still never be
+	// left mismatched on disk: a stale cert paired with a fresh key (or vice
+	// versa) fails every reload attempt once the cache's window elapses,
+	// falling back to the last known-good identity until the files are
+	// rewritten together. Writing them as two independent os.WriteFile
+	// calls (even atomic ones) doesn't fix this: whichever file commits
+	// second is still exposed if the write in between fails. Stage both
+	// file's data into temp files first -- any failure here (disk full,
+	// permission error, process killed) never touches a live file -- then
+	// commit with two adjacent renames, shrinking the risk window from "the
+	// entire duration of writing both files" to the gap between two
+	// metadata-only syscalls.
+	if err := commitClientIdentity(certsDir, chainPEM, keyPEM); err != nil {
+		return fmt.Errorf("commit client identity: %w", err)
+	}
+
+	return nil
+}
+
+func commitClientIdentity(certsDir string, chainPEM, keyPEM []byte) error {
+	crtPath := filepath.Join(certsDir, "client.crt")
+	keyPath := filepath.Join(certsDir, "client.key")
+	crtTmp := crtPath + ".tmp"
+	keyTmp := keyPath + ".tmp"
+
+	if err := os.WriteFile(crtTmp, chainPEM, 0o644); err != nil {
+		return fmt.Errorf("stage client.crt: %w", err)
+	}
+	if err := os.WriteFile(keyTmp, keyPEM, 0o600); err != nil {
+		os.Remove(crtTmp)
+		return fmt.Errorf("stage client.key: %w", err)
+	}
+	if err := os.Rename(keyTmp, keyPath); err != nil {
+		os.Remove(crtTmp)
+		os.Remove(keyTmp)
+		return fmt.Errorf("commit client.key: %w", err)
+	}
+	if err := os.Rename(crtTmp, crtPath); err != nil {
+		return fmt.Errorf("commit client.crt: %w", err)
+	}
 	return nil
 }

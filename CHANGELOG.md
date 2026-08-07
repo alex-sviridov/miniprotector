@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-07 — mtls: cache identity certificates instead of re-reading per connection
+
+`common/mtls`'s `GetCertificate`/`GetClientCertificate` callbacks read and parsed
+`client.crt`/`client.key` from disk on every single TLS handshake and outbound dial. Both now go
+through a small in-memory cache (`cachedIdentity`) bounded by a fixed 60s TTL and the certificate's
+own expiration, re-reading from disk only when that window has elapsed and the underlying files'
+mtimes actually changed. A reload failure now falls back to the last known-good identity instead of
+failing the live handshake outright, retrying on the next call. See
+`docs/superpowers/specs/2026-08-07-mtls-credential-caching-design.md`.
+
+## 2026-08-07 — issuer: fix self-cert-refresh leaving a permanently mismatched identity
+
+`issuer`'s daily self-cert-refresh wrote `client.crt` and `client.key` with two independent
+`os.WriteFile` calls. Since `common/mtls` reloaded both files from disk on every TLS handshake at
+the time (not just at startup; a bounded in-memory cache was added afterward, see the entry above),
+any interruption between the two writes — disk pressure, a permission error, the
+process being killed mid-write — could leave `client.crt` holding the new certificate while
+`client.key` still held the old private key, permanently failing every subsequent handshake until a
+full restart. `mintSelfIdentity` now stages both files into temp files first and commits them via
+two adjacent renames, so a failure while writing data never touches a live file.
+
 ## 2026-08-06 — e2e: add client lifecycle test (revoke/reissue, policy, job, catalog)
 
 Adds `TestE2E_ClientLifecycle` alongside the existing demo-web-UI smoke test: revokes and reissues
