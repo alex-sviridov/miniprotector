@@ -174,26 +174,23 @@ func TestServerTLSConfig_CachesCertificateWithinTTL(t *testing.T) {
 	assert.NoError(t, dial(addr, clientCfg), "a corrupted file within the cache TTL must not affect a live handshake")
 }
 
-func TestClientTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
+func TestClientTLSConfig_CachesCertificateWithinTTL(t *testing.T) {
 	dir := copyCertsDir(t, fixtureCertsDir)
 	cfg, err := clientTLSConfig(dir, "bwfs.internal")
 	require.NoError(t, err)
 
 	addr := startTestServer(t, fixtureCertsDir)
 
-	// Baseline succeeds.
+	// Baseline succeeds and warms the cache.
 	require.NoError(t, dial(addr, cfg))
 
-	// Corrupt the client's identity cert on disk. The test server requires
-	// and verifies client certs, so a stale-cached client cert would still
-	// dial successfully if GetClientCertificate weren't re-reading.
+	// Corrupt the client's identity cert on disk. Before caching,
+	// GetClientCertificate re-read on every dial and this would now fail;
+	// the cache is still within its TTL window, so it presents the
+	// in-memory copy instead.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), []byte("not a cert"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), []byte("not a key"), 0o600))
-	assert.Error(t, dial(addr, cfg))
-
-	copyFile(t, fixtureCertsDir+"/client.crt", filepath.Join(dir, "client.crt"))
-	copyFile(t, fixtureCertsDir+"/client.key", filepath.Join(dir, "client.key"))
-	assert.NoError(t, dial(addr, cfg))
+	assert.NoError(t, dial(addr, cfg), "a corrupted file within the cache TTL must not affect a live dial")
 }
 
 func TestLoadClientCredentialsWithIdentity_Success(t *testing.T) {
@@ -588,7 +585,7 @@ func TestClientTLSConfig_Success(t *testing.T) {
 	cfg, err := ClientTLSConfig(fixtureCertsDir, "bwfs.internal")
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.NotNil(t, cfg.GetClientCertificate, "must present this node's identity via GetClientCertificate for cert-reload-on-handshake, same as clientTLSConfig")
+	assert.NotNil(t, cfg.GetClientCertificate, "must present this node's identity via GetClientCertificate, same as clientTLSConfig")
 }
 
 func TestClientTLSConfig_MissingCAFile(t *testing.T) {
