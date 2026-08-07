@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-07 — mtls: cache identity certificates instead of re-reading per connection
+
+`common/mtls`'s `GetCertificate`/`GetClientCertificate` callbacks read and parsed
+`client.crt`/`client.key` from disk on every single TLS handshake and outbound dial. Both now go
+through a small in-memory cache (`cachedIdentity`) bounded by a fixed 60s TTL and the certificate's
+own expiration, re-reading from disk only when that window has elapsed and the underlying files'
+mtimes actually changed. A reload failure now falls back to the last known-good identity instead of
+failing the live handshake outright, retrying on the next call. See
+`docs/superpowers/specs/2026-08-07-mtls-credential-caching-design.md`.
+
 ## 2026-08-07 — issuer: fix self-cert-refresh leaving a permanently mismatched identity
 
 `issuer`'s daily self-cert-refresh wrote `client.crt` and `client.key` with two independent
