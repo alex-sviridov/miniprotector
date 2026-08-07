@@ -124,10 +124,12 @@ var storageStabilityWindow = 3 * time.Second
 // Policy, so it gets its own small supervise loop -- modeled directly on
 // vector.go's vectorSupervisor. Two differences: no TriggerRestart (unlike
 // Vector, both bwfs and catalogsync already hot-reload their mTLS identity
-// cert on every handshake (bwfs via mtls.LoadServerCredentials's
+// cert without a restart (bwfs via mtls.LoadServerCredentials's
 // GetCertificate, catalogsync via mtls.LoadClientCredentials's
-// GetClientCertificate), so a cert-rotation-triggered restart would only add
-// disruption with no benefit), and an onOutcome callback so the supervised
+// GetClientCertificate -- each reload is bounded by a ~60s in-memory cache
+// rather than happening on literally every handshake, but no restart is
+// ever needed either way), so a cert-rotation-triggered restart would only
+// add disruption with no benefit), and an onOutcome callback so the supervised
 // process's state reaches agent-state.json via reconcileState.recordOutcome
 // (see storageManager in this same file).
 type storageSupervisor struct {

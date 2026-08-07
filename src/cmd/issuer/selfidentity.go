@@ -64,11 +64,13 @@ func mintSelfIdentity(hostname, certsDir, rootFile string, mint mintAndSignFunc,
 		return fmt.Errorf("write ca.crt: %w", err)
 	}
 
-	// mtls.go's GetCertificate reloads client.crt/client.key from disk on
-	// every TLS handshake, not just once at startup, so the two must never
-	// be left mismatched -- a stale cert paired with a fresh key (or vice
-	// versa) fails every subsequent handshake until the next scheduled
-	// refresh or a restart. Writing them as two independent os.WriteFile
+	// mtls.go's GetCertificate caches client.crt/client.key in memory,
+	// reloading from disk at most once every 60s (or sooner if the cached
+	// cert is close to its own expiry) -- but the two must still never be
+	// left mismatched on disk: a stale cert paired with a fresh key (or vice
+	// versa) fails every reload attempt once the cache's window elapses,
+	// falling back to the last known-good identity until the files are
+	// rewritten together. Writing them as two independent os.WriteFile
 	// calls (even atomic ones) doesn't fix this: whichever file commits
 	// second is still exposed if the write in between fails. Stage both
 	// file's data into temp files first -- any failure here (disk full,

@@ -79,8 +79,9 @@ func TestMintSelfIdentity_MissingRootFileErrors(t *testing.T) {
 // TestMintSelfIdentity_KeyWriteFailure_LeavesLiveFilesConsistent reproduces
 // the production incident: issuer's gRPC listener went silent ~24h into
 // uptime, right at its daily self-cert-refresh tick, and only a full
-// restart recovered it. mtls.go's GetCertificate reloads client.crt/
-// client.key from disk on every single handshake (not once at startup), so
+// restart recovered it. mtls.go's GetCertificate caches client.crt/
+// client.key in memory, reloading from disk only once its cache window
+// elapses (see cachedIdentity), so
 // if a refresh overwrites client.crt with a new cert but then fails before
 // writing the matching client.key (disk full, permission error, kill
 // signal -- anything interrupting the sequence), every subsequent
