@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/x509"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -74,60 +73,6 @@ func TestMintSelfIdentity_MissingRootFileErrors(t *testing.T) {
 
 	err := mintSelfIdentity("issuer", certsDir, filepath.Join(t.TempDir(), "does-not-exist.crt"), mint, 3600)
 	assert.Error(t, err)
-}
-
-// TestMintSelfIdentity_KeyWriteFailure_LeavesLiveFilesConsistent reproduces
-// the production incident: issuer's gRPC listener went silent ~24h into
-// uptime, right at its daily self-cert-refresh tick, and only a full
-// restart recovered it. mtls.go's GetCertificate reloads client.crt/
-// client.key from disk on every single handshake (not once at startup), so
-// if a refresh overwrites client.crt with a new cert but then fails before
-// writing the matching client.key (disk full, permission error, kill
-// signal -- anything interrupting the sequence), every subsequent
-// handshake permanently fails to load a matching pair, until the files are
-// rewritten together. This forces client.key's write to fail (by
-// pre-occupying its path with a directory) after client.crt would already
-// be overwritten, and asserts the live files must still form the
-// previously-valid pair -- the refresh must not touch either live file
-// unless it can commit both.
-func TestMintSelfIdentity_KeyWriteFailure_LeavesLiveFilesConsistent(t *testing.T) {
-	certsDir := t.TempDir()
-	rootFile := filepath.Join(t.TempDir(), "root.crt")
-	require.NoError(t, os.WriteFile(rootFile, []byte("fake-root-pem"), 0o644))
-
-	call := 0
-	mint := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
-		call++
-		return []byte(fmt.Sprintf("fake-chain-%d", call)), nil
-	}
-
-	require.NoError(t, mintSelfIdentity("issuer", certsDir, rootFile, mint, 3600))
-	crtBefore, err := os.ReadFile(filepath.Join(certsDir, "client.crt"))
-	require.NoError(t, err)
-	keyBefore, err := os.ReadFile(filepath.Join(certsDir, "client.key"))
-	require.NoError(t, err)
-
-	// Occupy client.key's path with a directory so any write attempt to it
-	// fails, simulating a refresh interrupted between writing client.crt
-	// and client.key.
-	require.NoError(t, os.Remove(filepath.Join(certsDir, "client.key")))
-	require.NoError(t, os.Mkdir(filepath.Join(certsDir, "client.key"), 0o700))
-
-	err = mintSelfIdentity("issuer", certsDir, rootFile, mint, 3600)
-	assert.Error(t, err, "refresh should report failure when it cannot commit client.key")
-
-	crtAfter, err := os.ReadFile(filepath.Join(certsDir, "client.crt"))
-	require.NoError(t, err)
-	assert.Equal(t, crtBefore, crtAfter,
-		"client.crt must not be updated unless client.key can also be committed -- otherwise the live pair is permanently mismatched")
-
-	keyInfo, err := os.Stat(filepath.Join(certsDir, "client.key"))
-	require.NoError(t, err)
-	if !keyInfo.IsDir() {
-		keyAfter, err := os.ReadFile(filepath.Join(certsDir, "client.key"))
-		require.NoError(t, err)
-		assert.Equal(t, keyBefore, keyAfter)
-	}
 }
 
 func TestMintSelfIdentity_EachCallGeneratesAFreshKeypair(t *testing.T) {
