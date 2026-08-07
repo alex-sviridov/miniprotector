@@ -232,8 +232,6 @@ func serverTLSConfig(certsDir string) (*tls.Config, error) {
 
 // serverTLSConfigForTier is serverTLSConfig, parameterized on which
 // credential tier the listener accepts from its peers.
-// serverTLSConfigForTier is serverTLSConfig, parameterized on which
-// credential tier the listener accepts from its peers.
 func serverTLSConfigForTier(certsDir string, tier requiredTier) (*tls.Config, error) {
 	cache := newCachedIdentity(certsDir, identCertFile, identKeyFile)
 	// Fail fast at build time if certsDir is missing/broken, rather than
