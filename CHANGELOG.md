@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-07 — issuer: fix self-cert-refresh leaving a permanently mismatched identity
+
+`issuer`'s daily self-cert-refresh wrote `client.crt` and `client.key` with two independent
+`os.WriteFile` calls. Since `common/mtls` reloads both files from disk on every TLS handshake (not
+just at startup), any interruption between the two writes — disk pressure, a permission error, the
+process being killed mid-write — could leave `client.crt` holding the new certificate while
+`client.key` still held the old private key, permanently failing every subsequent handshake until a
+full restart. `mintSelfIdentity` now stages both files into temp files first and commits them via
+two adjacent renames, so a failure while writing data never touches a live file.
+
 ## 2026-08-06 — e2e: add client lifecycle test (revoke/reissue, policy, job, catalog)
 
 Adds `TestE2E_ClientLifecycle` alongside the existing demo-web-UI smoke test: revokes and reissues
