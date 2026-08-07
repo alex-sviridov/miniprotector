@@ -155,29 +155,23 @@ func copyCertsDir(t *testing.T, src string) string {
 	return dst
 }
 
-func TestServerTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
+func TestServerTLSConfig_CachesCertificateWithinTTL(t *testing.T) {
 	dir := copyCertsDir(t, fixtureCertsDir)
 	addr := startTestServer(t, dir)
 
 	clientCfg, err := clientTLSConfig(fixtureCertsDir, "bwfs.internal")
 	require.NoError(t, err)
 
-	// Baseline: valid cert on disk, handshake succeeds.
+	// Baseline: valid cert on disk, handshake succeeds and warms the cache.
 	require.NoError(t, dial(addr, clientCfg))
 
 	// Corrupt the server's identity cert on disk without restarting the
-	// listener. If GetCertificate were caching the cert captured when
-	// serverTLSConfig was built instead of re-reading, this would still
-	// succeed.
+	// listener. Before caching, GetCertificate re-read on every handshake
+	// and this dial would now fail; the cache is still within its TTL
+	// window, so it serves the in-memory copy instead of touching disk.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.crt"), []byte("not a cert"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "client.key"), []byte("not a key"), 0o600))
-	assert.Error(t, dial(addr, clientCfg))
-
-	// Restore a valid cert — proves this is a live re-read, not a one-time
-	// failure that got cached.
-	copyFile(t, fixtureCertsDir+"/client.crt", filepath.Join(dir, "client.crt"))
-	copyFile(t, fixtureCertsDir+"/client.key", filepath.Join(dir, "client.key"))
-	assert.NoError(t, dial(addr, clientCfg))
+	assert.NoError(t, dial(addr, clientCfg), "a corrupted file within the cache TTL must not affect a live handshake")
 }
 
 func TestClientTLSConfig_ReloadsCertificateOnEachNewConnection(t *testing.T) {
