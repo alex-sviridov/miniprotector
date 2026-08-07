@@ -15,8 +15,9 @@ failing the live handshake outright, retrying on the next call. See
 ## 2026-08-07 — issuer: fix self-cert-refresh leaving a permanently mismatched identity
 
 `issuer`'s daily self-cert-refresh wrote `client.crt` and `client.key` with two independent
-`os.WriteFile` calls. Since `common/mtls` reloads both files from disk on every TLS handshake (not
-just at startup), any interruption between the two writes — disk pressure, a permission error, the
+`os.WriteFile` calls. Since `common/mtls` reloaded both files from disk on every TLS handshake at
+the time (not just at startup; a bounded in-memory cache was added afterward, see the entry above),
+any interruption between the two writes — disk pressure, a permission error, the
 process being killed mid-write — could leave `client.crt` holding the new certificate while
 `client.key` still held the old private key, permanently failing every subsequent handshake until a
 full restart. `mintSelfIdentity` now stages both files into temp files first and commits them via
