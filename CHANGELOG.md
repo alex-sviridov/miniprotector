@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-08 — storage: shared SQLite-open helper, fixed busy-timeout, catalog reader pool, context propagation
+
+`storage/catalog`, `storage/policyserver`, `storage/clientmanager`, and `storage/filesystem`'s
+`ReplicaReader` each hand-rolled their own SQLite-open sequence (directory creation, `database/sql`
+open via the modernc.org/sqlite driver, busy-timeout and WAL pragmas, GORM handoff, AutoMigrate).
+These now go through one shared `storage/sqlitedb.Open` helper. Building it surfaced a
+longstanding bug: the `_busy_timeout=N` DSN parameter every one of these stores used was silently
+ignored by modernc.org/sqlite, so every SQLite-backed store in the system had effectively had no
+busy-timeout protection -- concurrent access failed fast with `SQLITE_BUSY` instead of waiting
+gracefully. `sqlitedb.Open` sets the timeout correctly via `_pragma=busy_timeout(N)`, backed by
+regression tests. `storage/catalog` also gets a dedicated dual connection-pool topology -- a
+single writer plus a 4-connection read-only pool -- so its read-heavy query RPCs (`ListEntries`,
+the facet endpoints, `ListDirectoryChildren`) no longer serialize behind fleet-wide sync writes.
+Separately, `context.Context` now propagates from every gRPC handler down through these four
+stores' methods to the database call (for `clientmanager`'s CLI, which has no real cancellation
+source, from a documented `context.Background()`), so caller cancellation and deadlines actually
+take effect. `storage/filesystem`'s much larger backing store (`bwfs`/`brfs`) was explicitly out
+of scope for this pass. See
+`docs/superpowers/specs/2026-08-08-storage-connection-foundation-design.md`.
+
 ## 2026-08-08 — catalog: directory browsing UI
 
 The web catalog view is now a file-manager-style directory browser instead of a flat file list:

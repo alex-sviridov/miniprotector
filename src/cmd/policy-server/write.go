@@ -354,7 +354,13 @@ func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePol
 	// out on its own. Best-effort now prevents a recreated policy that
 	// reuses this deleted one's deterministic id (derived from its
 	// filename) from immediately inheriting its stale check-ins.
-	if err := s.checkins.DeleteForPolicy(ctx, req.GetId()); err != nil {
+	//
+	// Detached from ctx (context.WithoutCancel) rather than bound to it:
+	// this cleanup must still be attempted even if the caller has already
+	// disconnected or timed out by the time we get here -- exactly the
+	// scenario this comment is about -- so it can't be allowed to inherit
+	// the caller's cancellation.
+	if err := s.checkins.DeleteForPolicy(context.WithoutCancel(ctx), req.GetId()); err != nil {
 		s.logger.Error("DeletePolicy: failed to delete check-in rows", "id", req.GetId(), "error", err)
 	}
 

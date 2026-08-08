@@ -66,6 +66,7 @@ func Open(opts Options) (*gorm.DB, error) {
 		maxConns = 1
 	}
 	sqlDB.SetMaxOpenConns(maxConns)
+	sqlDB.SetMaxIdleConns(maxConns)
 
 	if !opts.ReadOnly {
 		if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {

@@ -3,6 +3,7 @@ package sqlitedb
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -60,6 +61,36 @@ func TestOpen_MaxConnsSetsPoolSize(t *testing.T) {
 	defer sqlDB.Close()
 
 	assert.Equal(t, 4, sqlDB.Stats().MaxOpenConnections)
+}
+
+func TestOpen_MaxIdleConnsMatchesMaxConns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(Options{Path: dbPath, Models: []any{&testRecord{}}, MaxConns: 4})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+
+	// database/sql.DBStats has no MaxIdleConnections field, so exercise
+	// the pool behaviorally: acquire and hold MaxConns connections at
+	// once, then release them all. database/sql's default MaxIdleConns
+	// is 2, so if Open didn't raise it to match MaxConns, only 2 of these
+	// would remain idle and the other 2 would be torn down on release --
+	// the exact per-use reopen/re-pragma/WAL-remap churn this regression
+	// test guards against (see storage/sqlitedb.Open's SetMaxIdleConns
+	// call).
+	conns := make([]*sql.Conn, 4)
+	for i := range conns {
+		c, err := sqlDB.Conn(context.Background())
+		require.NoError(t, err)
+		require.NoError(t, c.PingContext(context.Background()))
+		conns[i] = c
+	}
+	for _, c := range conns {
+		require.NoError(t, c.Close())
+	}
+
+	assert.Equal(t, 4, sqlDB.Stats().Idle, "all 4 connections should remain idle in the pool, not be torn down")
 }
 
 func TestOpen_DefaultMaxConnsIsOne(t *testing.T) {
