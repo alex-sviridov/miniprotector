@@ -645,4 +645,29 @@ func TestListDirectoryChildren_AppliesDateAndHostAndJobFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.GetChildren(), 1)
 	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
+
+	// A date range that excludes the entry's actual sync time should zero
+	// out its contribution to FileCount/LastSeen, mirroring
+	// TestListDirectoryChildren_FileCountAndLastSeenRespectFilters at the
+	// store layer -- this asserts the gRPC handler actually wires
+	// ReceivedAfter/ReceivedBefore through to the same FacetFilter.
+	future := time.Now().Add(24 * time.Hour).Unix()
+	resp, err = srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:    "/var",
+		ReceivedAfter: future,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetLastSeen())
+
+	past := time.Now().Add(-24 * time.Hour).Unix()
+	resp, err = srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:     "/var",
+		ReceivedBefore: past,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetLastSeen())
 }

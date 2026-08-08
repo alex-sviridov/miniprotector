@@ -45,3 +45,11 @@ type DirectoryRecord struct {
 	Name       string // short display label, e.g. "lib", or the root itself ("/", "C:\") when ParentPath == ""
 	Depth      int    // 0 at a true root, increasing toward the leaf
 }
+
+// TableName overrides GORM's default pluralization (which would produce
+// "directory_records") so the actual table name matches what every
+// comment, docs/protocols/catalog-sync.md, and docs/components/catalog.md
+// already call it: catalog_directories.
+func (DirectoryRecord) TableName() string {
+	return "catalog_directories"
+}

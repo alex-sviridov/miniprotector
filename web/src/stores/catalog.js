@@ -147,6 +147,7 @@ export const useCatalogStore = defineStore('catalog', {
     // direct files if currentPath isn't the synthetic root/Home screen.
     async refresh() {
       if (this.filters.pattern) {
+        this._directoryChildrenToken++
         this.directoryChildren = []
         this.directoryChildrenError = null
         await this.search()
@@ -156,6 +157,7 @@ export const useCatalogStore = defineStore('catalog', {
       if (this.currentPath !== null) {
         await this.search()
       } else {
+        this._searchToken++
         this.entries = []
         this.error = null
       }

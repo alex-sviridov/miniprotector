@@ -296,6 +296,59 @@ describe('catalog store', () => {
 
       expect(catalog.error).toBe(null)
     })
+
+    it('discards a stale in-flight search that resolves after navigateHome already cleared entries', async () => {
+      let resolveStaleSearch
+      apiFetch.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStaleSearch = resolve
+          })
+      )
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib/dbdata'
+
+      // Kick off a search while browsing a folder, but don't await it yet --
+      // it stays in flight (e.g. mid-pagination loop) while the user
+      // navigates away.
+      const staleSearch = catalog.search()
+
+      // The user clicks Home before the in-flight search resolves. This
+      // moves to root/Home mode and clears entries directly.
+      await catalog.navigateHome()
+
+      expect(catalog.currentPath).toBe(null)
+      expect(catalog.entries).toEqual([])
+
+      // Now the earlier, stale search resolves with /var/lib/dbdata's data.
+      // It must not clobber entries -- the user is looking at Home now.
+      resolveStaleSearch({ data: [{ id: 'stale-dbdata-entry' }], has_more: false })
+      await staleSearch
+
+      expect(catalog.entries).toEqual([])
+    })
+
+    it('restores the previously browsed folder after the pattern is cleared', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib/dbdata'
+
+      catalog.filters.pattern = 'x'
+      await catalog.refresh()
+
+      expect(catalog.currentPath).toBe('/var/lib/dbdata')
+
+      apiFetch.mockClear()
+      catalog.filters.pattern = ''
+      await catalog.refresh()
+
+      expect(catalog.currentPath).toBe('/var/lib/dbdata')
+      expect(apiFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/catalog/directories/children?parent_path=%2Fvar%2Flib%2Fdbdata')
+      )
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('parent_directories=%2Fvar%2Flib%2Fdbdata'))
+    })
   })
 
   describe('navigateTo / navigateHome', () => {
