@@ -454,3 +454,49 @@ func TestListDirectoryFacets_ReturnsGroupedCounts(t *testing.T) {
 	assert.Equal(t, int64(2), byName["/var/lib/dbdata"])
 	assert.Equal(t, int64(1), byName["/var/www"])
 }
+
+func TestListClientFacets_NarrowedByParentDirectories(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListClientFacets(context.Background(), &pb.ListFacetsRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 1)
+	assert.Equal(t, "database", resp.GetFacets()[0].GetName())
+}
+
+func TestListJobFacets_NarrowedByParentDirectories(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListJobFacets(context.Background(), &pb.ListFacetsRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 1)
+	assert.Equal(t, "nightly-db", resp.GetFacets()[0].GetName())
+}
+
+func TestListDirectoryFacets_IgnoresParentDirectoriesOnRequest(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	// A ParentDirectories value on the request itself must not narrow
+	// ListDirectoryFacets's own results -- it's this facet's own dimension.
+	resp, err := srv.ListDirectoryFacets(context.Background(), &pb.ListFacetsRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	assert.Len(t, resp.GetFacets(), 2)
+}

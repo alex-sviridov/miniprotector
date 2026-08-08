@@ -115,7 +115,9 @@ func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequ
 // their zero values rather than failing the whole ListEntries call --
 // one bad row shouldn't hide every other entry in the response. SourceHost
 // is NOT decoded here — it's read directly from rec.SourceHost, persisted
-// once at sync time (see decodeSourceHost above).
+// once at sync time (see decodeSourceHost above). ParentDirectory and
+// ShortFilename are the same: persisted columns computed once at sync time
+// (see decodePathParts), not decoded here.
 func toProtoEntry(rec catalogstore.EntryRecord) *pb.Entry {
 	entry := &pb.Entry{
 		Id:              rec.ID,
@@ -153,10 +155,11 @@ func unixOrZero(ts int64) time.Time {
 
 func (s *catalogServer) ListClientFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
 	facets, err := s.store.ListClientFacets(catalogstore.FacetFilter{
-		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
-		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
-		Pattern:        req.GetPattern(),
-		JobNames:       req.GetJobNames(),
+		ReceivedAfter:     unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore:    unixOrZero(req.GetReceivedBefore()),
+		Pattern:           req.GetPattern(),
+		JobNames:          req.GetJobNames(),
+		ParentDirectories: req.GetParentDirectories(),
 	})
 	if err != nil {
 		s.logger.Error("ListClientFacets: query failed", "error", err)
@@ -167,10 +170,11 @@ func (s *catalogServer) ListClientFacets(ctx context.Context, req *pb.ListFacets
 
 func (s *catalogServer) ListJobFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
 	facets, err := s.store.ListJobFacets(catalogstore.FacetFilter{
-		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
-		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
-		Pattern:        req.GetPattern(),
-		SourceHosts:    req.GetSourceHosts(),
+		ReceivedAfter:     unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore:    unixOrZero(req.GetReceivedBefore()),
+		Pattern:           req.GetPattern(),
+		SourceHosts:       req.GetSourceHosts(),
+		ParentDirectories: req.GetParentDirectories(),
 	})
 	if err != nil {
 		s.logger.Error("ListJobFacets: query failed", "error", err)

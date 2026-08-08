@@ -386,6 +386,21 @@ func TestHandleListCatalogDirectories_PassesFilterQueryParamsThrough(t *testing.
 	assert.Equal(t, []string{"nightly-db"}, fake.lastFacetsReq.GetJobNames())
 }
 
+func TestHandleListCatalogDirectories_IgnoresParentDirectoriesQueryParam(t *testing.T) {
+	fake := &fakeCatalogQueryClient{facetsResp: &pb.ListFacetsResponse{}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories?parent_directories=/var/lib/dbdata", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastFacetsReq)
+	assert.Empty(t, fake.lastFacetsReq.GetParentDirectories())
+}
+
 func TestHandleListCatalogDirectories_InvalidReceivedAfterReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())

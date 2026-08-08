@@ -14,6 +14,7 @@ func TestSplitPath(t *testing.T) {
 		{"unix filename containing a literal backslash", `/var/log/weird\file.txt`, "/var/log", `weird\file.txt`},
 		{"windows nested", `C:\Users\alice\Documents\file.txt`, `C:\Users\alice\Documents`, "file.txt"},
 		{"windows drive root", `C:\file.txt`, `C:\`, "file.txt"},
+		{"windows drive root with forward slashes", "C:/Users/alice/file.txt", "C:/Users/alice", "file.txt"},
 		{"unc nested", `\\server\share\folder\file.txt`, `\\server\share\folder`, "file.txt"},
 		{"unc minimal", `\\server\share\file.txt`, `\\server\share`, "file.txt"},
 		{"no separator", "data.db", "", "data.db"},

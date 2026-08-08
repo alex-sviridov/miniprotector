@@ -25,6 +25,9 @@ func splitPath(p string) (dir, base string) {
 	sep := byte('/')
 	if isWindowsStyle(p) {
 		sep = '\\'
+		if !strings.ContainsRune(p, '\\') {
+			sep = '/'
+		}
 	}
 
 	idx := strings.LastIndexByte(p, sep)

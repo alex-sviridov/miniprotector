@@ -175,8 +175,9 @@ type FacetFilter struct {
 	ParentDirectories []string // ignored by ListDirectoryFacets -- its own dimension
 }
 
-// Facet is one aggregated row: a distinct client hostname or policy name,
-// how many matching entries it has, and the most recent one.
+// Facet is one aggregated row: a distinct client hostname, policy name, or
+// parent directory, how many matching entries it has, and the most recent
+// one.
 type Facet struct {
 	Name     string    `gorm:"column:name"`
 	Count    int64     `gorm:"column:count"`
