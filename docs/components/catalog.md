@@ -4,12 +4,11 @@ Receives `catalogsync`'s replicated `bwfs` file-version batches over gRPC and pe
 idempotently to its own SQLite database. **Control-plane component** — runs centrally, not
 colocated with any single `bwfs` node. Also serves five read-only query RPCs: `ListEntries`
 (filter by store host, real source host, a date range, an exact parent directory, and a substring
-match against the underlying object ID, keyset-paginated); the aggregate
+match against the underlying object ID, keyset-paginated), the aggregate
 `ListClientFacets`/`ListJobFacets`/`ListDirectoryFacets` (grouped counts by client host, policy
-name, or parent directory, backing the web catalog view's filter panels) — see
-[api-server](./api-server.md), the only intended caller of those four today; and
-`ListDirectoryChildren` (one level of the synced directory tree at a time, for file-manager-style
-browsing — not yet wired to a REST endpoint).
+name, or parent directory, backing the web catalog view's filter panels), and
+`ListDirectoryChildren` (the web catalog view's directory browsing: what's directly under a given
+path) — see [api-server](./api-server.md), the only intended caller today.
 
 ## Usage
 
@@ -38,6 +37,12 @@ persisted keyed by `(store_node, job_id, object_id)`:
   each entry's `metadata` blob and reading its embedded host. It's distinct from `store_node`: a
   `bwfs` node forwards entries for whatever host was actually backed up, which is not necessarily
   itself.
+- `parent_directory`'s full ancestor chain — every directory between it and its root — is also
+  recorded, in a second table (`catalog_directories`, one row per distinct directory ever seen)
+  populated at the same sync time via `decodeDirectoryAncestors`. This is what backs
+  `ListDirectoryChildren` (see [Catalog Sync Protocol](../protocols/catalog-sync.md)): answering
+  "what's directly under this path" from `EntryRecord`'s `parent_directory` column alone isn't
+  possible, since it only names a file's *immediate* directory, not every ancestor of it.
 - A batch containing an entry already stored for its `(store_node, job_id, object_id)` is a
   no-op for that entry (`ON CONFLICT DO NOTHING`) — safe for `catalogsync` to resend a batch it
   isn't sure was received.

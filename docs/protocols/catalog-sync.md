@@ -225,5 +225,5 @@ message ListDirectoryChildrenResponse {
 - [catalogsync](../components/catalogsync.md)
 - [api-server](../components/api-server.md) — calls `ListEntries`, the only intended caller today
 - [REST API v1](../api/rest-v1.md) — `GET /api/v1/catalog` (`ListEntries`), `GET /api/v1/catalog/clients`
-  (`ListClientFacets`), `GET /api/v1/catalog/jobs` (`ListJobFacets`), and `GET /api/v1/catalog/directories`
-  (`ListDirectoryFacets`)
+  (`ListClientFacets`), `GET /api/v1/catalog/jobs` (`ListJobFacets`), `GET /api/v1/catalog/directories`
+  (`ListDirectoryFacets`), and `GET /api/v1/catalog/directories/children` (`ListDirectoryChildren`)

@@ -197,6 +197,27 @@ reason.
 }
 ```
 
+## `GET /api/v1/catalog/directories/children`
+
+Backs the web catalog view's directory browsing — one level of a directory tree at a time, not the
+flat facet list `/catalog/directories` returns. Query parameters: `parent_path` (empty/omitted =
+the true roots: `/` and each distinct Windows drive/UNC root present in the catalog),
+`received_after`, `received_before`, `source_hosts`, `job_names` (comma-separated) — no `pattern`
+parameter: directory browsing and the free-text path search are mutually exclusive UI modes.
+
+Every directory that has ever been an ancestor of a synced file always appears here, regardless of
+the date/host/job filters — only `file_count`/`last_seen` per child respect them (0/absent if
+nothing currently matches). This lets the UI navigate through a folder that currently has no
+matching files of its own but does have matching descendants further down.
+
+```json
+{
+  "data": [
+    {"path": "/var/lib/dbdata", "name": "dbdata", "file_count": 12, "last_seen": 1752400010, "has_children": false}
+  ]
+}
+```
+
 ## `GET /api/v1/policies`
 
 Returns every policy, unfiltered by any client identity (unlike `policy-server`'s own `GetPolicies`

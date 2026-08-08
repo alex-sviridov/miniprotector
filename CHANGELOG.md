@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-08 — catalog: directory browsing UI
+
+The web catalog view is now a file-manager-style directory browser instead of a flat file list:
+starting at root (or a list of Windows drives), clicking a folder drills into it, and a breadcrumb
+path bar at the top of the table jumps back to any ancestor. This is backed by a new
+`catalog_directories` table — one row per directory that has ever been an ancestor of a synced
+file's `parent_directory`, computed once at sync time the same way `parent_directory`/
+`short_filename` already are — and a new `ListDirectoryChildren` RPC backing
+`GET /api/v1/catalog/directories/children`. A folder's existence in the tree is filter-independent
+(it reflects everything ever backed up); only its file count and last-seen timestamp respect the
+current date/host/job filters, avoiding the recursive subtree matching this system has
+consistently avoided elsewhere. Typing in the existing free-text path search still switches to
+today's flat, cross-directory result list — the two modes are mutually exclusive. See
+`docs/superpowers/specs/2026-08-08-catalog-directory-browsing-design.md`.
+
 ## 2026-08-07 — catalog: parent directory and filename fields, directory filtering
 
 The catalog gains two fields computed once at sync time from each entry's `Metadata` blob —
