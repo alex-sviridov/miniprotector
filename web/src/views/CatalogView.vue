@@ -20,18 +20,25 @@ const selectedGroup = ref(null)
 // catalog store's refresh()).
 const browsing = computed(() => !catalog.filters.pattern)
 
+// Gated on `browsing` rather than relying solely on the store clearing
+// directoryChildren -- filters.pattern updates (and therefore `browsing`)
+// synchronously on every keystroke, but the store only clears
+// directoryChildren inside the debounced refresh(). Without this gate,
+// folder rows from the previously-browsed directory would linger for up
+// to the debounce window after the user starts typing a pattern search.
 const folderRows = computed(() =>
-  catalog.directoryChildren.map((d) => ({
-    isFolder: true,
-    path: d.path,
-    name: d.name,
-    file_count: d.file_count,
-    last_seen: d.last_seen,
-  }))
+  browsing.value
+    ? catalog.directoryChildren.map((d) => ({
+        isFolder: true,
+        path: d.path,
+        name: d.name,
+        file_count: d.file_count,
+        last_seen: d.last_seen,
+      }))
+    : []
 )
 const fileRows = computed(() => groupEntriesByFile(catalog.entries).map((g) => ({ isFolder: false, ...g })))
-// Folders always precede files -- directoryChildren is empty during
-// pattern search (refresh() clears it), so this needs no extra branching.
+// Folders always precede files.
 const rows = computed(() => [...folderRows.value, ...fileRows.value])
 
 function summaryLabel(names, allLabel) {

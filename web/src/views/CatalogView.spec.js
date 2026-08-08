@@ -192,6 +192,15 @@ describe('CatalogView', () => {
     expect(wrapper.find('[data-test="directory-path-bar"]').exists()).toBe(false)
   })
 
+  it('does not render stale folder rows during pattern search, even if directoryChildren is still populated', () => {
+    const { wrapper } = mountView({
+      filters: { pattern: 'dbdata', receivedAfter: 1000, receivedBefore: 2000, sourceHosts: [], jobNames: [] },
+      directoryChildren: [{ path: '/var', name: 'var', file_count: 0, last_seen: 0, has_children: true }],
+    })
+    expect(wrapper.text()).not.toContain('var/')
+    expect(wrapper.findAll('tbody tr').filter((r) => r.text().includes('var/'))).toHaveLength(0)
+  })
+
   it('navigates home when the path bar emits a null path', async () => {
     const { wrapper, catalog } = mountView({ currentPath: '/var/lib' })
     await wrapper.findComponent(DirectoryPathBar).vm.$emit('navigate', null)
