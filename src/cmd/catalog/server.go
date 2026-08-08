@@ -52,7 +52,7 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 		}
 	}
 
-	if err := s.store.EnsureEntries(batch); err != nil {
+	if err := s.store.EnsureEntries(ctx, batch); err != nil {
 		s.logger.Error("SyncFileVersions: persist failed", "error", err, "count", len(batch))
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 		for _, a := range directoriesByPath {
 			directories = append(directories, a)
 		}
-		if err := s.store.EnsureDirectories(directories); err != nil {
+		if err := s.store.EnsureDirectories(ctx, directories); err != nil {
 			s.logger.Error("SyncFileVersions: persisting directory ancestors failed", "error", err, "count", len(directories))
 			return nil, err
 		}
@@ -127,7 +127,7 @@ func decodePathParts(metadata []byte) (parentDir, shortName string) {
 }
 
 func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequest) (*pb.ListEntriesResponse, error) {
-	records, hasMore, err := s.store.ListEntries(catalogstore.ListEntriesFilter{
+	records, hasMore, err := s.store.ListEntries(ctx, catalogstore.ListEntriesFilter{
 		StoreNode:         req.GetStoreHost(),
 		SourceHost:        req.GetSourceHost(),
 		Pattern:           req.GetPattern(),
@@ -196,7 +196,7 @@ func unixOrZero(ts int64) time.Time {
 }
 
 func (s *catalogServer) ListClientFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
-	facets, err := s.store.ListClientFacets(catalogstore.FacetFilter{
+	facets, err := s.store.ListClientFacets(ctx, catalogstore.FacetFilter{
 		ReceivedAfter:     unixOrZero(req.GetReceivedAfter()),
 		ReceivedBefore:    unixOrZero(req.GetReceivedBefore()),
 		Pattern:           req.GetPattern(),
@@ -211,7 +211,7 @@ func (s *catalogServer) ListClientFacets(ctx context.Context, req *pb.ListFacets
 }
 
 func (s *catalogServer) ListJobFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
-	facets, err := s.store.ListJobFacets(catalogstore.FacetFilter{
+	facets, err := s.store.ListJobFacets(ctx, catalogstore.FacetFilter{
 		ReceivedAfter:     unixOrZero(req.GetReceivedAfter()),
 		ReceivedBefore:    unixOrZero(req.GetReceivedBefore()),
 		Pattern:           req.GetPattern(),
@@ -226,7 +226,7 @@ func (s *catalogServer) ListJobFacets(ctx context.Context, req *pb.ListFacetsReq
 }
 
 func (s *catalogServer) ListDirectoryFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
-	facets, err := s.store.ListDirectoryFacets(catalogstore.FacetFilter{
+	facets, err := s.store.ListDirectoryFacets(ctx, catalogstore.FacetFilter{
 		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
 		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
 		Pattern:        req.GetPattern(),
@@ -249,7 +249,7 @@ func toProtoFacets(facets []catalogstore.Facet) []*pb.Facet {
 }
 
 func (s *catalogServer) ListDirectoryChildren(ctx context.Context, req *pb.ListDirectoryChildrenRequest) (*pb.ListDirectoryChildrenResponse, error) {
-	children, err := s.store.ListDirectoryChildren(req.GetParentPath(), catalogstore.FacetFilter{
+	children, err := s.store.ListDirectoryChildren(ctx, req.GetParentPath(), catalogstore.FacetFilter{
 		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
 		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
 		SourceHosts:    req.GetSourceHosts(),

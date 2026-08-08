@@ -1,7 +1,7 @@
 package catalog
 
 import (
-	"fmt"
+	"context"
 	"strings"
 	"time"
 
@@ -10,15 +10,16 @@ import (
 )
 
 type Store struct {
-	db *gorm.DB
+	writeDB *gorm.DB
+	readDB  *gorm.DB
 }
 
 func New(basePath string) (*Store, error) {
-	db, err := openDB(basePath)
+	writeDB, readDB, err := openDBs(basePath)
 	if err != nil {
-		return nil, fmt.Errorf("open catalog db: %w", err)
+		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{writeDB: writeDB, readDB: readDB}, nil
 }
 
 // Entry mirrors EntryRecord's replicated fields, decoupled from the gorm
@@ -40,7 +41,7 @@ type Entry struct {
 // given (StoreNode, JobID, ObjectID) is left untouched rather than
 // erroring — catalogsync retries a batch it isn't sure was received, so a
 // resend after a partial success must be a safe no-op.
-func (s *Store) EnsureEntries(batch []Entry) error {
+func (s *Store) EnsureEntries(ctx context.Context, batch []Entry) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -61,7 +62,7 @@ func (s *Store) EnsureEntries(batch []Entry) error {
 			ReceivedAt:      now,
 		}
 	}
-	return s.db.Clauses(clause.OnConflict{
+	return s.writeDB.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "store_node"}, {Name: "job_id"}, {Name: "object_id"}},
 		DoNothing: true,
 	}).Create(&records).Error
@@ -80,7 +81,7 @@ type DirectoryAncestor struct {
 // a given Path is left untouched (ON CONFLICT DO NOTHING) -- directory
 // structure never changes once known, and many files sync-after-sync
 // share the same ancestor directories.
-func (s *Store) EnsureDirectories(batch []DirectoryAncestor) error {
+func (s *Store) EnsureDirectories(ctx context.Context, batch []DirectoryAncestor) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -88,7 +89,7 @@ func (s *Store) EnsureDirectories(batch []DirectoryAncestor) error {
 	for i, a := range batch {
 		records[i] = DirectoryRecord{Path: a.Path, ParentPath: a.ParentPath, Name: a.Name, Depth: a.Depth}
 	}
-	return s.db.Clauses(clause.OnConflict{
+	return s.writeDB.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "path"}},
 		DoNothing: true,
 	}).Create(&records).Error
@@ -121,9 +122,9 @@ type DirectoryChild struct {
 // true when a child itself has any row in catalog_directories (a
 // DISTINCT parent_path scan), letting the UI show an expand affordance
 // without a second round trip.
-func (s *Store) ListDirectoryChildren(parentPath string, filter FacetFilter) ([]DirectoryChild, error) {
+func (s *Store) ListDirectoryChildren(ctx context.Context, parentPath string, filter FacetFilter) ([]DirectoryChild, error) {
 	var dirRows []DirectoryRecord
-	if err := s.db.Where("parent_path = ?", parentPath).Order("path").Find(&dirRows).Error; err != nil {
+	if err := s.readDB.WithContext(ctx).Where("parent_path = ?", parentPath).Order("path").Find(&dirRows).Error; err != nil {
 		return nil, err
 	}
 	if len(dirRows) == 0 {
@@ -135,7 +136,7 @@ func (s *Store) ListDirectoryChildren(parentPath string, filter FacetFilter) ([]
 		paths[i] = d.Path
 	}
 
-	q := s.db.Model(&EntryRecord{}).
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).
 		Select("parent_directory, received_at").
 		Where("parent_directory IN ?", paths)
 	q = filter.applyCommon(q)
@@ -162,7 +163,7 @@ func (s *Store) ListDirectoryChildren(parentPath string, filter FacetFilter) ([]
 	}
 
 	var grandchildRows []struct{ ParentPath string }
-	if err := s.db.Model(&DirectoryRecord{}).
+	if err := s.readDB.WithContext(ctx).Model(&DirectoryRecord{}).
 		Distinct("parent_path").
 		Where("parent_path IN ?", paths).
 		Scan(&grandchildRows).Error; err != nil {
@@ -187,9 +188,9 @@ func (s *Store) ListDirectoryChildren(parentPath string, filter FacetFilter) ([]
 }
 
 // Count returns the total number of persisted entries.
-func (s *Store) Count() (int64, error) {
+func (s *Store) Count(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.db.Model(&EntryRecord{}).Count(&n).Error
+	err := s.readDB.WithContext(ctx).Model(&EntryRecord{}).Count(&n).Error
 	return n, err
 }
 
@@ -218,7 +219,7 @@ const (
 // pattern is an unindexed SQL LIKE '%pattern%' scan against object_id
 // (which already embeds the original path -- see
 // workload/filesystem.FileInfo.ID) rather than decoding Metadata per row.
-func (s *Store) ListEntries(filter ListEntriesFilter) ([]EntryRecord, bool, error) {
+func (s *Store) ListEntries(ctx context.Context, filter ListEntriesFilter) ([]EntryRecord, bool, error) {
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = defaultListEntriesLimit
@@ -227,7 +228,7 @@ func (s *Store) ListEntries(filter ListEntriesFilter) ([]EntryRecord, bool, erro
 		limit = maxListEntriesLimit
 	}
 
-	q := s.db.Model(&EntryRecord{}).Order("id DESC")
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).Order("id DESC")
 	if filter.StoreNode != "" {
 		q = q.Where("store_node = ?", filter.StoreNode)
 	}
@@ -335,8 +336,8 @@ func (f FacetFilter) applyCommon(q *gorm.DB) *gorm.DB {
 // code over premature optimization (see storage/CLAUDE.md). Revisit with
 // a SQL-side strftime()-based approach if this ever becomes a measured hot
 // path.
-func (s *Store) ListClientFacets(filter FacetFilter) ([]Facet, error) {
-	q := s.db.Model(&EntryRecord{}).
+func (s *Store) ListClientFacets(ctx context.Context, filter FacetFilter) ([]Facet, error) {
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).
 		Select("source_host, received_at").
 		Where("source_host != ''")
 	q = filter.applyCommon(q)
@@ -386,8 +387,8 @@ func (s *Store) ListClientFacets(filter FacetFilter) ([]Facet, error) {
 // applied (it narrows which entries are considered); filter.JobNames is
 // ignored: a job facet list is never narrowed by its own dimension's
 // current selection.
-func (s *Store) ListJobFacets(filter FacetFilter) ([]Facet, error) {
-	q := s.db.Model(&EntryRecord{}).Select("job_id, received_at")
+func (s *Store) ListJobFacets(ctx context.Context, filter FacetFilter) ([]Facet, error) {
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).Select("job_id, received_at")
 	q = filter.applyCommon(q)
 	if len(filter.SourceHosts) > 0 {
 		q = q.Where("source_host IN ?", filter.SourceHosts)
@@ -444,8 +445,8 @@ func (s *Store) ListJobFacets(filter FacetFilter) ([]Facet, error) {
 // ListClientFacets (see its comment): avoids non-portable SQL-side
 // time-string parsing, consistent Go-side row-scan pattern across all
 // three facet methods.
-func (s *Store) ListDirectoryFacets(filter FacetFilter) ([]Facet, error) {
-	q := s.db.Model(&EntryRecord{}).
+func (s *Store) ListDirectoryFacets(ctx context.Context, filter FacetFilter) ([]Facet, error) {
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).
 		Select("parent_directory, received_at").
 		Where("parent_directory != ''")
 	q = filter.applyCommon(q)
@@ -502,9 +503,16 @@ func policyNameFromJobID(jobID string) string {
 }
 
 func (s *Store) Close() error {
-	sqlDB, err := s.db.DB()
+	writeSQL, err := s.writeDB.DB()
 	if err != nil {
 		return err
 	}
-	return sqlDB.Close()
+	if err := writeSQL.Close(); err != nil {
+		return err
+	}
+	readSQL, err := s.readDB.DB()
+	if err != nil {
+		return err
+	}
+	return readSQL.Close()
 }

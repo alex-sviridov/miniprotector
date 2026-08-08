@@ -80,7 +80,7 @@ func TestSyncFileVersions_PersistsBatchUnderPeerHostname(t *testing.T) {
 	_, err := srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err)
 
-	count, err := store.Count()
+	count, err := store.Count(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
@@ -103,7 +103,7 @@ func TestSyncFileVersions_DuplicateBatchIsIdempotent(t *testing.T) {
 	_, err = srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err)
 
-	count, err := store.Count()
+	count, err := store.Count(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
@@ -122,7 +122,7 @@ func TestSyncFileVersions_DerivesSourceHostFromMetadata(t *testing.T) {
 	_, err = srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err)
 
-	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	entries, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "origin-host", entries[0].SourceHost)
@@ -138,7 +138,7 @@ func TestSyncFileVersions_MalformedMetadataLeavesSourceHostEmpty(t *testing.T) {
 	_, err := srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
 
-	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	entries, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "", entries[0].SourceHost)
@@ -172,7 +172,7 @@ func TestSyncFileVersions_GRPCRoundTripWithoutTLSIsRejected(t *testing.T) {
 	// enforced end to end, not just when a fake context is handed in.
 	assert.Error(t, err)
 
-	count, err := store.Count()
+	count, err := store.Count(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
 }
@@ -222,14 +222,14 @@ func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	count, err := store.Count()
+	count, err := store.Count(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
 
 func TestListEntries_ReturnsPersistedEntriesNewestFirst(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
 	}))
@@ -243,7 +243,7 @@ func TestListEntries_ReturnsPersistedEntriesNewestFirst(t *testing.T) {
 
 func TestListEntries_FiltersByStoreHost(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
 	}))
@@ -256,7 +256,7 @@ func TestListEntries_FiltersByStoreHost(t *testing.T) {
 
 func TestListEntries_FiltersBySourceHost(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
 	}))
@@ -274,7 +274,7 @@ func TestListEntries_DecodesMetadataIntoEntryFields(t *testing.T) {
 	metadata, err := fi.Encode()
 	require.NoError(t, err)
 
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: fi.ID(), Metadata: metadata, StoreCreatedAt: time.Now()},
 	}))
 
@@ -290,7 +290,7 @@ func TestListEntries_DecodesMetadataIntoEntryFields(t *testing.T) {
 
 func TestListEntries_MalformedMetadataStillReturnsEntryWithEmptyDecodedFields(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", Metadata: []byte("not-gob-encoded"), StoreCreatedAt: time.Now()},
 	}))
 
@@ -302,7 +302,7 @@ func TestListEntries_MalformedMetadataStillReturnsEntryWithEmptyDecodedFields(t 
 
 func TestListEntries_FiltersByReceivedAtRange(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
 	}))
 
@@ -321,7 +321,7 @@ func TestListEntries_FiltersByReceivedAtRange(t *testing.T) {
 
 func TestListEntries_FiltersBySourceHostsAndJobNames(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", SourceHost: "webserver", StoreCreatedAt: time.Now()},
 	}))
@@ -337,7 +337,7 @@ func TestListEntries_FiltersBySourceHostsAndJobNames(t *testing.T) {
 
 func TestListClientFacets_ReturnsGroupedCounts(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "database", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", SourceHost: "webserver", StoreCreatedAt: time.Now()},
@@ -357,7 +357,7 @@ func TestListClientFacets_ReturnsGroupedCounts(t *testing.T) {
 
 func TestListJobFacets_ReturnsGroupedCounts(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:ef567890:2", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
 	}))
@@ -383,7 +383,7 @@ func TestSyncFileVersions_DerivesParentDirectoryAndShortFilenameFromMetadata(t *
 	_, err = srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err)
 
-	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	entries, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "/var/lib/dbdata", entries[0].ParentDirectory)
@@ -400,7 +400,7 @@ func TestSyncFileVersions_MalformedMetadataLeavesPathPartsEmpty(t *testing.T) {
 	_, err := srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
 
-	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	entries, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "", entries[0].ParentDirectory)
@@ -409,7 +409,7 @@ func TestSyncFileVersions_MalformedMetadataLeavesPathPartsEmpty(t *testing.T) {
 
 func TestListEntries_ReturnsParentDirectoryAndShortFilenameFields(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", ShortFilename: "data.db", StoreCreatedAt: time.Now()},
 	}))
 
@@ -422,7 +422,7 @@ func TestListEntries_ReturnsParentDirectoryAndShortFilenameFields(t *testing.T) 
 
 func TestListEntries_FiltersByParentDirectories(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
 	}))
@@ -437,7 +437,7 @@ func TestListEntries_FiltersByParentDirectories(t *testing.T) {
 
 func TestListDirectoryFacets_ReturnsGroupedCounts(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
@@ -457,7 +457,7 @@ func TestListDirectoryFacets_ReturnsGroupedCounts(t *testing.T) {
 
 func TestListClientFacets_NarrowedByParentDirectories(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
 	}))
@@ -472,7 +472,7 @@ func TestListClientFacets_NarrowedByParentDirectories(t *testing.T) {
 
 func TestListJobFacets_NarrowedByParentDirectories(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
 	}))
@@ -487,7 +487,7 @@ func TestListJobFacets_NarrowedByParentDirectories(t *testing.T) {
 
 func TestListDirectoryFacets_IgnoresParentDirectoriesOnRequest(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
 		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
 	}))
@@ -515,17 +515,17 @@ func TestSyncFileVersions_PersistsDirectoryAncestorsForSyncedFile(t *testing.T) 
 	_, err = srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err)
 
-	roots, err := store.ListDirectoryChildren("", catalogstore.FacetFilter{})
+	roots, err := store.ListDirectoryChildren(t.Context(), "", catalogstore.FacetFilter{})
 	require.NoError(t, err)
 	require.Len(t, roots, 1)
 	assert.Equal(t, "/", roots[0].Path)
 
-	varChildren, err := store.ListDirectoryChildren("/", catalogstore.FacetFilter{})
+	varChildren, err := store.ListDirectoryChildren(t.Context(), "/", catalogstore.FacetFilter{})
 	require.NoError(t, err)
 	require.Len(t, varChildren, 1)
 	assert.Equal(t, "/var", varChildren[0].Path)
 
-	dbdataChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	dbdataChildren, err := store.ListDirectoryChildren(t.Context(), "/var/lib", catalogstore.FacetFilter{})
 	require.NoError(t, err)
 	require.Len(t, dbdataChildren, 1)
 	assert.Equal(t, "/var/lib/dbdata", dbdataChildren[0].Path)
@@ -542,7 +542,7 @@ func TestSyncFileVersions_MalformedMetadataPersistsNoDirectoryAncestors(t *testi
 	_, err := srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
 
-	roots, err := store.ListDirectoryChildren("", catalogstore.FacetFilter{})
+	roots, err := store.ListDirectoryChildren(t.Context(), "", catalogstore.FacetFilter{})
 	require.NoError(t, err)
 	assert.Empty(t, roots)
 }
@@ -565,7 +565,7 @@ func TestSyncFileVersions_DirectoryAncestorsDedupedAcrossBatch(t *testing.T) {
 	_, err = srv.SyncFileVersions(ctx, req)
 	require.NoError(t, err)
 
-	libChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	libChildren, err := store.ListDirectoryChildren(t.Context(), "/var/lib", catalogstore.FacetFilter{})
 	require.NoError(t, err)
 	require.Len(t, libChildren, 1) // "dbdata" persisted once, not twice
 	assert.Equal(t, int64(2), libChildren[0].FileCount)
@@ -587,14 +587,14 @@ func TestSyncFileVersions_DirectoryAncestorsIdempotentAcrossRepeatedSyncs(t *tes
 	_, err = srv.SyncFileVersions(ctx, req) // resend, e.g. after a retried RPC
 	require.NoError(t, err)
 
-	libChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	libChildren, err := store.ListDirectoryChildren(t.Context(), "/var/lib", catalogstore.FacetFilter{})
 	require.NoError(t, err)
 	require.Len(t, libChildren, 1)
 }
 
 func TestListDirectoryChildren_ReturnsTrueRootsForEmptyParentPath(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+	require.NoError(t, store.EnsureDirectories(t.Context(), []catalogstore.DirectoryAncestor{
 		{Path: "/", ParentPath: "", Name: "/", Depth: 0},
 	}))
 
@@ -607,7 +607,7 @@ func TestListDirectoryChildren_ReturnsTrueRootsForEmptyParentPath(t *testing.T) 
 
 func TestListDirectoryChildren_ReturnsChildrenForGivenParentPath(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+	require.NoError(t, store.EnsureDirectories(t.Context(), []catalogstore.DirectoryAncestor{
 		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
 		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
 	}))
@@ -621,11 +621,11 @@ func TestListDirectoryChildren_ReturnsChildrenForGivenParentPath(t *testing.T) {
 
 func TestListDirectoryChildren_AppliesDateAndHostAndJobFilters(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
-	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+	require.NoError(t, store.EnsureDirectories(t.Context(), []catalogstore.DirectoryAncestor{
 		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
 		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
 	}))
-	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
 		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib", StoreCreatedAt: time.Now()},
 	}))
 

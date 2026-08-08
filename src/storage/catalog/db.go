@@ -1,46 +1,43 @@
 package catalog
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	_ "modernc.org/sqlite"
+
+	"github.com/alex-sviridov/miniprotector/storage/sqlitedb"
 )
 
-func openDB(basePath string) (*gorm.DB, error) {
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		return nil, fmt.Errorf("create storage dir: %w", err)
-	}
+// readerPoolSize is a small fixed constant, not a config knob: SQLite's
+// read concurrency benefit under WAL plateaus quickly, and there's no
+// measured read-QPS to size against yet (see
+// docs/superpowers/specs/2026-08-08-storage-connection-foundation-design.md).
+const readerPoolSize = 4
 
-	dbPath := filepath.Join(basePath, "catalog.db") + "?_busy_timeout=5000"
+// openDBs opens catalog's two connections against basePath/catalog.db: a
+// single-connection writer that also migrates the schema, and a
+// multi-connection read-only pool for the read-heavy query RPCs (see
+// store.go). The writer must open first -- WAL is a database-file-level
+// setting the writer establishes, and the schema must exist before the
+// reader pool touches the file.
+func openDBs(basePath string) (writeDB, readDB *gorm.DB, err error) {
+	dbPath := filepath.Join(basePath, "catalog.db")
 
-	sqlDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-
-	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-
-	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+	writeDB, err = sqlitedb.Open(sqlitedb.Options{
+		Path:   dbPath,
+		Models: []any{&EntryRecord{}, &DirectoryRecord{}},
 	})
 	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("gorm open: %w", err)
+		return nil, nil, fmt.Errorf("open catalog db: %w", err)
 	}
 
-	if err := db.AutoMigrate(&EntryRecord{}, &DirectoryRecord{}); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("automigrate: %w", err)
+	readDB, err = sqlitedb.Open(sqlitedb.Options{Path: dbPath, ReadOnly: true, MaxConns: readerPoolSize})
+	if err != nil {
+		if sqlDB, dbErr := writeDB.DB(); dbErr == nil {
+			sqlDB.Close()
+		}
+		return nil, nil, fmt.Errorf("open catalog reader pool: %w", err)
 	}
-	return db, nil
+	return writeDB, readDB, nil
 }
