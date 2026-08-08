@@ -12,6 +12,7 @@ service CatalogService {
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListDirectoryFacets(ListFacetsRequest) returns (ListFacetsResponse);
 }
 ```
 
@@ -55,6 +56,16 @@ identifies the machine whose files were actually backed up — they coincide onl
 node backs up its own filesystem. A metadata decode failure leaves `source_host` empty for that
 entry rather than failing the whole batch.
 
+`catalog` also derives `parent_directory` and `short_filename` at sync time from the same
+`metadata` blob, via `splitPath` (`cmd/catalog/pathsplit.go`). `parent_directory` is the file's
+exact immediate containing directory (not a subtree/prefix match); `short_filename` is its bare
+name. `splitPath` picks separator style (`/` vs `\`) from the path's own shape — a leading `/`, a
+drive letter, or a UNC prefix — rather than the runtime OS, since `catalog` always runs on Linux
+but a path may have been recorded by a Windows-origin `bwfs` node. A root-level file's
+`parent_directory` is `/` (or `C:\` on Windows), never empty — empty is reserved to mean an
+undecoded/failed entry, consistent with `source_host`'s existing convention. A metadata decode
+failure leaves both fields empty for that entry rather than failing the whole batch.
+
 ## ListEntries
 
 A read-only query RPC over the same store `SyncFileVersions` writes to — added for
@@ -73,6 +84,7 @@ message ListEntriesRequest {
   int64  received_before = 7; // unix seconds; 0 = no upper bound, filters on received_at
   repeated string source_hosts = 8; // OR-matched; empty = no filter, additive to source_host
   repeated string job_names    = 9; // OR-matched against the policy name embedded in job_id
+  repeated string parent_directories = 10; // OR-matched against the exact immediate containing directory
 }
 
 message ListEntriesResponse {
@@ -96,6 +108,8 @@ message Entry {
   uint32 group     = 12; // Unix GID (or Windows SID hash) — numeric, no name resolution
   int64  mod_time   = 13;
   string source_host = 14; // the real originating (backed-up) host, derived from Metadata at sync time
+  string parent_directory = 15; // the file's exact immediate containing directory, derived from Metadata at sync time
+  string short_filename   = 16; // the file's bare name, derived from Metadata at sync time; display only, not a filter
 }
 ```
 
@@ -113,16 +127,20 @@ message Entry {
   opaque `metadata` blob `SyncFileVersions` stores verbatim — `ListEntries` is the first RPC to
   interpret that blob's contents rather than just persisting it (`source_host` is decoded once,
   at sync time, not on every `ListEntries` call — see [Identity](#identity)).
+- `parent_directories` — OR-matched against `parent_directory`, an exact match against a file's
+  *immediate* containing directory only (not a recursive subtree/prefix match); empty applies no
+  filter, additive to every other active filter.
 
-## ListClientFacets / ListJobFacets
+## ListClientFacets / ListJobFacets / ListDirectoryFacets
 
-Two read-only aggregate RPCs backing the web catalog view's faceted filter panels — for
-[api-server](../components/api-server.md)'s `GET /api/v1/catalog/clients` and
-`GET /api/v1/catalog/jobs`. Both share one request/response shape:
+Three read-only aggregate RPCs backing the web catalog view's faceted filter panels — for
+[api-server](../components/api-server.md)'s `GET /api/v1/catalog/clients`,
+`GET /api/v1/catalog/jobs`, and `GET /api/v1/catalog/directories`. All three share one
+request/response shape:
 
 ```protobuf
 message Facet {
-  string name       = 1; // hostname, or policy name
+  string name       = 1; // hostname, policy name, or parent directory
   int64  count       = 2; // matching entries in the current scope
   int64  last_seen   = 3; // unix seconds, max(received_at) in scope
 }
@@ -133,6 +151,7 @@ message ListFacetsRequest {
   string pattern         = 3;
   repeated string source_hosts = 4; // ignored by ListClientFacets (own dimension)
   repeated string job_names    = 5; // ignored by ListJobFacets (own dimension)
+  repeated string parent_directories = 6; // ignored by ListDirectoryFacets (own dimension)
 }
 
 message ListFacetsResponse {
@@ -141,13 +160,14 @@ message ListFacetsResponse {
 ```
 
 `ListClientFacets` groups by `source_host`; `ListJobFacets` groups by the policy name embedded in
-`job_id` (the second colon-delimited segment of a `backup:<policyName>:...` job_id — see
-[Identity](#identity)'s `job_id` convention). Each RPC ignores its own dimension's `source_hosts`/
-`job_names` field on the request: a facet list is never narrowed by its own current selection, so
-a caller can implement cross-filtering (client selection narrows the policy list and vice versa)
-by passing the *other* dimension's active selection. Rows with an empty grouping key (an
-undecoded `source_host`, or a `job_id` that isn't `backup:`-prefixed) are dropped rather than
-surfaced as a blank-named facet.
+`job_id` (see [Identity](#identity)'s `job_id` convention); `ListDirectoryFacets` groups by
+`parent_directory`. Each RPC applies every *other* dimension's filter fields from the request but
+ignores its own (e.g. `ListDirectoryFacets` applies `source_hosts`/`job_names` but ignores
+`parent_directories`): a facet list is never narrowed by its own current selection, so a caller can
+implement cross-filtering (selecting in one dimension narrows the other two) by passing every other
+dimension's active selection. Rows with an empty grouping key (an undecoded `source_host`/
+`parent_directory`, or a `job_id` that isn't `backup:`-prefixed) are dropped rather than surfaced as
+a blank-named facet.
 
 ## See Also
 
@@ -155,4 +175,5 @@ surfaced as a blank-named facet.
 - [catalogsync](../components/catalogsync.md)
 - [api-server](../components/api-server.md) — calls `ListEntries`, the only intended caller today
 - [REST API v1](../api/rest-v1.md) — `GET /api/v1/catalog` (`ListEntries`), `GET /api/v1/catalog/clients`
-  (`ListClientFacets`), and `GET /api/v1/catalog/jobs` (`ListJobFacets`)
+  (`ListClientFacets`), `GET /api/v1/catalog/jobs` (`ListJobFacets`), and `GET /api/v1/catalog/directories`
+  (`ListDirectoryFacets`)
