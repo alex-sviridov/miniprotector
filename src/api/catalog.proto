@@ -9,6 +9,7 @@ service CatalogService {
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListDirectoryFacets(ListFacetsRequest) returns (ListFacetsResponse);
 }
 
 message FileVersionEntry {
@@ -39,6 +40,7 @@ message ListEntriesRequest {
   int64  received_before = 7; // unix seconds; 0 = no upper bound
   repeated string source_hosts = 8; // OR-matched; empty = no filter
   repeated string job_names    = 9; // OR-matched against the policy name embedded in job_id
+  repeated string parent_directories = 10; // OR-matched against the exact immediate containing directory; empty = no filter
 }
 
 message ListEntriesResponse {
@@ -62,6 +64,8 @@ message Entry {
   uint32 group     = 12; // Unix GID (or Windows SID hash) — numeric, no name resolution
   int64  mod_time   = 13;
   string source_host = 14; // the real originating (backed-up) host, derived from Metadata at sync time
+  string parent_directory = 15; // the file's immediate containing directory, derived from Metadata at sync time
+  string short_filename   = 16; // the file's bare name (no directory), derived from Metadata at sync time; display only
 }
 
 message Facet {
@@ -76,6 +80,7 @@ message ListFacetsRequest {
   string pattern         = 3;
   repeated string source_hosts = 4; // ignored by ListClientFacets (own dimension)
   repeated string job_names    = 5; // ignored by ListJobFacets (own dimension)
+  repeated string parent_directories = 6; // ignored by ListDirectoryFacets (own dimension)
 }
 
 message ListFacetsResponse {

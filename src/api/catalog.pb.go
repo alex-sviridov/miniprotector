@@ -195,12 +195,13 @@ type ListEntriesRequest struct {
 	// New, additive -- old singular fields (1-5) keep their current exact-match
 	// behavior; the new repeated fields are OR-matched, combined with
 	// everything else via AND, same as the old fields.
-	ReceivedAfter  int64    `protobuf:"varint,6,opt,name=received_after,json=receivedAfter,proto3" json:"received_after,omitempty"`    // unix seconds; 0 = no lower bound
-	ReceivedBefore int64    `protobuf:"varint,7,opt,name=received_before,json=receivedBefore,proto3" json:"received_before,omitempty"` // unix seconds; 0 = no upper bound
-	SourceHosts    []string `protobuf:"bytes,8,rep,name=source_hosts,json=sourceHosts,proto3" json:"source_hosts,omitempty"`           // OR-matched; empty = no filter
-	JobNames       []string `protobuf:"bytes,9,rep,name=job_names,json=jobNames,proto3" json:"job_names,omitempty"`                    // OR-matched against the policy name embedded in job_id
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	ReceivedAfter     int64    `protobuf:"varint,6,opt,name=received_after,json=receivedAfter,proto3" json:"received_after,omitempty"`             // unix seconds; 0 = no lower bound
+	ReceivedBefore    int64    `protobuf:"varint,7,opt,name=received_before,json=receivedBefore,proto3" json:"received_before,omitempty"`          // unix seconds; 0 = no upper bound
+	SourceHosts       []string `protobuf:"bytes,8,rep,name=source_hosts,json=sourceHosts,proto3" json:"source_hosts,omitempty"`                    // OR-matched; empty = no filter
+	JobNames          []string `protobuf:"bytes,9,rep,name=job_names,json=jobNames,proto3" json:"job_names,omitempty"`                             // OR-matched against the policy name embedded in job_id
+	ParentDirectories []string `protobuf:"bytes,10,rep,name=parent_directories,json=parentDirectories,proto3" json:"parent_directories,omitempty"` // OR-matched against the exact immediate containing directory; empty = no filter
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ListEntriesRequest) Reset() {
@@ -296,6 +297,13 @@ func (x *ListEntriesRequest) GetJobNames() []string {
 	return nil
 }
 
+func (x *ListEntriesRequest) GetParentDirectories() []string {
+	if x != nil {
+		return x.ParentDirectories
+	}
+	return nil
+}
+
 type ListEntriesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Entries       []*Entry               `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -358,15 +366,17 @@ type Entry struct {
 	StoreCreatedAt int64                  `protobuf:"varint,6,opt,name=store_created_at,json=storeCreatedAt,proto3" json:"store_created_at,omitempty"`
 	ReceivedAt     int64                  `protobuf:"varint,7,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
 	// decoded server-side from the stored Metadata blob:
-	Path          string `protobuf:"bytes,8,opt,name=path,proto3" json:"path,omitempty"`
-	Size          int64  `protobuf:"varint,9,opt,name=size,proto3" json:"size,omitempty"`
-	Mode          string `protobuf:"bytes,10,opt,name=mode,proto3" json:"mode,omitempty"`    // e.g. "-rw-r--r--", from fs.FileMode.String()
-	Owner         uint32 `protobuf:"varint,11,opt,name=owner,proto3" json:"owner,omitempty"` // Unix UID (or Windows SID hash) — numeric, no name resolution
-	Group         uint32 `protobuf:"varint,12,opt,name=group,proto3" json:"group,omitempty"` // Unix GID (or Windows SID hash) — numeric, no name resolution
-	ModTime       int64  `protobuf:"varint,13,opt,name=mod_time,json=modTime,proto3" json:"mod_time,omitempty"`
-	SourceHost    string `protobuf:"bytes,14,opt,name=source_host,json=sourceHost,proto3" json:"source_host,omitempty"` // the real originating (backed-up) host, derived from Metadata at sync time
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Path            string `protobuf:"bytes,8,opt,name=path,proto3" json:"path,omitempty"`
+	Size            int64  `protobuf:"varint,9,opt,name=size,proto3" json:"size,omitempty"`
+	Mode            string `protobuf:"bytes,10,opt,name=mode,proto3" json:"mode,omitempty"`    // e.g. "-rw-r--r--", from fs.FileMode.String()
+	Owner           uint32 `protobuf:"varint,11,opt,name=owner,proto3" json:"owner,omitempty"` // Unix UID (or Windows SID hash) — numeric, no name resolution
+	Group           uint32 `protobuf:"varint,12,opt,name=group,proto3" json:"group,omitempty"` // Unix GID (or Windows SID hash) — numeric, no name resolution
+	ModTime         int64  `protobuf:"varint,13,opt,name=mod_time,json=modTime,proto3" json:"mod_time,omitempty"`
+	SourceHost      string `protobuf:"bytes,14,opt,name=source_host,json=sourceHost,proto3" json:"source_host,omitempty"`                // the real originating (backed-up) host, derived from Metadata at sync time
+	ParentDirectory string `protobuf:"bytes,15,opt,name=parent_directory,json=parentDirectory,proto3" json:"parent_directory,omitempty"` // the file's immediate containing directory, derived from Metadata at sync time
+	ShortFilename   string `protobuf:"bytes,16,opt,name=short_filename,json=shortFilename,proto3" json:"short_filename,omitempty"`       // the file's bare name (no directory), derived from Metadata at sync time; display only
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Entry) Reset() {
@@ -497,6 +507,20 @@ func (x *Entry) GetSourceHost() string {
 	return ""
 }
 
+func (x *Entry) GetParentDirectory() string {
+	if x != nil {
+		return x.ParentDirectory
+	}
+	return ""
+}
+
+func (x *Entry) GetShortFilename() string {
+	if x != nil {
+		return x.ShortFilename
+	}
+	return ""
+}
+
 type Facet struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                          // hostname, or policy name
@@ -558,14 +582,15 @@ func (x *Facet) GetLastSeen() int64 {
 }
 
 type ListFacetsRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ReceivedAfter  int64                  `protobuf:"varint,1,opt,name=received_after,json=receivedAfter,proto3" json:"received_after,omitempty"`
-	ReceivedBefore int64                  `protobuf:"varint,2,opt,name=received_before,json=receivedBefore,proto3" json:"received_before,omitempty"`
-	Pattern        string                 `protobuf:"bytes,3,opt,name=pattern,proto3" json:"pattern,omitempty"`
-	SourceHosts    []string               `protobuf:"bytes,4,rep,name=source_hosts,json=sourceHosts,proto3" json:"source_hosts,omitempty"` // ignored by ListClientFacets (own dimension)
-	JobNames       []string               `protobuf:"bytes,5,rep,name=job_names,json=jobNames,proto3" json:"job_names,omitempty"`          // ignored by ListJobFacets (own dimension)
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	ReceivedAfter     int64                  `protobuf:"varint,1,opt,name=received_after,json=receivedAfter,proto3" json:"received_after,omitempty"`
+	ReceivedBefore    int64                  `protobuf:"varint,2,opt,name=received_before,json=receivedBefore,proto3" json:"received_before,omitempty"`
+	Pattern           string                 `protobuf:"bytes,3,opt,name=pattern,proto3" json:"pattern,omitempty"`
+	SourceHosts       []string               `protobuf:"bytes,4,rep,name=source_hosts,json=sourceHosts,proto3" json:"source_hosts,omitempty"`                   // ignored by ListClientFacets (own dimension)
+	JobNames          []string               `protobuf:"bytes,5,rep,name=job_names,json=jobNames,proto3" json:"job_names,omitempty"`                            // ignored by ListJobFacets (own dimension)
+	ParentDirectories []string               `protobuf:"bytes,6,rep,name=parent_directories,json=parentDirectories,proto3" json:"parent_directories,omitempty"` // ignored by ListDirectoryFacets (own dimension)
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ListFacetsRequest) Reset() {
@@ -633,6 +658,13 @@ func (x *ListFacetsRequest) GetJobNames() []string {
 	return nil
 }
 
+func (x *ListFacetsRequest) GetParentDirectories() []string {
+	if x != nil {
+		return x.ParentDirectories
+	}
+	return nil
+}
+
 type ListFacetsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Facets        []*Facet               `protobuf:"bytes,1,rep,name=facets,proto3" json:"facets,omitempty"`
@@ -692,7 +724,7 @@ const file_api_catalog_proto_rawDesc = "" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"I\n" +
 	"\vSyncRequest\x12:\n" +
 	"\aentries\x18\x01 \x03(\v2 .catalogservice.FileVersionEntryR\aentries\"\x0e\n" +
-	"\fSyncResponse\"\xbb\x02\n" +
+	"\fSyncResponse\"\xea\x02\n" +
 	"\x12ListEntriesRequest\x12\x1d\n" +
 	"\n" +
 	"store_host\x18\x01 \x01(\tR\tstoreHost\x12\x18\n" +
@@ -704,10 +736,12 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\x0ereceived_after\x18\x06 \x01(\x03R\rreceivedAfter\x12'\n" +
 	"\x0freceived_before\x18\a \x01(\x03R\x0ereceivedBefore\x12!\n" +
 	"\fsource_hosts\x18\b \x03(\tR\vsourceHosts\x12\x1b\n" +
-	"\tjob_names\x18\t \x03(\tR\bjobNames\"a\n" +
+	"\tjob_names\x18\t \x03(\tR\bjobNames\x12-\n" +
+	"\x12parent_directories\x18\n" +
+	" \x03(\tR\x11parentDirectories\"a\n" +
 	"\x13ListEntriesResponse\x12/\n" +
 	"\aentries\x18\x01 \x03(\v2\x15.catalogservice.EntryR\aentries\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xef\x02\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xc1\x03\n" +
 	"\x05Entry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +
@@ -726,24 +760,28 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\x05group\x18\f \x01(\rR\x05group\x12\x19\n" +
 	"\bmod_time\x18\r \x01(\x03R\amodTime\x12\x1f\n" +
 	"\vsource_host\x18\x0e \x01(\tR\n" +
-	"sourceHost\"N\n" +
+	"sourceHost\x12)\n" +
+	"\x10parent_directory\x18\x0f \x01(\tR\x0fparentDirectory\x12%\n" +
+	"\x0eshort_filename\x18\x10 \x01(\tR\rshortFilename\"N\n" +
 	"\x05Facet\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\x03R\x05count\x12\x1b\n" +
-	"\tlast_seen\x18\x03 \x01(\x03R\blastSeen\"\xbd\x01\n" +
+	"\tlast_seen\x18\x03 \x01(\x03R\blastSeen\"\xec\x01\n" +
 	"\x11ListFacetsRequest\x12%\n" +
 	"\x0ereceived_after\x18\x01 \x01(\x03R\rreceivedAfter\x12'\n" +
 	"\x0freceived_before\x18\x02 \x01(\x03R\x0ereceivedBefore\x12\x18\n" +
 	"\apattern\x18\x03 \x01(\tR\apattern\x12!\n" +
 	"\fsource_hosts\x18\x04 \x03(\tR\vsourceHosts\x12\x1b\n" +
-	"\tjob_names\x18\x05 \x03(\tR\bjobNames\"C\n" +
+	"\tjob_names\x18\x05 \x03(\tR\bjobNames\x12-\n" +
+	"\x12parent_directories\x18\x06 \x03(\tR\x11parentDirectories\"C\n" +
 	"\x12ListFacetsResponse\x12-\n" +
-	"\x06facets\x18\x01 \x03(\v2\x15.catalogservice.FacetR\x06facets2\xea\x02\n" +
+	"\x06facets\x18\x01 \x03(\v2\x15.catalogservice.FacetR\x06facets2\xc8\x03\n" +
 	"\x0eCatalogService\x12M\n" +
 	"\x10SyncFileVersions\x12\x1b.catalogservice.SyncRequest\x1a\x1c.catalogservice.SyncResponse\x12V\n" +
 	"\vListEntries\x12\".catalogservice.ListEntriesRequest\x1a#.catalogservice.ListEntriesResponse\x12Y\n" +
 	"\x10ListClientFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12V\n" +
-	"\rListJobFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponseB\tZ\a./protob\x06proto3"
+	"\rListJobFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12\\\n" +
+	"\x13ListDirectoryFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponseB\tZ\a./protob\x06proto3"
 
 var (
 	file_api_catalog_proto_rawDescOnce sync.Once
@@ -777,12 +815,14 @@ var file_api_catalog_proto_depIdxs = []int32{
 	3, // 4: catalogservice.CatalogService.ListEntries:input_type -> catalogservice.ListEntriesRequest
 	7, // 5: catalogservice.CatalogService.ListClientFacets:input_type -> catalogservice.ListFacetsRequest
 	7, // 6: catalogservice.CatalogService.ListJobFacets:input_type -> catalogservice.ListFacetsRequest
-	2, // 7: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
-	4, // 8: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
-	8, // 9: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
-	8, // 10: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
-	7, // [7:11] is the sub-list for method output_type
-	3, // [3:7] is the sub-list for method input_type
+	7, // 7: catalogservice.CatalogService.ListDirectoryFacets:input_type -> catalogservice.ListFacetsRequest
+	2, // 8: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
+	4, // 9: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
+	8, // 10: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
+	8, // 11: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
+	8, // 12: catalogservice.CatalogService.ListDirectoryFacets:output_type -> catalogservice.ListFacetsResponse
+	8, // [8:13] is the sub-list for method output_type
+	3, // [3:8] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name
 	3, // [3:3] is the sub-list for extension extendee
 	0, // [0:3] is the sub-list for field type_name
