@@ -273,6 +273,29 @@ describe('catalog store', () => {
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/catalog?'))
       expect(catalog.directoryChildren).toEqual([])
     })
+
+    it('clears directoryChildrenError when switching from browse mode to pattern mode', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.directoryChildrenError = 'previous browse failed'
+      catalog.filters.pattern = 'dbdata'
+
+      await catalog.refresh()
+
+      expect(catalog.directoryChildrenError).toBe(null)
+    })
+
+    it('clears error when switching to root/Home mode from pattern search', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const catalog = useCatalogStore()
+      catalog.error = 'previous pattern search failed'
+      catalog.currentPath = null
+      catalog.filters.pattern = ''
+
+      await catalog.refresh()
+
+      expect(catalog.error).toBe(null)
+    })
   })
 
   describe('navigateTo / navigateHome', () => {

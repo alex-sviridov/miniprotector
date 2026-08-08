@@ -148,6 +148,7 @@ export const useCatalogStore = defineStore('catalog', {
     async refresh() {
       if (this.filters.pattern) {
         this.directoryChildren = []
+        this.directoryChildrenError = null
         await this.search()
         return
       }
@@ -156,6 +157,7 @@ export const useCatalogStore = defineStore('catalog', {
         await this.search()
       } else {
         this.entries = []
+        this.error = null
       }
     },
     navigateTo(path) {
