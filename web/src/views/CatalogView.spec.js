@@ -5,6 +5,7 @@ import CatalogView from './CatalogView.vue'
 import { useCatalogStore } from '../stores/catalog'
 import DateRangePanel from '../components/catalog/DateRangePanel.vue'
 import FacetPanel from '../components/catalog/FacetPanel.vue'
+import DirectoryPathBar from '../components/catalog/DirectoryPathBar.vue'
 
 function entry(overrides) {
   return {
@@ -17,6 +18,8 @@ function entry(overrides) {
     store_created_at: 1752400000,
     received_at: 1752400010,
     path: '/var/lib/dbdata/data.db',
+    parent_directory: '/var/lib/dbdata',
+    short_filename: 'data.db',
     size: 8192,
     mode: '-rw-r--r--',
     owner: 999,
@@ -31,6 +34,7 @@ function mountView(state) {
     stubActions: true,
     initialState: {
       catalog: {
+        currentPath: null,
         entries: [],
         loading: false,
         error: null,
@@ -39,6 +43,9 @@ function mountView(state) {
         clientFacetsError: null,
         jobFacets: [],
         jobFacetsError: null,
+        directoryChildren: [],
+        directoryChildrenLoading: false,
+        directoryChildrenError: null,
         ...state,
       },
     },
@@ -57,9 +64,9 @@ describe('CatalogView', () => {
     vi.useRealTimers()
   })
 
-  it('fetches results and both facet lists on mount', () => {
+  it('refreshes and fetches both facet lists on mount', () => {
     const { catalog } = mountView({})
-    expect(catalog.search).toHaveBeenCalledTimes(1)
+    expect(catalog.refresh).toHaveBeenCalledTimes(1)
     expect(catalog.fetchClientFacets).toHaveBeenCalledTimes(1)
     expect(catalog.fetchJobFacets).toHaveBeenCalledTimes(1)
   })
@@ -94,67 +101,112 @@ describe('CatalogView', () => {
     expect(wrapper.findComponent(DateRangePanel).exists()).toBe(false)
   })
 
-  it('re-fetches results and both facet lists when the date range changes', async () => {
+  it('re-refreshes and re-fetches both facet lists when the date range changes', async () => {
     const { wrapper, catalog } = mountView({})
-    catalog.search.mockClear()
+    catalog.refresh.mockClear()
     catalog.fetchClientFacets.mockClear()
     catalog.fetchJobFacets.mockClear()
 
     catalog.filters.receivedAfter = 500
     await wrapper.vm.$nextTick()
 
-    expect(catalog.search).toHaveBeenCalledTimes(1)
+    expect(catalog.refresh).toHaveBeenCalledTimes(1)
     expect(catalog.fetchClientFacets).toHaveBeenCalledTimes(1)
     expect(catalog.fetchJobFacets).toHaveBeenCalledTimes(1)
   })
 
-  it('re-fetches results and only the job facets when the client selection changes', async () => {
+  it('re-refreshes and only re-fetches job facets when the client selection changes', async () => {
     const { wrapper, catalog } = mountView({})
-    catalog.search.mockClear()
+    catalog.refresh.mockClear()
     catalog.fetchClientFacets.mockClear()
     catalog.fetchJobFacets.mockClear()
 
     catalog.filters.sourceHosts.push('database')
     await wrapper.vm.$nextTick()
 
-    expect(catalog.search).toHaveBeenCalledTimes(1)
+    expect(catalog.refresh).toHaveBeenCalledTimes(1)
     expect(catalog.fetchJobFacets).toHaveBeenCalledTimes(1)
     expect(catalog.fetchClientFacets).not.toHaveBeenCalled()
   })
 
-  it('re-fetches results and only the client facets when the job selection changes', async () => {
+  it('re-refreshes and only re-fetches client facets when the job selection changes', async () => {
     const { wrapper, catalog } = mountView({})
-    catalog.search.mockClear()
+    catalog.refresh.mockClear()
     catalog.fetchClientFacets.mockClear()
     catalog.fetchJobFacets.mockClear()
 
     catalog.filters.jobNames.push('nightly-db')
     await wrapper.vm.$nextTick()
 
-    expect(catalog.search).toHaveBeenCalledTimes(1)
+    expect(catalog.refresh).toHaveBeenCalledTimes(1)
     expect(catalog.fetchClientFacets).toHaveBeenCalledTimes(1)
     expect(catalog.fetchJobFacets).not.toHaveBeenCalled()
   })
 
-  it('debounces path input before searching', async () => {
+  it('debounces path input before refreshing', async () => {
     const { wrapper, catalog } = mountView({})
-    catalog.search.mockClear()
+    catalog.refresh.mockClear()
 
     await wrapper.find('[data-test="path-input"]').setValue('dbdata')
-    expect(catalog.search).not.toHaveBeenCalled()
+    expect(catalog.refresh).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(300)
     await flushPromises()
-    expect(catalog.search).toHaveBeenCalledTimes(1)
+    expect(catalog.refresh).toHaveBeenCalledTimes(1)
   })
 
-  it('shows a no-results message when there are no entries', () => {
+  it('shows a no-results message when there are no entries or folders', () => {
     const { wrapper } = mountView({})
     expect(wrapper.text()).toContain('No entries match this filter.')
   })
 
+  it('renders folder rows above file rows when browsing', () => {
+    const { wrapper } = mountView({
+      currentPath: '/var/lib/dbdata',
+      directoryChildren: [{ path: '/var/lib/dbdata/backups', name: 'backups', file_count: 3, last_seen: 1752400010, has_children: false }],
+      entries: [entry({ id: 1 })],
+    })
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('backups/')
+    expect(rows[1].text()).toContain('data.db')
+  })
+
+  it('navigates into a folder when its row is clicked', async () => {
+    const { wrapper, catalog } = mountView({
+      directoryChildren: [{ path: '/var', name: 'var', file_count: 0, last_seen: 0, has_children: true }],
+    })
+    await wrapper.find('tbody tr').trigger('click')
+    expect(catalog.navigateTo).toHaveBeenCalledWith('/var')
+  })
+
+  it('shows the directory path bar while browsing', () => {
+    const { wrapper } = mountView({ currentPath: '/var/lib' })
+    expect(wrapper.find('[data-test="directory-path-bar"]').exists()).toBe(true)
+  })
+
+  it('hides the directory path bar during pattern search', () => {
+    const { wrapper } = mountView({
+      filters: { pattern: 'dbdata', receivedAfter: 1000, receivedBefore: 2000, sourceHosts: [], jobNames: [] },
+    })
+    expect(wrapper.find('[data-test="directory-path-bar"]').exists()).toBe(false)
+  })
+
+  it('navigates home when the path bar emits a null path', async () => {
+    const { wrapper, catalog } = mountView({ currentPath: '/var/lib' })
+    await wrapper.findComponent(DirectoryPathBar).vm.$emit('navigate', null)
+    expect(catalog.navigateHome).toHaveBeenCalled()
+  })
+
+  it('navigates to a crumb path when the path bar emits it', async () => {
+    const { wrapper, catalog } = mountView({ currentPath: '/var/lib' })
+    await wrapper.findComponent(DirectoryPathBar).vm.$emit('navigate', '/var')
+    expect(catalog.navigateTo).toHaveBeenCalledWith('/var')
+  })
+
   it('groups entries sharing source_host and path into a single row with a version count', () => {
     const { wrapper } = mountView({
+      currentPath: '/var/lib/dbdata',
       entries: [
         entry({ id: 1, store_created_at: 1752300000, size: 8004 }),
         entry({ id: 2, store_created_at: 1752400000, size: 8192 }),
@@ -162,13 +214,13 @@ describe('CatalogView', () => {
     })
     const rows = wrapper.findAll('tbody tr')
     expect(rows).toHaveLength(1)
-    expect(rows[0].text()).toContain('/var/lib/dbdata/data.db')
+    expect(rows[0].text()).toContain('data.db')
     expect(rows[0].text()).toContain('8.0 KB')
     expect(rows[0].text()).toContain('2')
   })
 
   it('renders a single-version file without a version count', () => {
-    const { wrapper } = mountView({ entries: [entry({ id: 1 })] })
+    const { wrapper } = mountView({ currentPath: '/var/lib/dbdata', entries: [entry({ id: 1 })] })
     const rows = wrapper.findAll('tbody tr')
     const cells = rows[0].findAll('td')
     expect(cells[cells.length - 1].text()).toBe('')
@@ -176,6 +228,7 @@ describe('CatalogView', () => {
 
   it('opens the versions modal for the row actually clicked, even after sorting reorders the table', async () => {
     const { wrapper } = mountView({
+      filters: { pattern: 'x', receivedAfter: 1000, receivedBefore: 2000, sourceHosts: [], jobNames: [] },
       entries: [
         entry({ id: 3, source_host: 'webserver', path: '/var/www/index.html', store_created_at: 1752350000 }),
         entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/data.db', store_created_at: 1752300000 }),
@@ -195,7 +248,7 @@ describe('CatalogView', () => {
   })
 
   it('does not open the versions modal when a single-version row is clicked', async () => {
-    const { wrapper } = mountView({ entries: [entry({ id: 1 })] })
+    const { wrapper } = mountView({ currentPath: '/var/lib/dbdata', entries: [entry({ id: 1 })] })
     await wrapper.find('tbody tr').trigger('click')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.fixed').exists()).toBe(false)
@@ -203,6 +256,7 @@ describe('CatalogView', () => {
 
   it('closes the versions modal via its Close button', async () => {
     const { wrapper } = mountView({
+      currentPath: '/var/lib/dbdata',
       entries: [
         entry({ id: 1, store_created_at: 1752300000 }),
         entry({ id: 2, store_created_at: 1752400000 }),
