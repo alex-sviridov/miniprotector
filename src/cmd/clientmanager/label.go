@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -16,21 +17,21 @@ func parseKV(s string) (key, value string, err error) {
 	return parts[0], parts[1], nil
 }
 
-func runKVSet(store *clientmanagerstore.Store, kind clientmanagerstore.KVKind, args *Arguments) error {
+func runKVSet(ctx context.Context, store *clientmanagerstore.Store, kind clientmanagerstore.KVKind, args *Arguments) error {
 	for _, pair := range args.KVPairs {
 		key, value, err := parseKV(pair)
 		if err != nil {
 			return err
 		}
-		if err := store.SetKV(args.Hostname, kind, key, value); err != nil {
+		if err := store.SetKV(ctx, args.Hostname, kind, key, value); err != nil {
 			return fmt.Errorf("set %s %s on %s: %w", kind, key, args.Hostname, err)
 		}
 	}
 	return nil
 }
 
-func runKVUnset(store *clientmanagerstore.Store, kind clientmanagerstore.KVKind, args *Arguments) error {
-	if err := store.UnsetKV(args.Hostname, kind, args.Key); err != nil {
+func runKVUnset(ctx context.Context, store *clientmanagerstore.Store, kind clientmanagerstore.KVKind, args *Arguments) error {
+	if err := store.UnsetKV(ctx, args.Hostname, kind, args.Key); err != nil {
 		return fmt.Errorf("unset %s %s on %s: %w", kind, args.Key, args.Hostname, err)
 	}
 	return nil

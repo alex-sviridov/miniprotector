@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -12,8 +13,8 @@ import (
 
 const timeLayout = "2006-01-02 15:04:05"
 
-func runList(store *clientmanagerstore.Store, out io.Writer) error {
-	clients, err := store.ListClients()
+func runList(ctx context.Context, store *clientmanagerstore.Store, out io.Writer) error {
+	clients, err := store.ListClients(ctx)
 	if err != nil {
 		return fmt.Errorf("list clients: %w", err)
 	}
@@ -33,8 +34,8 @@ func runList(store *clientmanagerstore.Store, out io.Writer) error {
 	return tw.Flush()
 }
 
-func runShow(store *clientmanagerstore.Store, args *Arguments, out io.Writer) error {
-	client, err := store.GetClient(args.Hostname)
+func runShow(ctx context.Context, store *clientmanagerstore.Store, args *Arguments, out io.Writer) error {
+	client, err := store.GetClient(ctx, args.Hostname)
 	if err != nil {
 		return fmt.Errorf("show %s: %w", args.Hostname, err)
 	}
@@ -56,7 +57,7 @@ func runShow(store *clientmanagerstore.Store, args *Arguments, out io.Writer) er
 		fmt.Fprintln(out, "last_seen:  never")
 	}
 
-	descs, err := store.KV(args.Hostname, clientmanagerstore.KindDescription)
+	descs, err := store.KV(ctx, args.Hostname, clientmanagerstore.KindDescription)
 	if err != nil {
 		return fmt.Errorf("show %s: load descriptions: %w", args.Hostname, err)
 	}
@@ -65,7 +66,7 @@ func runShow(store *clientmanagerstore.Store, args *Arguments, out io.Writer) er
 		fmt.Fprintf(out, "  %s=%s\n", d.Key, d.Value)
 	}
 
-	attrs, err := store.KV(args.Hostname, clientmanagerstore.KindAttribute)
+	attrs, err := store.KV(ctx, args.Hostname, clientmanagerstore.KindAttribute)
 	if err != nil {
 		return fmt.Errorf("show %s: load attributes: %w", args.Hostname, err)
 	}
@@ -76,15 +77,15 @@ func runShow(store *clientmanagerstore.Store, args *Arguments, out io.Writer) er
 	return nil
 }
 
-func runRevoke(store *clientmanagerstore.Store, args *Arguments) error {
-	if err := store.SetRevoked(args.Hostname, true, time.Now()); err != nil {
+func runRevoke(ctx context.Context, store *clientmanagerstore.Store, args *Arguments) error {
+	if err := store.SetRevoked(ctx, args.Hostname, true, time.Now()); err != nil {
 		return fmt.Errorf("revoke %s: %w", args.Hostname, err)
 	}
 	return nil
 }
 
-func runUnrevoke(store *clientmanagerstore.Store, args *Arguments) error {
-	if err := store.SetRevoked(args.Hostname, false, time.Now()); err != nil {
+func runUnrevoke(ctx context.Context, store *clientmanagerstore.Store, args *Arguments) error {
+	if err := store.SetRevoked(ctx, args.Hostname, false, time.Now()); err != nil {
 		return fmt.Errorf("unrevoke %s: %w", args.Hostname, err)
 	}
 	return nil

@@ -14,76 +14,76 @@ import (
 func TestRunList_EmptyStore(t *testing.T) {
 	store := newTestManagerStore(t)
 	var out bytes.Buffer
-	require.NoError(t, runList(store, &out))
+	require.NoError(t, runList(t.Context(), store, &out))
 	assert.Equal(t, "HOSTNAME  ADDED_AT  REVOKED  LAST_SEEN\n", out.String())
 }
 
 func TestRunList_ShowsAddedClients(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	var out bytes.Buffer
-	require.NoError(t, runList(store, &out))
+	require.NoError(t, runList(t.Context(), store, &out))
 	assert.Contains(t, out.String(), "node-1")
 	assert.Contains(t, out.String(), "never")
 }
 
 func TestRunShow_UnknownErrors(t *testing.T) {
 	store := newTestManagerStore(t)
-	err := runShow(store, &Arguments{Hostname: "ghost"}, &bytes.Buffer{})
+	err := runShow(t.Context(), store, &Arguments{Hostname: "ghost"}, &bytes.Buffer{})
 	assert.ErrorIs(t, err, clientmanagerstore.ErrClientNotFound)
 }
 
 func TestRunShow_PrintsDescriptionsAndAttributes(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindDescription, "owner", "alice"))
-	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindAttribute, "role", "prod-db"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindDescription, "owner", "alice"))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, "role", "prod-db"))
 
 	var out bytes.Buffer
-	require.NoError(t, runShow(store, &Arguments{Hostname: "node-1"}, &out))
+	require.NoError(t, runShow(t.Context(), store, &Arguments{Hostname: "node-1"}, &out))
 	assert.Contains(t, out.String(), "owner=alice")
 	assert.Contains(t, out.String(), "role=prod-db")
 }
 
 func TestRunRevoke_SetsFlag(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, runRevoke(store, &Arguments{Hostname: "node-1"}))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, runRevoke(t.Context(), store, &Arguments{Hostname: "node-1"}))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.True(t, got.Revoked)
 }
 
 func TestRunUnrevoke_ClearsFlag(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, runRevoke(store, &Arguments{Hostname: "node-1"}))
-	require.NoError(t, runUnrevoke(store, &Arguments{Hostname: "node-1"}))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, runRevoke(t.Context(), store, &Arguments{Hostname: "node-1"}))
+	require.NoError(t, runUnrevoke(t.Context(), store, &Arguments{Hostname: "node-1"}))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.False(t, got.Revoked)
 }
 
 func TestRunList_ShowsRealLastSeenTimestamp(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	seenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen("node-1", seenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
 
 	var out bytes.Buffer
-	require.NoError(t, runList(store, &out))
+	require.NoError(t, runList(t.Context(), store, &out))
 	assert.Contains(t, out.String(), seenAt.Format(timeLayout))
 }
 
 func TestRunShow_ShowsRealLastSeenTimestamp(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	seenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen("node-1", seenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
 
 	var out bytes.Buffer
-	require.NoError(t, runShow(store, &Arguments{Hostname: "node-1"}, &out))
+	require.NoError(t, runShow(t.Context(), store, &Arguments{Hostname: "node-1"}, &out))
 	assert.Contains(t, out.String(), "last_seen:  "+seenAt.Format(timeLayout))
 }

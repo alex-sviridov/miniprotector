@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -54,40 +55,43 @@ func main() {
 		PasswordFile: args.PasswordFile,
 	}
 
-	if err := run(mintOpts, store, args, os.Stdout); err != nil {
+	if err := run(context.Background(), mintOpts, store, args, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 }
 
 // run dispatches on args.Action. Broken out from main so tests can drive
-// it directly against a temp-dir store without touching os.Exit.
-func run(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, out io.Writer) error {
+// it directly against a temp-dir store without touching os.Exit. ctx has
+// no real cancellation source here -- this is a synchronous, one-shot CLI
+// invocation, not a long-running server -- it exists only so the CLI's
+// store calls share the same Store method signatures the gRPC servers use.
+func run(ctx context.Context, mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, out io.Writer) error {
 	switch args.Action {
 	case "add":
-		return runAdd(mintOpts, store, args, certmint.Mint, out)
+		return runAdd(ctx, mintOpts, store, args, certmint.Mint, out)
 	case "re-enroll":
-		return runReEnroll(mintOpts, store, args, certmint.Mint, out)
+		return runReEnroll(ctx, mintOpts, store, args, certmint.Mint, out)
 	case "list":
-		return runList(store, out)
+		return runList(ctx, store, out)
 	case "show":
-		return runShow(store, args, out)
+		return runShow(ctx, store, args, out)
 	case "revoke":
-		return runRevoke(store, args)
+		return runRevoke(ctx, store, args)
 	case "unrevoke":
-		return runUnrevoke(store, args)
+		return runUnrevoke(ctx, store, args)
 	case "description-set":
-		return runKVSet(store, clientmanagerstore.KindDescription, args)
+		return runKVSet(ctx, store, clientmanagerstore.KindDescription, args)
 	case "description-unset":
-		return runKVUnset(store, clientmanagerstore.KindDescription, args)
+		return runKVUnset(ctx, store, clientmanagerstore.KindDescription, args)
 	case "attribute-set":
-		return runKVSet(store, clientmanagerstore.KindAttribute, args)
+		return runKVSet(ctx, store, clientmanagerstore.KindAttribute, args)
 	case "attribute-unset":
-		return runKVUnset(store, clientmanagerstore.KindAttribute, args)
+		return runKVUnset(ctx, store, clientmanagerstore.KindAttribute, args)
 	case "san-add":
-		return runSanAdd(store, args)
+		return runSanAdd(ctx, store, args)
 	case "san-remove":
-		return runSanRemove(store, args)
+		return runSanRemove(ctx, store, args)
 	default:
 		return fmt.Errorf("unknown action %q", args.Action)
 	}

@@ -22,9 +22,9 @@ func TestAddClient_ThenGetClient_RoundTrips(t *testing.T) {
 	store := newTestStore(t)
 	addedAt := time.Now().Truncate(time.Second)
 
-	require.NoError(t, store.AddClient("node-1", nil, addedAt))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, addedAt))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, "node-1", got.Hostname)
 	assert.True(t, addedAt.Equal(got.AddedAt))
@@ -35,9 +35,9 @@ func TestAddClient_WithSANs_ThenGetClient_RoundTripsSANsList(t *testing.T) {
 	store := newTestStore(t)
 	sans := []string{"alias1", "alias2"}
 
-	require.NoError(t, store.AddClient("node-1", sans, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", sans, time.Now()))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, sans, got.SANsList())
 }
@@ -45,33 +45,33 @@ func TestAddClient_WithSANs_ThenGetClient_RoundTripsSANsList(t *testing.T) {
 func TestAddClient_WithNilSANs_ThenGetClient_SANsListReturnsNil(t *testing.T) {
 	store := newTestStore(t)
 
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Nil(t, got.SANsList())
 }
 
 func TestAddClient_DuplicateReturnsErrClientExists(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
-	err := store.AddClient("node-1", nil, time.Now())
+	err := store.AddClient(t.Context(), "node-1", nil, time.Now())
 	assert.ErrorIs(t, err, ErrClientExists)
 }
 
 func TestGetClient_UnknownReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	_, err := store.GetClient("ghost")
+	_, err := store.GetClient(t.Context(), "ghost")
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
 
 func TestListClients_OrderedByHostname(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("zebra", nil, time.Now()))
-	require.NoError(t, store.AddClient("apple", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "zebra", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "apple", nil, time.Now()))
 
-	clients, err := store.ListClients()
+	clients, err := store.ListClients(t.Context())
 	require.NoError(t, err)
 	require.Len(t, clients, 2)
 	assert.Equal(t, "apple", clients[0].Hostname)
@@ -80,19 +80,19 @@ func TestListClients_OrderedByHostname(t *testing.T) {
 
 func TestSetRevoked_ThenGetClient_ReflectsFlag(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	revokedAt := time.Now().Truncate(time.Second)
 
-	require.NoError(t, store.SetRevoked("node-1", true, revokedAt))
+	require.NoError(t, store.SetRevoked(t.Context(), "node-1", true, revokedAt))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.True(t, got.Revoked)
 	require.NotNil(t, got.RevokedAt)
 	assert.True(t, revokedAt.Equal(*got.RevokedAt))
 
-	require.NoError(t, store.SetRevoked("node-1", false, time.Now()))
-	got, err = store.GetClient("node-1")
+	require.NoError(t, store.SetRevoked(t.Context(), "node-1", false, time.Now()))
+	got, err = store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.False(t, got.Revoked)
 	assert.Nil(t, got.RevokedAt)
@@ -100,24 +100,24 @@ func TestSetRevoked_ThenGetClient_ReflectsFlag(t *testing.T) {
 
 func TestSetRevoked_UnknownReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	err := store.SetRevoked("ghost", true, time.Now())
+	err := store.SetRevoked(t.Context(), "ghost", true, time.Now())
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
 
 func TestSetKV_ThenKV_RoundTrips(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
-	require.NoError(t, store.SetKV("node-1", KindDescription, "owner", "alice"))
-	require.NoError(t, store.SetKV("node-1", KindAttribute, "role", "prod-db"))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindDescription, "owner", "alice"))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindAttribute, "role", "prod-db"))
 
-	descs, err := store.KV("node-1", KindDescription)
+	descs, err := store.KV(t.Context(), "node-1", KindDescription)
 	require.NoError(t, err)
 	require.Len(t, descs, 1)
 	assert.Equal(t, "owner", descs[0].Key)
 	assert.Equal(t, "alice", descs[0].Value)
 
-	attrs, err := store.KV("node-1", KindAttribute)
+	attrs, err := store.KV(t.Context(), "node-1", KindAttribute)
 	require.NoError(t, err)
 	require.Len(t, attrs, 1)
 	assert.Equal(t, "role", attrs[0].Key)
@@ -126,11 +126,11 @@ func TestSetKV_ThenKV_RoundTrips(t *testing.T) {
 
 func TestSetKV_UpsertOverwritesValue(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.SetKV("node-1", KindDescription, "owner", "alice"))
-	require.NoError(t, store.SetKV("node-1", KindDescription, "owner", "bob"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindDescription, "owner", "alice"))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindDescription, "owner", "bob"))
 
-	descs, err := store.KV("node-1", KindDescription)
+	descs, err := store.KV(t.Context(), "node-1", KindDescription)
 	require.NoError(t, err)
 	require.Len(t, descs, 1)
 	assert.Equal(t, "bob", descs[0].Value)
@@ -138,18 +138,18 @@ func TestSetKV_UpsertOverwritesValue(t *testing.T) {
 
 func TestSetKV_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	err := store.SetKV("ghost", KindDescription, "owner", "alice")
+	err := store.SetKV(t.Context(), "ghost", KindDescription, "owner", "alice")
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
 
 func TestUnsetKV_RemovesRow(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.SetKV("node-1", KindDescription, "owner", "alice"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindDescription, "owner", "alice"))
 
-	require.NoError(t, store.UnsetKV("node-1", KindDescription, "owner"))
+	require.NoError(t, store.UnsetKV(t.Context(), "node-1", KindDescription, "owner"))
 
-	descs, err := store.KV("node-1", KindDescription)
+	descs, err := store.KV(t.Context(), "node-1", KindDescription)
 	require.NoError(t, err)
 	assert.Empty(t, descs)
 }
@@ -165,11 +165,11 @@ func TestAddClient_ConcurrentDuplicatePreservesSentinel(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		results[0] = store.AddClient(hostname, nil, addedAt)
+		results[0] = store.AddClient(t.Context(), hostname, nil, addedAt)
 	}()
 	go func() {
 		defer wg.Done()
-		results[1] = store.AddClient(hostname, nil, addedAt)
+		results[1] = store.AddClient(t.Context(), hostname, nil, addedAt)
 	}()
 	wg.Wait()
 
@@ -193,68 +193,68 @@ func TestNew_OpensAndClosesCleanly(t *testing.T) {
 
 func TestAddSAN_AppendsToEmptyList(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
-	require.NoError(t, store.AddSAN("node-1", "node-1.internal"))
+	require.NoError(t, store.AddSAN(t.Context(), "node-1", "node-1.internal"))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node-1.internal"}, got.SANsList())
 }
 
 func TestAddSAN_DuplicateIsNoOp(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", []string{"a.internal"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"a.internal"}, time.Now()))
 
-	require.NoError(t, store.AddSAN("node-1", "a.internal"))
+	require.NoError(t, store.AddSAN(t.Context(), "node-1", "a.internal"))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.internal"}, got.SANsList())
 }
 
 func TestAddSAN_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	err := store.AddSAN("ghost", "a.internal")
+	err := store.AddSAN(t.Context(), "ghost", "a.internal")
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
 
 func TestRemoveSAN_RemovesExistingAlias(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", []string{"a.internal", "b.internal"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"a.internal", "b.internal"}, time.Now()))
 
-	require.NoError(t, store.RemoveSAN("node-1", "a.internal"))
+	require.NoError(t, store.RemoveSAN(t.Context(), "node-1", "a.internal"))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"b.internal"}, got.SANsList())
 }
 
 func TestRemoveSAN_NonExistentAliasIsNoOp(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", []string{"a.internal"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"a.internal"}, time.Now()))
 
-	require.NoError(t, store.RemoveSAN("node-1", "z.internal"))
+	require.NoError(t, store.RemoveSAN(t.Context(), "node-1", "z.internal"))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.internal"}, got.SANsList())
 }
 
 func TestRemoveSAN_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	err := store.RemoveSAN("ghost", "a.internal")
+	err := store.RemoveSAN(t.Context(), "ghost", "a.internal")
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
 
 func TestUpdateLastSeen_SetsTimestamp(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	seenAt := time.Now().Truncate(time.Second)
 
-	require.NoError(t, store.UpdateLastSeen("node-1", seenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	require.NotNil(t, got.LastSeenAt)
 	assert.True(t, seenAt.Equal(*got.LastSeenAt))
@@ -262,39 +262,39 @@ func TestUpdateLastSeen_SetsTimestamp(t *testing.T) {
 
 func TestUpdateLastSeen_OverwritesPreviousValue(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.UpdateLastSeen("node-1", time.Now().Add(-time.Hour)))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", time.Now().Add(-time.Hour)))
 
 	newSeenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen("node-1", newSeenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", newSeenAt))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.True(t, newSeenAt.Equal(*got.LastSeenAt))
 }
 
 func TestUpdateLastSeen_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	err := store.UpdateLastSeen("ghost", time.Now())
+	err := store.UpdateLastSeen(t.Context(), "ghost", time.Now())
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
 
 func TestGetClient_NewClientHasNilLastSeenAt(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Nil(t, got.LastSeenAt)
 }
 
 func TestLoadClientView_ReturnsFullRecordWithKVAndSANs(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.AddClient("node-1", []string{"alias.internal"}, time.Now()))
-	require.NoError(t, store.SetKV("node-1", KindAttribute, "role", "db"))
-	require.NoError(t, store.SetKV("node-1", KindDescription, "owner", "alice"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"alias.internal"}, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindAttribute, "role", "db"))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindDescription, "owner", "alice"))
 
-	view, err := store.LoadClientView("node-1")
+	view, err := store.LoadClientView(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, "node-1", view.Hostname)
 	assert.False(t, view.Revoked)
@@ -305,6 +305,6 @@ func TestLoadClientView_ReturnsFullRecordWithKVAndSANs(t *testing.T) {
 
 func TestLoadClientView_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	_, err := store.LoadClientView("ghost")
+	_, err := store.LoadClientView(t.Context(), "ghost")
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }

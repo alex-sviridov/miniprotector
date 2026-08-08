@@ -26,7 +26,7 @@ func NewClientManagerAPIServer(store *clientmanagerstore.Store, logger *slog.Log
 }
 
 func (s *clientManagerAPIServer) ListClients(ctx context.Context, _ *pb.ListClientsRequest) (*pb.ListClientsResponse, error) {
-	recs, err := s.store.ListClients()
+	recs, err := s.store.ListClients(ctx)
 	if err != nil {
 		s.logger.Error("ListClients: query failed", "error", err)
 		return nil, status.Errorf(codes.Internal, "list clients: %v", err)
@@ -34,7 +34,7 @@ func (s *clientManagerAPIServer) ListClients(ctx context.Context, _ *pb.ListClie
 
 	clients := make([]*pb.Client, len(recs))
 	for i, rec := range recs {
-		view, err := s.store.LoadClientView(rec.Hostname)
+		view, err := s.store.LoadClientView(ctx, rec.Hostname)
 		if err != nil {
 			s.logger.Error("ListClients: load view failed", "hostname", rec.Hostname, "error", err)
 			return nil, status.Errorf(codes.Internal, "list clients: %v", err)
@@ -45,7 +45,7 @@ func (s *clientManagerAPIServer) ListClients(ctx context.Context, _ *pb.ListClie
 }
 
 func (s *clientManagerAPIServer) GetClient(ctx context.Context, req *pb.GetClientRequest) (*pb.Client, error) {
-	view, err := s.store.LoadClientView(req.GetHostname())
+	view, err := s.store.LoadClientView(ctx, req.GetHostname())
 	if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		return nil, status.Errorf(codes.NotFound, "client %s not found", req.GetHostname())
 	}

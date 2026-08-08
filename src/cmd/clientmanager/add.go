@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +11,8 @@ import (
 	clientmanagerstore "github.com/alex-sviridov/miniprotector/storage/clientmanager"
 )
 
-func runAdd(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
-	if _, err := store.GetClient(args.Hostname); err == nil {
+func runAdd(ctx context.Context, mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
+	if _, err := store.GetClient(ctx, args.Hostname); err == nil {
 		return fmt.Errorf("client %q already exists; use re-enroll or description/attribute set instead", args.Hostname)
 	} else if !errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		return fmt.Errorf("check existing client: %w", err)
@@ -22,7 +23,7 @@ func runAdd(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Ar
 		return fmt.Errorf("add %s: %w", args.Hostname, err)
 	}
 
-	if err := store.AddClient(args.Hostname, args.SANs, time.Now()); err != nil {
+	if err := store.AddClient(ctx, args.Hostname, args.SANs, time.Now()); err != nil {
 		return fmt.Errorf("record client %s: %w", args.Hostname, err)
 	}
 
@@ -30,8 +31,8 @@ func runAdd(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Ar
 	return nil
 }
 
-func runReEnroll(mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
-	client, err := store.GetClient(args.Hostname)
+func runReEnroll(ctx context.Context, mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
+	client, err := store.GetClient(ctx, args.Hostname)
 	if err != nil {
 		return fmt.Errorf("re-enroll %s: %w", args.Hostname, err)
 	}

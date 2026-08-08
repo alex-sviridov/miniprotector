@@ -48,7 +48,7 @@ func (s *issuerServer) RequestOperatingCert(ctx context.Context, req *pb.Request
 		return nil, fmt.Errorf("job-id metadata required: %w", err)
 	}
 
-	client, err := s.store.GetClient(hostname)
+	client, err := s.store.GetClient(ctx, hostname)
 	if err != nil {
 		return nil, fmt.Errorf("hostname %s not tracked: %w", hostname, err)
 	}
@@ -56,7 +56,7 @@ func (s *issuerServer) RequestOperatingCert(ctx context.Context, req *pb.Request
 		return nil, fmt.Errorf("hostname %s is revoked", hostname)
 	}
 
-	attrRecords, err := s.store.KV(hostname, clientmanagerstore.KindAttribute)
+	attrRecords, err := s.store.KV(ctx, hostname, clientmanagerstore.KindAttribute)
 	if err != nil {
 		return nil, fmt.Errorf("load attributes for %s: %w", hostname, err)
 	}
@@ -75,7 +75,7 @@ func (s *issuerServer) RequestOperatingCert(ctx context.Context, req *pb.Request
 		return nil, fmt.Errorf("issue certificate for %s: %w", hostname, err)
 	}
 
-	if err := s.store.UpdateLastSeen(hostname, time.Now()); err != nil {
+	if err := s.store.UpdateLastSeen(ctx, hostname, time.Now()); err != nil {
 		s.logger.Error("failed to update last_seen", "hostname", hostname, "job_id", jobID, "error", err)
 	}
 
@@ -95,7 +95,7 @@ func (s *issuerServer) DescribeSANs(ctx context.Context, _ *pb.DescribeSANsReque
 		return nil, fmt.Errorf("determine caller identity: %w", err)
 	}
 
-	client, err := s.store.GetClient(hostname)
+	client, err := s.store.GetClient(ctx, hostname)
 	if err != nil {
 		return nil, fmt.Errorf("hostname %s not tracked: %w", hostname, err)
 	}

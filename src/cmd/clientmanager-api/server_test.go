@@ -27,9 +27,9 @@ func newTestServer(t *testing.T) (*clientManagerAPIServer, *clientmanagerstore.S
 
 func TestListClients_ReturnsAllClientsWithAttributesAndDescriptions(t *testing.T) {
 	srv, store := newTestServer(t)
-	require.NoError(t, store.AddClient("node-1", []string{"alias.internal"}, time.Now()))
-	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindAttribute, "role", "db"))
-	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindDescription, "owner", "alice"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"alias.internal"}, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, "role", "db"))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindDescription, "owner", "alice"))
 
 	resp, err := srv.ListClients(context.Background(), &pb.ListClientsRequest{})
 	require.NoError(t, err)
@@ -53,11 +53,11 @@ func TestGetClient_UnknownHostnameReturnsNotFound(t *testing.T) {
 
 func TestGetClient_RevokedAndLastSeenTimestampsRoundTrip(t *testing.T) {
 	srv, store := newTestServer(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	revokedAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.SetRevoked("node-1", true, revokedAt))
+	require.NoError(t, store.SetRevoked(t.Context(), "node-1", true, revokedAt))
 	seenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen("node-1", seenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
 
 	client, err := srv.GetClient(context.Background(), &pb.GetClientRequest{Hostname: "node-1"})
 	require.NoError(t, err)

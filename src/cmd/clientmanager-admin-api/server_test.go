@@ -64,14 +64,14 @@ func TestAddClient_MintsAndRecordsClient(t *testing.T) {
 	assert.Equal(t, "node-1", rec.lastHost)
 	assert.Equal(t, []string{"alias.internal"}, rec.lastSANs)
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Equal(t, "node-1", got.Hostname)
 }
 
 func TestAddClient_DuplicateHostnameReturnsAlreadyExists(t *testing.T) {
 	srv, store, rec := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
 	_, err := srv.AddClient(context.Background(), &pb.AddClientRequest{Hostname: "node-1"})
 	require.Error(t, err)
@@ -87,7 +87,7 @@ func TestAddClient_MintFailureDoesNotRecordClient(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 
-	_, err = store.GetClient("node-1")
+	_, err = store.GetClient(t.Context(), "node-1")
 	assert.ErrorIs(t, err, clientmanagerstore.ErrClientNotFound)
 }
 
@@ -102,7 +102,7 @@ func TestReEnrollClient_UnknownHostnameReturnsNotFound(t *testing.T) {
 
 func TestReEnrollClient_NoSANOverride_ReusesStoredSANs(t *testing.T) {
 	srv, store, rec := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", []string{"alias1", "alias2"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"alias1", "alias2"}, time.Now()))
 
 	resp, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "node-1"})
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestReEnrollClient_NoSANOverride_ReusesStoredSANs(t *testing.T) {
 
 func TestReEnrollClient_WithSANOverride_UsesOverrideNotStoredSANs(t *testing.T) {
 	srv, store, rec := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", []string{"alias1"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"alias1"}, time.Now()))
 
 	_, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "node-1", Sans: []string{"override1"}})
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestReEnrollClient_WithSANOverride_UsesOverrideNotStoredSANs(t *testing.T) 
 
 func TestRevokeClient_SetsRevokedAndReturnsUpdatedClient(t *testing.T) {
 	srv, store, _ := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
 	client, err := srv.RevokeClient(context.Background(), &pb.RevokeClientRequest{Hostname: "node-1"})
 	require.NoError(t, err)
@@ -139,8 +139,8 @@ func TestRevokeClient_UnknownHostnameReturnsNotFound(t *testing.T) {
 
 func TestUnrevokeClient_ClearsRevokedFlag(t *testing.T) {
 	srv, store, _ := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.SetRevoked("node-1", true, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetRevoked(t.Context(), "node-1", true, time.Now()))
 
 	client, err := srv.UnrevokeClient(context.Background(), &pb.UnrevokeClientRequest{Hostname: "node-1"})
 	require.NoError(t, err)
@@ -158,8 +158,8 @@ func TestUnrevokeClient_UnknownHostnameReturnsNotFound(t *testing.T) {
 
 func TestUpdateDescription_SetsAndUnsetsKeys(t *testing.T) {
 	srv, store, _ := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindDescription, "old", "gone"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindDescription, "old", "gone"))
 
 	client, err := srv.UpdateDescription(context.Background(), &pb.UpdateClientKVRequest{
 		Hostname: "node-1",
@@ -182,7 +182,7 @@ func TestUpdateDescription_UnknownHostnameReturnsNotFound(t *testing.T) {
 
 func TestUpdateAttributes_SetsAndUnsetsKeys(t *testing.T) {
 	srv, store, _ := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
 	client, err := srv.UpdateAttributes(context.Background(), &pb.UpdateClientKVRequest{
 		Hostname: "node-1",
@@ -202,7 +202,7 @@ func TestUpdateAttributes_UnknownHostnameReturnsNotFound(t *testing.T) {
 
 func TestUpdateSANs_AddsAndRemovesAliases(t *testing.T) {
 	srv, store, _ := newTestAdminServer(t)
-	require.NoError(t, store.AddClient("node-1", []string{"old.internal"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"old.internal"}, time.Now()))
 
 	client, err := srv.UpdateSANs(context.Background(), &pb.UpdateClientSANsRequest{
 		Hostname: "node-1",

@@ -38,7 +38,7 @@ func (s *clientManagerAdminServer) AddClient(ctx context.Context, req *pb.AddCli
 		return nil, status.Error(codes.InvalidArgument, "hostname is required")
 	}
 
-	if _, err := s.store.GetClient(hostname); err == nil {
+	if _, err := s.store.GetClient(ctx, hostname); err == nil {
 		return nil, status.Errorf(codes.AlreadyExists, "client %s already enrolled", hostname)
 	} else if !errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		s.logger.Error("AddClient: check existing failed", "hostname", hostname, "error", err)
@@ -51,7 +51,7 @@ func (s *clientManagerAdminServer) AddClient(ctx context.Context, req *pb.AddCli
 		return nil, status.Errorf(codes.Internal, "mint token: %v", err)
 	}
 
-	if err := s.store.AddClient(hostname, req.GetSans(), time.Now()); err != nil {
+	if err := s.store.AddClient(ctx, hostname, req.GetSans(), time.Now()); err != nil {
 		s.logger.Error("AddClient: record failed", "hostname", hostname, "error", err)
 		return nil, status.Errorf(codes.Internal, "record client: %v", err)
 	}
@@ -61,7 +61,7 @@ func (s *clientManagerAdminServer) AddClient(ctx context.Context, req *pb.AddCli
 
 func (s *clientManagerAdminServer) ReEnrollClient(ctx context.Context, req *pb.ReEnrollClientRequest) (*pb.ReEnrollClientResponse, error) {
 	hostname := req.GetHostname()
-	rec, err := s.store.GetClient(hostname)
+	rec, err := s.store.GetClient(ctx, hostname)
 	if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
 	}
@@ -85,36 +85,36 @@ func (s *clientManagerAdminServer) ReEnrollClient(ctx context.Context, req *pb.R
 }
 
 func (s *clientManagerAdminServer) RevokeClient(ctx context.Context, req *pb.RevokeClientRequest) (*pb.Client, error) {
-	return s.setRevoked(req.GetHostname(), true)
+	return s.setRevoked(ctx, req.GetHostname(), true)
 }
 
 func (s *clientManagerAdminServer) UnrevokeClient(ctx context.Context, req *pb.UnrevokeClientRequest) (*pb.Client, error) {
-	return s.setRevoked(req.GetHostname(), false)
+	return s.setRevoked(ctx, req.GetHostname(), false)
 }
 
-func (s *clientManagerAdminServer) setRevoked(hostname string, revoked bool) (*pb.Client, error) {
-	if err := s.store.SetRevoked(hostname, revoked, time.Now()); err != nil {
+func (s *clientManagerAdminServer) setRevoked(ctx context.Context, hostname string, revoked bool) (*pb.Client, error) {
+	if err := s.store.SetRevoked(ctx, hostname, revoked, time.Now()); err != nil {
 		if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 			return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
 		}
 		s.logger.Error("setRevoked: update failed", "hostname", hostname, "revoked", revoked, "error", err)
 		return nil, status.Errorf(codes.Internal, "update revoked: %v", err)
 	}
-	return s.loadClient(hostname)
+	return s.loadClient(ctx, hostname)
 }
 
 func (s *clientManagerAdminServer) UpdateDescription(ctx context.Context, req *pb.UpdateClientKVRequest) (*pb.Client, error) {
-	return s.updateKV(req, clientmanagerstore.KindDescription)
+	return s.updateKV(ctx, req, clientmanagerstore.KindDescription)
 }
 
 func (s *clientManagerAdminServer) UpdateAttributes(ctx context.Context, req *pb.UpdateClientKVRequest) (*pb.Client, error) {
-	return s.updateKV(req, clientmanagerstore.KindAttribute)
+	return s.updateKV(ctx, req, clientmanagerstore.KindAttribute)
 }
 
-func (s *clientManagerAdminServer) updateKV(req *pb.UpdateClientKVRequest, kind clientmanagerstore.KVKind) (*pb.Client, error) {
+func (s *clientManagerAdminServer) updateKV(ctx context.Context, req *pb.UpdateClientKVRequest, kind clientmanagerstore.KVKind) (*pb.Client, error) {
 	hostname := req.GetHostname()
 	for key, value := range req.GetSet() {
-		if err := s.store.SetKV(hostname, kind, key, value); err != nil {
+		if err := s.store.SetKV(ctx, hostname, kind, key, value); err != nil {
 			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
 			}
@@ -123,7 +123,7 @@ func (s *clientManagerAdminServer) updateKV(req *pb.UpdateClientKVRequest, kind 
 		}
 	}
 	for _, key := range req.GetUnset() {
-		if err := s.store.UnsetKV(hostname, kind, key); err != nil {
+		if err := s.store.UnsetKV(ctx, hostname, kind, key); err != nil {
 			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
 			}
@@ -131,13 +131,13 @@ func (s *clientManagerAdminServer) updateKV(req *pb.UpdateClientKVRequest, kind 
 			return nil, status.Errorf(codes.Internal, "unset %s: %v", kind, err)
 		}
 	}
-	return s.loadClient(hostname)
+	return s.loadClient(ctx, hostname)
 }
 
 func (s *clientManagerAdminServer) UpdateSANs(ctx context.Context, req *pb.UpdateClientSANsRequest) (*pb.Client, error) {
 	hostname := req.GetHostname()
 	for _, alias := range req.GetAdd() {
-		if err := s.store.AddSAN(hostname, alias); err != nil {
+		if err := s.store.AddSAN(ctx, hostname, alias); err != nil {
 			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
 			}
@@ -146,7 +146,7 @@ func (s *clientManagerAdminServer) UpdateSANs(ctx context.Context, req *pb.Updat
 		}
 	}
 	for _, alias := range req.GetRemove() {
-		if err := s.store.RemoveSAN(hostname, alias); err != nil {
+		if err := s.store.RemoveSAN(ctx, hostname, alias); err != nil {
 			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
 			}
@@ -154,13 +154,13 @@ func (s *clientManagerAdminServer) UpdateSANs(ctx context.Context, req *pb.Updat
 			return nil, status.Errorf(codes.Internal, "remove san: %v", err)
 		}
 	}
-	return s.loadClient(hostname)
+	return s.loadClient(ctx, hostname)
 }
 
 // loadClient loads hostname's full record for a response, used by every
 // RPC below AddClient/ReEnrollClient that returns the updated Client.
-func (s *clientManagerAdminServer) loadClient(hostname string) (*pb.Client, error) {
-	view, err := s.store.LoadClientView(hostname)
+func (s *clientManagerAdminServer) loadClient(ctx context.Context, hostname string) (*pb.Client, error) {
+	view, err := s.store.LoadClientView(ctx, hostname)
 	if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
 	}

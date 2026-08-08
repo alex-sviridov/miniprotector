@@ -24,12 +24,12 @@ func TestParseKV_MissingEqualsErrors(t *testing.T) {
 
 func TestRunKVSet_MultiplePairs(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
 	args := &Arguments{Hostname: "node-1", KVPairs: []string{"owner=alice", "location=rack3"}}
-	require.NoError(t, runKVSet(store, clientmanagerstore.KindDescription, args))
+	require.NoError(t, runKVSet(t.Context(), store, clientmanagerstore.KindDescription, args))
 
-	descs, err := store.KV("node-1", clientmanagerstore.KindDescription)
+	descs, err := store.KV(t.Context(), "node-1", clientmanagerstore.KindDescription)
 	require.NoError(t, err)
 	assert.Len(t, descs, 2)
 }
@@ -37,30 +37,30 @@ func TestRunKVSet_MultiplePairs(t *testing.T) {
 func TestRunKVSet_UnknownHostnameErrors(t *testing.T) {
 	store := newTestManagerStore(t)
 	args := &Arguments{Hostname: "ghost", KVPairs: []string{"owner=alice"}}
-	err := runKVSet(store, clientmanagerstore.KindDescription, args)
+	err := runKVSet(t.Context(), store, clientmanagerstore.KindDescription, args)
 	assert.ErrorIs(t, err, clientmanagerstore.ErrClientNotFound)
 }
 
 func TestRunKVUnset_RemovesKey(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindAttribute, "role", "prod-db"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, "role", "prod-db"))
 
 	args := &Arguments{Hostname: "node-1", Key: "role"}
-	require.NoError(t, runKVUnset(store, clientmanagerstore.KindAttribute, args))
+	require.NoError(t, runKVUnset(t.Context(), store, clientmanagerstore.KindAttribute, args))
 
-	attrs, err := store.KV("node-1", clientmanagerstore.KindAttribute)
+	attrs, err := store.KV(t.Context(), "node-1", clientmanagerstore.KindAttribute)
 	require.NoError(t, err)
 	assert.Empty(t, attrs)
 }
 
 func TestRunKVSet_KindsAreIsolated(t *testing.T) {
 	store := newTestManagerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
-	require.NoError(t, runKVSet(store, clientmanagerstore.KindDescription, &Arguments{Hostname: "node-1", KVPairs: []string{"role=not-an-attribute"}}))
+	require.NoError(t, runKVSet(t.Context(), store, clientmanagerstore.KindDescription, &Arguments{Hostname: "node-1", KVPairs: []string{"role=not-an-attribute"}}))
 
-	attrs, err := store.KV("node-1", clientmanagerstore.KindAttribute)
+	attrs, err := store.KV(t.Context(), "node-1", clientmanagerstore.KindAttribute)
 	require.NoError(t, err)
 	assert.Empty(t, attrs, "a description must not be visible as an attribute")
 }

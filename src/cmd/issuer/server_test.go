@@ -91,8 +91,8 @@ func testCSR(t *testing.T) *x509.CertificateRequest {
 
 func TestRequestOperatingCert_KnownNotRevokedHostSucceeds(t *testing.T) {
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", []string{"node-1.internal"}, time.Now()))
-	require.NoError(t, store.SetKV("node-1", clientmanagerstore.KindAttribute, "role", "prod-db"))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"node-1.internal"}, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, "role", "prod-db"))
 
 	var gotHostname string
 	var gotSANs []string
@@ -114,15 +114,15 @@ func TestRequestOperatingCert_KnownNotRevokedHostSucceeds(t *testing.T) {
 	assert.Equal(t, []string{"node-1.internal"}, gotSANs)
 	assert.Equal(t, map[string]string{"role": "prod-db"}, gotAttrs)
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	require.NotNil(t, got.LastSeenAt, "last_seen should be stamped on success")
 }
 
 func TestRequestOperatingCert_RevokedHostRejectedWithoutMinting(t *testing.T) {
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
-	require.NoError(t, store.SetRevoked("node-1", true, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetRevoked(t.Context(), "node-1", true, time.Now()))
 
 	called := false
 	mintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
@@ -137,7 +137,7 @@ func TestRequestOperatingCert_RevokedHostRejectedWithoutMinting(t *testing.T) {
 	assert.Error(t, err)
 	assert.False(t, called, "mintSign must not be called for a revoked host")
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Nil(t, got.LastSeenAt, "last_seen must not be stamped when the request was refused")
 }
@@ -175,7 +175,7 @@ func TestRequestOperatingCert_NoPeerIdentityRejected(t *testing.T) {
 
 func TestRequestOperatingCert_MissingJobIDRejectedWithoutMinting(t *testing.T) {
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
 	called := false
 	mintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
@@ -193,7 +193,7 @@ func TestRequestOperatingCert_MissingJobIDRejectedWithoutMinting(t *testing.T) {
 
 func TestRequestOperatingCert_MalformedCSRRejected(t *testing.T) {
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	mintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
 		t.Fatal("mintSign must not be called for an unparseable CSR")
 		return nil, nil
@@ -208,7 +208,7 @@ func TestRequestOperatingCert_MalformedCSRRejected(t *testing.T) {
 
 func TestRequestOperatingCert_MintSignFailurePropagatesAndSkipsLastSeen(t *testing.T) {
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	mintSign := func(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest) ([]byte, error) {
 		return nil, assert.AnError
 	}
@@ -219,14 +219,14 @@ func TestRequestOperatingCert_MintSignFailurePropagatesAndSkipsLastSeen(t *testi
 	})
 	assert.Error(t, err)
 
-	got, err := store.GetClient("node-1")
+	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
 	assert.Nil(t, got.LastSeenAt)
 }
 
 func TestDescribeSANs_KnownHostReturnsCurrentSANs(t *testing.T) {
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", []string{"node-1.internal", "node-1.alt"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"node-1.internal", "node-1.alt"}, time.Now()))
 
 	srv := newIssuerServer(store, nil, testLogger())
 	resp, err := srv.DescribeSANs(fakeAuthContext(t, "node-1"), &pb.DescribeSANsRequest{})
@@ -236,7 +236,7 @@ func TestDescribeSANs_KnownHostReturnsCurrentSANs(t *testing.T) {
 
 func TestDescribeSANs_HostWithNoSANsReturnsEmpty(t *testing.T) {
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 
 	srv := newIssuerServer(store, nil, testLogger())
 	resp, err := srv.DescribeSANs(fakeAuthContext(t, "node-1"), &pb.DescribeSANsRequest{})
@@ -249,8 +249,8 @@ func TestDescribeSANs_RevokedHostStillReturnsSANs(t *testing.T) {
 	// about itself and issues nothing -- only RequestOperatingCert enforces
 	// revocation.
 	store := newTestIssuerStore(t)
-	require.NoError(t, store.AddClient("node-1", []string{"node-1.internal"}, time.Now()))
-	require.NoError(t, store.SetRevoked("node-1", true, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"node-1.internal"}, time.Now()))
+	require.NoError(t, store.SetRevoked(t.Context(), "node-1", true, time.Now()))
 
 	srv := newIssuerServer(store, nil, testLogger())
 	resp, err := srv.DescribeSANs(fakeAuthContext(t, "node-1"), &pb.DescribeSANsRequest{})
