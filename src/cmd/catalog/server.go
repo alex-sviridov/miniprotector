@@ -32,6 +32,7 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 
 	entries := req.GetEntries()
 	batch := make([]catalogstore.Entry, len(entries))
+	directoriesByPath := make(map[string]catalogstore.DirectoryAncestor)
 	for i, e := range entries {
 		parentDir, shortName := decodePathParts(e.GetMetadata())
 		batch[i] = catalogstore.Entry{
@@ -46,6 +47,9 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 			ParentDirectory: parentDir,
 			ShortFilename:   shortName,
 		}
+		for _, a := range decodeDirectoryAncestors(parentDir) {
+			directoriesByPath[a.Path] = a
+		}
 	}
 
 	if err := s.store.EnsureEntries(batch); err != nil {
@@ -53,8 +57,46 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 		return nil, err
 	}
 
+	if len(directoriesByPath) > 0 {
+		directories := make([]catalogstore.DirectoryAncestor, 0, len(directoriesByPath))
+		for _, a := range directoriesByPath {
+			directories = append(directories, a)
+		}
+		if err := s.store.EnsureDirectories(directories); err != nil {
+			s.logger.Error("SyncFileVersions: persisting directory ancestors failed", "error", err, "count", len(directories))
+			return nil, err
+		}
+	}
+
 	s.logger.Info("SyncFileVersions: batch persisted", "store_node", storeNode, "count", len(batch))
 	return &pb.SyncResponse{}, nil
+}
+
+// decodeDirectoryAncestors walks parentDir's ancestor chain via splitPath
+// -- the same shape-detecting split that produced parentDir itself in
+// decodePathParts -- collecting one DirectoryAncestor per level from
+// parentDir up to its root, root-first Depth (0 at the root). A blank
+// parentDir (a decodePathParts failure) yields no ancestors: an unknown
+// location can't be placed in the tree.
+func decodeDirectoryAncestors(parentDir string) []catalogstore.DirectoryAncestor {
+	if parentDir == "" {
+		return nil
+	}
+	var ancestors []catalogstore.DirectoryAncestor
+	current := parentDir
+	for current != "" {
+		parent, base := splitPath(current)
+		name := base
+		if parent == "" {
+			name = current // true root: display itself, e.g. "/" or "C:\"
+		}
+		ancestors = append(ancestors, catalogstore.DirectoryAncestor{Path: current, ParentPath: parent, Name: name})
+		current = parent
+	}
+	for i := range ancestors {
+		ancestors[i].Depth = len(ancestors) - 1 - i // built leaf-to-root; index from the end for root-first depth
+	}
+	return ancestors
 }
 
 // decodeSourceHost extracts the real originating (backed-up) host from a

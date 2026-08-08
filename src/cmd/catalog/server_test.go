@@ -500,3 +500,94 @@ func TestListDirectoryFacets_IgnoresParentDirectoriesOnRequest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.GetFacets(), 2)
 }
+
+func TestSyncFileVersions_PersistsDirectoryAncestorsForSyncedFile(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi.ID(), Metadata: metadata, CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	roots, err := store.ListDirectoryChildren("", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+	assert.Equal(t, "/", roots[0].Path)
+
+	varChildren, err := store.ListDirectoryChildren("/", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, varChildren, 1)
+	assert.Equal(t, "/var", varChildren[0].Path)
+
+	dbdataChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, dbdataChildren, 1)
+	assert.Equal(t, "/var/lib/dbdata", dbdataChildren[0].Path)
+	assert.Equal(t, int64(1), dbdataChildren[0].FileCount)
+}
+
+func TestSyncFileVersions_MalformedMetadataPersistsNoDirectoryAncestors(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", Metadata: []byte("not-gob-encoded"), CreatedAt: time.Now().Unix()},
+	}}
+	_, err := srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
+
+	roots, err := store.ListDirectoryChildren("", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, roots)
+}
+
+func TestSyncFileVersions_DirectoryAncestorsDedupedAcrossBatch(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi1 := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	m1, err := fi1.Encode()
+	require.NoError(t, err)
+	fi2 := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/wal.log", 4096, 0o644, 999, 999, time.Now())
+	m2, err := fi2.Encode()
+	require.NoError(t, err)
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi1.ID(), Metadata: m1, CreatedAt: time.Now().Unix()},
+		{JobId: "job-1", ObjectId: fi2.ID(), Metadata: m2, CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	libChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, libChildren, 1) // "dbdata" persisted once, not twice
+	assert.Equal(t, int64(2), libChildren[0].FileCount)
+}
+
+func TestSyncFileVersions_DirectoryAncestorsIdempotentAcrossRepeatedSyncs(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi.ID(), Metadata: metadata, CreatedAt: time.Now().Unix()},
+	}}
+
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+	_, err = srv.SyncFileVersions(ctx, req) // resend, e.g. after a retried RPC
+	require.NoError(t, err)
+
+	libChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, libChildren, 1)
+}
