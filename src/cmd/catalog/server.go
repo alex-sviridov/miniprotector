@@ -33,15 +33,18 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 	entries := req.GetEntries()
 	batch := make([]catalogstore.Entry, len(entries))
 	for i, e := range entries {
+		parentDir, shortName := decodePathParts(e.GetMetadata())
 		batch[i] = catalogstore.Entry{
-			StoreNode:      storeNode,
-			JobID:          e.GetJobId(),
-			ObjectID:       e.GetObjectId(),
-			Metadata:       e.GetMetadata(),
-			Ctime:          e.GetCtime(),
-			StoreSeq:       e.GetStoreSeq(),
-			StoreCreatedAt: time.Unix(e.GetCreatedAt(), 0).UTC(),
-			SourceHost:     decodeSourceHost(e.GetMetadata()),
+			StoreNode:       storeNode,
+			JobID:           e.GetJobId(),
+			ObjectID:        e.GetObjectId(),
+			Metadata:        e.GetMetadata(),
+			Ctime:           e.GetCtime(),
+			StoreSeq:        e.GetStoreSeq(),
+			StoreCreatedAt:  time.Unix(e.GetCreatedAt(), 0).UTC(),
+			SourceHost:      decodeSourceHost(e.GetMetadata()),
+			ParentDirectory: parentDir,
+			ShortFilename:   shortName,
 		}
 	}
 
@@ -68,17 +71,31 @@ func decodeSourceHost(metadata []byte) string {
 	return fi.Source()
 }
 
+// decodePathParts extracts parent_directory/short_filename from an entry's
+// Metadata blob, decoded once at sync time so ListEntries/
+// ListDirectoryFacets can filter/group on plain indexed columns instead of
+// decoding Metadata per row (see decodeSourceHost above, same rationale). A
+// decode failure yields ("", "") rather than failing the whole batch.
+func decodePathParts(metadata []byte) (parentDir, shortName string) {
+	fi, err := filesystem.DecodeFileInfo(metadata)
+	if err != nil {
+		return "", ""
+	}
+	return splitPath(fi.Path())
+}
+
 func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequest) (*pb.ListEntriesResponse, error) {
 	records, hasMore, err := s.store.ListEntries(catalogstore.ListEntriesFilter{
-		StoreNode:      req.GetStoreHost(),
-		SourceHost:     req.GetSourceHost(),
-		Pattern:        req.GetPattern(),
-		Limit:          int(req.GetLimit()),
-		StartingAfter:  req.GetStartingAfter(),
-		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
-		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
-		SourceHosts:    req.GetSourceHosts(),
-		JobNames:       req.GetJobNames(),
+		StoreNode:         req.GetStoreHost(),
+		SourceHost:        req.GetSourceHost(),
+		Pattern:           req.GetPattern(),
+		Limit:             int(req.GetLimit()),
+		StartingAfter:     req.GetStartingAfter(),
+		ReceivedAfter:     unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore:    unixOrZero(req.GetReceivedBefore()),
+		SourceHosts:       req.GetSourceHosts(),
+		JobNames:          req.GetJobNames(),
+		ParentDirectories: req.GetParentDirectories(),
 	})
 	if err != nil {
 		s.logger.Error("ListEntries: query failed", "error", err)
@@ -101,14 +118,16 @@ func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequ
 // once at sync time (see decodeSourceHost above).
 func toProtoEntry(rec catalogstore.EntryRecord) *pb.Entry {
 	entry := &pb.Entry{
-		Id:             rec.ID,
-		StoreHost:      rec.StoreNode,
-		SourceHost:     rec.SourceHost,
-		JobId:          rec.JobID,
-		ObjectId:       rec.ObjectID,
-		Ctime:          rec.Ctime,
-		StoreCreatedAt: rec.StoreCreatedAt.Unix(),
-		ReceivedAt:     rec.ReceivedAt.Unix(),
+		Id:              rec.ID,
+		StoreHost:       rec.StoreNode,
+		SourceHost:      rec.SourceHost,
+		JobId:           rec.JobID,
+		ObjectId:        rec.ObjectID,
+		Ctime:           rec.Ctime,
+		StoreCreatedAt:  rec.StoreCreatedAt.Unix(),
+		ReceivedAt:      rec.ReceivedAt.Unix(),
+		ParentDirectory: rec.ParentDirectory,
+		ShortFilename:   rec.ShortFilename,
 	}
 	if fi, err := filesystem.DecodeFileInfo(rec.Metadata); err == nil {
 		entry.Path = fi.Path()
@@ -156,6 +175,21 @@ func (s *catalogServer) ListJobFacets(ctx context.Context, req *pb.ListFacetsReq
 	if err != nil {
 		s.logger.Error("ListJobFacets: query failed", "error", err)
 		return nil, status.Errorf(codes.Internal, "list job facets: %v", err)
+	}
+	return &pb.ListFacetsResponse{Facets: toProtoFacets(facets)}, nil
+}
+
+func (s *catalogServer) ListDirectoryFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
+	facets, err := s.store.ListDirectoryFacets(catalogstore.FacetFilter{
+		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
+		Pattern:        req.GetPattern(),
+		SourceHosts:    req.GetSourceHosts(),
+		JobNames:       req.GetJobNames(),
+	})
+	if err != nil {
+		s.logger.Error("ListDirectoryFacets: query failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "list directory facets: %v", err)
 	}
 	return &pb.ListFacetsResponse{Facets: toProtoFacets(facets)}, nil
 }

@@ -368,3 +368,89 @@ func TestListJobFacets_ReturnsGroupedCounts(t *testing.T) {
 	assert.Equal(t, "nightly-db", resp.GetFacets()[0].GetName())
 	assert.Equal(t, int64(2), resp.GetFacets()[0].GetCount())
 }
+
+func TestSyncFileVersions_DerivesParentDirectoryAndShortFilenameFromMetadata(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi.ID(), Metadata: metadata, CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "/var/lib/dbdata", entries[0].ParentDirectory)
+	assert.Equal(t, "data.db", entries[0].ShortFilename)
+}
+
+func TestSyncFileVersions_MalformedMetadataLeavesPathPartsEmpty(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", Metadata: []byte("not-gob-encoded"), CreatedAt: time.Now().Unix()},
+	}}
+	_, err := srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
+
+	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "", entries[0].ParentDirectory)
+	assert.Equal(t, "", entries[0].ShortFilename)
+}
+
+func TestListEntries_ReturnsParentDirectoryAndShortFilenameFields(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", ShortFilename: "data.db", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "/var/lib/dbdata", resp.GetEntries()[0].GetParentDirectory())
+	assert.Equal(t, "data.db", resp.GetEntries()[0].GetShortFilename())
+}
+
+func TestListEntries_FiltersByParentDirectories(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "obj-1", resp.GetEntries()[0].GetObjectId())
+}
+
+func TestListDirectoryFacets_ReturnsGroupedCounts(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListDirectoryFacets(context.Background(), &pb.ListFacetsRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 2)
+
+	byName := map[string]int64{}
+	for _, f := range resp.GetFacets() {
+		byName[f.GetName()] = f.GetCount()
+	}
+	assert.Equal(t, int64(2), byName["/var/lib/dbdata"])
+	assert.Equal(t, int64(1), byName["/var/www"])
+}
