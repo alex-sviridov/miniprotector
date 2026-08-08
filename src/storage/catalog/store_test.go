@@ -484,3 +484,112 @@ func TestListEntries_FiltersByParentDirectoriesMultiValue(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"obj-1", "obj-3"}, objIDs)
 }
+
+func TestListClientFacets_NarrowedByParentDirectories(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListClientFacets(FacetFilter{ParentDirectories: []string{"/var/lib/dbdata"}})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "database", facets[0].Name)
+}
+
+func TestListJobFacets_NarrowedByParentDirectories(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListJobFacets(FacetFilter{ParentDirectories: []string{"/var/lib/dbdata"}})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "nightly-db", facets[0].Name)
+}
+
+func TestListDirectoryFacets_GroupsByParentDirectoryWithCountAndLastSeen(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListDirectoryFacets(FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, facets, 2)
+
+	byName := map[string]Facet{}
+	for _, f := range facets {
+		byName[f.Name] = f
+	}
+	assert.Equal(t, int64(2), byName["/var/lib/dbdata"].Count)
+	assert.Equal(t, int64(1), byName["/var/www"].Count)
+}
+
+func TestListDirectoryFacets_ExcludesEmptyParentDirectory(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListDirectoryFacets(FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "/var/www", facets[0].Name)
+}
+
+func TestListDirectoryFacets_NarrowedBySourceHostsAndJobNames(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", SourceHost: "webserver", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListDirectoryFacets(FacetFilter{SourceHosts: []string{"database"}})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "/var/lib/dbdata", facets[0].Name)
+
+	facets, err = store.ListDirectoryFacets(FacetFilter{JobNames: []string{"hourly-web"}})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "/var/www", facets[0].Name)
+}
+
+func TestListDirectoryFacets_IgnoresOwnDimension(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	// A ParentDirectories value on the request itself must not narrow
+	// ListDirectoryFacets -- it's this facet's own dimension.
+	facets, err := store.ListDirectoryFacets(FacetFilter{ParentDirectories: []string{"/var/lib/dbdata"}})
+	require.NoError(t, err)
+	assert.Len(t, facets, 2)
+}

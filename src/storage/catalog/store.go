@@ -164,14 +164,15 @@ func jobNamesWhere(q *gorm.DB, names []string) *gorm.DB {
 	return q.Where(strings.Join(conds, " OR "), args...)
 }
 
-// FacetFilter narrows a ListClientFacets/ListJobFacets aggregate query. A
-// zero-valued filter matches every entry, no date bound.
+// FacetFilter narrows a ListClientFacets/ListJobFacets/ListDirectoryFacets
+// aggregate query. A zero-valued filter matches every entry, no date bound.
 type FacetFilter struct {
-	ReceivedAfter  time.Time
-	ReceivedBefore time.Time
-	Pattern        string
-	SourceHosts    []string // ignored by ListClientFacets -- its own dimension
-	JobNames       []string // ignored by ListJobFacets -- its own dimension
+	ReceivedAfter     time.Time
+	ReceivedBefore    time.Time
+	Pattern           string
+	SourceHosts       []string // ignored by ListClientFacets -- its own dimension
+	JobNames          []string // ignored by ListJobFacets -- its own dimension
+	ParentDirectories []string // ignored by ListDirectoryFacets -- its own dimension
 }
 
 // Facet is one aggregated row: a distinct client hostname or policy name,
@@ -222,6 +223,9 @@ func (s *Store) ListClientFacets(filter FacetFilter) ([]Facet, error) {
 	if len(filter.JobNames) > 0 {
 		q = jobNamesWhere(q, filter.JobNames)
 	}
+	if len(filter.ParentDirectories) > 0 {
+		q = q.Where("parent_directory IN ?", filter.ParentDirectories)
+	}
 
 	var rows []struct {
 		SourceHost string
@@ -268,6 +272,9 @@ func (s *Store) ListJobFacets(filter FacetFilter) ([]Facet, error) {
 	if len(filter.SourceHosts) > 0 {
 		q = q.Where("source_host IN ?", filter.SourceHosts)
 	}
+	if len(filter.ParentDirectories) > 0 {
+		q = q.Where("parent_directory IN ?", filter.ParentDirectories)
+	}
 
 	var rows []struct {
 		JobID      string
@@ -284,6 +291,63 @@ func (s *Store) ListJobFacets(filter FacetFilter) ([]Facet, error) {
 		if name == "" {
 			continue
 		}
+		f, ok := byName[name]
+		if !ok {
+			f = &Facet{Name: name}
+			byName[name] = f
+			order = append(order, name)
+		}
+		f.Count++
+		if r.ReceivedAt.After(f.LastSeen) {
+			f.LastSeen = r.ReceivedAt
+		}
+	}
+
+	facets := make([]Facet, 0, len(order))
+	for _, name := range order {
+		facets = append(facets, *byName[name])
+	}
+	return facets, nil
+}
+
+// ListDirectoryFacets groups entries matching filter by parent_directory,
+// dropping rows where parent_directory is empty (a sync-time Metadata
+// decode failure -- see decodePathParts in cmd/catalog/server.go) rather
+// than surfacing a blank-named facet, mirroring ListClientFacets's drop of
+// an empty source_host. filter.ParentDirectories is ignored: a directory
+// facet list is never narrowed by its own dimension's current selection.
+// Both SourceHosts and JobNames narrow it, extending the same
+// "apply every other dimension, ignore your own" rule ListClientFacets/
+// ListJobFacets already follow to this third dimension.
+//
+// Aggregation happens in Go, not SQL, for the same reason as
+// ListClientFacets (see its comment): avoids non-portable SQL-side
+// time-string parsing, consistent Go-side row-scan pattern across all
+// three facet methods.
+func (s *Store) ListDirectoryFacets(filter FacetFilter) ([]Facet, error) {
+	q := s.db.Model(&EntryRecord{}).
+		Select("parent_directory, received_at").
+		Where("parent_directory != ''")
+	q = filter.applyCommon(q)
+	if len(filter.SourceHosts) > 0 {
+		q = q.Where("source_host IN ?", filter.SourceHosts)
+	}
+	if len(filter.JobNames) > 0 {
+		q = jobNamesWhere(q, filter.JobNames)
+	}
+
+	var rows []struct {
+		ParentDirectory string
+		ReceivedAt      time.Time
+	}
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	byName := make(map[string]*Facet)
+	var order []string
+	for _, r := range rows {
+		name := r.ParentDirectory
 		f, ok := byName[name]
 		if !ok {
 			f = &Facet{Name: name}
