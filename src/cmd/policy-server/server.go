@@ -81,8 +81,8 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 			continue
 		}
 		pp := p.ToProto(false)
-		attachDestination(pp, s.cache, s.checkins, s.logger)
-		if err := s.checkins.RecordCheckin(pp.GetId(), hostname, now); err != nil {
+		attachDestination(ctx, pp, s.cache, s.checkins, s.logger)
+		if err := s.checkins.RecordCheckin(ctx, pp.GetId(), hostname, now); err != nil {
 			s.logger.Error("GetPolicies: failed to record check-in", "hostname", hostname, "job_id", jobID, "policy_id", pp.GetId(), "error", err)
 			return nil, status.Error(codes.Internal, "failed to record check-in")
 		}
@@ -105,7 +105,7 @@ func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
 // names a storage policy), or a storage policy with no checkins yet, leaves
 // pp.Destinations empty rather than erroring. A checkin lookup failure is
 // logged and also leaves pp.Destinations empty rather than failing the RPC.
-func attachDestination(pp *pb.Policy, cache *Cache, checkins *checkinstore.Store, logger *slog.Logger) {
+func attachDestination(ctx context.Context, pp *pb.Policy, cache *Cache, checkins *checkinstore.Store, logger *slog.Logger) {
 	if pp.GetType() != "backup" || pp.GetStoragePolicyId() == "" {
 		return
 	}
@@ -117,7 +117,7 @@ func attachDestination(pp *pb.Policy, cache *Cache, checkins *checkinstore.Store
 	if !ok {
 		return
 	}
-	records, err := checkins.CheckinsForPolicy(pp.GetStoragePolicyId())
+	records, err := checkins.CheckinsForPolicy(ctx, pp.GetStoragePolicyId())
 	if err != nil {
 		logger.Error("attachDestination: failed to load checkins", "storage_policy_id", pp.GetStoragePolicyId(), "error", err)
 		return
@@ -134,8 +134,8 @@ func attachDestination(pp *pb.Policy, cache *Cache, checkins *checkinstore.Store
 // failing the whole ListPolicies call -- the same "loud skip, don't block
 // the rest" treatment this codebase already gives a single malformed
 // policy file during Cache.Reload.
-func attachCheckins(pp *pb.Policy, store *checkinstore.Store, logger *slog.Logger) {
-	records, err := store.CheckinsForPolicy(pp.GetId())
+func attachCheckins(ctx context.Context, pp *pb.Policy, store *checkinstore.Store, logger *slog.Logger) {
+	records, err := store.CheckinsForPolicy(ctx, pp.GetId())
 	if err != nil {
 		logger.Error("ListPolicies: failed to load checkins", "policy_id", pp.GetId(), "error", err)
 		return
@@ -162,8 +162,8 @@ func (s *policyServerServer) ListPolicies(ctx context.Context, req *pb.ListPolic
 			continue
 		}
 		pp := p.ToProto(true)
-		attachDestination(pp, s.cache, s.checkins, s.logger)
-		attachCheckins(pp, s.checkins, s.logger)
+		attachDestination(ctx, pp, s.cache, s.checkins, s.logger)
+		attachCheckins(ctx, pp, s.checkins, s.logger)
 		out = append(out, pp)
 	}
 	s.logger.Info("ListPolicies", "type", req.GetType(), "count", len(out))

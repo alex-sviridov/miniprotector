@@ -254,7 +254,7 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	}
 	s.logger.Info("CreatePolicy", "id", created.Meta().ID, "name", created.Meta().Name, "path", filePath)
 	pp := created.ToProto(true)
-	attachDestination(pp, s.cache, s.checkins, s.logger)
+	attachDestination(ctx, pp, s.cache, s.checkins, s.logger)
 	return pp, nil
 }
 
@@ -303,7 +303,7 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 	}
 	s.logger.Info("UpdatePolicy", "id", updated.Meta().ID, "name", updated.Meta().Name, "path", existing.Path())
 	pp := updated.ToProto(true)
-	attachDestination(pp, s.cache, s.checkins, s.logger)
+	attachDestination(ctx, pp, s.cache, s.checkins, s.logger)
 	return pp, nil
 }
 
@@ -354,7 +354,7 @@ func (s *policyServerServer) DeletePolicy(ctx context.Context, req *pb.DeletePol
 	// out on its own. Best-effort now prevents a recreated policy that
 	// reuses this deleted one's deterministic id (derived from its
 	// filename) from immediately inheriting its stale check-ins.
-	if err := s.checkins.DeleteForPolicy(req.GetId()); err != nil {
+	if err := s.checkins.DeleteForPolicy(ctx, req.GetId()); err != nil {
 		s.logger.Error("DeletePolicy: failed to delete check-in rows", "id", req.GetId(), "error", err)
 	}
 

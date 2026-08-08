@@ -68,7 +68,7 @@ func createTestStoragePolicy(t *testing.T, srv *policyServerServer, hostname str
 		Config:        "{}",
 	})
 	require.NoError(t, err)
-	require.NoError(t, srv.checkins.RecordCheckin(resp.Id, hostname, time.Now()))
+	require.NoError(t, srv.checkins.RecordCheckin(t.Context(), resp.Id, hostname, time.Now()))
 	return resp.Id
 }
 
@@ -308,14 +308,14 @@ func TestDeletePolicy_RemovesCheckinRows(t *testing.T) {
 	require.Len(t, getResp.Policies, 1)
 	policyID := getResp.Policies[0].Id
 
-	records, err := srv.checkins.CheckinsForPolicy(policyID)
+	records, err := srv.checkins.CheckinsForPolicy(t.Context(), policyID)
 	require.NoError(t, err)
 	require.Len(t, records, 1, "sanity check: a check-in should be recorded before delete")
 
 	_, err = srv.DeletePolicy(context.Background(), &pb.DeletePolicyRequest{Id: policyID})
 	require.NoError(t, err)
 
-	records, err = srv.checkins.CheckinsForPolicy(policyID)
+	records, err = srv.checkins.CheckinsForPolicy(t.Context(), policyID)
 	require.NoError(t, err)
 	assert.Empty(t, records, "DeletePolicy must not orphan check-in rows for the deleted policy")
 }

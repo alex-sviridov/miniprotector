@@ -27,7 +27,7 @@ func runCheckinCleanup(ctx context.Context, store *checkinstore.Store, interval,
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			deleted, err := store.DeleteOlderThan(time.Now().Add(-retention))
+			deleted, err := store.DeleteOlderThan(ctx, time.Now().Add(-retention))
 			if err != nil {
 				logger.Error("checkin cleanup failed", "error", err)
 				continue

@@ -179,7 +179,7 @@ func TestGetPolicies_ResponseFieldsRoundTrip(t *testing.T) {
 		"storage_policy_id": %q
 	}`, storageID))
 	srv := newTestServerWithPolicies(t, dir)
-	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-east.internal", time.Now()))
+	require.NoError(t, srv.checkins.RecordCheckin(t.Context(), storageID, "bwfs-east.internal", time.Now()))
 
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
 	require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestGetPolicies_RecordsCheckinForEachMatchedPolicy(t *testing.T) {
 	require.Len(t, resp.Policies, 1)
 	policyID := resp.Policies[0].Id
 
-	records, err := checkins.CheckinsForPolicy(policyID)
+	records, err := checkins.CheckinsForPolicy(t.Context(), policyID)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, "web-01", records[0].Hostname)
@@ -472,7 +472,7 @@ func TestListPolicies_ResolvesDestinationsFromStoragePolicyCheckins(t *testing.T
 		"storage_policy_id": %q
 	}`, storageID))
 	srv := newTestServerWithPolicies(t, dir)
-	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-east.internal", time.Now()))
+	require.NoError(t, srv.checkins.RecordCheckin(t.Context(), storageID, "bwfs-east.internal", time.Now()))
 
 	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{Type: "backup"})
 	require.NoError(t, err)
@@ -500,8 +500,8 @@ func TestGetPolicies_MultipleCheckinsAllAppearOrderedFreshestFirst(t *testing.T)
 
 	older := time.Now().Add(-time.Hour)
 	newer := time.Now()
-	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-1", older))
-	require.NoError(t, srv.checkins.RecordCheckin(storageID, "bwfs-2", newer))
+	require.NoError(t, srv.checkins.RecordCheckin(t.Context(), storageID, "bwfs-1", older))
+	require.NoError(t, srv.checkins.RecordCheckin(t.Context(), storageID, "bwfs-2", newer))
 
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
 	require.NoError(t, err)
@@ -558,7 +558,7 @@ func TestListPolicies_CheckinStoreFailureLeavesDestinationsEmptyRatherThanFailin
 	require.NoError(t, c.Reload(dir, testLogger()))
 
 	checkins := newTestCheckinStore(t)
-	require.NoError(t, checkins.RecordCheckin(storageID, "bwfs-east.internal", time.Now()))
+	require.NoError(t, checkins.RecordCheckin(t.Context(), storageID, "bwfs-east.internal", time.Now()))
 	require.NoError(t, checkins.Close()) // force every subsequent read to fail
 	srv := NewPolicyServerServer(c, dir, testLogger(), checkins)
 
