@@ -67,6 +67,125 @@ func (s *Store) EnsureEntries(batch []Entry) error {
 	}).Create(&records).Error
 }
 
+// DirectoryAncestor mirrors DirectoryRecord's replicated fields, decoupled
+// from the gorm model the same way Entry is decoupled from EntryRecord.
+type DirectoryAncestor struct {
+	Path       string
+	ParentPath string
+	Name       string
+	Depth      int
+}
+
+// EnsureDirectories idempotently persists batch: a row already present for
+// a given Path is left untouched (ON CONFLICT DO NOTHING) -- directory
+// structure never changes once known, and many files sync-after-sync
+// share the same ancestor directories.
+func (s *Store) EnsureDirectories(batch []DirectoryAncestor) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	records := make([]DirectoryRecord, len(batch))
+	for i, a := range batch {
+		records[i] = DirectoryRecord{Path: a.Path, ParentPath: a.ParentPath, Name: a.Name, Depth: a.Depth}
+	}
+	return s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "path"}},
+		DoNothing: true,
+	}).Create(&records).Error
+}
+
+// DirectoryChild is one directory returned by ListDirectoryChildren: a
+// known subdirectory of the requested parent, plus how many files sit
+// directly in it and when the most recent one arrived, both computed
+// under filter's date/host/job narrowing.
+type DirectoryChild struct {
+	Path        string
+	Name        string
+	FileCount   int64
+	LastSeen    time.Time
+	HasChildren bool
+}
+
+// ListDirectoryChildren returns every directory whose ParentPath equals
+// parentPath (parentPath == "" for the true roots: "/" and each distinct
+// drive/UNC root). Existence is filter-independent -- it reflects every
+// directory ever synced, not just ones with entries matching filter's
+// date/host/job narrowing -- because making existence filter-aware would
+// require knowing whether *any* descendant anywhere in a subtree
+// matches, the same recursive-subtree question ListEntries'
+// ParentDirectories filter and ListDirectoryFacets both deliberately
+// avoid (exact-match only, see their comments). FileCount/LastSeen, by
+// contrast, only need a direct (non-recursive) parent_directory match
+// against entries, so those do respect filter -- computed as one grouped
+// scan across every child, not N+1 per-child queries. HasChildren is
+// true when a child itself has any row in catalog_directories (a
+// DISTINCT parent_path scan), letting the UI show an expand affordance
+// without a second round trip.
+func (s *Store) ListDirectoryChildren(parentPath string, filter FacetFilter) ([]DirectoryChild, error) {
+	var dirRows []DirectoryRecord
+	if err := s.db.Where("parent_path = ?", parentPath).Order("path").Find(&dirRows).Error; err != nil {
+		return nil, err
+	}
+	if len(dirRows) == 0 {
+		return []DirectoryChild{}, nil
+	}
+
+	paths := make([]string, len(dirRows))
+	for i, d := range dirRows {
+		paths[i] = d.Path
+	}
+
+	q := s.db.Model(&EntryRecord{}).
+		Select("parent_directory, received_at").
+		Where("parent_directory IN ?", paths)
+	q = filter.applyCommon(q)
+	if len(filter.SourceHosts) > 0 {
+		q = q.Where("source_host IN ?", filter.SourceHosts)
+	}
+	if len(filter.JobNames) > 0 {
+		q = jobNamesWhere(q, filter.JobNames)
+	}
+	var entryRows []struct {
+		ParentDirectory string
+		ReceivedAt      time.Time
+	}
+	if err := q.Scan(&entryRows).Error; err != nil {
+		return nil, err
+	}
+	fileCount := make(map[string]int64, len(paths))
+	lastSeen := make(map[string]time.Time, len(paths))
+	for _, r := range entryRows {
+		fileCount[r.ParentDirectory]++
+		if r.ReceivedAt.After(lastSeen[r.ParentDirectory]) {
+			lastSeen[r.ParentDirectory] = r.ReceivedAt
+		}
+	}
+
+	var grandchildRows []struct{ ParentPath string }
+	if err := s.db.Model(&DirectoryRecord{}).
+		Distinct("parent_path").
+		Where("parent_path IN ?", paths).
+		Scan(&grandchildRows).Error; err != nil {
+		return nil, err
+	}
+	hasChildren := make(map[string]bool, len(grandchildRows))
+	for _, g := range grandchildRows {
+		hasChildren[g.ParentPath] = true
+	}
+
+	children := make([]DirectoryChild, len(dirRows))
+	for i, d := range dirRows {
+		children[i] = DirectoryChild{
+			Path:        d.Path,
+			Name:        d.Name,
+			FileCount:   fileCount[d.Path],
+			LastSeen:    lastSeen[d.Path],
+			HasChildren: hasChildren[d.Path],
+		}
+	}
+	return children, nil
+}
+
 // Count returns the total number of persisted entries.
 func (s *Store) Count() (int64, error) {
 	var n int64

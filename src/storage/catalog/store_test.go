@@ -593,3 +593,181 @@ func TestListDirectoryFacets_IgnoresOwnDimension(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, facets, 2)
 }
+
+func TestEnsureDirectories_PersistsBatch(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureDirectories([]DirectoryAncestor{
+		{Path: "/", ParentPath: "", Name: "/", Depth: 0},
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+	}))
+
+	children, err := store.ListDirectoryChildren("", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, "/", children[0].Path)
+}
+
+func TestEnsureDirectories_DuplicatePathIsNoOp(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	batch := []DirectoryAncestor{{Path: "/var", ParentPath: "/", Name: "var", Depth: 1}}
+	require.NoError(t, store.EnsureDirectories(batch))
+	require.NoError(t, store.EnsureDirectories(batch)) // resend, e.g. after a retried sync
+
+	children, err := store.ListDirectoryChildren("/", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+}
+
+func TestEnsureDirectories_EmptyBatchSucceeds(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureDirectories(nil))
+}
+
+func TestListDirectoryChildren_ReturnsChildrenOfGivenParentPath(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureDirectories([]DirectoryAncestor{
+		{Path: "/", ParentPath: "", Name: "/", Depth: 0},
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+		{Path: "/var/www", ParentPath: "/var", Name: "www", Depth: 2},
+	}))
+
+	children, err := store.ListDirectoryChildren("/var", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 2)
+	names := []string{children[0].Name, children[1].Name}
+	assert.ElementsMatch(t, []string{"lib", "www"}, names)
+}
+
+func TestListDirectoryChildren_EmptyParentPathReturnsTrueRoots(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureDirectories([]DirectoryAncestor{
+		{Path: "/", ParentPath: "", Name: "/", Depth: 0},
+		{Path: `C:\`, ParentPath: "", Name: `C:\`, Depth: 0},
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+	}))
+
+	children, err := store.ListDirectoryChildren("", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 2)
+	names := []string{children[0].Name, children[1].Name}
+	assert.ElementsMatch(t, []string{"/", `C:\`}, names)
+}
+
+func TestListDirectoryChildren_UnknownParentPathReturnsEmpty(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	children, err := store.ListDirectoryChildren("/nope", FacetFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, children)
+}
+
+func TestListDirectoryChildren_FileCountAndLastSeenRespectFilters(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureDirectories([]DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+	}))
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib", StoreCreatedAt: older},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "database", ParentDirectory: "/var/lib", StoreCreatedAt: newer},
+	}))
+	// EnsureEntries stamps ReceivedAt = time.Now(); simulate a range that
+	// excludes nothing so both count, then a range that excludes both.
+	children, err := store.ListDirectoryChildren("/var", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, int64(2), children[0].FileCount)
+
+	future := time.Now().Add(24 * time.Hour)
+	children, err = store.ListDirectoryChildren("/var", FacetFilter{ReceivedAfter: future})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, int64(0), children[0].FileCount)
+	assert.True(t, children[0].LastSeen.IsZero())
+}
+
+func TestListDirectoryChildren_FileCountRespectsSourceHostsAndJobNames(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureDirectories([]DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+	}))
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-lib:ef567890:2", ObjectID: "obj-2", SourceHost: "webserver", ParentDirectory: "/var/lib", StoreCreatedAt: time.Now()},
+	}))
+
+	children, err := store.ListDirectoryChildren("/var", FacetFilter{SourceHosts: []string{"database"}})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, int64(1), children[0].FileCount)
+
+	children, err = store.ListDirectoryChildren("/var", FacetFilter{JobNames: []string{"hourly-web"}})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, int64(1), children[0].FileCount)
+}
+
+func TestListDirectoryChildren_ChildWithNoMatchingFilesStillAppears(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	// /var/lib has no direct files (only a subfolder, /var/lib/dbdata,
+	// does) -- existence must still surface it so the UI can navigate
+	// through it, per the design's filter-independent-existence rule.
+	require.NoError(t, store.EnsureDirectories([]DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+		{Path: "/var/lib/dbdata", ParentPath: "/var/lib", Name: "dbdata", Depth: 3},
+	}))
+
+	children, err := store.ListDirectoryChildren("/var", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, "/var/lib", children[0].Path)
+	assert.Equal(t, int64(0), children[0].FileCount)
+	assert.True(t, children[0].HasChildren)
+}
+
+func TestListDirectoryChildren_HasChildrenFalseForLeafDirectory(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureDirectories([]DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+	}))
+
+	children, err := store.ListDirectoryChildren("/var", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.False(t, children[0].HasChildren)
+}

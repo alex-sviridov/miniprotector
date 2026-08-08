@@ -38,7 +38,7 @@ func openDB(basePath string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("gorm open: %w", err)
 	}
 
-	if err := db.AutoMigrate(&EntryRecord{}); err != nil {
+	if err := db.AutoMigrate(&EntryRecord{}, &DirectoryRecord{}); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}

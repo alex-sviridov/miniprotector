@@ -30,3 +30,18 @@ type EntryRecord struct {
 	ShortFilename   string
 	ReceivedAt      time.Time `gorm:"index"`
 }
+
+// DirectoryRecord is one directory known to exist because some synced
+// file's ParentDirectory chain passes through it -- not just directories
+// that directly contain a file. Computed once at sync time by walking
+// each file's ParentDirectory with splitPath (see
+// cmd/catalog/server.go's decodeDirectoryAncestors), the same helper that
+// produced ParentDirectory itself. Existence here is intentionally
+// filter-independent: see ListDirectoryChildren's comment in store.go for
+// why.
+type DirectoryRecord struct {
+	Path       string `gorm:"uniqueIndex"`
+	ParentPath string `gorm:"index"` // "" for a true root: "/", "C:\", "\\server\share\"
+	Name       string // short display label, e.g. "lib", or the root itself ("/", "C:\") when ParentPath == ""
+	Depth      int    // 0 at a true root, increasing toward the leaf
+}
