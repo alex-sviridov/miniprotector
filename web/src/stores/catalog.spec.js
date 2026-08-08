@@ -176,4 +176,201 @@ describe('catalog store', () => {
       expect(catalog.jobFacets).toEqual([{ name: 'nightly-db', count: 7, last_seen: 123 }])
     })
   })
+
+  describe('search with currentPath', () => {
+    it('scopes the query to currentPath via parent_directories when browsing a folder', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib/dbdata'
+
+      await catalog.search()
+
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('parent_directories=%2Fvar%2Flib%2Fdbdata'))
+    })
+
+    it('ignores currentPath and omits parent_directories when a pattern is set', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib/dbdata'
+      catalog.filters.pattern = 'dbdata'
+
+      await catalog.search()
+
+      expect(apiFetch).toHaveBeenCalledWith(expect.not.stringContaining('parent_directories'))
+    })
+  })
+
+  describe('fetchDirectoryChildren', () => {
+    it('queries /catalog/directories/children for the root when currentPath is null', async () => {
+      apiFetch.mockResolvedValue({ data: [{ path: '/', name: '/', file_count: 0, last_seen: 0, has_children: true }] })
+      const catalog = useCatalogStore()
+
+      await catalog.fetchDirectoryChildren()
+
+      const now = Math.floor(Date.now() / 1000)
+      expect(apiFetch).toHaveBeenCalledWith(
+        `/catalog/directories/children?parent_path=&received_after=${now - 7 * DAY}&received_before=${now}`
+      )
+      expect(catalog.directoryChildren).toEqual([
+        { path: '/', name: '/', file_count: 0, last_seen: 0, has_children: true },
+      ])
+    })
+
+    it('queries the current path when browsing a folder', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib'
+
+      await catalog.fetchDirectoryChildren()
+
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('parent_path=%2Fvar%2Flib'))
+    })
+
+    it('sets directoryChildrenError without touching the results error on failure', async () => {
+      apiFetch.mockRejectedValue(new Error('boom'))
+      const catalog = useCatalogStore()
+
+      await catalog.fetchDirectoryChildren()
+
+      expect(catalog.directoryChildrenError).toBe('boom')
+      expect(catalog.error).toBe(null)
+    })
+  })
+
+  describe('refresh', () => {
+    it('fetches directory children only, and clears entries, when at the root with no pattern', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const catalog = useCatalogStore()
+      catalog.entries = [{ id: 1 }]
+
+      await catalog.refresh()
+
+      expect(apiFetch).toHaveBeenCalledTimes(1)
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/catalog/directories/children'))
+      expect(catalog.entries).toEqual([])
+    })
+
+    it('fetches both directory children and entries when browsing a folder', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib'
+
+      await catalog.refresh()
+
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/catalog/directories/children'))
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/catalog?'))
+    })
+
+    it('fetches only entries, and clears directoryChildren, when a pattern is set', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.filters.pattern = 'dbdata'
+      catalog.directoryChildren = [{ path: '/var', name: 'var', file_count: 1, last_seen: 1, has_children: false }]
+
+      await catalog.refresh()
+
+      expect(apiFetch).toHaveBeenCalledTimes(1)
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/catalog?'))
+      expect(catalog.directoryChildren).toEqual([])
+    })
+
+    it('clears directoryChildrenError when switching from browse mode to pattern mode', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.directoryChildrenError = 'previous browse failed'
+      catalog.filters.pattern = 'dbdata'
+
+      await catalog.refresh()
+
+      expect(catalog.directoryChildrenError).toBe(null)
+    })
+
+    it('clears error when switching to root/Home mode from pattern search', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const catalog = useCatalogStore()
+      catalog.error = 'previous pattern search failed'
+      catalog.currentPath = null
+      catalog.filters.pattern = ''
+
+      await catalog.refresh()
+
+      expect(catalog.error).toBe(null)
+    })
+
+    it('discards a stale in-flight search that resolves after navigateHome already cleared entries', async () => {
+      let resolveStaleSearch
+      apiFetch.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStaleSearch = resolve
+          })
+      )
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib/dbdata'
+
+      // Kick off a search while browsing a folder, but don't await it yet --
+      // it stays in flight (e.g. mid-pagination loop) while the user
+      // navigates away.
+      const staleSearch = catalog.search()
+
+      // The user clicks Home before the in-flight search resolves. This
+      // moves to root/Home mode and clears entries directly.
+      await catalog.navigateHome()
+
+      expect(catalog.currentPath).toBe(null)
+      expect(catalog.entries).toEqual([])
+
+      // Now the earlier, stale search resolves with /var/lib/dbdata's data.
+      // It must not clobber entries -- the user is looking at Home now.
+      resolveStaleSearch({ data: [{ id: 'stale-dbdata-entry' }], has_more: false })
+      await staleSearch
+
+      expect(catalog.entries).toEqual([])
+    })
+
+    it('restores the previously browsed folder after the pattern is cleared', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib/dbdata'
+
+      catalog.filters.pattern = 'x'
+      await catalog.refresh()
+
+      expect(catalog.currentPath).toBe('/var/lib/dbdata')
+
+      apiFetch.mockClear()
+      catalog.filters.pattern = ''
+      await catalog.refresh()
+
+      expect(catalog.currentPath).toBe('/var/lib/dbdata')
+      expect(apiFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/catalog/directories/children?parent_path=%2Fvar%2Flib%2Fdbdata')
+      )
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('parent_directories=%2Fvar%2Flib%2Fdbdata'))
+    })
+  })
+
+  describe('navigateTo / navigateHome', () => {
+    it('navigateTo sets currentPath and refreshes', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const catalog = useCatalogStore()
+
+      await catalog.navigateTo('/var/lib')
+
+      expect(catalog.currentPath).toBe('/var/lib')
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('parent_path=%2Fvar%2Flib'))
+    })
+
+    it('navigateHome clears currentPath and refreshes', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const catalog = useCatalogStore()
+      catalog.currentPath = '/var/lib'
+
+      await catalog.navigateHome()
+
+      expect(catalog.currentPath).toBe(null)
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('parent_path=&'))
+    })
+  })
 })

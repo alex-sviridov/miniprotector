@@ -38,6 +38,8 @@ type catalogQueryClient interface {
 	ListEntries(ctx context.Context, in *pb.ListEntriesRequest, opts ...grpc.CallOption) (*pb.ListEntriesResponse, error)
 	ListClientFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error)
 	ListJobFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error)
+	ListDirectoryFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error)
+	ListDirectoryChildren(ctx context.Context, in *pb.ListDirectoryChildrenRequest, opts ...grpc.CallOption) (*pb.ListDirectoryChildrenResponse, error)
 }
 
 // policyServiceClient is the subset of pb.PolicyServiceClient the policies
@@ -81,6 +83,8 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
 	mux.HandleFunc("GET /api/v1/catalog/clients", s.handleListCatalogClients)
 	mux.HandleFunc("GET /api/v1/catalog/jobs", s.handleListCatalogJobs)
+	mux.HandleFunc("GET /api/v1/catalog/directories", s.handleListCatalogDirectories)
+	mux.HandleFunc("GET /api/v1/catalog/directories/children", s.handleListCatalogDirectoryChildren)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)
 	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)

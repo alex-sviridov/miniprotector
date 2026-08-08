@@ -14,38 +14,42 @@ const (
 )
 
 type entryDTO struct {
-	ID             int64  `json:"id"`
-	SourceHost     string `json:"source_host"`
-	StoreHost      string `json:"store_host"`
-	JobID          string `json:"job_id"`
-	ObjectID       string `json:"object_id"`
-	Ctime          int64  `json:"ctime"`
-	StoreCreatedAt int64  `json:"store_created_at"`
-	ReceivedAt     int64  `json:"received_at"`
-	Path           string `json:"path"`
-	Size           int64  `json:"size"`
-	Mode           string `json:"mode"`
-	Owner          uint32 `json:"owner"`
-	Group          uint32 `json:"group"`
-	ModTime        int64  `json:"mod_time"`
+	ID              int64  `json:"id"`
+	SourceHost      string `json:"source_host"`
+	StoreHost       string `json:"store_host"`
+	JobID           string `json:"job_id"`
+	ObjectID        string `json:"object_id"`
+	Ctime           int64  `json:"ctime"`
+	StoreCreatedAt  int64  `json:"store_created_at"`
+	ReceivedAt      int64  `json:"received_at"`
+	Path            string `json:"path"`
+	Size            int64  `json:"size"`
+	Mode            string `json:"mode"`
+	Owner           uint32 `json:"owner"`
+	Group           uint32 `json:"group"`
+	ModTime         int64  `json:"mod_time"`
+	ParentDirectory string `json:"parent_directory"`
+	ShortFilename   string `json:"short_filename"`
 }
 
 func toEntryDTO(e *pb.Entry) entryDTO {
 	return entryDTO{
-		ID:             e.GetId(),
-		SourceHost:     e.GetSourceHost(),
-		StoreHost:      e.GetStoreHost(),
-		JobID:          e.GetJobId(),
-		ObjectID:       e.GetObjectId(),
-		Ctime:          e.GetCtime(),
-		StoreCreatedAt: e.GetStoreCreatedAt(),
-		ReceivedAt:     e.GetReceivedAt(),
-		Path:           e.GetPath(),
-		Size:           e.GetSize(),
-		Mode:           e.GetMode(),
-		Owner:          e.GetOwner(),
-		Group:          e.GetGroup(),
-		ModTime:        e.GetModTime(),
+		ID:              e.GetId(),
+		SourceHost:      e.GetSourceHost(),
+		StoreHost:       e.GetStoreHost(),
+		JobID:           e.GetJobId(),
+		ObjectID:        e.GetObjectId(),
+		Ctime:           e.GetCtime(),
+		StoreCreatedAt:  e.GetStoreCreatedAt(),
+		ReceivedAt:      e.GetReceivedAt(),
+		Path:            e.GetPath(),
+		Size:            e.GetSize(),
+		Mode:            e.GetMode(),
+		Owner:           e.GetOwner(),
+		Group:           e.GetGroup(),
+		ModTime:         e.GetModTime(),
+		ParentDirectory: e.GetParentDirectory(),
+		ShortFilename:   e.GetShortFilename(),
 	}
 }
 
@@ -84,15 +88,16 @@ func (s *server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := s.catalog.ListEntries(r.Context(), &pb.ListEntriesRequest{
-		SourceHost:     q.Get("source_host"),
-		StoreHost:      q.Get("store_host"),
-		Pattern:        q.Get("pattern"),
-		Limit:          int32(limit),
-		StartingAfter:  startingAfter,
-		ReceivedAfter:  receivedAfter,
-		ReceivedBefore: receivedBefore,
-		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
-		JobNames:       splitCommaParam(q.Get("job_names")),
+		SourceHost:        q.Get("source_host"),
+		StoreHost:         q.Get("store_host"),
+		Pattern:           q.Get("pattern"),
+		Limit:             int32(limit),
+		StartingAfter:     startingAfter,
+		ReceivedAfter:     receivedAfter,
+		ReceivedBefore:    receivedBefore,
+		SourceHosts:       splitCommaParam(q.Get("source_hosts")),
+		JobNames:          splitCommaParam(q.Get("job_names")),
+		ParentDirectories: splitCommaParam(q.Get("parent_directories")),
 	})
 	if err != nil {
 		s.logger.Error("handleListCatalog: backend call failed", "error", err)
@@ -163,10 +168,11 @@ func (s *server) handleListCatalogClients(w http.ResponseWriter, r *http.Request
 	}
 
 	resp, err := s.catalog.ListClientFacets(r.Context(), &pb.ListFacetsRequest{
-		ReceivedAfter:  receivedAfter,
-		ReceivedBefore: receivedBefore,
-		Pattern:        q.Get("pattern"),
-		JobNames:       splitCommaParam(q.Get("job_names")),
+		ReceivedAfter:     receivedAfter,
+		ReceivedBefore:    receivedBefore,
+		Pattern:           q.Get("pattern"),
+		JobNames:          splitCommaParam(q.Get("job_names")),
+		ParentDirectories: splitCommaParam(q.Get("parent_directories")),
 	})
 	if err != nil {
 		s.logger.Error("handleListCatalogClients: backend call failed", "error", err)
@@ -195,10 +201,11 @@ func (s *server) handleListCatalogJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := s.catalog.ListJobFacets(r.Context(), &pb.ListFacetsRequest{
-		ReceivedAfter:  receivedAfter,
-		ReceivedBefore: receivedBefore,
-		Pattern:        q.Get("pattern"),
-		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
+		ReceivedAfter:     receivedAfter,
+		ReceivedBefore:    receivedBefore,
+		Pattern:           q.Get("pattern"),
+		SourceHosts:       splitCommaParam(q.Get("source_hosts")),
+		ParentDirectories: splitCommaParam(q.Get("parent_directories")),
 	})
 	if err != nil {
 		s.logger.Error("handleListCatalogJobs: backend call failed", "error", err)
@@ -211,4 +218,88 @@ func (s *server) handleListCatalogJobs(w http.ResponseWriter, r *http.Request) {
 		facets[i] = toFacetDTO(f)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": facets})
+}
+
+func (s *server) handleListCatalogDirectories(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
+		return
+	}
+	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
+		return
+	}
+
+	resp, err := s.catalog.ListDirectoryFacets(r.Context(), &pb.ListFacetsRequest{
+		ReceivedAfter:  receivedAfter,
+		ReceivedBefore: receivedBefore,
+		Pattern:        q.Get("pattern"),
+		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
+		JobNames:       splitCommaParam(q.Get("job_names")),
+	})
+	if err != nil {
+		s.logger.Error("handleListCatalogDirectories: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+
+	facets := make([]facetDTO, len(resp.GetFacets()))
+	for i, f := range resp.GetFacets() {
+		facets[i] = toFacetDTO(f)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": facets})
+}
+
+type directoryChildDTO struct {
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	FileCount   int64  `json:"file_count"`
+	LastSeen    int64  `json:"last_seen"`
+	HasChildren bool   `json:"has_children"`
+}
+
+func toDirectoryChildDTO(c *pb.DirectoryChild) directoryChildDTO {
+	return directoryChildDTO{
+		Path:        c.GetPath(),
+		Name:        c.GetName(),
+		FileCount:   c.GetFileCount(),
+		LastSeen:    c.GetLastSeen(),
+		HasChildren: c.GetHasChildren(),
+	}
+}
+
+func (s *server) handleListCatalogDirectoryChildren(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
+		return
+	}
+	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
+		return
+	}
+
+	resp, err := s.catalog.ListDirectoryChildren(r.Context(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:     q.Get("parent_path"),
+		ReceivedAfter:  receivedAfter,
+		ReceivedBefore: receivedBefore,
+		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
+		JobNames:       splitCommaParam(q.Get("job_names")),
+	})
+	if err != nil {
+		s.logger.Error("handleListCatalogDirectoryChildren: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+
+	children := make([]directoryChildDTO, len(resp.GetChildren()))
+	for i, c := range resp.GetChildren() {
+		children[i] = toDirectoryChildDTO(c)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": children})
 }

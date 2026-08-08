@@ -368,3 +368,306 @@ func TestListJobFacets_ReturnsGroupedCounts(t *testing.T) {
 	assert.Equal(t, "nightly-db", resp.GetFacets()[0].GetName())
 	assert.Equal(t, int64(2), resp.GetFacets()[0].GetCount())
 }
+
+func TestSyncFileVersions_DerivesParentDirectoryAndShortFilenameFromMetadata(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi.ID(), Metadata: metadata, CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "/var/lib/dbdata", entries[0].ParentDirectory)
+	assert.Equal(t, "data.db", entries[0].ShortFilename)
+}
+
+func TestSyncFileVersions_MalformedMetadataLeavesPathPartsEmpty(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", Metadata: []byte("not-gob-encoded"), CreatedAt: time.Now().Unix()},
+	}}
+	_, err := srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
+
+	entries, _, err := store.ListEntries(catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "", entries[0].ParentDirectory)
+	assert.Equal(t, "", entries[0].ShortFilename)
+}
+
+func TestListEntries_ReturnsParentDirectoryAndShortFilenameFields(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", ShortFilename: "data.db", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "/var/lib/dbdata", resp.GetEntries()[0].GetParentDirectory())
+	assert.Equal(t, "data.db", resp.GetEntries()[0].GetShortFilename())
+}
+
+func TestListEntries_FiltersByParentDirectories(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListEntries(context.Background(), &pb.ListEntriesRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetEntries(), 1)
+	assert.Equal(t, "obj-1", resp.GetEntries()[0].GetObjectId())
+}
+
+func TestListDirectoryFacets_ReturnsGroupedCounts(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListDirectoryFacets(context.Background(), &pb.ListFacetsRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 2)
+
+	byName := map[string]int64{}
+	for _, f := range resp.GetFacets() {
+		byName[f.GetName()] = f.GetCount()
+	}
+	assert.Equal(t, int64(2), byName["/var/lib/dbdata"])
+	assert.Equal(t, int64(1), byName["/var/www"])
+}
+
+func TestListClientFacets_NarrowedByParentDirectories(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", SourceHost: "webserver", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListClientFacets(context.Background(), &pb.ListFacetsRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 1)
+	assert.Equal(t, "database", resp.GetFacets()[0].GetName())
+}
+
+func TestListJobFacets_NarrowedByParentDirectories(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "backup:hourly-web:var-www:ef567890:2", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListJobFacets(context.Background(), &pb.ListFacetsRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 1)
+	assert.Equal(t, "nightly-db", resp.GetFacets()[0].GetName())
+}
+
+func TestListDirectoryFacets_IgnoresParentDirectoriesOnRequest(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+	}))
+
+	// A ParentDirectories value on the request itself must not narrow
+	// ListDirectoryFacets's own results -- it's this facet's own dimension.
+	resp, err := srv.ListDirectoryFacets(context.Background(), &pb.ListFacetsRequest{
+		ParentDirectories: []string{"/var/lib/dbdata"},
+	})
+	require.NoError(t, err)
+	assert.Len(t, resp.GetFacets(), 2)
+}
+
+func TestSyncFileVersions_PersistsDirectoryAncestorsForSyncedFile(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi.ID(), Metadata: metadata, CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	roots, err := store.ListDirectoryChildren("", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+	assert.Equal(t, "/", roots[0].Path)
+
+	varChildren, err := store.ListDirectoryChildren("/", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, varChildren, 1)
+	assert.Equal(t, "/var", varChildren[0].Path)
+
+	dbdataChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, dbdataChildren, 1)
+	assert.Equal(t, "/var/lib/dbdata", dbdataChildren[0].Path)
+	assert.Equal(t, int64(1), dbdataChildren[0].FileCount)
+}
+
+func TestSyncFileVersions_MalformedMetadataPersistsNoDirectoryAncestors(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", Metadata: []byte("not-gob-encoded"), CreatedAt: time.Now().Unix()},
+	}}
+	_, err := srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err) // a bad row's metadata doesn't fail the batch
+
+	roots, err := store.ListDirectoryChildren("", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, roots)
+}
+
+func TestSyncFileVersions_DirectoryAncestorsDedupedAcrossBatch(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi1 := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	m1, err := fi1.Encode()
+	require.NoError(t, err)
+	fi2 := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/wal.log", 4096, 0o644, 999, 999, time.Now())
+	m2, err := fi2.Encode()
+	require.NoError(t, err)
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi1.ID(), Metadata: m1, CreatedAt: time.Now().Unix()},
+		{JobId: "job-1", ObjectId: fi2.ID(), Metadata: m2, CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	libChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, libChildren, 1) // "dbdata" persisted once, not twice
+	assert.Equal(t, int64(2), libChildren[0].FileCount)
+}
+
+func TestSyncFileVersions_DirectoryAncestorsIdempotentAcrossRepeatedSyncs(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	fi := filesystem.NewFileInfoForTest("origin-host", "/var/lib/dbdata/data.db", 8192, 0o644, 999, 999, time.Now())
+	metadata, err := fi.Encode()
+	require.NoError(t, err)
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: fi.ID(), Metadata: metadata, CreatedAt: time.Now().Unix()},
+	}}
+
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+	_, err = srv.SyncFileVersions(ctx, req) // resend, e.g. after a retried RPC
+	require.NoError(t, err)
+
+	libChildren, err := store.ListDirectoryChildren("/var/lib", catalogstore.FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, libChildren, 1)
+}
+
+func TestListDirectoryChildren_ReturnsTrueRootsForEmptyParentPath(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+		{Path: "/", ParentPath: "", Name: "/", Depth: 0},
+	}))
+
+	resp, err := srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, "/", resp.GetChildren()[0].GetPath())
+	assert.Equal(t, "/", resp.GetChildren()[0].GetName())
+}
+
+func TestListDirectoryChildren_ReturnsChildrenForGivenParentPath(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+	}))
+
+	resp, err := srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{ParentPath: "/var"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, "/var/lib", resp.GetChildren()[0].GetPath())
+	assert.Equal(t, "lib", resp.GetChildren()[0].GetName())
+}
+
+func TestListDirectoryChildren_AppliesDateAndHostAndJobFilters(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+	}))
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:  "/var",
+		SourceHosts: []string{"database"},
+		JobNames:    []string{"nightly-db"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(1), resp.GetChildren()[0].GetFileCount())
+
+	resp, err = srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:  "/var",
+		SourceHosts: []string{"webserver"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
+
+	// A date range that excludes the entry's actual sync time should zero
+	// out its contribution to FileCount/LastSeen, mirroring
+	// TestListDirectoryChildren_FileCountAndLastSeenRespectFilters at the
+	// store layer -- this asserts the gRPC handler actually wires
+	// ReceivedAfter/ReceivedBefore through to the same FacetFilter.
+	future := time.Now().Add(24 * time.Hour).Unix()
+	resp, err = srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:    "/var",
+		ReceivedAfter: future,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetLastSeen())
+
+	past := time.Now().Add(-24 * time.Hour).Unix()
+	resp, err = srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:     "/var",
+		ReceivedBefore: past,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetLastSeen())
+}
