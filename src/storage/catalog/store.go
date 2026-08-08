@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -503,16 +504,16 @@ func policyNameFromJobID(jobID string) string {
 }
 
 func (s *Store) Close() error {
-	writeSQL, err := s.writeDB.DB()
-	if err != nil {
-		return err
+	var errs []error
+	if writeSQL, err := s.writeDB.DB(); err != nil {
+		errs = append(errs, err)
+	} else if err := writeSQL.Close(); err != nil {
+		errs = append(errs, err)
 	}
-	if err := writeSQL.Close(); err != nil {
-		return err
+	if readSQL, err := s.readDB.DB(); err != nil {
+		errs = append(errs, err)
+	} else if err := readSQL.Close(); err != nil {
+		errs = append(errs, err)
 	}
-	readSQL, err := s.readDB.DB()
-	if err != nil {
-		return err
-	}
-	return readSQL.Close()
+	return errors.Join(errs...)
 }
