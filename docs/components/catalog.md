@@ -2,12 +2,14 @@
 
 Receives `catalogsync`'s replicated `bwfs` file-version batches over gRPC and persists them
 idempotently to its own SQLite database. **Control-plane component** — runs centrally, not
-colocated with any single `bwfs` node. Also serves four read-only query RPCs: `ListEntries`
+colocated with any single `bwfs` node. Also serves five read-only query RPCs: `ListEntries`
 (filter by store host, real source host, a date range, an exact parent directory, and a substring
-match against the underlying object ID, keyset-paginated) and the aggregate
+match against the underlying object ID, keyset-paginated); the aggregate
 `ListClientFacets`/`ListJobFacets`/`ListDirectoryFacets` (grouped counts by client host, policy
 name, or parent directory, backing the web catalog view's filter panels) — see
-[api-server](./api-server.md), the only intended caller today.
+[api-server](./api-server.md), the only intended caller of those four today; and
+`ListDirectoryChildren` (one level of the synced directory tree at a time, for file-manager-style
+browsing — not yet wired to a REST endpoint).
 
 ## Usage
 

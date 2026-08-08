@@ -13,6 +13,7 @@ service CatalogService {
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListDirectoryFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListDirectoryChildren(ListDirectoryChildrenRequest) returns (ListDirectoryChildrenResponse);
 }
 ```
 
@@ -168,6 +169,55 @@ implement cross-filtering (selecting in one dimension narrows the other two) by 
 dimension's active selection. Rows with an empty grouping key (an undecoded `source_host`/
 `parent_directory`, or a `job_id` that isn't `backup:`-prefixed) are dropped rather than surfaced as
 a blank-named facet.
+
+## ListDirectoryChildren
+
+A read-only query RPC backing file-manager-style directory browsing in the web catalog view —
+distinct from `ListDirectoryFacets`, which returns a flat grouped-count list over every
+`parent_directory` value regardless of tree position. `ListDirectoryChildren` instead walks the
+`catalog_directories` tree (populated at sync time from each entry's `parent_directory` — see
+[Identity](#identity) above) one level at a time, so a caller can implement expand/collapse
+navigation without loading the whole tree.
+
+```protobuf
+message ListDirectoryChildrenRequest {
+  string parent_path     = 1; // "" = true roots ("/", each distinct drive/UNC root)
+  int64  received_after  = 2;
+  int64  received_before = 3;
+  repeated string source_hosts = 4;
+  repeated string job_names    = 5;
+  // No pattern field: directory browsing and pattern search are mutually
+  // exclusive UI modes, never combined.
+}
+
+message DirectoryChild {
+  string path         = 1; // full path, e.g. "/var/lib"
+  string name         = 2; // short display label, e.g. "lib"
+  int64  file_count   = 3; // direct files under path matching the current date/host/job filters
+  int64  last_seen    = 4; // unix seconds, max(received_at) among those files; 0 if file_count == 0
+  bool   has_children = 5; // true if catalog_directories has any row with parent_path == path
+}
+
+message ListDirectoryChildrenResponse {
+  repeated DirectoryChild children = 1;
+}
+```
+
+- `parent_path` — exact match against `catalog_directories.parent_path`; empty returns the true
+  roots (`/` and each distinct drive/UNC root observed during sync), the same convention
+  `decodeDirectoryAncestors` uses when it terminates a directory's ancestor walk.
+- The returned set of children is **filter-independent**: it reflects every directory ever synced
+  under `parent_path`, not just ones with entries matching the request's date/host/job narrowing.
+  Making existence filter-aware would require answering whether *any* descendant anywhere in a
+  subtree matches — the same recursive-subtree question `ListEntries`'s `parent_directories` filter
+  and `ListDirectoryFacets` both deliberately avoid (see [above](#listclientfacets--listjobfacets--listdirectoryfacets)).
+- `file_count`/`last_seen`, by contrast, only need a direct (non-recursive) `parent_directory` match
+  against entries, so those **do** respect `received_after`/`received_before`/`source_hosts`/
+  `job_names` — computed as one grouped scan across every child rather than N+1 per-child queries.
+  `last_seen` is `0` when `file_count` is `0` (no matching entries, not the Unix epoch).
+- `has_children` is `true` when the child itself has any row in `catalog_directories` with
+  `parent_path` equal to the child's `path` (a `DISTINCT parent_path` scan) — lets the UI show an
+  expand affordance without a second round trip per row.
 
 ## See Also
 
