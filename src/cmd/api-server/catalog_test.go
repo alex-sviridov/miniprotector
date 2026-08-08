@@ -21,6 +21,9 @@ type fakeCatalogQueryClient struct {
 	facetsResp    *pb.ListFacetsResponse
 	facetsErr     error
 	lastFacetsReq *pb.ListFacetsRequest
+	childrenResp    *pb.ListDirectoryChildrenResponse
+	childrenErr     error
+	lastChildrenReq *pb.ListDirectoryChildrenRequest
 }
 
 func (f *fakeCatalogQueryClient) ListEntries(ctx context.Context, in *pb.ListEntriesRequest, opts ...grpc.CallOption) (*pb.ListEntriesResponse, error) {
@@ -41,6 +44,11 @@ func (f *fakeCatalogQueryClient) ListJobFacets(ctx context.Context, in *pb.ListF
 func (f *fakeCatalogQueryClient) ListDirectoryFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error) {
 	f.lastFacetsReq = in
 	return f.facetsResp, f.facetsErr
+}
+
+func (f *fakeCatalogQueryClient) ListDirectoryChildren(ctx context.Context, in *pb.ListDirectoryChildrenRequest, opts ...grpc.CallOption) (*pb.ListDirectoryChildrenResponse, error) {
+	f.lastChildrenReq = in
+	return f.childrenResp, f.childrenErr
 }
 
 func TestHandleListCatalog_ReturnsDataAndHasMore(t *testing.T) {
@@ -408,6 +416,76 @@ func TestHandleListCatalogDirectories_InvalidReceivedAfterReturns400(t *testing.
 	srv.registerRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories?received_after=not-a-number", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListCatalogDirectoryChildren_ReturnsData(t *testing.T) {
+	fake := &fakeCatalogQueryClient{childrenResp: &pb.ListDirectoryChildrenResponse{
+		Children: []*pb.DirectoryChild{{Path: "/var/lib", Name: "lib", FileCount: 2, LastSeen: 1752400000, HasChildren: true}},
+	}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children?parent_path=/var", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 1)
+	child := data[0].(map[string]any)
+	assert.Equal(t, "/var/lib", child["path"])
+	assert.Equal(t, "lib", child["name"])
+	assert.Equal(t, float64(2), child["file_count"])
+	assert.Equal(t, true, child["has_children"])
+}
+
+func TestHandleListCatalogDirectoryChildren_PassesParentPathAndFilterQueryParamsThrough(t *testing.T) {
+	fake := &fakeCatalogQueryClient{childrenResp: &pb.ListDirectoryChildrenResponse{}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children?parent_path=/var/lib&received_after=1000&source_hosts=database&job_names=nightly-db", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastChildrenReq)
+	assert.Equal(t, "/var/lib", fake.lastChildrenReq.GetParentPath())
+	assert.Equal(t, int64(1000), fake.lastChildrenReq.GetReceivedAfter())
+	assert.Equal(t, []string{"database"}, fake.lastChildrenReq.GetSourceHosts())
+	assert.Equal(t, []string{"nightly-db"}, fake.lastChildrenReq.GetJobNames())
+}
+
+func TestHandleListCatalogDirectoryChildren_OmittedParentPathMeansRoot(t *testing.T) {
+	fake := &fakeCatalogQueryClient{childrenResp: &pb.ListDirectoryChildrenResponse{}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, fake.lastChildrenReq)
+	assert.Equal(t, "", fake.lastChildrenReq.GetParentPath())
+}
+
+func TestHandleListCatalogDirectoryChildren_InvalidReceivedAfterReturns400(t *testing.T) {
+	fake := &fakeCatalogQueryClient{}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children?received_after=not-a-number", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

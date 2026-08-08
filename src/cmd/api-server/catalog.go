@@ -252,3 +252,54 @@ func (s *server) handleListCatalogDirectories(w http.ResponseWriter, r *http.Req
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": facets})
 }
+
+type directoryChildDTO struct {
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	FileCount   int64  `json:"file_count"`
+	LastSeen    int64  `json:"last_seen"`
+	HasChildren bool   `json:"has_children"`
+}
+
+func toDirectoryChildDTO(c *pb.DirectoryChild) directoryChildDTO {
+	return directoryChildDTO{
+		Path:        c.GetPath(),
+		Name:        c.GetName(),
+		FileCount:   c.GetFileCount(),
+		LastSeen:    c.GetLastSeen(),
+		HasChildren: c.GetHasChildren(),
+	}
+}
+
+func (s *server) handleListCatalogDirectoryChildren(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
+		return
+	}
+	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
+		return
+	}
+
+	resp, err := s.catalog.ListDirectoryChildren(r.Context(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:     q.Get("parent_path"),
+		ReceivedAfter:  receivedAfter,
+		ReceivedBefore: receivedBefore,
+		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
+		JobNames:       splitCommaParam(q.Get("job_names")),
+	})
+	if err != nil {
+		s.logger.Error("handleListCatalogDirectoryChildren: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+
+	children := make([]directoryChildDTO, len(resp.GetChildren()))
+	for i, c := range resp.GetChildren() {
+		children[i] = toDirectoryChildDTO(c)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": children})
+}
