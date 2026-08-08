@@ -24,14 +24,16 @@ func New(basePath string) (*Store, error) {
 // Entry mirrors EntryRecord's replicated fields, decoupled from the gorm
 // model so callers (the gRPC server) don't need to import gorm tags.
 type Entry struct {
-	StoreNode      string
-	JobID          string
-	ObjectID       string
-	Metadata       []byte
-	Ctime          int64
-	StoreSeq       int64
-	StoreCreatedAt time.Time
-	SourceHost     string
+	StoreNode       string
+	JobID           string
+	ObjectID        string
+	Metadata        []byte
+	Ctime           int64
+	StoreSeq        int64
+	StoreCreatedAt  time.Time
+	SourceHost      string
+	ParentDirectory string
+	ShortFilename   string
 }
 
 // EnsureEntries idempotently persists batch: a row already present for a
@@ -46,15 +48,17 @@ func (s *Store) EnsureEntries(batch []Entry) error {
 	now := time.Now()
 	for i, e := range batch {
 		records[i] = EntryRecord{
-			StoreNode:      e.StoreNode,
-			JobID:          e.JobID,
-			ObjectID:       e.ObjectID,
-			Metadata:       e.Metadata,
-			Ctime:          e.Ctime,
-			StoreSeq:       e.StoreSeq,
-			StoreCreatedAt: e.StoreCreatedAt,
-			SourceHost:     e.SourceHost,
-			ReceivedAt:     now,
+			StoreNode:       e.StoreNode,
+			JobID:           e.JobID,
+			ObjectID:        e.ObjectID,
+			Metadata:        e.Metadata,
+			Ctime:           e.Ctime,
+			StoreSeq:        e.StoreSeq,
+			StoreCreatedAt:  e.StoreCreatedAt,
+			SourceHost:      e.SourceHost,
+			ParentDirectory: e.ParentDirectory,
+			ShortFilename:   e.ShortFilename,
+			ReceivedAt:      now,
 		}
 	}
 	return s.db.Clauses(clause.OnConflict{

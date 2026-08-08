@@ -447,3 +447,19 @@ func TestListJobFacets_NarrowedBySourceHosts(t *testing.T) {
 	require.Len(t, facets, 1)
 	assert.Equal(t, "nightly-db", facets[0].Name)
 }
+
+func TestEnsureEntries_PersistsParentDirectoryAndShortFilename(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", ShortFilename: "data.db", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, _, err := store.ListEntries(ListEntriesFilter{})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "/var/lib/dbdata", entries[0].ParentDirectory)
+	assert.Equal(t, "data.db", entries[0].ShortFilename)
+}

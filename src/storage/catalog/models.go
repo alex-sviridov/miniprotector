@@ -21,5 +21,12 @@ type EntryRecord struct {
 	// Metadata at sync time -- distinct from StoreNode, the bwfs node that
 	// sent the batch. Indexed so ListEntries can filter on it directly.
 	SourceHost string `gorm:"index"`
-	ReceivedAt time.Time `gorm:"index"`
+	// ParentDirectory is the file's immediate containing directory, and
+	// ShortFilename its bare name, both derived from Metadata at sync time
+	// the same way SourceHost is (see cmd/catalog/server.go's
+	// decodePathParts). ParentDirectory is indexed for filtering;
+	// ShortFilename is display-only, not a filter dimension.
+	ParentDirectory string `gorm:"index"`
+	ShortFilename   string
+	ReceivedAt      time.Time `gorm:"index"`
 }
