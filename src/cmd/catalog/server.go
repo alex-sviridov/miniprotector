@@ -247,3 +247,35 @@ func toProtoFacets(facets []catalogstore.Facet) []*pb.Facet {
 	}
 	return out
 }
+
+func (s *catalogServer) ListDirectoryChildren(ctx context.Context, req *pb.ListDirectoryChildrenRequest) (*pb.ListDirectoryChildrenResponse, error) {
+	children, err := s.store.ListDirectoryChildren(req.GetParentPath(), catalogstore.FacetFilter{
+		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
+		SourceHosts:    req.GetSourceHosts(),
+		JobNames:       req.GetJobNames(),
+	})
+	if err != nil {
+		s.logger.Error("ListDirectoryChildren: query failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "list directory children: %v", err)
+	}
+	return &pb.ListDirectoryChildrenResponse{Children: toProtoDirectoryChildren(children)}, nil
+}
+
+func toProtoDirectoryChildren(children []catalogstore.DirectoryChild) []*pb.DirectoryChild {
+	out := make([]*pb.DirectoryChild, len(children))
+	for i, c := range children {
+		var lastSeen int64
+		if !c.LastSeen.IsZero() {
+			lastSeen = c.LastSeen.Unix()
+		}
+		out[i] = &pb.DirectoryChild{
+			Path:        c.Path,
+			Name:        c.Name,
+			FileCount:   c.FileCount,
+			LastSeen:    lastSeen,
+			HasChildren: c.HasChildren,
+		}
+	}
+	return out
+}

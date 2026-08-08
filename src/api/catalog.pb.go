@@ -709,6 +709,202 @@ func (x *ListFacetsResponse) GetFacets() []*Facet {
 	return nil
 }
 
+type ListDirectoryChildrenRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ParentPath     string                 `protobuf:"bytes,1,opt,name=parent_path,json=parentPath,proto3" json:"parent_path,omitempty"` // "" = true roots ("/", each distinct drive/UNC root)
+	ReceivedAfter  int64                  `protobuf:"varint,2,opt,name=received_after,json=receivedAfter,proto3" json:"received_after,omitempty"`
+	ReceivedBefore int64                  `protobuf:"varint,3,opt,name=received_before,json=receivedBefore,proto3" json:"received_before,omitempty"`
+	SourceHosts    []string               `protobuf:"bytes,4,rep,name=source_hosts,json=sourceHosts,proto3" json:"source_hosts,omitempty"`
+	JobNames       []string               `protobuf:"bytes,5,rep,name=job_names,json=jobNames,proto3" json:"job_names,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListDirectoryChildrenRequest) Reset() {
+	*x = ListDirectoryChildrenRequest{}
+	mi := &file_api_catalog_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListDirectoryChildrenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListDirectoryChildrenRequest) ProtoMessage() {}
+
+func (x *ListDirectoryChildrenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListDirectoryChildrenRequest.ProtoReflect.Descriptor instead.
+func (*ListDirectoryChildrenRequest) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ListDirectoryChildrenRequest) GetParentPath() string {
+	if x != nil {
+		return x.ParentPath
+	}
+	return ""
+}
+
+func (x *ListDirectoryChildrenRequest) GetReceivedAfter() int64 {
+	if x != nil {
+		return x.ReceivedAfter
+	}
+	return 0
+}
+
+func (x *ListDirectoryChildrenRequest) GetReceivedBefore() int64 {
+	if x != nil {
+		return x.ReceivedBefore
+	}
+	return 0
+}
+
+func (x *ListDirectoryChildrenRequest) GetSourceHosts() []string {
+	if x != nil {
+		return x.SourceHosts
+	}
+	return nil
+}
+
+func (x *ListDirectoryChildrenRequest) GetJobNames() []string {
+	if x != nil {
+		return x.JobNames
+	}
+	return nil
+}
+
+type DirectoryChild struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`                                   // full path, e.g. "/var/lib"
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                                   // short display label, e.g. "lib"
+	FileCount     int64                  `protobuf:"varint,3,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`       // direct files under path matching the current date/host/job filters
+	LastSeen      int64                  `protobuf:"varint,4,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`          // unix seconds, max(received_at) among those files; 0 if file_count == 0
+	HasChildren   bool                   `protobuf:"varint,5,opt,name=has_children,json=hasChildren,proto3" json:"has_children,omitempty"` // true if catalog_directories has any row with parent_path == path
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DirectoryChild) Reset() {
+	*x = DirectoryChild{}
+	mi := &file_api_catalog_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DirectoryChild) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DirectoryChild) ProtoMessage() {}
+
+func (x *DirectoryChild) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DirectoryChild.ProtoReflect.Descriptor instead.
+func (*DirectoryChild) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *DirectoryChild) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *DirectoryChild) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DirectoryChild) GetFileCount() int64 {
+	if x != nil {
+		return x.FileCount
+	}
+	return 0
+}
+
+func (x *DirectoryChild) GetLastSeen() int64 {
+	if x != nil {
+		return x.LastSeen
+	}
+	return 0
+}
+
+func (x *DirectoryChild) GetHasChildren() bool {
+	if x != nil {
+		return x.HasChildren
+	}
+	return false
+}
+
+type ListDirectoryChildrenResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Children      []*DirectoryChild      `protobuf:"bytes,1,rep,name=children,proto3" json:"children,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListDirectoryChildrenResponse) Reset() {
+	*x = ListDirectoryChildrenResponse{}
+	mi := &file_api_catalog_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListDirectoryChildrenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListDirectoryChildrenResponse) ProtoMessage() {}
+
+func (x *ListDirectoryChildrenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListDirectoryChildrenResponse.ProtoReflect.Descriptor instead.
+func (*ListDirectoryChildrenResponse) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListDirectoryChildrenResponse) GetChildren() []*DirectoryChild {
+	if x != nil {
+		return x.Children
+	}
+	return nil
+}
+
 var File_api_catalog_proto protoreflect.FileDescriptor
 
 const file_api_catalog_proto_rawDesc = "" +
@@ -775,13 +971,30 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\tjob_names\x18\x05 \x03(\tR\bjobNames\x12-\n" +
 	"\x12parent_directories\x18\x06 \x03(\tR\x11parentDirectories\"C\n" +
 	"\x12ListFacetsResponse\x12-\n" +
-	"\x06facets\x18\x01 \x03(\v2\x15.catalogservice.FacetR\x06facets2\xc8\x03\n" +
+	"\x06facets\x18\x01 \x03(\v2\x15.catalogservice.FacetR\x06facets\"\xcf\x01\n" +
+	"\x1cListDirectoryChildrenRequest\x12\x1f\n" +
+	"\vparent_path\x18\x01 \x01(\tR\n" +
+	"parentPath\x12%\n" +
+	"\x0ereceived_after\x18\x02 \x01(\x03R\rreceivedAfter\x12'\n" +
+	"\x0freceived_before\x18\x03 \x01(\x03R\x0ereceivedBefore\x12!\n" +
+	"\fsource_hosts\x18\x04 \x03(\tR\vsourceHosts\x12\x1b\n" +
+	"\tjob_names\x18\x05 \x03(\tR\bjobNames\"\x97\x01\n" +
+	"\x0eDirectoryChild\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"file_count\x18\x03 \x01(\x03R\tfileCount\x12\x1b\n" +
+	"\tlast_seen\x18\x04 \x01(\x03R\blastSeen\x12!\n" +
+	"\fhas_children\x18\x05 \x01(\bR\vhasChildren\"[\n" +
+	"\x1dListDirectoryChildrenResponse\x12:\n" +
+	"\bchildren\x18\x01 \x03(\v2\x1e.catalogservice.DirectoryChildR\bchildren2\xbe\x04\n" +
 	"\x0eCatalogService\x12M\n" +
 	"\x10SyncFileVersions\x12\x1b.catalogservice.SyncRequest\x1a\x1c.catalogservice.SyncResponse\x12V\n" +
 	"\vListEntries\x12\".catalogservice.ListEntriesRequest\x1a#.catalogservice.ListEntriesResponse\x12Y\n" +
 	"\x10ListClientFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12V\n" +
 	"\rListJobFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12\\\n" +
-	"\x13ListDirectoryFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponseB\tZ\a./protob\x06proto3"
+	"\x13ListDirectoryFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12t\n" +
+	"\x15ListDirectoryChildren\x12,.catalogservice.ListDirectoryChildrenRequest\x1a-.catalogservice.ListDirectoryChildrenResponseB\tZ\a./protob\x06proto3"
 
 var (
 	file_api_catalog_proto_rawDescOnce sync.Once
@@ -795,37 +1008,43 @@ func file_api_catalog_proto_rawDescGZIP() []byte {
 	return file_api_catalog_proto_rawDescData
 }
 
-var file_api_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_api_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_api_catalog_proto_goTypes = []any{
-	(*FileVersionEntry)(nil),    // 0: catalogservice.FileVersionEntry
-	(*SyncRequest)(nil),         // 1: catalogservice.SyncRequest
-	(*SyncResponse)(nil),        // 2: catalogservice.SyncResponse
-	(*ListEntriesRequest)(nil),  // 3: catalogservice.ListEntriesRequest
-	(*ListEntriesResponse)(nil), // 4: catalogservice.ListEntriesResponse
-	(*Entry)(nil),               // 5: catalogservice.Entry
-	(*Facet)(nil),               // 6: catalogservice.Facet
-	(*ListFacetsRequest)(nil),   // 7: catalogservice.ListFacetsRequest
-	(*ListFacetsResponse)(nil),  // 8: catalogservice.ListFacetsResponse
+	(*FileVersionEntry)(nil),              // 0: catalogservice.FileVersionEntry
+	(*SyncRequest)(nil),                   // 1: catalogservice.SyncRequest
+	(*SyncResponse)(nil),                  // 2: catalogservice.SyncResponse
+	(*ListEntriesRequest)(nil),            // 3: catalogservice.ListEntriesRequest
+	(*ListEntriesResponse)(nil),           // 4: catalogservice.ListEntriesResponse
+	(*Entry)(nil),                         // 5: catalogservice.Entry
+	(*Facet)(nil),                         // 6: catalogservice.Facet
+	(*ListFacetsRequest)(nil),             // 7: catalogservice.ListFacetsRequest
+	(*ListFacetsResponse)(nil),            // 8: catalogservice.ListFacetsResponse
+	(*ListDirectoryChildrenRequest)(nil),  // 9: catalogservice.ListDirectoryChildrenRequest
+	(*DirectoryChild)(nil),                // 10: catalogservice.DirectoryChild
+	(*ListDirectoryChildrenResponse)(nil), // 11: catalogservice.ListDirectoryChildrenResponse
 }
 var file_api_catalog_proto_depIdxs = []int32{
-	0, // 0: catalogservice.SyncRequest.entries:type_name -> catalogservice.FileVersionEntry
-	5, // 1: catalogservice.ListEntriesResponse.entries:type_name -> catalogservice.Entry
-	6, // 2: catalogservice.ListFacetsResponse.facets:type_name -> catalogservice.Facet
-	1, // 3: catalogservice.CatalogService.SyncFileVersions:input_type -> catalogservice.SyncRequest
-	3, // 4: catalogservice.CatalogService.ListEntries:input_type -> catalogservice.ListEntriesRequest
-	7, // 5: catalogservice.CatalogService.ListClientFacets:input_type -> catalogservice.ListFacetsRequest
-	7, // 6: catalogservice.CatalogService.ListJobFacets:input_type -> catalogservice.ListFacetsRequest
-	7, // 7: catalogservice.CatalogService.ListDirectoryFacets:input_type -> catalogservice.ListFacetsRequest
-	2, // 8: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
-	4, // 9: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
-	8, // 10: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
-	8, // 11: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
-	8, // 12: catalogservice.CatalogService.ListDirectoryFacets:output_type -> catalogservice.ListFacetsResponse
-	8, // [8:13] is the sub-list for method output_type
-	3, // [3:8] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0,  // 0: catalogservice.SyncRequest.entries:type_name -> catalogservice.FileVersionEntry
+	5,  // 1: catalogservice.ListEntriesResponse.entries:type_name -> catalogservice.Entry
+	6,  // 2: catalogservice.ListFacetsResponse.facets:type_name -> catalogservice.Facet
+	10, // 3: catalogservice.ListDirectoryChildrenResponse.children:type_name -> catalogservice.DirectoryChild
+	1,  // 4: catalogservice.CatalogService.SyncFileVersions:input_type -> catalogservice.SyncRequest
+	3,  // 5: catalogservice.CatalogService.ListEntries:input_type -> catalogservice.ListEntriesRequest
+	7,  // 6: catalogservice.CatalogService.ListClientFacets:input_type -> catalogservice.ListFacetsRequest
+	7,  // 7: catalogservice.CatalogService.ListJobFacets:input_type -> catalogservice.ListFacetsRequest
+	7,  // 8: catalogservice.CatalogService.ListDirectoryFacets:input_type -> catalogservice.ListFacetsRequest
+	9,  // 9: catalogservice.CatalogService.ListDirectoryChildren:input_type -> catalogservice.ListDirectoryChildrenRequest
+	2,  // 10: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
+	4,  // 11: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
+	8,  // 12: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
+	8,  // 13: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
+	8,  // 14: catalogservice.CatalogService.ListDirectoryFacets:output_type -> catalogservice.ListFacetsResponse
+	11, // 15: catalogservice.CatalogService.ListDirectoryChildren:output_type -> catalogservice.ListDirectoryChildrenResponse
+	10, // [10:16] is the sub-list for method output_type
+	4,  // [4:10] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_api_catalog_proto_init() }
@@ -839,7 +1058,7 @@ func file_api_catalog_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_catalog_proto_rawDesc), len(file_api_catalog_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -591,3 +591,58 @@ func TestSyncFileVersions_DirectoryAncestorsIdempotentAcrossRepeatedSyncs(t *tes
 	require.NoError(t, err)
 	require.Len(t, libChildren, 1)
 }
+
+func TestListDirectoryChildren_ReturnsTrueRootsForEmptyParentPath(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+		{Path: "/", ParentPath: "", Name: "/", Depth: 0},
+	}))
+
+	resp, err := srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, "/", resp.GetChildren()[0].GetPath())
+	assert.Equal(t, "/", resp.GetChildren()[0].GetName())
+}
+
+func TestListDirectoryChildren_ReturnsChildrenForGivenParentPath(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+	}))
+
+	resp, err := srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{ParentPath: "/var"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, "/var/lib", resp.GetChildren()[0].GetPath())
+	assert.Equal(t, "lib", resp.GetChildren()[0].GetName())
+}
+
+func TestListDirectoryChildren_AppliesDateAndHostAndJobFilters(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureDirectories([]catalogstore.DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+		{Path: "/var/lib", ParentPath: "/var", Name: "lib", Depth: 2},
+	}))
+	require.NoError(t, store.EnsureEntries([]catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "backup:nightly-db:var-lib:abcd1234:1", ObjectID: "obj-1", SourceHost: "database", ParentDirectory: "/var/lib", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:  "/var",
+		SourceHosts: []string{"database"},
+		JobNames:    []string{"nightly-db"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(1), resp.GetChildren()[0].GetFileCount())
+
+	resp, err = srv.ListDirectoryChildren(context.Background(), &pb.ListDirectoryChildrenRequest{
+		ParentPath:  "/var",
+		SourceHosts: []string{"webserver"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
+}

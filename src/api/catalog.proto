@@ -10,6 +10,7 @@ service CatalogService {
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListDirectoryFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListDirectoryChildren(ListDirectoryChildrenRequest) returns (ListDirectoryChildrenResponse);
 }
 
 message FileVersionEntry {
@@ -85,4 +86,26 @@ message ListFacetsRequest {
 
 message ListFacetsResponse {
   repeated Facet facets = 1;
+}
+
+message ListDirectoryChildrenRequest {
+  string parent_path     = 1; // "" = true roots ("/", each distinct drive/UNC root)
+  int64  received_after  = 2;
+  int64  received_before = 3;
+  repeated string source_hosts = 4;
+  repeated string job_names    = 5;
+  // No pattern field: directory browsing and pattern search are mutually
+  // exclusive UI modes, never combined.
+}
+
+message DirectoryChild {
+  string path         = 1; // full path, e.g. "/var/lib"
+  string name         = 2; // short display label, e.g. "lib"
+  int64  file_count   = 3; // direct files under path matching the current date/host/job filters
+  int64  last_seen    = 4; // unix seconds, max(received_at) among those files; 0 if file_count == 0
+  bool   has_children = 5; // true if catalog_directories has any row with parent_path == path
+}
+
+message ListDirectoryChildrenResponse {
+  repeated DirectoryChild children = 1;
 }
