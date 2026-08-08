@@ -463,3 +463,24 @@ func TestEnsureEntries_PersistsParentDirectoryAndShortFilename(t *testing.T) {
 	assert.Equal(t, "/var/lib/dbdata", entries[0].ParentDirectory)
 	assert.Equal(t, "data.db", entries[0].ShortFilename)
 }
+
+func TestListEntries_FiltersByParentDirectoriesMultiValue(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries([]Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", ParentDirectory: "/var/lib/dbdata", ShortFilename: "data.db", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", ParentDirectory: "/var/www", ShortFilename: "index.html", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-3", ParentDirectory: "/etc", ShortFilename: "passwd", StoreCreatedAt: time.Now()},
+	}))
+
+	entries, _, err := store.ListEntries(ListEntriesFilter{ParentDirectories: []string{"/var/lib/dbdata", "/etc"}})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	var objIDs []string
+	for _, e := range entries {
+		objIDs = append(objIDs, e.ObjectID)
+	}
+	assert.ElementsMatch(t, []string{"obj-1", "obj-3"}, objIDs)
+}

@@ -77,15 +77,16 @@ func (s *Store) Count() (int64, error) {
 // ListEntriesFilter narrows and paginates a ListEntries query. A
 // zero-valued filter matches every entry, newest first, first page.
 type ListEntriesFilter struct {
-	StoreNode      string    // exact match against the sending bwfs node; "" = all store nodes
-	SourceHost     string    // exact match against the real originating host; "" = all source hosts
-	Pattern        string    // substring match against object_id; "" = no filter
-	Limit          int       // clamped to [1, 500]; 0 or negative defaults to 100
-	StartingAfter  int64     // last-seen entry ID from a previous page; 0 = first page
-	ReceivedAfter  time.Time // zero value = no lower bound
-	ReceivedBefore time.Time // zero value = no upper bound
-	SourceHosts    []string  // OR-matched; empty = no filter, additive to SourceHost
-	JobNames       []string  // OR-matched against the policy name embedded in job_id
+	StoreNode         string    // exact match against the sending bwfs node; "" = all store nodes
+	SourceHost        string    // exact match against the real originating host; "" = all source hosts
+	Pattern           string    // substring match against object_id; "" = no filter
+	Limit             int       // clamped to [1, 500]; 0 or negative defaults to 100
+	StartingAfter     int64     // last-seen entry ID from a previous page; 0 = first page
+	ReceivedAfter     time.Time // zero value = no lower bound
+	ReceivedBefore    time.Time // zero value = no upper bound
+	SourceHosts       []string  // OR-matched; empty = no filter, additive to SourceHost
+	JobNames          []string  // OR-matched against the policy name embedded in job_id
+	ParentDirectories []string  // OR-matched against the exact immediate containing directory; empty = no filter
 }
 
 const (
@@ -131,6 +132,9 @@ func (s *Store) ListEntries(filter ListEntriesFilter) ([]EntryRecord, bool, erro
 	}
 	if len(filter.JobNames) > 0 {
 		q = jobNamesWhere(q, filter.JobNames)
+	}
+	if len(filter.ParentDirectories) > 0 {
+		q = q.Where("parent_directory IN ?", filter.ParentDirectories)
 	}
 
 	var entries []EntryRecord
