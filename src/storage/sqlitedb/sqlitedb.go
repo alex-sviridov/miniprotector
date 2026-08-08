@@ -49,9 +49,9 @@ type Options struct {
 
 // Open opens a GORM handle to a SQLite database per opts.
 func Open(opts Options) (*gorm.DB, error) {
-	dsn := opts.Path + fmt.Sprintf("?_busy_timeout=%d", busyTimeoutMS)
+	dsn := opts.Path + fmt.Sprintf("?_pragma=busy_timeout(%d)", busyTimeoutMS)
 	if opts.ReadOnly {
-		dsn = fmt.Sprintf("file:%s?mode=ro&_busy_timeout=%d", opts.Path, busyTimeoutMS)
+		dsn = fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(%d)", opts.Path, busyTimeoutMS)
 	} else if err := os.MkdirAll(filepath.Dir(opts.Path), 0755); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}

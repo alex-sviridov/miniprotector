@@ -89,3 +89,35 @@ func TestOpen_RespectsContextCancellation(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestOpen_WritableSetsTransactionIsolationTimeout(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(Options{Path: dbPath, Models: []any{&testRecord{}}})
+	require.NoError(t, err)
+	defer func() { sqlDB, _ := db.DB(); sqlDB.Close() }()
+
+	var timeout int
+	require.NoError(t, db.Raw("PRAGMA busy_timeout").Scan(&timeout).Error)
+	assert.Equal(t, busyTimeoutMS, timeout)
+}
+
+func TestOpen_ReadOnlySetsTransactionIsolationTimeout(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// Create and populate database
+	writer, err := Open(Options{Path: dbPath, Models: []any{&testRecord{}}})
+	require.NoError(t, err)
+	require.NoError(t, writer.Create(&testRecord{Name: "a"}).Error)
+	writerSQL, err := writer.DB()
+	require.NoError(t, err)
+	require.NoError(t, writerSQL.Close())
+
+	// Open as read-only and verify busy_timeout is set
+	reader, err := Open(Options{Path: dbPath, ReadOnly: true})
+	require.NoError(t, err)
+	defer func() { sqlDB, _ := reader.DB(); sqlDB.Close() }()
+
+	var timeout int
+	require.NoError(t, reader.Raw("PRAGMA busy_timeout").Scan(&timeout).Error)
+	assert.Equal(t, busyTimeoutMS, timeout)
+}
