@@ -1,14 +1,13 @@
 package filesystem
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"path/filepath"
 
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	_ "modernc.org/sqlite"
+
+	"github.com/alex-sviridov/miniprotector/storage/sqlitedb"
 )
 
 // ReplicaReader is a strictly read-only accessor for an existing bwfs
@@ -25,29 +24,21 @@ type ReplicaReader struct {
 // already exist and have its schema migrated (by a real bwfs Store) — a
 // read-only connection cannot create it.
 func OpenReplicaReader(basePath string) (*ReplicaReader, error) {
-	dbPath := fmt.Sprintf("file:%s?mode=ro&_busy_timeout=5000", filepath.Join(basePath, "metadata.db"))
-
-	sqlDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite read-only: %w", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-
-	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+	db, err := sqlitedb.Open(sqlitedb.Options{
+		Path:     filepath.Join(basePath, "metadata.db"),
+		ReadOnly: true,
 	})
 	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("gorm open read-only: %w", err)
+		return nil, fmt.Errorf("open sqlite read-only: %w", err)
 	}
 	return &ReplicaReader{db: db}, nil
 }
 
 // FileVersionsSince returns up to limit file_versions rows with seq greater
 // than cursor, ordered ascending by seq — catalogsync's replication cursor.
-func (r *ReplicaReader) FileVersionsSince(cursor int64, limit int) ([]FileVersionRecord, error) {
+func (r *ReplicaReader) FileVersionsSince(ctx context.Context, cursor int64, limit int) ([]FileVersionRecord, error) {
 	var records []FileVersionRecord
-	err := r.db.
+	err := r.db.WithContext(ctx).
 		Where("seq > ?", cursor).
 		Order("seq ASC").
 		Limit(limit).

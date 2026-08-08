@@ -21,7 +21,7 @@ type fakeReader struct {
 	records []wfs.FileVersionRecord
 }
 
-func (f *fakeReader) FileVersionsSince(cursor int64, limit int) ([]wfs.FileVersionRecord, error) {
+func (f *fakeReader) FileVersionsSince(ctx context.Context, cursor int64, limit int) ([]wfs.FileVersionRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []wfs.FileVersionRecord

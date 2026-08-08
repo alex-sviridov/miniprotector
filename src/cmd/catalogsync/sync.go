@@ -19,7 +19,7 @@ type syncConfig struct {
 
 // reader is the subset of *filesystem.ReplicaReader that run depends on.
 type reader interface {
-	FileVersionsSince(cursor int64, limit int) ([]wfs.FileVersionRecord, error)
+	FileVersionsSince(ctx context.Context, cursor int64, limit int) ([]wfs.FileVersionRecord, error)
 }
 
 // run polls rd for new file_versions rows and hands each batch to sender,
@@ -38,7 +38,7 @@ func run(ctx context.Context, logger *slog.Logger, rd reader, sender Sender, cur
 			return nil
 		}
 
-		batch, err := rd.FileVersionsSince(cursor, cfg.BatchSize)
+		batch, err := rd.FileVersionsSince(ctx, cursor, cfg.BatchSize)
 		if err != nil {
 			logger.Error("read file versions failed", "error", err)
 			if !sleepOrDone(ctx, cfg.PollInterval) {

@@ -21,13 +21,13 @@ func TestOpenReplicaReader_FileVersionsSince_ReturnsNewRowsInOrder(t *testing.T)
 	require.NoError(t, err)
 	defer reader.Close()
 
-	batch, err := reader.FileVersionsSince(0, 2)
+	batch, err := reader.FileVersionsSince(t.Context(), 0, 2)
 	require.NoError(t, err)
 	require.Len(t, batch, 2)
 	assert.Equal(t, "obj-1", batch[0].ObjectID)
 	assert.Equal(t, "obj-2", batch[1].ObjectID)
 
-	next, err := reader.FileVersionsSince(batch[1].Seq, 2)
+	next, err := reader.FileVersionsSince(t.Context(), batch[1].Seq, 2)
 	require.NoError(t, err)
 	require.Len(t, next, 1)
 	assert.Equal(t, "obj-3", next[0].ObjectID)
@@ -45,11 +45,11 @@ func TestOpenReplicaReader_FileVersionsSince_EmptyWhenCaughtUp(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	batch, err := reader.FileVersionsSince(0, 10)
+	batch, err := reader.FileVersionsSince(t.Context(), 0, 10)
 	require.NoError(t, err)
 	require.Len(t, batch, 1)
 
-	caughtUp, err := reader.FileVersionsSince(batch[0].Seq, 10)
+	caughtUp, err := reader.FileVersionsSince(t.Context(), batch[0].Seq, 10)
 	require.NoError(t, err)
 	assert.Empty(t, caughtUp)
 }
