@@ -415,6 +415,40 @@ func TestCreatePolicy_BackupTypeWithStorageFieldsRejected(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
+func TestCreatePolicy_BackupTypeWithSourceStoreRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "bad",
+		Type:            "backup",
+		StoragePolicyId: storageID,
+		SourceStore:     "bwfs:8080",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_StorageTypeWithSourceStoreRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "bad",
+		Type:        "storage",
+		Port:        9400,
+		Config:      `{}`,
+		SourceStore: "bwfs:8080",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
 func TestUpdatePolicy_StoragePolicyRoundTripsAndTypeStaysImmutable(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{

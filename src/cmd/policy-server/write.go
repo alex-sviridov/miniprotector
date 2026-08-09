@@ -187,6 +187,9 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 			Config:      json.RawMessage(req.GetConfig()),
 		}, nil
 	}
+	if req.GetSourceStore() != "" {
+		return nil, fmt.Errorf("only a restore policy may set source_store")
+	}
 	return buildPolicy(req.GetType(), base, req)
 }
 
