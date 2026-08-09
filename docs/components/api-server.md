@@ -34,7 +34,7 @@ exception to that rule, documented in
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
 `policy-server` also supports a `"storage"` policy type (`port`/`config`).
-`GET /policies` accepts an optional `?type=backup|storage` query parameter to filter by type;
+`GET /policies` accepts an optional `?type=backup|storage|restore` query parameter to filter by type;
 without it, every policy of every type is returned, each with `port`/`config` populated
 in the response DTO when applicable (zero for a `"backup"`-typed policy, and vice versa for
 `rpo`/`storage_policy_id`/`object_filters`). A `"backup"` policy's `destinations` in the response DTO

@@ -46,19 +46,20 @@ are opaque strings, stored and returned verbatim for a future consumer to interp
 
 A policy's type is derived from the name of the immediate subfolder its file lives in under
 `$MP_CONFIG_PATH/policies/` — `policies/backup/*.json` are type `"backup"`, `policies/storage/*.json`
-are type `"storage"`. Type is never read from or written to the on-disk policy JSON itself; it's
-purely a function of file location, computed at load time the same way `policy-server` already
-computes each policy's `id`. Each type is a distinct Go type internally (`BackupPolicy`,
-`StoragePolicy`) implementing a shared `Policy` interface, with its own on-disk schema, validation,
+are type `"storage"`, and `policies/restore/*.json` are type `"restore"`. Type is never read from or
+written to the on-disk policy JSON itself; it's purely a function of file location, computed at load
+time the same way `policy-server` already computes each policy's `id`. Each type is a distinct Go
+type internally (`BackupPolicy`, `StoragePolicy`, `RestorePolicy`) implementing a shared `Policy`
+interface, with its own on-disk schema, validation,
 and wire conversion — adding a further type means writing one more such type and registering its
 parser, not changing `policy-server`'s directory-walking or RPC-handling code. A `*.json` sitting
 directly under `policies/`, outside any type subfolder, is skipped and logged — the same "loud skip,
 don't block the rest" treatment applied to a malformed file. **A subfolder name that isn't a
 registered type is also skipped and logged**, the same way — there's no schema to load an
 unrecognized type's file into, so it can no longer be loaded generically the way an earlier design
-allowed. `CreatePolicy` requires a `type` (`"backup"` or `"storage"`) and writes into the matching
+allowed. `CreatePolicy` requires a `type` (`"backup"`, `"storage"`, or `"restore"`) and writes into the matching
 `policies/<type>/`, creating that subdirectory if missing; a request that sets fields belonging to
-the other type is rejected. `ListPolicies` additionally accepts an optional `type` filter — `"backup"` or `"storage"` restricts
+the other type is rejected. `ListPolicies` additionally accepts an optional `type` filter — `"backup"`, `"storage"`, or `"restore"` restricts
 the response to that type; empty returns every type, unchanged from before this filter existed. See
 [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
 and [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
@@ -153,7 +154,7 @@ Every time `GetPolicies` hands a policy to a host, `policy-server` upserts a row
 `<var-dir>/policy-server.sqlite`. One row exists per `(policy, hostname)` pair: a host re-polling
 the same policy overwrites its own row's timestamp rather than adding a new one, so the table always
 holds each host's *most recent* check-in per policy, not a full history. This covers every policy
-type `GetPolicies` returns (`"backup"` and `"storage"` alike). If the check-in write fails,
+type `GetPolicies` returns (`"backup"`, `"storage"`, and `"restore"` alike). If the check-in write fails,
 `GetPolicies` fails the whole call — check-in tracking is not best-effort telemetry the caller's
 policies can silently proceed without.
 

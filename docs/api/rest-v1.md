@@ -381,6 +381,9 @@ restore, the same mechanism every other policy type uses. `201` with the created
 `400` if `name` is empty, `source_store` isn't a valid `host:port`, or `config` isn't well-formed
 JSON -- no file is written when validation fails.
 
+An optional integer `disabled_at` (Unix seconds) may also be included; once that time passes,
+`GetPolicies` stops serving the policy. Omit it (or send `0`) for a policy that's never disabled.
+
 Restore policies are never updatable: `PUT /api/v1/policies/{id}` against one returns `400`.
 `GET /api/v1/policies/{id}` and `DELETE /api/v1/policies/{id}` work on them like any other type.
 
