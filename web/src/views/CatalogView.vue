@@ -231,7 +231,11 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
       <DataTable :columns="columns" :rows="rows" :search-enabled="false" @row-click="onRowClick">
         <template #table-row="{ column, row }">
           <span v-if="column.field === 'select'">
-            <TriStateCheckbox v-bind="checkboxProps(row)" @toggle="toggleSelection(row)" />
+            <TriStateCheckbox
+              :data-test="row.isFolder ? `folder-checkbox-${row.path}` : `file-checkbox-${row.sourceHost}:${row.path}`"
+              v-bind="checkboxProps(row)"
+              @toggle="toggleSelection(row)"
+            />
           </span>
           <template v-else-if="row.isFolder">
             <span v-if="column.field === 'path'" class="font-semibold">{{ row.name }}/</span>

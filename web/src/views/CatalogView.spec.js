@@ -375,4 +375,20 @@ describe('CatalogView', () => {
     expect(restoreCart.toggleFolder).toHaveBeenCalledWith('/var/log')
     expect(catalog.navigateTo).not.toHaveBeenCalled()
   })
+
+  it('sets a data-test attribute identifying each row\'s checkbox', () => {
+    const { wrapper } = mountView({
+      currentPath: '/var',
+      directoryChildren: [{ path: '/var/lib', name: 'lib', file_count: 0, last_seen: 0, has_children: true }],
+    })
+    expect(wrapper.find('[data-test="folder-checkbox-/var/lib"]').exists()).toBe(true)
+  })
+
+  it('sets a data-test attribute identifying a file row\'s checkbox', () => {
+    const { wrapper } = mountView({
+      currentPath: '/var/lib/dbdata',
+      entries: [entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/dump.sql' })],
+    })
+    expect(wrapper.find('[data-test="file-checkbox-database:/var/lib/dbdata/dump.sql"]').exists()).toBe(true)
+  })
 })
