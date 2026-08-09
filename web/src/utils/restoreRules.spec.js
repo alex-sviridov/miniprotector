@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveFile } from './restoreRules'
+import { resolveFile, resolveFolderState } from './restoreRules'
 
 describe('resolveFile', () => {
   it('is false when no rule matches', () => {
@@ -37,5 +37,49 @@ describe('resolveFile', () => {
     ]
     expect(resolveFile(rules, 'web01', '/var/log/access.log')).toBe(false)
     expect(resolveFile(rules, 'web01', '/var/lib/data.db')).toBe(true)
+  })
+})
+
+describe('resolveFolderState', () => {
+  it('is unchecked when nothing covers the path and nothing sits under it', () => {
+    expect(resolveFolderState([], '/etc')).toBe('unchecked')
+  })
+
+  it('is checked when a rule fully covers the path with nothing underneath', () => {
+    const rules = [{ path: '/etc', host: null, include: true }]
+    expect(resolveFolderState(rules, '/etc')).toBe('checked')
+  })
+
+  it('is checked when covered by an ancestor rule, with nothing underneath', () => {
+    const rules = [{ path: '/', host: null, include: true }]
+    expect(resolveFolderState(rules, '/etc')).toBe('checked')
+  })
+
+  it('is indeterminate when a nested exception exists under a covering rule', () => {
+    const rules = [
+      { path: '/var', host: null, include: true },
+      { path: '/var/log', host: null, include: false },
+    ]
+    expect(resolveFolderState(rules, '/var')).toBe('indeterminate')
+  })
+
+  it('is indeterminate when a file below is individually selected without covering the folder', () => {
+    const rules = [{ path: '/var/log/access.log', host: 'web01', include: true }]
+    expect(resolveFolderState(rules, '/var/log')).toBe('indeterminate')
+    expect(resolveFolderState(rules, '/var')).toBe('indeterminate')
+  })
+
+  it('is indeterminate even when its own exact rule excludes it, if something nested re-includes', () => {
+    const rules = [
+      { path: '/var', host: null, include: true },
+      { path: '/var/log', host: null, include: false },
+      { path: '/var/log/nginx', host: null, include: true },
+    ]
+    expect(resolveFolderState(rules, '/var/log')).toBe('indeterminate')
+  })
+
+  it('is unaffected by sibling rules', () => {
+    const rules = [{ path: '/home', host: null, include: true }]
+    expect(resolveFolderState(rules, '/etc')).toBe('unchecked')
   })
 })

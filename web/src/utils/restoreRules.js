@@ -41,3 +41,25 @@ export function resolveFile(rules, host, path) {
   if (exact) return exact.include
   return longestMatchingFolderRule(rules, path) === true
 }
+
+// isStrictDescendantPath is true when ancestorPath is a proper ancestor
+// of candidatePath (not equal to it).
+function isStrictDescendantPath(candidatePath, ancestorPath) {
+  if (candidatePath === ancestorPath) return false
+  return ancestorsOrSelf(candidatePath).includes(ancestorPath)
+}
+
+// hasRuleUnder is true if any rule (folder or file, any host) sits
+// strictly under path -- used to detect a folder's indeterminate state.
+function hasRuleUnder(rules, path) {
+  return rules.some((r) => isStrictDescendantPath(r.path, path))
+}
+
+// resolveFolderState returns the tri-state checkbox value for a folder
+// row: 'checked' if a rule fully covers it and nothing overrides that
+// underneath; 'unchecked' if nothing covers it and nothing sits under
+// it; 'indeterminate' otherwise (mixed).
+export function resolveFolderState(rules, path) {
+  if (hasRuleUnder(rules, path)) return 'indeterminate'
+  return longestMatchingFolderRule(rules, path) === true ? 'checked' : 'unchecked'
+}
