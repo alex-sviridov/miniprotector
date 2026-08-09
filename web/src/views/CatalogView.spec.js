@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import CatalogView from './CatalogView.vue'
 import { useCatalogStore } from '../stores/catalog'
+import { useRestoreCartStore } from '../stores/restoreCart'
 import DateRangePanel from '../components/catalog/DateRangePanel.vue'
 import FacetPanel from '../components/catalog/FacetPanel.vue'
 import DirectoryPathBar from '../components/catalog/DirectoryPathBar.vue'
@@ -29,7 +30,7 @@ function entry(overrides) {
   }
 }
 
-function mountView(state) {
+function mountView(state, restoreCartState = {}) {
   const pinia = createTestingPinia({
     stubActions: true,
     initialState: {
@@ -48,12 +49,13 @@ function mountView(state) {
         directoryChildrenError: null,
         ...state,
       },
+      restoreCart: { rules: [], ...restoreCartState },
     },
   })
   const wrapper = mount(CatalogView, {
     global: { plugins: [pinia], stubs: { DateRangePanel: true, FacetPanel: true } },
   })
-  return { wrapper, catalog: useCatalogStore() }
+  return { wrapper, catalog: useCatalogStore(), restoreCart: useRestoreCartStore() }
 }
 
 describe('CatalogView', () => {
@@ -291,5 +293,86 @@ describe('CatalogView', () => {
   it('renders a single-segment breadcrumb', () => {
     const { wrapper } = mountView({})
     expect(wrapper.find('[data-test="breadcrumb"]').text()).toBe('Catalog')
+  })
+
+  it('renders a checkbox for a file row reflecting its restore-cart state', () => {
+    const { wrapper } = mountView(
+      { currentPath: '/var/lib/dbdata', entries: [entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/data.db' })] },
+      { rules: [{ path: '/var/lib/dbdata/data.db', host: 'database', include: true }] }
+    )
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    expect(checkbox.element.checked).toBe(true)
+  })
+
+  it('renders an unchecked checkbox for a file row not in the restore cart', () => {
+    const { wrapper } = mountView({
+      currentPath: '/var/lib/dbdata',
+      entries: [entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/data.db' })],
+    })
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    expect(checkbox.element.checked).toBe(false)
+  })
+
+  it('clicking a file checkbox calls restoreCart.toggleFile and does not navigate', async () => {
+    const { wrapper, catalog, restoreCart } = mountView({
+      currentPath: '/var/lib/dbdata',
+      entries: [entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/data.db' })],
+    })
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    // jsdom only runs a checkbox's native input/change cascade from a
+    // 'click' when the element is attached to `document` (mount() here
+    // uses a detached div), so 'change' is triggered explicitly to
+    // exercise TriStateCheckbox's @change listener the way a real
+    // browser click would. The 'click' trigger still exercises the
+    // component's @click.stop, which is what keeps this from navigating.
+    await checkbox.trigger('click')
+    await checkbox.trigger('change')
+    expect(restoreCart.toggleFile).toHaveBeenCalledWith('database', '/var/lib/dbdata/data.db')
+    expect(catalog.navigateTo).not.toHaveBeenCalled()
+  })
+
+  it('renders a checked checkbox for a folder row fully covered by a wildcard rule', () => {
+    const { wrapper } = mountView(
+      {
+        currentPath: '/var',
+        directoryChildren: [{ path: '/var/log', name: 'log', file_count: 3, last_seen: 1752400010, has_children: false }],
+      },
+      { rules: [{ path: '/var/log', host: null, include: true }] }
+    )
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    expect(checkbox.element.checked).toBe(true)
+    expect(checkbox.element.indeterminate).toBe(false)
+  })
+
+  it('renders an indeterminate checkbox for a folder row with a nested exception', () => {
+    const { wrapper } = mountView(
+      {
+        currentPath: '/var',
+        directoryChildren: [{ path: '/var/log', name: 'log', file_count: 3, last_seen: 1752400010, has_children: true }],
+      },
+      {
+        rules: [
+          { path: '/var/log', host: null, include: true },
+          { path: '/var/log/access.log', host: 'web01', include: false },
+        ],
+      }
+    )
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    expect(checkbox.element.indeterminate).toBe(true)
+  })
+
+  it('clicking a folder checkbox calls restoreCart.toggleFolder and does not navigate into it', async () => {
+    const { wrapper, catalog, restoreCart } = mountView({
+      currentPath: '/var',
+      directoryChildren: [{ path: '/var/log', name: 'log', file_count: 3, last_seen: 1752400010, has_children: false }],
+    })
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    // See the comment on the analogous file-checkbox test above: 'change'
+    // is triggered explicitly since jsdom won't cascade it from 'click'
+    // on a detached element.
+    await checkbox.trigger('click')
+    await checkbox.trigger('change')
+    expect(restoreCart.toggleFolder).toHaveBeenCalledWith('/var/log')
+    expect(catalog.navigateTo).not.toHaveBeenCalled()
   })
 })
