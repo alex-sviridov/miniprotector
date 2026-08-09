@@ -128,11 +128,15 @@ type policyFieldsGetter interface {
 	GetConfig() string
 }
 
-// buildPolicy constructs the concrete Policy kind asks for out of base and
-// req's type-specific fields, rejecting a request that also sets fields
-// belonging to the other type. Shared by buildPolicyForCreate (kind ==
-// req.GetType()) and buildPolicyForUpdate (kind == existing.Kind(), since a
-// policy's type is immutable via update).
+// buildPolicy constructs the concrete "backup" or "storage" Policy kind
+// asks for out of base and req's type-specific fields, rejecting a request
+// that also sets fields belonging to the other type. Shared by
+// buildPolicyForCreate (kind == req.GetType()) and buildPolicyForUpdate
+// (kind == existing.Kind(), since a policy's type is immutable via update).
+// "restore" is handled separately in buildPolicyForCreate, not routed
+// through here or through policyFieldsGetter -- it's create-only (see
+// buildPolicyForUpdate) and UpdatePolicyRequest has no source_store field
+// for policyFieldsGetter to expose.
 func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, error) {
 	switch kind {
 	case "backup":
@@ -172,6 +176,16 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 			DisabledAt: disabledAtFromProto(req.GetDisabledAt()),
 		},
 		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
+	}
+	if req.GetType() == "restore" {
+		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetStoragePolicyId()) || req.GetPort() != 0 {
+			return nil, fmt.Errorf("a restore policy must not set object_filters/rpo/backup_window/storage_policy_id/port")
+		}
+		return &RestorePolicy{
+			PolicyBase:  base,
+			SourceStore: req.GetSourceStore(),
+			Config:      json.RawMessage(req.GetConfig()),
+		}, nil
 	}
 	return buildPolicy(req.GetType(), base, req)
 }

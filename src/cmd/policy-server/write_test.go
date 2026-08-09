@@ -636,3 +636,97 @@ func TestDeletePolicy_UnreferencedStoragePolicySucceeds(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, srv.cache.Policies())
 }
+
+func TestCreatePolicy_RestorePolicyWritesIntoRestoreDir(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:          "Web01 Emergency Restore",
+		Type:          "restore",
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		SourceStore:   "bwfs-east.internal:8080",
+		Config:        `{"files": ["/var/www/index.html"]}`,
+	})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.Id)
+	assert.Equal(t, "restore", resp.Type)
+	assert.Equal(t, "bwfs-east.internal:8080", resp.SourceStore)
+	assert.JSONEq(t, `{"files": ["/var/www/index.html"]}`, resp.Config)
+
+	_, err = os.Stat(filepath.Join(dir, "restore", "web01-emergency-restore.json"))
+	require.NoError(t, err)
+}
+
+func TestCreatePolicy_ResponseIncludesRestoreType(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "quick-restore", Type: "restore", SourceStore: "bwfs:8080", Config: `{}`,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "restore", resp.Type)
+}
+
+func TestCreatePolicy_RestoreTypeWithBackupFieldsRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "bad",
+		Type:            "restore",
+		SourceStore:     "bwfs:8080",
+		Config:          `{}`,
+		StoragePolicyId: "sp-1",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_RestoreTypeWithPortRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:        "bad",
+		Type:        "restore",
+		SourceStore: "bwfs:8080",
+		Config:      `{}`,
+		Port:        9400,
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_RestoreMissingSourceStoreReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "no-source", Type: "restore", Config: `{}`,
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_RestoreInvalidSourceStoreFormatReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "bad-source", Type: "restore", SourceStore: "no-port-here", Config: `{}`,
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
