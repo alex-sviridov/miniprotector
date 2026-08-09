@@ -5,8 +5,9 @@ import IconCatalog from './IconCatalog.vue'
 import IconPolicies from './IconPolicies.vue'
 import IconStorage from './IconStorage.vue'
 import IconJobs from './IconJobs.vue'
+import IconRestore from './IconRestore.vue'
 
-const icons = { IconClients, IconCatalog, IconPolicies, IconStorage, IconJobs }
+const icons = { IconClients, IconCatalog, IconPolicies, IconStorage, IconJobs, IconRestore }
 
 describe('icons', () => {
   for (const [name, component] of Object.entries(icons)) {
