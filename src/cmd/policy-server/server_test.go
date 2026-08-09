@@ -327,6 +327,30 @@ func TestGetPolicies_ResponseIncludesType(t *testing.T) {
 	assert.Equal(t, "backup", resp.Policies[0].Type)
 }
 
+func TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "restore"), "web01-emergency.json", `{
+		"metadata": {"name": "web01-emergency"},
+		"client_filters": {"hostnames": ["web-01"]},
+		"source_store": "bwfs-east.internal:8080",
+		"config": {"files": ["/var/www/index.html"]}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	p := resp.Policies[0]
+	assert.Equal(t, "restore", p.Type)
+	assert.Equal(t, "bwfs-east.internal:8080", p.SourceStore)
+	assert.Nil(t, p.ClientFilters)
+
+	checkins, err := srv.checkins.CheckinsForPolicy(context.Background(), p.Id)
+	require.NoError(t, err)
+	require.Len(t, checkins, 1)
+	assert.Equal(t, "web-01", checkins[0].Hostname)
+}
+
 func TestListPolicies_ResponseIncludesType(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
@@ -359,6 +383,26 @@ func TestListPolicies_FilterByTypeReturnsOnlyMatchingType(t *testing.T) {
 	require.Len(t, resp.Policies, 1)
 	assert.Equal(t, "east-1-storage", resp.Policies[0].Name)
 	assert.Equal(t, "storage", resp.Policies[0].Type)
+}
+
+func TestListPolicies_FilterByRestoreTypeReturnsOnlyRestorePolicies(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
+		"metadata": {"name": "web-policy"},
+		"storage_policy_id": "sp-1"
+	}`)
+	writePolicyFile(t, filepath.Join(dir, "restore"), "web01-emergency.json", `{
+		"metadata": {"name": "web01-emergency"},
+		"source_store": "bwfs:8080",
+		"config": {}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.ListPolicies(context.Background(), &pb.ListPoliciesRequest{Type: "restore"})
+	require.NoError(t, err)
+	require.Len(t, resp.Policies, 1)
+	assert.Equal(t, "web01-emergency", resp.Policies[0].Name)
+	assert.Equal(t, "restore", resp.Policies[0].Type)
 }
 
 func TestListPolicies_EmptyTypeReturnsEveryType(t *testing.T) {
@@ -409,6 +453,21 @@ func TestGetPolicies_ExcludesPolicyPastItsDisabledAt(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Policies, 1)
 	assert.Equal(t, "active-policy", resp.Policies[0].Name)
+}
+
+func TestGetPolicies_ExcludesRestorePolicyPastItsDisabledAt(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "restore"), "expired.json", `{
+		"metadata": {"name": "expired-restore", "disabled_at": "2020-01-01T00:00:00Z"},
+		"source_store": "bwfs:8080",
+		"config": {}
+	}`)
+	srv := newTestServerWithPolicies(t, dir)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "any", nil), &pb.GetPoliciesRequest{})
+
+	require.NoError(t, err)
+	assert.Empty(t, resp.Policies)
 }
 
 func TestGetPolicies_IncludesPolicyWithFutureDisabledAt(t *testing.T) {
