@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-09 — policy-server gains a restore policy type
+
+`policy-server` now supports a third policy type, `"restore"`, alongside `"backup"`/`"storage"`: a
+one-shot directive (`client_filters` for the executing node, `source_store` for the source `bwfs`,
+and the existing `config` field reused for an opaque restore spec) with no recurring-schedule
+fields and no update path -- restores are normally ad hoc, but still need to reach a specific mesh
+node the same way backup/storage policies already do, since there's no direct-access channel to an
+arbitrary node otherwise. `api-server` gains `POST /api/v1/restore`, the sole creation path.
+Actual restore execution (`agent` picking up a restore policy and running it) is deliberately out
+of scope here, left for a future design the same way storage-policy-type and agent-storage-
+supervision were split.
+
 ## 2026-08-09 — restore cart gains a real-browser e2e suite
 
 The catalog's restore-cart selection (file/folder checkboxes, sidebar highlight, `/restore` list)
