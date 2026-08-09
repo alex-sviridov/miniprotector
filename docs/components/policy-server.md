@@ -79,6 +79,19 @@ to this type; see
 which is the first actual consumer of `storage`-typed policies. See
 [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
 
+A `"restore"` policy is a one-shot directive: `client_filters` targets the node that will execute
+the restore, `source_store` (required, a syntactically valid `host:port`) names the source `bwfs`
+to restore from, and `config` (required, well-formed JSON, the same field a `"storage"` policy
+carries -- not a separate one) holds the restore spec, whose shape is defined by a future design.
+It has no `object_filters`, `rpo`, `backup_window`, `storage_policy_id`, or `port`. Unlike every
+other type, a `"restore"` policy is never updatable -- `UpdatePolicy` rejects any request targeting
+one with `INVALID_ARGUMENT`, regardless of which fields the request sets, so `api-server`'s generic
+`PUT /api/v1/policies/{id}` rejects it too, with no `api-server`-side special-casing needed.
+`policy-server` only defines this type's schema and validation; a future design covers `agent`
+actually picking up `"restore"`-typed policies and executing a restore, the same way "Storage
+Policy Type" and "agent storage-policy supervision" were split into separate specs. See
+[Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md).
+
 ### Policy files and hot reload
 
 Each policy type subfolder's `*.json` file is one policy. Every type shares `metadata` (`name`,

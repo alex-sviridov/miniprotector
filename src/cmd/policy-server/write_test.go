@@ -730,3 +730,27 @@ func TestCreatePolicy_RestoreInvalidSourceStoreFormatReturnsInvalidArgument(t *t
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
+
+func TestUpdatePolicy_RestoreTypeRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "quick-restore", Type: "restore", SourceStore: "bwfs:8080", Config: `{}`,
+	})
+	require.NoError(t, err)
+
+	_, err = srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:   created.Id,
+		Name: "renamed",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+
+	data, readErr := os.ReadFile(filepath.Join(dir, "restore", "quick-restore.json"))
+	require.NoError(t, readErr)
+	var onDisk map[string]any
+	require.NoError(t, json.Unmarshal(data, &onDisk))
+	assert.Equal(t, "quick-restore", onDisk["metadata"].(map[string]any)["name"], "the file must be left untouched when the update is rejected")
+}

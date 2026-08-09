@@ -194,6 +194,9 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 // policy being updated -- a policy's type is immutable via UpdatePolicy, so
 // kind comes from the existing record (existing.Kind()), not the request.
 func buildPolicyForUpdate(req *pb.UpdatePolicyRequest, kind string, existingMeta Metadata, now time.Time) (Policy, error) {
+	if kind == "restore" {
+		return nil, fmt.Errorf("restore policies cannot be updated")
+	}
 	if kind != "backup" && kind != "storage" {
 		return nil, fmt.Errorf("existing policy has unknown type %q", kind)
 	}
