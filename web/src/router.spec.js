@@ -7,6 +7,7 @@ const EXPECTED_NAMES = [
   'client-new',
   'client-detail',
   'catalog',
+  'restore',
   'policies',
   'policy-detail',
   'storage',

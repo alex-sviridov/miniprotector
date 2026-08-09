@@ -8,6 +8,7 @@ export const router = createRouter({
     { path: '/clients/new', name: 'client-new', component: () => import('./views/ClientFormView.vue') },
     { path: '/clients/:hostname', name: 'client-detail', component: () => import('./views/ClientDetailView.vue') },
     { path: '/catalog', name: 'catalog', component: () => import('./views/CatalogView.vue') },
+    { path: '/restore', name: 'restore', component: () => import('./views/RestoreView.vue') },
     { path: '/policies', name: 'policies', component: () => import('./views/BackupPoliciesView.vue') },
     { path: '/policies/:id', name: 'policy-detail', component: () => import('./views/BackupPolicyView.vue') },
     { path: '/storage', name: 'storage', component: () => import('./views/StorageView.vue') },

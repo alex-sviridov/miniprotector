@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-09 — catalog UI gains restore selection (file/folder checkboxes, restore cart)
+
+The catalog view can now stage files and folders for restore. Each row gets a checkbox; checking a file adds it to a new `restoreCart` Pinia store keyed by `(source_host, path)`, while checking a folder adds a single host-agnostic wildcard rule instead of one entry per contained file, so selecting a large folder stays cheap regardless of its size. Selection state is resolved from this small rule list on demand using longest-matching-path semantics (like `.gitignore`), which lets a user drill into an already-selected folder and see it pre-checked, then uncheck individual items to carve out exceptions. The sidebar's new Restore link highlights whenever the cart is non-empty, and a new placeholder `/restore` page lists what's staged. This is UI-only groundwork — no restore job submission or backend changes yet.
+
 ## 2026-08-09 — catalog write-path: atomicity, decode visibility, facet aggregation, date-range DRY
 
 The catalog gains four implementation improvements. `SyncFileVersions`'s write to the catalog database now uses `Store.SyncBatch`, ensuring entries and their directory ancestors commit together or not at all, eliminating a window where an entry could be visible without its directory ancestors. Sync-time metadata decode failures are now logged (previously silent), and each entry's metadata is decoded once instead of twice. A new `storage/catalog/facets.go` file consolidates the three `ListClientFacets`, `ListJobFacets`, and `ListDirectoryFacets` methods behind a shared `aggregateFacets` helper, eliminating ~90 duplicated lines of filter application and facet deduplication logic. In the API server, `cmd/api-server/catalog.go`'s five catalog handlers (`handleListCatalog*`) now share one `parseDateRange` helper instead of each repeating the same eight-line received_after/received_before parse-or-400 block. These are internal implementation cleanups only — no behavior change to any RPC or REST endpoint's contract.

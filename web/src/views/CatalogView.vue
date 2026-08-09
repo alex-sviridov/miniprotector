@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useCatalogStore } from '../stores/catalog'
+import { useRestoreCartStore } from '../stores/restoreCart'
+import { resolveFile, resolveFolderState } from '../utils/restoreRules'
 import { formatBytes, formatTimestamp } from '../utils/format'
 import { groupEntriesByFile } from '../utils/catalogGrouping'
 import PageHeader from '../components/ui/PageHeader.vue'
@@ -10,8 +12,10 @@ import DateRangePanel from '../components/catalog/DateRangePanel.vue'
 import FacetPanel from '../components/catalog/FacetPanel.vue'
 import DirectoryPathBar from '../components/catalog/DirectoryPathBar.vue'
 import VersionsModal from '../components/VersionsModal.vue'
+import TriStateCheckbox from '../components/ui/TriStateCheckbox.vue'
 
 const catalog = useCatalogStore()
+const restoreCart = useRestoreCartStore()
 const activePanel = ref('date')
 const selectedGroup = ref(null)
 
@@ -40,6 +44,19 @@ const folderRows = computed(() =>
 const fileRows = computed(() => groupEntriesByFile(catalog.entries).map((g) => ({ isFolder: false, ...g })))
 // Folders always precede files.
 const rows = computed(() => [...folderRows.value, ...fileRows.value])
+
+function checkboxProps(row) {
+  if (row.isFolder) {
+    const state = resolveFolderState(restoreCart.rules, row.path)
+    return { checked: state === 'checked', indeterminate: state === 'indeterminate' }
+  }
+  return { checked: resolveFile(restoreCart.rules, row.sourceHost, row.path), indeterminate: false }
+}
+
+function toggleSelection(row) {
+  if (row.isFolder) restoreCart.toggleFolder(row.path)
+  else restoreCart.toggleFile(row.sourceHost, row.path)
+}
 
 function summaryLabel(names, allLabel) {
   if (names.length === 0) return allLabel
@@ -115,6 +132,7 @@ watch(
 )
 
 const baseColumns = [
+  { label: '', field: 'select', sortable: false },
   { label: 'Path', field: 'path', sortable: true },
   { label: 'Source Host', field: 'sourceHost', sortable: true },
   { label: 'Store Host', field: 'representative.store_host', sortable: true },
@@ -212,7 +230,10 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
     >
       <DataTable :columns="columns" :rows="rows" :search-enabled="false" @row-click="onRowClick">
         <template #table-row="{ column, row }">
-          <template v-if="row.isFolder">
+          <span v-if="column.field === 'select'">
+            <TriStateCheckbox v-bind="checkboxProps(row)" @toggle="toggleSelection(row)" />
+          </span>
+          <template v-else-if="row.isFolder">
             <span v-if="column.field === 'path'" class="font-semibold">{{ row.name }}/</span>
             <span v-else-if="column.field === 'representative.mod_time'">{{ formatTimestamp(row.last_seen) || '—' }}</span>
             <span v-else-if="column.field === 'versions'">{{ row.file_count || '' }}</span>
