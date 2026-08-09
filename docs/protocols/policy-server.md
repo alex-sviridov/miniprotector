@@ -22,6 +22,9 @@ message GetPoliciesResponse {
 }
 
 message ListPoliciesRequest {
+  // Optional. "backup", "storage", or "restore" -- when set, only policies
+  // of this type are returned. Empty returns every type (unfiltered,
+  // today's behavior).
   string type = 1;
 }
 
@@ -59,11 +62,17 @@ message Policy {
   string type = 10;
   reserved 11; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 12;
+  // "storage" and "restore" policy only -- opaque JSON text, verbatim
+  // passthrough. Never parsed or interpreted by policy-server beyond
+  // checking well-formedness. For "restore", this carries the restore spec
+  // (file list etc.); its shape is defined by a future design.
   string config = 13;
   google.protobuf.Timestamp disabled_at = 14;
   string storage_policy_id = 15; // backup policy only, required
   repeated PolicyCheckin checkins = 16; // ListPolicies only, not GetPolicies; one entry per host that has received this policy
   repeated string destinations = 17; // backup policy only, derived, read-only -- see below
+  // "restore" policy only. host:port of the source bwfs to restore from.
+  string source_store = 18;
 }
 
 message CreatePolicyRequest {
@@ -73,12 +82,19 @@ message CreatePolicyRequest {
   string rpo = 4;
   repeated string backup_window = 5;
   reserved 6; reserved "destination"; // removed -- never itself writable, see below
+  // "backup", "storage", or "restore" -- required. Determines which of the
+  // type-specific fields are valid; mixing fields across types is rejected
+  // (e.g. a "restore" request must not set object_filters/rpo/
+  // backup_window/storage_policy_id/port).
   string type = 7;
   reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
   google.protobuf.Timestamp disabled_at = 11;
   string storage_policy_id = 12; // backup policy only, required
+  // "restore" policy only, required. host:port of the source bwfs to
+  // restore from.
+  string source_store = 13;
 }
 
 message UpdatePolicyRequest {
@@ -141,6 +157,16 @@ certificate — the same requirement every server except `issuer`'s own listener
   storage policy (removed -- see
   [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md));
   targeting a node is `client_filters` only, identical to a backup policy.
+- A `"restore"`-typed policy carries `client_filters` (targets the node that will execute the
+  restore), `source_store` (required, a syntactically valid `host:port` naming the source `bwfs`),
+  and `config` (required, well-formed JSON -- the restore spec, format defined by a future design;
+  the same field a `"storage"` policy uses, not a separate one). It has no `object_filters`, `rpo`,
+  `backup_window`, `storage_policy_id`, or `port` -- a `CreatePolicyRequest` of this type setting any
+  of those is rejected with `INVALID_ARGUMENT`. Unlike every other type, a `"restore"` policy is
+  **never updatable**: `UpdatePolicyRequest` has no `source_store` field, and `UpdatePolicy` rejects
+  any request whose target policy is type `"restore"` with `INVALID_ARGUMENT`, regardless of which
+  fields the request sets. See
+  [Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md).
 - `disabled_at` is generic across every policy type -- unset (zero/nil) means never disabled. Once it
   passes, `GetPolicies` stops returning that policy to any node, checked live against the current
   time on every call (not cached at load/reload time) -- no `.changed`-touch or restart needed for a

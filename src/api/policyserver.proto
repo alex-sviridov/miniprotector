@@ -26,8 +26,9 @@ message GetPoliciesResponse {
 }
 
 message ListPoliciesRequest {
-  // Optional. "backup" or "storage" -- when set, only policies of this type
-  // are returned. Empty returns every type (unfiltered, today's behavior).
+  // Optional. "backup", "storage", or "restore" -- when set, only policies
+  // of this type are returned. Empty returns every type (unfiltered,
+  // today's behavior).
   string type = 1;
 }
 
@@ -90,8 +91,10 @@ message Policy {
   reserved "hostname";
   // storage policy only.
   int32 port = 12;
-  // storage policy only -- opaque JSON text, verbatim passthrough. Never
-  // parsed or interpreted by policy-server beyond checking well-formedness.
+  // "storage" and "restore" policy only -- opaque JSON text, verbatim
+  // passthrough. Never parsed or interpreted by policy-server beyond
+  // checking well-formedness. For "restore", this carries the restore spec
+  // (file list etc.); its shape is defined by a future design.
   string config = 13;
   // Zero/unset means never disabled. Once this time passes, GetPolicies
   // stops returning the policy (checked live, not cached); ListPolicies is
@@ -107,6 +110,8 @@ message Policy {
   // if the storage policy has no checkins yet or storage_policy_id is
   // dangling. Unset for a "storage" policy, as before.
   repeated string destinations = 17;
+  // "restore" policy only. host:port of the source bwfs to restore from.
+  string source_store = 18;
 }
 
 message CreatePolicyRequest {
@@ -122,9 +127,10 @@ message CreatePolicyRequest {
   // docs/superpowers/specs/2026-08-03-backup-policy-storage-link-design.md.
   reserved 6;
   reserved "destination";
-  // "backup" or "storage" -- required. Determines which of the fields above
-  // (backup) or below (storage) are valid; mixing fields from both types is
-  // rejected.
+  // "backup", "storage", or "restore" -- required. Determines which of the
+  // type-specific fields are valid; mixing fields across types is rejected
+  // (e.g. a "restore" request must not set object_filters/rpo/
+  // backup_window/storage_policy_id/port).
   string type = 7;
   // reserved 8 was "hostname" -- removed, see Policy.reserved 11 above.
   reserved 8;
@@ -134,6 +140,9 @@ message CreatePolicyRequest {
   google.protobuf.Timestamp disabled_at = 11;
   // "backup" only, required.
   string storage_policy_id = 12;
+  // "restore" policy only, required. host:port of the source bwfs to
+  // restore from.
+  string source_store = 13;
 }
 
 message UpdatePolicyRequest {
@@ -151,7 +160,10 @@ message UpdatePolicyRequest {
   // A policy's type is immutable via UpdatePolicy -- there is no type field
   // here. port/config are only valid when the policy being updated is
   // already type "storage"; object_filters/rpo/backup_window/storage_policy_id
-  // are only valid when it's already type "backup".
+  // are only valid when it's already type "backup". "restore"-typed
+  // policies cannot be updated at all -- UpdatePolicy rejects any request
+  // whose target policy is type "restore" regardless of which fields it
+  // sets, which is why there is no source_store field here.
   // reserved 8 was "hostname" -- removed, see Policy.reserved 11 above.
   reserved 8;
   reserved "hostname";
