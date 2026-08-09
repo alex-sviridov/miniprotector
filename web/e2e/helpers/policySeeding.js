@@ -75,11 +75,19 @@ async function waitForCatalogFiles(page, dirPath, files, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     await page.goto('/catalog')
+    let reachedTarget = true
     for (const segment of segments) {
-      await page.getByText(`${segment}/`, { exact: true }).click()
+      try {
+        await page.getByText(`${segment}/`, { exact: true }).click({ timeout: 5000 })
+      } catch {
+        reachedTarget = false
+        break
+      }
     }
-    const counts = await Promise.all(files.map((f) => page.getByText(f, { exact: true }).count()))
-    if (counts.every((c) => c > 0)) return
+    if (reachedTarget) {
+      const counts = await Promise.all(files.map((f) => page.getByText(f, { exact: true }).count()))
+      if (counts.every((c) => c > 0)) return
+    }
     if (Date.now() > deadline) throw new Error(`Timed out waiting for catalog files under ${dirPath}`)
     await page.waitForTimeout(3000)
   }

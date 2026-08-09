@@ -105,6 +105,15 @@ against the real, already-running demo lab rather than mocked data — see
 Seeding is itself UI-driven: the suite creates and runs a fast ad-hoc backup policy through the real
 `/policies` form before asserting against the resulting catalog data.
 
+One-time setup (host Node, not the Docker-based flow used for `dev`/`build` above — Playwright
+needs a real browser binary, which isn't practical inside the `node:20-alpine` image used
+elsewhere in this doc):
+
+```bash
+cd web && npm install
+npx playwright install --with-deps chromium
+```
+
 ```bash
 make demo-up          # precondition, not managed by the suite itself
 cd web && npx playwright test

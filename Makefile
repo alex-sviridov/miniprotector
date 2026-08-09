@@ -168,6 +168,8 @@ api-server: $(BINARY_DIR) ## Build api-server binary
 test: ## Run unit and integration tests
 	cd src && go test ./...
 
+# test-e2e's web/ step requires host Node + `npm install` + `npx playwright install` in web/
+# (see docs/components/web.md)
 test-e2e: ## Run e2e tests against the running demo lab (run `make demo-up` first)
 	cd src && go test -tags=e2e -count=1 -timeout=240s ./e2e/...
 	cd web && npx playwright test
