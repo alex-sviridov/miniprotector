@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-09 — restore cart gains a real-browser e2e suite
+
+The catalog's restore-cart selection (file/folder checkboxes, sidebar highlight, `/restore` list)
+now has Playwright coverage running against the real demo lab instead of mocked data — the kind of
+suite that would have caught the restore-cart branch's own CSS-cascade bug, which every jsdom-based
+component test missed. Seeding is UI-driven: the suite creates and runs a fast ad-hoc backup policy
+through the actual `/policies` form (forcing one CLI-only pickup step the pull-based policy model
+has no other way to skip), then drives the browser through file selection, folder-wildcard selection
+with drill-down pre-checking, a nested exception, and full deselection. `make test-e2e` now runs
+this alongside the existing Go e2e suite.
+
 ## 2026-08-09 — catalog UI gains restore selection (file/folder checkboxes, restore cart)
 
 The catalog view can now stage files and folders for restore. Each row gets a checkbox; checking a file adds it to a new `restoreCart` Pinia store keyed by `(source_host, path)`, while checking a folder adds a single host-agnostic wildcard rule instead of one entry per contained file, so selecting a large folder stays cheap regardless of its size. Selection state is resolved from this small rule list on demand using longest-matching-path semantics (like `.gitignore`), which lets a user drill into an already-selected folder and see it pre-checked, then uncheck individual items to carve out exceptions. The sidebar's new Restore link highlights whenever the cart is non-empty, and a new placeholder `/restore` page lists what's staged. This is UI-only groundwork — no restore job submission or backend changes yet.

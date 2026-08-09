@@ -170,6 +170,7 @@ test: ## Run unit and integration tests
 
 test-e2e: ## Run e2e tests against the running demo lab (run `make demo-up` first)
 	cd src && go test -tags=e2e -count=1 -timeout=240s ./e2e/...
+	cd web && npx playwright test
 
 lint: ## Run go vet
 	cd src && go vet ./...

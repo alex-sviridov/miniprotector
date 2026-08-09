@@ -96,6 +96,20 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/web":/app -w /app node:20-
 The dev server proxies `/api` to `http://localhost:8090` — run `api-server` locally (or via
 `make control-plane-up`) alongside it.
 
+## End-to-end tests
+
+`web/e2e/` holds a Playwright suite covering the restore cart's selection scenarios (file select,
+folder-wildcard select with drill-down pre-checking, a nested exception, full deselection), run
+against the real, already-running demo lab rather than mocked data — see
+[Design: restore cart e2e tests](../superpowers/specs/2026-08-09-restore-cart-e2e-design.md) for why.
+Seeding is itself UI-driven: the suite creates and runs a fast ad-hoc backup policy through the real
+`/policies` form before asserting against the resulting catalog data.
+
+```bash
+make demo-up          # precondition, not managed by the suite itself
+cd web && npx playwright test
+```
+
 ## Deployment
 
 Ships as the `web` service in `demo/docker-compose.yml`, published at `http://localhost:8091`. Not
