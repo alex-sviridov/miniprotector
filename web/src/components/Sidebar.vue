@@ -1,13 +1,18 @@
 <script setup>
 import IconClients from './icons/IconClients.vue'
 import IconCatalog from './icons/IconCatalog.vue'
+import IconRestore from './icons/IconRestore.vue'
 import IconPolicies from './icons/IconPolicies.vue'
 import IconStorage from './icons/IconStorage.vue'
 import IconJobs from './icons/IconJobs.vue'
+import { useRestoreCartStore } from '../stores/restoreCart'
+
+const restoreCart = useRestoreCartStore()
 
 const NAV_ITEMS = [
   { name: 'clients', label: 'Clients', icon: IconClients },
   { name: 'catalog', label: 'Catalog', icon: IconCatalog },
+  { name: 'restore', label: 'Restore', icon: IconRestore },
   { name: 'policies', label: 'Policies', icon: IconPolicies },
   { name: 'storage', label: 'Storage', icon: IconStorage },
   { name: 'jobs', label: 'Jobs', icon: IconJobs },
@@ -34,11 +39,12 @@ const NAV_ITEMS = [
           :href="href"
           data-test="nav-link"
           class="flex items-center gap-2.5 pr-2.5 py-1.5 rounded text-sm"
-          :class="
+          :class="[
             isActive
               ? 'bg-slate-800 text-white border-l-4 border-blue-500 pl-2'
-              : 'text-slate-300 hover:bg-slate-800 hover:text-white pl-3'
-          "
+              : 'text-slate-300 hover:bg-slate-800 hover:text-white pl-3',
+            !isActive && item.name === 'restore' && restoreCart.hasSelections ? 'text-blue-400' : '',
+          ]"
           @click="navigate"
         >
           <component :is="item.icon" class="w-4 h-4 shrink-0" />
