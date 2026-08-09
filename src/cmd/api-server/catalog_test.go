@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -490,4 +491,59 @@ func TestHandleListCatalogDirectoryChildren_InvalidReceivedAfterReturns400(t *te
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestParseDateRange_BothValid(t *testing.T) {
+	w := httptest.NewRecorder()
+	q := url.Values{"received_after": {"1000"}, "received_before": {"2000"}}
+
+	after, before, ok := parseDateRange(w, q)
+
+	require.True(t, ok)
+	assert.Equal(t, int64(1000), after)
+	assert.Equal(t, int64(2000), before)
+	assert.Equal(t, http.StatusOK, w.Code) // nothing written on success
+}
+
+func TestParseDateRange_BothOmittedReturnsZeroBounds(t *testing.T) {
+	w := httptest.NewRecorder()
+
+	after, before, ok := parseDateRange(w, url.Values{})
+
+	require.True(t, ok)
+	assert.Equal(t, int64(0), after)
+	assert.Equal(t, int64(0), before)
+}
+
+func TestParseDateRange_InvalidReceivedAfterWrites400(t *testing.T) {
+	w := httptest.NewRecorder()
+	q := url.Values{"received_after": {"not-a-number"}}
+
+	_, _, ok := parseDateRange(w, q)
+
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestParseDateRange_InvalidReceivedBeforeWrites400(t *testing.T) {
+	w := httptest.NewRecorder()
+	q := url.Values{"received_before": {"-5"}}
+
+	_, _, ok := parseDateRange(w, q)
+
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestParseDateRange_BothMalformedReturns400OnReceivedAfterFirst(t *testing.T) {
+	w := httptest.NewRecorder()
+	q := url.Values{"received_after": {"not-a-number"}, "received_before": {"also-not-a-number"}}
+
+	_, _, ok := parseDateRange(w, q)
+
+	// received_after is checked first; its error is the one written when both are malformed.
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, "received_after")
 }

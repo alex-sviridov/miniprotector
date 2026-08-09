@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -76,14 +77,8 @@ func (s *server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
 		startingAfter = parsed
 	}
 
-	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	receivedAfter, receivedBefore, ok := parseDateRange(w, q)
 	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
-		return
-	}
-	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
-	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
 		return
 	}
 
@@ -126,6 +121,23 @@ func parseUnixParam(raw string) (int64, bool) {
 	return parsed, true
 }
 
+// parseDateRange parses received_after/received_before from q, writing a
+// 400 response and returning ok=false if either is malformed. Callers must
+// return immediately when ok is false -- the response is already written.
+func parseDateRange(w http.ResponseWriter, q url.Values) (after, before int64, ok bool) {
+	after, ok = parseUnixParam(q.Get("received_after"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
+		return 0, 0, false
+	}
+	before, ok = parseUnixParam(q.Get("received_before"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
+		return 0, 0, false
+	}
+	return after, before, true
+}
+
 // splitCommaParam splits a comma-separated query param into a slice,
 // trimming surrounding whitespace from each segment and dropping empty
 // segments; an empty input yields nil (no filter).
@@ -156,14 +168,8 @@ func toFacetDTO(f *pb.Facet) facetDTO {
 
 func (s *server) handleListCatalogClients(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	receivedAfter, receivedBefore, ok := parseDateRange(w, q)
 	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
-		return
-	}
-	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
-	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
 		return
 	}
 
@@ -189,14 +195,8 @@ func (s *server) handleListCatalogClients(w http.ResponseWriter, r *http.Request
 
 func (s *server) handleListCatalogJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	receivedAfter, receivedBefore, ok := parseDateRange(w, q)
 	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
-		return
-	}
-	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
-	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
 		return
 	}
 
@@ -222,14 +222,8 @@ func (s *server) handleListCatalogJobs(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleListCatalogDirectories(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	receivedAfter, receivedBefore, ok := parseDateRange(w, q)
 	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
-		return
-	}
-	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
-	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
 		return
 	}
 
@@ -273,14 +267,8 @@ func toDirectoryChildDTO(c *pb.DirectoryChild) directoryChildDTO {
 
 func (s *server) handleListCatalogDirectoryChildren(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	receivedAfter, ok := parseUnixParam(q.Get("received_after"))
+	receivedAfter, receivedBefore, ok := parseDateRange(w, q)
 	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_after must be a non-negative integer")
-		return
-	}
-	receivedBefore, ok := parseUnixParam(q.Get("received_before"))
-	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "received_before must be a non-negative integer")
 		return
 	}
 

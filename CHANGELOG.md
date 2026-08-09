@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-09 — catalog write-path: atomicity, decode visibility, facet aggregation, date-range DRY
+
+The catalog sync path gains three improvements. `SyncFileVersions`'s write to the catalog database now uses `Store.SyncBatch`, ensuring entries and their directory ancestors commit together or not at all, eliminating a window where an entry could be visible without its directory ancestors. Sync-time metadata decode failures are now logged (previously silent) via `logUnmarshalError`, and each entry's metadata is decoded once instead of twice. A new `storage/catalog/facets.go` file consolidates the three `ListClientFacets`, `ListJobFacets`, and `ListDirectoryFacets` methods behind a shared `listFacetsInternal` aggregation helper, eliminating ~90 duplicated lines of filter application and facet deduplication logic. In the API server, `cmd/api-server/catalog.go`'s five catalog handlers (`handleListCatalog*`) now share one `parseDateRange` helper instead of each repeating the same eight-line received_after/received_before parse-or-400 block. These are internal implementation cleanups only — no behavior change to any RPC or REST endpoint's contract.
+
 ## 2026-08-08 — storage: shared SQLite-open helper, fixed busy-timeout, catalog reader pool, context propagation
 
 `storage/catalog`, `storage/policyserver`, `storage/clientmanager`, and `storage/filesystem`'s
