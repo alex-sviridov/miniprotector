@@ -34,7 +34,14 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 	batch := make([]catalogstore.Entry, len(entries))
 	directoriesByPath := make(map[string]catalogstore.DirectoryAncestor)
 	for i, e := range entries {
-		parentDir, shortName := decodePathParts(e.GetMetadata())
+		var sourceHost, parentDir, shortName string
+		if fi, err := filesystem.DecodeFileInfo(e.GetMetadata()); err != nil {
+			s.logger.Error("SyncFileVersions: metadata decode failed, entry stored without derived fields",
+				"job_id", e.GetJobId(), "object_id", e.GetObjectId(), "error", err)
+		} else {
+			sourceHost = fi.Source()
+			parentDir, shortName = splitPath(fi.Path())
+		}
 		batch[i] = catalogstore.Entry{
 			StoreNode:       storeNode,
 			JobID:           e.GetJobId(),
@@ -43,7 +50,7 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 			Ctime:           e.GetCtime(),
 			StoreSeq:        e.GetStoreSeq(),
 			StoreCreatedAt:  time.Unix(e.GetCreatedAt(), 0).UTC(),
-			SourceHost:      decodeSourceHost(e.GetMetadata()),
+			SourceHost:      sourceHost,
 			ParentDirectory: parentDir,
 			ShortFilename:   shortName,
 		}
@@ -66,11 +73,11 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 }
 
 // decodeDirectoryAncestors walks parentDir's ancestor chain via splitPath
-// -- the same shape-detecting split that produced parentDir itself in
-// decodePathParts -- collecting one DirectoryAncestor per level from
+// -- the same shape-detecting split SyncFileVersions uses to derive
+// parentDir itself -- collecting one DirectoryAncestor per level from
 // parentDir up to its root, root-first Depth (0 at the root). A blank
-// parentDir (a decodePathParts failure) yields no ancestors: an unknown
-// location can't be placed in the tree.
+// parentDir (a sync-time metadata decode failure) yields no ancestors: an
+// unknown location can't be placed in the tree.
 func decodeDirectoryAncestors(parentDir string) []catalogstore.DirectoryAncestor {
 	if parentDir == "" {
 		return nil
@@ -90,33 +97,6 @@ func decodeDirectoryAncestors(parentDir string) []catalogstore.DirectoryAncestor
 		ancestors[i].Depth = len(ancestors) - 1 - i // built leaf-to-root; index from the end for root-first depth
 	}
 	return ancestors
-}
-
-// decodeSourceHost extracts the real originating (backed-up) host from a
-// FileVersionEntry's opaque Metadata blob, decoded once at sync time so
-// ListEntries can filter on a plain indexed column instead of re-decoding
-// Metadata on every read. A decode failure (malformed or non-filesystem
-// metadata) yields "" rather than failing the whole batch — one bad entry
-// shouldn't block every other entry in it.
-func decodeSourceHost(metadata []byte) string {
-	fi, err := filesystem.DecodeFileInfo(metadata)
-	if err != nil {
-		return ""
-	}
-	return fi.Source()
-}
-
-// decodePathParts extracts parent_directory/short_filename from an entry's
-// Metadata blob, decoded once at sync time so ListEntries/
-// ListDirectoryFacets can filter/group on plain indexed columns instead of
-// decoding Metadata per row (see decodeSourceHost above, same rationale). A
-// decode failure yields ("", "") rather than failing the whole batch.
-func decodePathParts(metadata []byte) (parentDir, shortName string) {
-	fi, err := filesystem.DecodeFileInfo(metadata)
-	if err != nil {
-		return "", ""
-	}
-	return splitPath(fi.Path())
 }
 
 func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequest) (*pb.ListEntriesResponse, error) {
@@ -150,9 +130,9 @@ func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequ
 // their zero values rather than failing the whole ListEntries call --
 // one bad row shouldn't hide every other entry in the response. SourceHost
 // is NOT decoded here — it's read directly from rec.SourceHost, persisted
-// once at sync time (see decodeSourceHost above). ParentDirectory and
-// ShortFilename are the same: persisted columns computed once at sync time
-// (see decodePathParts), not decoded here.
+// once at sync time in SyncFileVersions. ParentDirectory and ShortFilename
+// are the same: persisted columns computed once at sync time, not decoded
+// here.
 func toProtoEntry(rec catalogstore.EntryRecord) *pb.Entry {
 	entry := &pb.Entry{
 		Id:              rec.ID,

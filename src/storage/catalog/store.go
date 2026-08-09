@@ -345,8 +345,9 @@ func (f FacetFilter) applyCommon(q *gorm.DB) *gorm.DB {
 }
 
 // ListClientFacets groups entries matching filter by source_host, dropping
-// rows where source_host is empty (a decodeSourceHost failure at sync time
-// -- see cmd/catalog/server.go) rather than surfacing a blank-named facet.
+// rows where source_host is empty (a sync-time metadata decode failure in
+// SyncFileVersions, see cmd/catalog/server.go) rather than surfacing a
+// blank-named facet.
 // filter.SourceHosts is ignored: a client facet list is never narrowed by
 // its own dimension's current selection.
 //
@@ -459,8 +460,8 @@ func (s *Store) ListJobFacets(ctx context.Context, filter FacetFilter) ([]Facet,
 }
 
 // ListDirectoryFacets groups entries matching filter by parent_directory,
-// dropping rows where parent_directory is empty (a sync-time Metadata
-// decode failure -- see decodePathParts in cmd/catalog/server.go) rather
+// dropping rows where parent_directory is empty (a sync-time metadata
+// decode failure in SyncFileVersions, see cmd/catalog/server.go) rather
 // than surfacing a blank-named facet, mirroring ListClientFacets's drop of
 // an empty source_host. filter.ParentDirectories is ignored: a directory
 // facet list is never narrowed by its own dimension's current selection.

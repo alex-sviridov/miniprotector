@@ -23,8 +23,8 @@ type EntryRecord struct {
 	SourceHost string `gorm:"index"`
 	// ParentDirectory is the file's immediate containing directory, and
 	// ShortFilename its bare name, both derived from Metadata at sync time
-	// the same way SourceHost is (see cmd/catalog/server.go's
-	// decodePathParts). ParentDirectory is indexed for filtering;
+	// the same way SourceHost is, in cmd/catalog/server.go's
+	// SyncFileVersions. ParentDirectory is indexed for filtering;
 	// ShortFilename is display-only, not a filter dimension.
 	ParentDirectory string `gorm:"index"`
 	ShortFilename   string

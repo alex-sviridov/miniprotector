@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -670,4 +671,26 @@ func TestListDirectoryChildren_AppliesDateAndHostAndJobFilters(t *testing.T) {
 	require.Len(t, resp.GetChildren(), 1)
 	assert.Equal(t, int64(0), resp.GetChildren()[0].GetFileCount())
 	assert.Equal(t, int64(0), resp.GetChildren()[0].GetLastSeen())
+}
+
+func TestSyncFileVersions_MalformedMetadataLogsError(t *testing.T) {
+	store, err := catalogstore.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
+	srv := NewCatalogServer(store, logger)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", Metadata: []byte("not-gob-encoded"), CreatedAt: time.Now().Unix()},
+	}}
+	_, err = srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err) // a bad row's metadata still doesn't fail the batch
+
+	logOutput := logBuf.String()
+	assert.Contains(t, logOutput, "metadata decode failed")
+	assert.Contains(t, logOutput, "job-1")
+	assert.Contains(t, logOutput, "obj-1")
 }
