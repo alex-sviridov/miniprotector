@@ -52,20 +52,13 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 		}
 	}
 
-	if err := s.store.EnsureEntries(ctx, batch); err != nil {
+	directories := make([]catalogstore.DirectoryAncestor, 0, len(directoriesByPath))
+	for _, a := range directoriesByPath {
+		directories = append(directories, a)
+	}
+	if err := s.store.SyncBatch(ctx, batch, directories); err != nil {
 		s.logger.Error("SyncFileVersions: persist failed", "error", err, "count", len(batch))
 		return nil, err
-	}
-
-	if len(directoriesByPath) > 0 {
-		directories := make([]catalogstore.DirectoryAncestor, 0, len(directoriesByPath))
-		for _, a := range directoriesByPath {
-			directories = append(directories, a)
-		}
-		if err := s.store.EnsureDirectories(ctx, directories); err != nil {
-			s.logger.Error("SyncFileVersions: persisting directory ancestors failed", "error", err, "count", len(directories))
-			return nil, err
-		}
 	}
 
 	s.logger.Info("SyncFileVersions: batch persisted", "store_node", storeNode, "count", len(batch))

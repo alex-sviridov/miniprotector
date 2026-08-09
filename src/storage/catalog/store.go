@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -43,6 +44,10 @@ type Entry struct {
 // erroring — catalogsync retries a batch it isn't sure was received, so a
 // resend after a partial success must be a safe no-op.
 func (s *Store) EnsureEntries(ctx context.Context, batch []Entry) error {
+	return ensureEntries(s.writeDB.WithContext(ctx), batch)
+}
+
+func ensureEntries(db *gorm.DB, batch []Entry) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -63,7 +68,7 @@ func (s *Store) EnsureEntries(ctx context.Context, batch []Entry) error {
 			ReceivedAt:      now,
 		}
 	}
-	return s.writeDB.WithContext(ctx).Clauses(clause.OnConflict{
+	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "store_node"}, {Name: "job_id"}, {Name: "object_id"}},
 		DoNothing: true,
 	}).Create(&records).Error
@@ -83,6 +88,10 @@ type DirectoryAncestor struct {
 // structure never changes once known, and many files sync-after-sync
 // share the same ancestor directories.
 func (s *Store) EnsureDirectories(ctx context.Context, batch []DirectoryAncestor) error {
+	return ensureDirectories(s.writeDB.WithContext(ctx), batch)
+}
+
+func ensureDirectories(db *gorm.DB, batch []DirectoryAncestor) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -90,10 +99,27 @@ func (s *Store) EnsureDirectories(ctx context.Context, batch []DirectoryAncestor
 	for i, a := range batch {
 		records[i] = DirectoryRecord{Path: a.Path, ParentPath: a.ParentPath, Name: a.Name, Depth: a.Depth}
 	}
-	return s.writeDB.WithContext(ctx).Clauses(clause.OnConflict{
+	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "path"}},
 		DoNothing: true,
 	}).Create(&records).Error
+}
+
+// SyncBatch persists entries and their directory ancestors atomically:
+// both commit, or neither does. Used by SyncFileVersions instead of
+// separate EnsureEntries/EnsureDirectories calls, closing the window
+// where a batch's entries could be durable with no corresponding
+// directory tree.
+func (s *Store) SyncBatch(ctx context.Context, entries []Entry, directories []DirectoryAncestor) error {
+	return s.writeDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensureEntries(tx, entries); err != nil {
+			return fmt.Errorf("ensure entries: %w", err)
+		}
+		if err := ensureDirectories(tx, directories); err != nil {
+			return fmt.Errorf("ensure directories: %w", err)
+		}
+		return nil
+	})
 }
 
 // DirectoryChild is one directory returned by ListDirectoryChildren: a

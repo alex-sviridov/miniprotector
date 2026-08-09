@@ -771,3 +771,51 @@ func TestListDirectoryChildren_HasChildrenFalseForLeafDirectory(t *testing.T) {
 	require.Len(t, children, 1)
 	assert.False(t, children[0].HasChildren)
 }
+
+func TestSyncBatch_PersistsEntriesAndDirectories(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	entries := []Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+	}
+	directories := []DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+	}
+	require.NoError(t, store.SyncBatch(t.Context(), entries, directories))
+
+	count, err := store.Count(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+
+	children, err := store.ListDirectoryChildren(t.Context(), "/", FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, "/var", children[0].Path)
+}
+
+func TestSyncBatch_RollsBackEntriesIfDirectoriesInsertFails(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Force the directories phase to fail with a genuine SQL error --
+	// EnsureDirectories/EnsureEntries both use ON CONFLICT DO NOTHING, so no
+	// ordinary bad input produces a real constraint violation.
+	require.NoError(t, store.writeDB.Exec("DROP TABLE catalog_directories").Error)
+
+	entries := []Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+	}
+	directories := []DirectoryAncestor{
+		{Path: "/var", ParentPath: "/", Name: "var", Depth: 1},
+	}
+	err = store.SyncBatch(t.Context(), entries, directories)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "ensure directories")
+
+	count, err := store.Count(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count, "entries insert must roll back when the directories insert fails")
+}
