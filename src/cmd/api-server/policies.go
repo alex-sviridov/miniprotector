@@ -41,6 +41,7 @@ type policyDTO struct {
 	Type            string            `json:"type"`
 	Port            int32             `json:"port"`
 	Config          string            `json:"config"`
+	SourceStore     string            `json:"source_store,omitempty"`
 	DisabledAt      int64             `json:"disabled_at,omitempty"`
 	Checkins        []checkinDTO      `json:"checkins"`
 }
@@ -71,6 +72,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		Type:            p.GetType(),
 		Port:            p.GetPort(),
 		Config:          p.GetConfig(),
+		SourceStore:     p.GetSourceStore(),
 		Checkins:        checkins,
 	}
 	if p.GetDisabledAt() != nil {
@@ -298,6 +300,49 @@ func (s *server) handleUpdateStoragePolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, toPolicyDTO(resp))
+}
+
+type restorePolicyInput struct {
+	Name          string           `json:"name"`
+	ClientFilters clientFiltersDTO `json:"client_filters"`
+	SourceStore   string           `json:"source_store"`
+	Config        string           `json:"config"`
+	DisabledAt    int64            `json:"disabled_at,omitempty"`
+}
+
+func decodeRestorePolicyInput(r *http.Request) (restorePolicyInput, error) {
+	var in restorePolicyInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		return restorePolicyInput{}, err
+	}
+	return in, nil
+}
+
+// handleCreateRestore is the sole creation path for "restore"-typed
+// policies: POST /api/v1/restore, not POST/PUT /api/v1/restore-policies --
+// a restore policy is launched, not managed as a long-lived resource, and
+// is never updatable (PUT /api/v1/policies/{id} against one is rejected by
+// policy-server itself, see write.go's buildPolicyForUpdate).
+func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
+	in, err := decodeRestorePolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
+		Name:          in.Name,
+		Type:          "restore",
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		SourceStore:   in.SourceStore,
+		Config:        in.Config,
+		DisabledAt:    disabledAtToProto(in.DisabledAt),
+	})
+	if err != nil {
+		s.logger.Error("handleCreateRestore: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
 }
 
 func (s *server) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {

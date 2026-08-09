@@ -93,6 +93,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicy)
 	mux.HandleFunc("POST /api/v1/storage-policies", s.handleCreateStoragePolicy)
 	mux.HandleFunc("PUT /api/v1/storage-policies/{id}", s.handleUpdateStoragePolicy)
+	mux.HandleFunc("POST /api/v1/restore", s.handleCreateRestore)
 	mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/v1/jobs/{job_id}/logs", s.handleGetJobLogs)
 }

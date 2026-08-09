@@ -682,3 +682,90 @@ func TestToPolicyDTO_NoCheckinsYieldsEmptySlice(t *testing.T) {
 
 	assert.Empty(t, dto.Checkins)
 }
+
+func TestToPolicyDTO_IncludesSourceStoreForRestore(t *testing.T) {
+	p := &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		SourceStore: "bwfs-east.internal:8080",
+		Config:      `{"files": ["/var/www/index.html"]}`,
+	}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, "bwfs-east.internal:8080", dto.SourceStore)
+	assert.Equal(t, `{"files": ["/var/www/index.html"]}`, dto.Config)
+}
+
+func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		SourceStore: "bwfs-east.internal:8080",
+		Config:      `{"files": ["/var/www/index.html"]}`,
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-01"}, Labels: map[string]string{}},
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"client_filters": {"hostnames": ["web-01"], "labels": {}},
+		"source_store": "bwfs-east.internal:8080",
+		"config": "{\"files\": [\"/var/www/index.html\"]}"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "restore", fake.lastCreateReq.GetType())
+	assert.Equal(t, "web01-emergency", fake.lastCreateReq.GetName())
+	assert.Equal(t, []string{"web-01"}, fake.lastCreateReq.GetClientFilters().GetHostnames())
+	assert.Equal(t, "bwfs-east.internal:8080", fake.lastCreateReq.GetSourceStore())
+	assert.Equal(t, `{"files": ["/var/www/index.html"]}`, fake.lastCreateReq.GetConfig())
+
+	var respBody map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "bwfs-east.internal:8080", respBody["source_store"])
+}
+
+func TestHandleCreateRestore_MalformedJSONReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader("not json"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastCreateReq, "backend must not be called on malformed input")
+}
+
+func TestHandleCreateRestore_BackendValidationErrorReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "source_store must be a valid host:port")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader(`{"name": "x", "source_store": "bad"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleUpdatePolicy_RestoreTypeRejectedReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.InvalidArgument, "restore policies cannot be updated")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/r1", strings.NewReader(`{"name": "renamed"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

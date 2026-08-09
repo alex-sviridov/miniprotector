@@ -57,6 +57,14 @@ caller never composes those three fields by hand to get a "run once on every mat
 expire" policy. See [Design: adhoc policy endpoint](../superpowers/specs/2026-08-02-adhoc-policy-endpoint-design.md)
 and [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
 
+`POST /restore-policies` doesn't exist -- restore policies have exactly one creation path,
+`POST /restore` (fields: `name`/`client_filters`/`source_store`/`config`), and no update path at
+all: `PUT /policies/{id}` against a `"restore"`-typed policy is rejected with `400`, enforced by
+`policy-server` itself (`UpdatePolicy` refuses any request whose target policy is type `"restore"`),
+not by any `api-server`-side special-casing. `GET /policies/{id}` and `DELETE /policies/{id}` remain
+type-agnostic and work on restore policies like any other type. See
+[Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md).
+
 ## Authentication
 
 Every request must present `Authorization: Bearer <token>`, checked against the single

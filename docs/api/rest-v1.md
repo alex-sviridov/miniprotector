@@ -222,8 +222,8 @@ matching files of its own but does have matching descendants further down.
 
 Returns every policy, unfiltered by any client identity (unlike `policy-server`'s own `GetPolicies`
 RPC, which every mesh node calls and which is scoped to its own matching policies). Not paginated.
-Accepts an optional `?type=backup` or `?type=storage` query parameter to restrict the response to
-one policy type; omitted returns every type.
+Accepts an optional `?type=backup`, `?type=storage`, or `?type=restore` query parameter to restrict
+the response to one policy type; omitted returns every type.
 
 ```json
 {
@@ -358,6 +358,31 @@ change. `400` on the same validation failures as `POST`. `404` if `id` doesn't m
 `client_filters` already must be) — omitting it (or sending `0`) clears it. Same known limitation as
 `PUT /api/v1/policies/{id}` above: the web UI's storage policy edit form doesn't read or send
 `disabled_at`, so an edit made through the UI always clears it.
+
+## `POST /api/v1/restore`
+
+Creates a new `"restore"`-typed policy -- the only way to create one; there is no
+`POST /api/v1/restore-policies` and no update endpoint. Body:
+
+```json
+{
+  "name": "web01-emergency",
+  "client_filters": {"hostnames": ["web-01"], "labels": {}},
+  "source_store": "bwfs-east.internal:8080",
+  "config": "{\"files\": [\"/var/www/index.html\"]}"
+}
+```
+
+`source_store` must be a syntactically valid `host:port` naming the source `bwfs` to restore from.
+`config` is a JSON string, not a nested object -- `policy-server` treats it as opaque, pass-through
+text; its shape (file list etc.) is defined by a future design, and it's the same field a storage
+policy's `config` is, not a separate one. `client_filters` targets the node that will execute the
+restore, the same mechanism every other policy type uses. `201` with the created policy on success.
+`400` if `name` is empty, `source_store` isn't a valid `host:port`, or `config` isn't well-formed
+JSON -- no file is written when validation fails.
+
+Restore policies are never updatable: `PUT /api/v1/policies/{id}` against one returns `400`.
+`GET /api/v1/policies/{id}` and `DELETE /api/v1/policies/{id}` work on them like any other type.
 
 ## `GET /api/v1/jobs`
 
