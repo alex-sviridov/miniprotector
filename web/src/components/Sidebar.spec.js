@@ -89,6 +89,7 @@ describe('Sidebar', () => {
     const wrapper = mountSidebar({ router, hasSelections: false })
     const links = wrapper.findAll('[data-test="nav-link"]')
     expect(links[2].text()).toContain('Restore')
+    expect(links[2].classes()).toContain('text-slate-300')
     expect(links[2].classes()).not.toContain('text-blue-400')
   })
 
@@ -101,6 +102,7 @@ describe('Sidebar', () => {
     const links = wrapper.findAll('[data-test="nav-link"]')
     expect(links[2].text()).toContain('Restore')
     expect(links[2].classes()).toContain('text-blue-400')
+    expect(links[2].classes()).not.toContain('text-slate-300')
   })
 
   it('does not highlight Restore when it is the active route, even with selections', async () => {

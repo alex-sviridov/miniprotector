@@ -39,12 +39,13 @@ const NAV_ITEMS = [
           :href="href"
           data-test="nav-link"
           class="flex items-center gap-2.5 pr-2.5 py-1.5 rounded text-sm"
-          :class="[
+          :class="
             isActive
               ? 'bg-slate-800 text-white border-l-4 border-blue-500 pl-2'
-              : 'text-slate-300 hover:bg-slate-800 hover:text-white pl-3',
-            !isActive && item.name === 'restore' && restoreCart.hasSelections ? 'text-blue-400' : '',
-          ]"
+              : item.name === 'restore' && restoreCart.hasSelections
+                ? 'text-blue-400 hover:bg-slate-800 hover:text-white pl-3'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white pl-3'
+          "
           @click="navigate"
         >
           <component :is="item.icon" class="w-4 h-4 shrink-0" />
