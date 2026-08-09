@@ -83,3 +83,17 @@ export function toggleFolder(rules, path) {
   if (longestMatchingFolderRule(pruned, path) === true) return pruned
   return [...pruned, { path, host: null, include: true }]
 }
+
+// toggleFile returns a new rule list with (host, path)'s selection
+// flipped. If an exact rule already exists at (host, path), it is
+// removed: by the pruning invariant maintained throughout this module,
+// a stored rule only ever exists because it overrides its closest
+// ancestor, so removing it always flips the resolved state back.
+// Otherwise a fresh rule is added with the opposite of the current
+// resolved state.
+export function toggleFile(rules, host, path) {
+  const exact = rules.find((r) => r.host === host && r.path === path)
+  if (exact) return rules.filter((r) => r !== exact)
+  const checked = resolveFile(rules, host, path)
+  return [...rules, { path, host, include: !checked }]
+}

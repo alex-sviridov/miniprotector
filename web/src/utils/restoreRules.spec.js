@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveFile, resolveFolderState, toggleFolder } from './restoreRules'
+import { resolveFile, resolveFolderState, toggleFolder, toggleFile } from './restoreRules'
 
 describe('resolveFile', () => {
   it('is false when no rule matches', () => {
@@ -126,5 +126,39 @@ describe('toggleFolder', () => {
       { path: '/etc/hosts', host: 'web01', include: false },
     ]
     expect(toggleFolder(rules, '/etc')).toEqual([{ path: '/etc', host: null, include: true }])
+  })
+})
+
+describe('toggleFile', () => {
+  it('adds an include rule when unchecked with no existing rules', () => {
+    expect(toggleFile([], 'web01', '/etc/hosts')).toEqual([{ path: '/etc/hosts', host: 'web01', include: true }])
+  })
+
+  it('removes the exact rule when checked via its own rule', () => {
+    const rules = [{ path: '/etc/hosts', host: 'web01', include: true }]
+    expect(toggleFile(rules, 'web01', '/etc/hosts')).toEqual([])
+  })
+
+  it('adds a host-specific exception when checked via an inherited ancestor folder rule', () => {
+    const rules = [{ path: '/etc', host: null, include: true }]
+    const result = toggleFile(rules, 'web01', '/etc/hosts')
+    expect(result).toEqual([
+      { path: '/etc', host: null, include: true },
+      { path: '/etc/hosts', host: 'web01', include: false },
+    ])
+  })
+
+  it('removes a host-specific exception to re-check a file, reverting to the ancestor rule', () => {
+    const rules = [
+      { path: '/etc', host: null, include: true },
+      { path: '/etc/hosts', host: 'web01', include: false },
+    ]
+    expect(toggleFile(rules, 'web01', '/etc/hosts')).toEqual([{ path: '/etc', host: null, include: true }])
+  })
+
+  it('does not affect other hosts sharing the same path', () => {
+    const rules = [{ path: '/etc', host: null, include: true }]
+    const result = toggleFile(rules, 'web01', '/etc/hosts')
+    expect(resolveFile(result, 'db02', '/etc/hosts')).toBe(true)
   })
 })
