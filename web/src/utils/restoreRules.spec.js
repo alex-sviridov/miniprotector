@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveFile, resolveFolderState } from './restoreRules'
+import { resolveFile, resolveFolderState, toggleFolder } from './restoreRules'
 
 describe('resolveFile', () => {
   it('is false when no rule matches', () => {
@@ -81,5 +81,50 @@ describe('resolveFolderState', () => {
   it('is unaffected by sibling rules', () => {
     const rules = [{ path: '/home', host: null, include: true }]
     expect(resolveFolderState(rules, '/etc')).toBe('unchecked')
+  })
+})
+
+describe('toggleFolder', () => {
+  it('adds a wildcard rule when unchecked with no existing rules', () => {
+    const result = toggleFolder([], '/etc')
+    expect(result).toEqual([{ path: '/etc', host: null, include: true }])
+  })
+
+  it('removes the exact rule when checked via its own rule', () => {
+    const rules = [{ path: '/etc', host: null, include: true }]
+    expect(toggleFolder(rules, '/etc')).toEqual([])
+  })
+
+  it('adds an exception when checked via an inherited ancestor rule', () => {
+    const rules = [{ path: '/', host: null, include: true }]
+    const result = toggleFolder(rules, '/etc')
+    expect(result).toEqual([
+      { path: '/', host: null, include: true },
+      { path: '/etc', host: null, include: false },
+    ])
+  })
+
+  it('prunes nested exceptions when re-checking a folder, without a redundant rule', () => {
+    const rules = [
+      { path: '/var', host: null, include: true },
+      { path: '/var/log', host: null, include: false },
+      { path: '/var/log/nginx', host: null, include: true },
+    ]
+    // /var/log is indeterminate; checking it should clear everything
+    // under it and, since /var already covers it, add nothing new.
+    expect(toggleFolder(rules, '/var/log')).toEqual([{ path: '/var', host: null, include: true }])
+  })
+
+  it('prunes nested rules and adds a fresh wildcard when checking an uncovered indeterminate folder', () => {
+    const rules = [{ path: '/var/log/access.log', host: 'web01', include: true }]
+    expect(toggleFolder(rules, '/var/log')).toEqual([{ path: '/var/log', host: null, include: true }])
+  })
+
+  it('prunes a host-specific file exception nested under a newly re-checked folder', () => {
+    const rules = [
+      { path: '/etc', host: null, include: true },
+      { path: '/etc/hosts', host: 'web01', include: false },
+    ]
+    expect(toggleFolder(rules, '/etc')).toEqual([{ path: '/etc', host: null, include: true }])
   })
 })

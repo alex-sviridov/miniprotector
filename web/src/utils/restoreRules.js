@@ -63,3 +63,23 @@ export function resolveFolderState(rules, path) {
   if (hasRuleUnder(rules, path)) return 'indeterminate'
   return longestMatchingFolderRule(rules, path) === true ? 'checked' : 'unchecked'
 }
+
+// toggleFolder returns a new rule list with path's selection flipped.
+// Checked -> unchecked mirrors the exact-rule-removal trick below (a
+// state of 'checked' guarantees nothing sits underneath, so no pruning
+// is needed there). Unchecked/indeterminate -> checked first prunes
+// every rule at-or-under path -- clearing any exceptions or partial
+// selections underneath -- then adds a fresh wildcard only if the
+// remaining rules don't already cover path via an ancestor (avoiding a
+// redundant rule).
+export function toggleFolder(rules, path) {
+  const state = resolveFolderState(rules, path)
+  if (state === 'checked') {
+    const exact = rules.find((r) => r.host === null && r.path === path)
+    if (exact) return rules.filter((r) => r !== exact)
+    return [...rules, { path, host: null, include: false }]
+  }
+  const pruned = rules.filter((r) => r.path !== path && !isStrictDescendantPath(r.path, path))
+  if (longestMatchingFolderRule(pruned, path) === true) return pruned
+  return [...pruned, { path, host: null, include: true }]
+}
