@@ -19,7 +19,11 @@ function errorFor(value, existingValues) {
 }
 
 const chips = reactive(
-  props.items.map((value) => ({ id: nextId++, value, error: validateGlobPattern(value).valid ? undefined : validateGlobPattern(value).error }))
+  props.items.reduce((acc, value) => {
+    const priorValues = acc.map((c) => c.value)
+    acc.push({ id: nextId++, value, error: errorFor(value, priorValues) })
+    return acc
+  }, [])
 )
 const text = ref('')
 

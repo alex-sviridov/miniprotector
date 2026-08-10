@@ -105,4 +105,11 @@ describe('TagInput', () => {
     await pressKey(wrapper, 'Enter')
     expect(wrapper.vm.isValid()).toBe(true)
   })
+
+  it('flags overlapping patterns among pre-existing items on mount', () => {
+    const { wrapper } = mountTagInput(['/var/log', '/var/log/app'])
+    const chips = wrapper.findAll('[data-test="pattern-chip"]')
+    expect(chips[1].classes()).toContain('border-red-500')
+    expect(wrapper.vm.isValid()).toBe(false)
+  })
 })
