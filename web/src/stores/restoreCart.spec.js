@@ -44,4 +44,18 @@ describe('restoreCart store', () => {
     expect(cart.rules).toHaveLength(2)
     expect(cart.entries).toEqual([{ path: '/etc', host: null, include: true }])
   })
+
+  it('removeEntry unsets a folder wildcard entry', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+    cart.removeEntry({ path: '/var', host: null, include: true })
+    expect(cart.rules).toEqual([])
+  })
+
+  it('removeEntry unsets a file entry', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+    cart.removeEntry({ path: '/etc/hosts', host: 'web01', include: true })
+    expect(cart.rules).toEqual([])
+  })
 })

@@ -16,5 +16,9 @@ export const useRestoreCartStore = defineStore('restoreCart', {
     toggleFolder(path) {
       this.rules = toggleFolderRule(this.rules, path)
     },
+    removeEntry(entry) {
+      if (entry.host === null) this.toggleFolder(entry.path)
+      else this.toggleFile(entry.host, entry.path)
+    },
   },
 })
