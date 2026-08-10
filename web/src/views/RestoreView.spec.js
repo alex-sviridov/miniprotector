@@ -116,11 +116,20 @@ describe('RestoreView', () => {
     )
   })
 
-  it('renders a submission-level error', () => {
-    const wrapper = mountView({
-      rules: [{ path: '/var', host: null, include: true }],
-      submission: { error: 'Nothing selected for restore.' },
-    })
+  // The submission-level error is only ever set when the cart is empty, so it
+  // has to render alongside the empty state -- not inside the slot the empty
+  // state replaces.
+  it('renders a submission-level error while the cart is empty', () => {
+    const wrapper = mountView({ submission: { error: 'Nothing selected for restore.' } })
+    expect(wrapper.text()).toContain('No files selected for restore yet.')
     expect(wrapper.find('[data-test="submission-error"]').text()).toBe('Nothing selected for restore.')
+  })
+
+  it('keeps submission results visible after the cart is emptied', () => {
+    const wrapper = mountView({
+      submission: { results: [{ storeHost: 'store-a', status: 'success', policy: { name: 'restore-x' } }] },
+    })
+    expect(wrapper.text()).toContain('No files selected for restore yet.')
+    expect(wrapper.find('[data-test="submission-results"]').text()).toContain('restore-x')
   })
 })

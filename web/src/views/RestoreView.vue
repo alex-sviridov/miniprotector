@@ -63,13 +63,17 @@ function submit() {
       <BaseButton data-test="submit-restore" variant="primary" :disabled="!canSubmit" @click="submit">
         Submit restore
       </BaseButton>
-      <p v-if="submission.error" data-test="submission-error">{{ submission.error }}</p>
-      <ul v-if="submission.results.length" data-test="submission-results">
-        <li v-for="result in submission.results" :key="result.storeHost">
-          <span v-if="result.status === 'success'">Created {{ result.policy.name }} from {{ result.storeHost }}</span>
-          <span v-else>{{ result.storeHost }}: {{ result.message }}</span>
-        </li>
-      </ul>
     </StatusMessage>
+    <!-- Outside StatusMessage on purpose: its slot only renders for a
+         non-empty cart, but the error (e.g. "Nothing selected for restore.")
+         and the results of an already-submitted restore must stay visible
+         even once the cart is empty. -->
+    <p v-if="submission.error" data-test="submission-error">{{ submission.error }}</p>
+    <ul v-if="submission.results.length" data-test="submission-results">
+      <li v-for="result in submission.results" :key="result.storeHost">
+        <span v-if="result.status === 'success'">Created {{ result.policy.name }} from {{ result.storeHost }}</span>
+        <span v-else>{{ result.storeHost }}: {{ result.message }}</span>
+      </li>
+    </ul>
   </div>
 </template>

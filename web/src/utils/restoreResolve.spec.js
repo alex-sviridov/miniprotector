@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterResolved, dedupeById, groupByStore } from './restoreResolve'
+import { filterResolved, collapseToLatestVersion, groupByStore } from './restoreResolve'
 
 describe('filterResolved', () => {
   it('keeps an entry covered by a folder wildcard rule', () => {
@@ -36,12 +36,64 @@ describe('filterResolved', () => {
   })
 })
 
-describe('dedupeById', () => {
-  it('drops repeat entries with the same id, keeping the first occurrence', () => {
-    const a = { id: 1, path: '/a' }
-    const b = { id: 1, path: '/a' }
-    const c = { id: 2, path: '/b' }
-    expect(dedupeById([a, b, c])).toEqual([a, c])
+describe('collapseToLatestVersion', () => {
+  function version(overrides) {
+    return {
+      id: 1,
+      source_host: 'database',
+      path: '/var/lib/dbdata/data.db',
+      store_host: 'store-a',
+      store_created_at: 1752400000,
+      ...overrides,
+    }
+  }
+
+  it('returns an empty array for no entries', () => {
+    expect(collapseToLatestVersion([])).toEqual([])
+  })
+
+  it('collapses many versions of one file to the single newest-version row', () => {
+    const oldest = version({ id: 10, store_created_at: 1752200000 })
+    const middle = version({ id: 11, store_created_at: 1752300000 })
+    const newest = version({ id: 12, store_created_at: 1752400000 })
+    expect(collapseToLatestVersion([oldest, newest, middle])).toEqual([newest])
+  })
+
+  it('keeps the newest version even when versions of one file live on different stores', () => {
+    const older = version({ id: 20, store_created_at: 1752300000, store_host: 'store-a' })
+    const newer = version({ id: 21, store_created_at: 1752400000, store_host: 'store-b' })
+    const collapsed = collapseToLatestVersion([older, newer])
+    expect(collapsed).toEqual([newer])
+    expect(collapsed[0].store_host).toBe('store-b')
+  })
+
+  it('keeps the same path on different source hosts as separate files', () => {
+    const a = version({ id: 30, source_host: 'web01', path: '/etc/hosts' })
+    const b = version({ id: 31, source_host: 'web02', path: '/etc/hosts' })
+    expect(collapseToLatestVersion([a, b])).toEqual([a, b])
+  })
+
+  it('keeps distinct paths on one source host as separate files', () => {
+    const a = version({ id: 40, path: '/var/lib/dbdata/dump.sql' })
+    const b = version({ id: 41, path: '/var/lib/dbdata/schema.sql' })
+    expect(collapseToLatestVersion([a, b])).toEqual([a, b])
+  })
+
+  it('leaves a group that later feeds groupByStore with one file per path', () => {
+    const entries = [
+      version({ id: 50, path: '/a', store_created_at: 1752300000, store_host: 'store-a' }),
+      version({ id: 51, path: '/a', store_created_at: 1752400000, store_host: 'store-b' }),
+      version({ id: 52, path: '/b', store_created_at: 1752400000, store_host: 'store-b' }),
+    ]
+    expect(groupByStore(collapseToLatestVersion(entries))).toEqual([
+      {
+        storeHost: 'store-b',
+        files: [
+          { sourceHost: 'database', path: '/a' },
+          { sourceHost: 'database', path: '/b' },
+        ],
+      },
+    ])
   })
 })
 

@@ -101,15 +101,27 @@ constraint — resolution always considers the full, unfiltered catalog):
 - A rule that resolves to zero files (e.g. a stale selection referencing files no longer in the
   catalog) is silently dropped — nothing to restore, not an error.
 
-Output: a flat list of `{ sourceHost, path, storeHost }` (each entry's `store_host`, already present
-on catalog entries, carried through for the next step).
+- `GET /catalog` returns one row per file *version*, not one per file: a file backed up nightly for
+  30 days comes back as 30 rows sharing `(source_host, path)` but with 30 distinct `id`s. Collapse
+  those to one row per distinct file before going further (`collapseToLatestVersion`, reusing
+  `catalogGrouping.js`'s `groupEntriesByFile`, which keys on `(source_host, path)` and sorts versions
+  by `store_created_at` descending), keeping the latest version's row as the file's representative.
+  Deduping on `id` would not collapse anything, since version ids never collide.
+
+Output: a flat list of `{ sourceHost, path, storeHost }`, one element per distinct file (each entry's
+`store_host`, already present on catalog entries, carried through for the next step).
 
 ### 2. Group by physical store
 
-Group the resolved list by `storeHost`. This is what "one policy per store" means in practice, and
-it falls out naturally at the file level — no special-casing needed for the edge case of one source
-host's files being split across two different storage destinations over time; each file just lands
-in whichever group its own `storeHost` puts it in.
+Group the collapsed list by `storeHost`. This is what "one policy per store" means in practice, and
+it works per distinct file — one source host's files can be split across two storage destinations,
+and each file lands in whichever group its own `storeHost` puts it in.
+
+Grouping must happen *after* the version collapse, not on raw catalog rows. A single file's versions
+can carry different `store_host` values (its store changed at some point), so grouping raw rows would
+place the same path into two different restore policies and repeat it once per version within each.
+Collapsing first means every path is grouped exactly once, using the store its latest version lives
+on — which is also the version a path-based restore will actually read back.
 
 ### 3. Resolve each store's dial address
 

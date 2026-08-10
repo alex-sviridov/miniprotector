@@ -3,7 +3,7 @@ import { apiFetch } from '../api/client'
 import { useRestoreCartStore } from './restoreCart'
 import { useStoragePoliciesStore } from './storagePolicies'
 import { useRestorePoliciesStore } from './restorePolicies'
-import { filterResolved, dedupeById, groupByStore } from '../utils/restoreResolve'
+import { filterResolved, collapseToLatestVersion, groupByStore } from '../utils/restoreResolve'
 import { resolveStoreAddress } from '../utils/storeAddress'
 
 const MAX_PAGE_LIMIT = 500
@@ -58,11 +58,18 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
         }
 
         const candidateLists = await Promise.all(positiveEntries.map(fetchCandidateEntries))
-        const candidates = dedupeById(candidateLists.flat())
+        const candidates = collapseToLatestVersion(candidateLists.flat())
         const resolved = filterResolved(cart.rules, candidates)
         const groups = groupByStore(resolved)
 
         await storagePolicies.fetchAll()
+        // Without this check every group would be reported as having no
+        // reachable storage node, blaming the stores for what is really a
+        // failed policy lookup.
+        if (storagePolicies.error) {
+          this.error = `Could not look up storage policies: ${storagePolicies.error}`
+          return
+        }
 
         const results = []
         for (const group of groups) {
@@ -91,6 +98,8 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
           }
         }
         this.results = results
+      } catch (err) {
+        this.error = err.message
       } finally {
         this.submitting = false
       }

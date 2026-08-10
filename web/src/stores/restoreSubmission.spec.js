@@ -83,6 +83,122 @@ describe('restoreSubmission store', () => {
     })
   })
 
+  it('collapses a file\'s many catalog versions to one entry per path in the submitted policy', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+
+    // One file backed up nightly is one /catalog row per version, all sharing
+    // (source_host, path) but with distinct ids -- and here the older version
+    // even sits on a different store than the latest one.
+    apiFetch.mockImplementation((path) => {
+      if (path.startsWith('/catalog')) {
+        return Promise.resolve({
+          data: [
+            {
+              id: 1,
+              source_host: 'database',
+              path: '/var/lib/dbdata/dump.sql',
+              store_host: 'store-b',
+              store_created_at: 1752200000,
+            },
+            {
+              id: 2,
+              source_host: 'database',
+              path: '/var/lib/dbdata/dump.sql',
+              store_host: 'store-a',
+              store_created_at: 1752300000,
+            },
+            {
+              id: 3,
+              source_host: 'database',
+              path: '/var/lib/dbdata/dump.sql',
+              store_host: 'store-a',
+              store_created_at: 1752400000,
+            },
+            {
+              id: 4,
+              source_host: 'database',
+              path: '/var/lib/dbdata/schema.sql',
+              store_host: 'store-a',
+              store_created_at: 1752400000,
+            },
+          ],
+          has_more: false,
+        })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.resolve({ id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' })
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01')
+
+    const restoreCalls = apiFetch.mock.calls.filter(([path]) => path === '/restore')
+    expect(restoreCalls).toHaveLength(1)
+    const files = JSON.parse(JSON.parse(restoreCalls[0][1].body).config).files
+    expect(files).toEqual([
+      { source_host: 'database', path: '/var/lib/dbdata/dump.sql' },
+      { source_host: 'database', path: '/var/lib/dbdata/schema.sql' },
+    ])
+    expect(submission.error).toBeNull()
+  })
+
+  it('sets error when a catalog fetch rejects, without throwing out of submit', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+
+    apiFetch.mockImplementation((path) => {
+      if (path.startsWith('/catalog')) return Promise.reject(new Error('catalog unavailable'))
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await expect(submission.submit('web01')).resolves.toBeUndefined()
+
+    expect(submission.error).toBe('catalog unavailable')
+    expect(submission.results).toEqual([])
+    expect(submission.submitting).toBe(false)
+    expect(apiFetch).not.toHaveBeenCalledWith('/restore', expect.anything())
+  })
+
+  it('reports a storage-policy lookup failure and processes no groups', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+
+    apiFetch.mockImplementation((path) => {
+      if (path.startsWith('/catalog')) {
+        return Promise.resolve({
+          data: [
+            {
+              id: 1,
+              source_host: 'database',
+              path: '/var/lib/dbdata/dump.sql',
+              store_host: 'store-a',
+              store_created_at: 1752400000,
+            },
+          ],
+          has_more: false,
+        })
+      }
+      if (path === '/policies?type=storage') return Promise.reject(new Error('policy server down'))
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01')
+
+    expect(submission.error).toBe('Could not look up storage policies: policy server down')
+    expect(submission.results).toEqual([])
+    expect(apiFetch).not.toHaveBeenCalledWith('/restore', expect.anything())
+  })
+
   it('reports a per-group error when a store has no resolvable address, without blocking other groups', async () => {
     const cart = useRestoreCartStore()
     cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
