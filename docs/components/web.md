@@ -47,7 +47,19 @@ no data — there's no read-only "guest" mode.
   split across a page boundary. Clearing the pattern restores whichever folder was last being browsed
   (or root, if none). Sizes render human-readable (KB/MB/...); a "Versions" count on multi-version
   files opens a modal (click anywhere on that row) listing that file's other versions. Each row (folder or file) now also carries a checkbox for staging it into the restore cart (`stores/restoreCart.js`): checking a file adds it by `(source_host, path)`; checking a folder adds one host-agnostic wildcard rule covering everything under it, rather than one entry per file, so a large folder selection stays a single rule. Selection state is *resolved* from this small rule list on demand (longest-matching-path wins, like `.gitignore`), which is also what lets a user drill into an already-selected folder and see its contents pre-checked, then uncheck individual items to carve out exceptions — unchecking shows as a partial/indeterminate checkbox on any ancestor folder row. The cart is in-memory only (no persistence yet) and UI-only: nothing is submitted for restore in this pass.
-- `/restore` — placeholder list of everything currently staged in the restore cart (folder selections as `path/*`, file selections as `path (host)`); no actions yet, just a preview of what `/catalog`'s checkboxes have accumulated. The sidebar's Restore link highlights whenever the cart is non-empty.
+- `/restore` — lists everything currently staged in the restore cart (folder selections as
+  `path/*`, file selections as `path (host)`), each with a Remove button that unstages it (toggles
+  the same rule back off, via `restoreCart.removeEntry`). Picking a destination host (from the
+  enrolled-client list, `useClientsStore`) and clicking Submit resolves the cart's rules into
+  concrete catalog entries (`GET /catalog`), groups them by the physical `store_host` each file is
+  actually stored on, resolves each group's dial address from a matching `"storage"` policy's
+  checked-in hostname + port, and creates one `"restore"` policy per group (`POST /restore`) — so a
+  selection spanning files backed up to more than one storage destination becomes multiple
+  policies, each scoped to just the files that live there. Results (created policy, or a per-group
+  error such as an unresolvable store address) render inline; one group failing doesn't block the
+  others. Submission is still terminal: nothing yet consumes a `"restore"` policy (see
+  `docs/superpowers/specs/2026-08-09-restore-policy-type-design.md`) — this only creates it. The
+  sidebar's Restore link still highlights whenever the cart is non-empty.
 - `/policies` — every policy (name, RPO, destination), with a "New backup" action opening a form modal for creating new policies (fields: name, RPO, backup window, client filters, object filters (each filter's include/exclude glob patterns entered as individual chips via a reusable `TagInput` component (`components/ui/TagInput.vue`) — each pattern is validated client-side for glob syntax and checked against the rest of its own list for parent/child path overlap, e.g. `/var/log` and `/var/log/app` in the same list, before Save is allowed), destination (a required select over `/storage`'s storage policies, replacing free-text host:port entry)) and clickable policy names navigating to each policy's detail view. The modal (`BackupPolicyFormModal` in `components/backup_policies/`) offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after its configured timeout, 1h by default) and redirects to `/jobs`, where the resulting job(s) can be found and opened for their log lines — same modal-plus-detail-page pattern as `/storage` below. Linking to:
 - `/policies/:id` — one policy's full record, in two tabs built on a reusable `Tabs` component
   (`components/ui/Tabs.vue`, active tab synced to `?tab=details`/`?tab=checkins` so either can be
@@ -138,4 +150,5 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/web":/app -w /app node:20-
 - [Design: web frontend consistency & best-practices refresh](../superpowers/specs/2026-07-20-web-frontend-refresh-design.md)
 - [Design: catalog directory-browsing UI](../superpowers/specs/2026-08-08-catalog-directory-browsing-design.md)
 - [Design: restore cart](../superpowers/specs/2026-08-09-restore-cart-design.md)
+- [Design: restore cart submission](../superpowers/specs/2026-08-10-restore-cart-submission-design.md)
 - [Architecture](../ARCHITECTURE.md)

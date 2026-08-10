@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-10 — restore cart submission
+
+The restore cart's `/restore` page can now actually be submitted, not just previewed. Each cart
+entry gets a Remove button, and picking a destination host and clicking Submit resolves the cart's
+rules into concrete catalog files, groups them by which physical `bwfs` store each one actually
+lives on, and creates one `"restore"` policy per store (`POST /api/v1/restore`) — the config format
+that policy type's own design left open. This is still frontend-only groundwork: no backend change
+was needed (every step uses REST endpoints that already existed), and nothing yet consumes a
+created `"restore"` policy — `agent` fetching and executing them is future work.
+
 ## 2026-08-10 — backup policy object filter patterns entered as chips
 
 The backup policy form's object filter include/exclude fields are no longer a single
