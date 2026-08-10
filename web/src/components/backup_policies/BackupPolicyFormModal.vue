@@ -7,6 +7,8 @@ import BaseButton from '../ui/BaseButton.vue'
 import BaseField from '../ui/BaseField.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseSelect from '../ui/BaseSelect.vue'
+import TagInput from '../ui/TagInput.vue'
+import { validateGlobPattern, findParentChildConflict } from '../../utils/globPattern'
 
 const props = defineProps({
   policy: { type: Object, default: null },
@@ -35,8 +37,8 @@ function toFormShape(policy) {
     },
     object_filters: (policy.object_filters || []).map((f) => ({
       path: f.path,
-      includeText: (f.include || []).join(', '),
-      excludeText: (f.exclude || []).join(', '),
+      include: [...(f.include || [])],
+      exclude: [...(f.exclude || [])],
     })),
     rpo: policy.rpo,
     backup_window: [...(policy.backup_window || [])],
@@ -77,10 +79,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
 })
 
-function splitCsv(text) {
-  return text.split(',').map((s) => s.trim()).filter(Boolean)
-}
-
 function buildPayload() {
   return {
     name: form.name.trim(),
@@ -96,13 +94,21 @@ function buildPayload() {
       .filter((f) => f.path.trim())
       .map((f) => ({
         path: f.path.trim(),
-        include: splitCsv(f.includeText || ''),
-        exclude: splitCsv(f.excludeText || ''),
+        include: f.include,
+        exclude: f.exclude,
       })),
     rpo: form.rpo,
     backup_window: form.backup_window.map((w) => w.trim()).filter(Boolean),
     storage_policy_id: form.storage_policy_id,
   }
+}
+
+function hasInvalidPatterns(patterns) {
+  return patterns.some((pattern, index) => {
+    if (!validateGlobPattern(pattern).valid) return true
+    const others = patterns.filter((_, i) => i !== index)
+    return findParentChildConflict(others, pattern) !== undefined
+  })
 }
 
 // validate: name is checked in JS (native `required` alone doesn't reject
@@ -113,6 +119,13 @@ function validate() {
   errors.message = ''
   if (!form.name.trim()) {
     errors.message = 'Name is required.'
+    return false
+  }
+  const hasInvalidFilter = form.object_filters.some(
+    (f) => hasInvalidPatterns(f.include) || hasInvalidPatterns(f.exclude)
+  )
+  if (hasInvalidFilter) {
+    errors.message = 'One or more filter patterns are invalid.'
     return false
   }
   return formEl.value.reportValidity()
@@ -184,7 +197,7 @@ function runNow() {
           <label class="block font-medium mb-1">Object Filters</label>
           <RepeatableFieldList
             :items="form.object_filters"
-            :new-item="() => ({ path: '', includeText: '', excludeText: '' })"
+            :new-item="() => ({ path: '', include: [], exclude: [] })"
             add-label="Add Object Filter"
             remove-label="Remove Filter"
             row-class="border rounded p-2 mb-2 space-y-1"
@@ -197,17 +210,15 @@ function runNow() {
                 placeholder="path"
                 class="w-full border rounded px-2 py-1"
               />
-              <input
-                data-test="filter-include-input"
-                v-model="form.object_filters[index].includeText"
-                placeholder="include patterns, comma-separated"
-                class="w-full border rounded px-2 py-1"
+              <TagInput
+                :items="form.object_filters[index].include"
+                test-prefix="filter-include"
+                placeholder="include pattern, Enter to add"
               />
-              <input
-                data-test="filter-exclude-input"
-                v-model="form.object_filters[index].excludeText"
-                placeholder="exclude patterns, comma-separated"
-                class="w-full border rounded px-2 py-1"
+              <TagInput
+                :items="form.object_filters[index].exclude"
+                test-prefix="filter-exclude"
+                placeholder="exclude pattern, Enter to add"
               />
             </template>
           </RepeatableFieldList>

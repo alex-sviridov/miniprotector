@@ -44,7 +44,7 @@ describe('BackupPolicyFormModal', () => {
     expect(wrapper.find('[data-test="label-key-input"]').element.value).toBe('env')
     expect(wrapper.find('[data-test="label-value-input"]').element.value).toBe('prod')
     expect(wrapper.find('[data-test="filter-path-input"]').element.value).toBe('/var/lib/dbdata')
-    expect(wrapper.find('[data-test="filter-include-input"]').element.value).toBe('*.sql')
+    expect(wrapper.find('[data-test="filter-include-chip"]').text()).toContain('*.sql')
     expect(wrapper.find('[data-test="window-input"]').element.value).toBe('0 2 * * *')
   })
 
@@ -158,14 +158,23 @@ describe('BackupPolicyFormModal', () => {
     expect(wrapper.emitted('save')[0][0]).toEqual(expect.objectContaining({ backup_window: ['0 2 * * *'] }))
   })
 
-  it('adds an object filter and splits comma-separated include/exclude into arrays', async () => {
+  it('adds object filter patterns as chips and sends them as arrays', async () => {
     const { wrapper } = mountModal({ policy: null })
     await wrapper.find('input[name="name"]').setValue('x')
     await wrapper.find('[data-test="backup-policy-storage-select"]').setValue('sp1')
     await wrapper.find('[data-test="filter-add"]').trigger('click')
     await wrapper.find('[data-test="filter-path-input"]').setValue('/var/lib/dbdata')
-    await wrapper.find('[data-test="filter-include-input"]').setValue('*.sql, *.dump')
-    await wrapper.find('[data-test="filter-exclude-input"]').setValue('*.tmp')
+
+    const includeInput = wrapper.find('[data-test="filter-include-input"]')
+    await includeInput.setValue('*.sql')
+    await includeInput.trigger('keydown', { key: 'Enter' })
+    await includeInput.setValue('*.dump')
+    await includeInput.trigger('keydown', { key: ',' })
+
+    const excludeInput = wrapper.find('[data-test="filter-exclude-input"]')
+    await excludeInput.setValue('*.tmp')
+    await excludeInput.trigger('keydown', { key: 'Enter' })
+
     await wrapper.find('form').trigger('submit')
 
     expect(wrapper.emitted('save')[0][0]).toEqual(
@@ -173,6 +182,38 @@ describe('BackupPolicyFormModal', () => {
         object_filters: [{ path: '/var/lib/dbdata', include: ['*.sql', '*.dump'], exclude: ['*.tmp'] }],
       })
     )
+  })
+
+  it('blocks submit when an object filter pattern is syntactically invalid', async () => {
+    const { wrapper } = mountModal({ policy: null })
+    await wrapper.find('input[name="name"]').setValue('x')
+    await wrapper.find('[data-test="backup-policy-storage-select"]').setValue('sp1')
+    await wrapper.find('[data-test="filter-add"]').trigger('click')
+    await wrapper.find('[data-test="filter-path-input"]').setValue('/var/lib/dbdata')
+
+    const includeInput = wrapper.find('[data-test="filter-include-input"]')
+    await includeInput.setValue('[abc')
+    await includeInput.trigger('keydown', { key: 'Enter' })
+
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.emitted('save')).toBeUndefined()
+  })
+
+  it('blocks submit when an object filter pattern overlaps another in the same list', async () => {
+    const { wrapper } = mountModal({ policy: null })
+    await wrapper.find('input[name="name"]').setValue('x')
+    await wrapper.find('[data-test="backup-policy-storage-select"]').setValue('sp1')
+    await wrapper.find('[data-test="filter-add"]').trigger('click')
+    await wrapper.find('[data-test="filter-path-input"]').setValue('/var/lib/dbdata')
+
+    const includeInput = wrapper.find('[data-test="filter-include-input"]')
+    await includeInput.setValue('/var/log')
+    await includeInput.trigger('keydown', { key: 'Enter' })
+    await includeInput.setValue('/var/log/app')
+    await includeInput.trigger('keydown', { key: 'Enter' })
+
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.emitted('save')).toBeUndefined()
   })
 
   it('removes a row via its remove button', async () => {
