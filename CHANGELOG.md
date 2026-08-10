@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-10 — backup policy object filter patterns entered as chips
+
+The backup policy form's object filter include/exclude fields are no longer a single
+comma-separated text box each. A new reusable `TagInput` component (`web/src/components/ui/TagInput.vue`)
+lets an operator add and remove one pattern at a time as a chip, with two checks run client-side on
+each pattern as it's added: glob syntax (a hand-ported mirror of the same `path.Match` grammar
+`policy-server` already enforces server-side) and same-list parent/child path overlap (e.g. `/var/log`
+and `/var/log/app` in the same `include` list) — both catch mistakes before Save rather than after a
+round trip to the server.
+
 ## 2026-08-09 — policy-server gains a restore policy type
 
 `policy-server` now supports a third policy type, `"restore"`, alongside `"backup"`/`"storage"`: a
