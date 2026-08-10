@@ -112,4 +112,48 @@ describe('TagInput', () => {
     expect(chips[1].classes()).toContain('border-red-500')
     expect(wrapper.vm.isValid()).toBe(false)
   })
+
+  it('resyncs chips when the items prop is replaced out from under the component', async () => {
+    // Reproduces the RepeatableFieldList row-reuse-on-removal scenario: the
+    // same TagInput instance survives a row removal and is handed a
+    // different row's `items` array without unmounting.
+    const a = ['*.aaa']
+    const b = ['*.bbb']
+    const wrapper = mount(TagInput, { props: { items: a, testPrefix: 'pattern' } })
+    let texts = wrapper.findAll('[data-test="pattern-chip"]').map((n) => n.text())
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain('*.aaa')
+
+    await wrapper.setProps({ items: b })
+
+    texts = wrapper.findAll('[data-test="pattern-chip"]').map((n) => n.text())
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain('*.bbb')
+    expect(texts[0]).not.toContain('*.aaa')
+  })
+
+  it('clears a chip error once the chip it conflicted with is removed', async () => {
+    const { wrapper } = mountTagInput(['/var/log', '/var/log/app'])
+    let chips = wrapper.findAll('[data-test="pattern-chip"]')
+    expect(chips[1].classes()).toContain('border-red-500')
+    expect(wrapper.vm.isValid()).toBe(false)
+
+    await wrapper.findAll('[data-test="pattern-chip-remove"]')[0].trigger('click')
+
+    chips = wrapper.findAll('[data-test="pattern-chip"]')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].classes()).not.toContain('border-red-500')
+    expect(wrapper.vm.isValid()).toBe(true)
+  })
+
+  it('splits a pasted comma-separated value into separate chips', async () => {
+    const { wrapper, items } = mountTagInput([])
+    await type(wrapper, '*.sql, *.dump')
+    await pressKey(wrapper, 'Enter')
+    const texts = wrapper.findAll('[data-test="pattern-chip"]').map((n) => n.text())
+    expect(texts).toHaveLength(2)
+    expect(texts[0]).toContain('*.sql')
+    expect(texts[1]).toContain('*.dump')
+    expect(items).toEqual(['*.sql', '*.dump'])
+  })
 })

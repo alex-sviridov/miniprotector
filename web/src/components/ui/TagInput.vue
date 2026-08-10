@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { validateGlobPattern, findParentChildConflict } from '../../utils/globPattern'
 
 const props = defineProps({
@@ -10,35 +10,57 @@ const props = defineProps({
 
 let nextId = 0
 
-function errorFor(value, existingValues) {
+function errorFor(value, otherValues) {
   const syntax = validateGlobPattern(value)
   if (!syntax.valid) return syntax.error
-  const conflict = findParentChildConflict(existingValues, value)
+  const conflict = findParentChildConflict(otherValues, value)
   if (conflict) return `overlaps with "${conflict}"`
   return undefined
 }
 
-const chips = reactive(
-  props.items.reduce((acc, value) => {
-    const priorValues = acc.map((c) => c.value)
-    acc.push({ id: nextId++, value, error: errorFor(value, priorValues) })
-    return acc
-  }, [])
-)
+function buildChips(values) {
+  return values.map((value) => ({ id: nextId++, value }))
+}
+
+const chips = reactive(buildChips(props.items))
 const text = ref('')
+
+// RepeatableFieldList keys its v-for by array index, not a stable id, so
+// removing a row can leave this component instance mounted while its
+// `items` prop now points at a different row's data. Resync `chips`
+// whenever `items` diverges from what we currently show. `syncItems()`
+// below always leaves `items` and `chips` in agreement by construction, so
+// this guard naturally no-ops in response to our own writes.
+watch(
+  () => props.items,
+  (items) => {
+    const current = chips.map((c) => c.value)
+    if (items.length === current.length && items.every((v, i) => v === current[i])) return
+    chips.splice(0, chips.length, ...buildChips(items))
+  },
+  { deep: true }
+)
+
+// Errors are derived reactively from the current chip set so that removing
+// a chip that was causing a conflict immediately clears the error on the
+// chip(s) it conflicted with, instead of leaving stale styling behind.
+const chipErrors = computed(() =>
+  chips.map((c, i) => errorFor(c.value, chips.filter((_, j) => j !== i).map((x) => x.value)))
+)
 
 function syncItems() {
   props.items.splice(0, props.items.length, ...chips.map((c) => c.value))
 }
 
 function commit(rawText) {
-  const value = rawText.trim()
-  if (!value) return
-  const error = errorFor(
-    value,
-    chips.map((c) => c.value)
-  )
-  chips.push({ id: nextId++, value, error })
+  const values = rawText
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+  if (values.length === 0) return
+  for (const value of values) {
+    chips.push({ id: nextId++, value })
+  }
   syncItems()
 }
 
@@ -72,7 +94,7 @@ function onBlur() {
 }
 
 function isValid() {
-  return chips.every((c) => !c.error)
+  return chipErrors.value.every((e) => !e)
 }
 
 defineExpose({ isValid })
@@ -82,12 +104,12 @@ defineExpose({ isValid })
   <div>
     <div class="flex flex-wrap gap-1 mb-1">
       <span
-        v-for="chip in chips"
+        v-for="(chip, index) in chips"
         :key="chip.id"
         :data-test="`${testPrefix}-chip`"
-        :title="chip.error || ''"
+        :title="chipErrors[index] || ''"
         class="inline-flex items-center gap-1 border rounded px-2 py-0.5 text-sm"
-        :class="chip.error ? 'border-red-500 text-red-600' : 'border-gray-300'"
+        :class="chipErrors[index] ? 'border-red-500 text-red-600' : 'border-gray-300'"
       >
         {{ chip.value }}
         <button
