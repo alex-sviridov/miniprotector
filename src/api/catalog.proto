@@ -10,6 +10,7 @@ service CatalogService {
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListDirectoryFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListStoreFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListDirectoryChildren(ListDirectoryChildrenRequest) returns (ListDirectoryChildrenResponse);
 }
 

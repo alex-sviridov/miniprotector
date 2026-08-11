@@ -987,13 +987,14 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\tlast_seen\x18\x04 \x01(\x03R\blastSeen\x12!\n" +
 	"\fhas_children\x18\x05 \x01(\bR\vhasChildren\"[\n" +
 	"\x1dListDirectoryChildrenResponse\x12:\n" +
-	"\bchildren\x18\x01 \x03(\v2\x1e.catalogservice.DirectoryChildR\bchildren2\xbe\x04\n" +
+	"\bchildren\x18\x01 \x03(\v2\x1e.catalogservice.DirectoryChildR\bchildren2\x98\x05\n" +
 	"\x0eCatalogService\x12M\n" +
 	"\x10SyncFileVersions\x12\x1b.catalogservice.SyncRequest\x1a\x1c.catalogservice.SyncResponse\x12V\n" +
 	"\vListEntries\x12\".catalogservice.ListEntriesRequest\x1a#.catalogservice.ListEntriesResponse\x12Y\n" +
 	"\x10ListClientFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12V\n" +
 	"\rListJobFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12\\\n" +
-	"\x13ListDirectoryFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12t\n" +
+	"\x13ListDirectoryFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12X\n" +
+	"\x0fListStoreFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12t\n" +
 	"\x15ListDirectoryChildren\x12,.catalogservice.ListDirectoryChildrenRequest\x1a-.catalogservice.ListDirectoryChildrenResponseB\tZ\a./protob\x06proto3"
 
 var (
@@ -1033,15 +1034,17 @@ var file_api_catalog_proto_depIdxs = []int32{
 	7,  // 6: catalogservice.CatalogService.ListClientFacets:input_type -> catalogservice.ListFacetsRequest
 	7,  // 7: catalogservice.CatalogService.ListJobFacets:input_type -> catalogservice.ListFacetsRequest
 	7,  // 8: catalogservice.CatalogService.ListDirectoryFacets:input_type -> catalogservice.ListFacetsRequest
-	9,  // 9: catalogservice.CatalogService.ListDirectoryChildren:input_type -> catalogservice.ListDirectoryChildrenRequest
-	2,  // 10: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
-	4,  // 11: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
-	8,  // 12: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
-	8,  // 13: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
-	8,  // 14: catalogservice.CatalogService.ListDirectoryFacets:output_type -> catalogservice.ListFacetsResponse
-	11, // 15: catalogservice.CatalogService.ListDirectoryChildren:output_type -> catalogservice.ListDirectoryChildrenResponse
-	10, // [10:16] is the sub-list for method output_type
-	4,  // [4:10] is the sub-list for method input_type
+	7,  // 9: catalogservice.CatalogService.ListStoreFacets:input_type -> catalogservice.ListFacetsRequest
+	9,  // 10: catalogservice.CatalogService.ListDirectoryChildren:input_type -> catalogservice.ListDirectoryChildrenRequest
+	2,  // 11: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
+	4,  // 12: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
+	8,  // 13: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
+	8,  // 14: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
+	8,  // 15: catalogservice.CatalogService.ListDirectoryFacets:output_type -> catalogservice.ListFacetsResponse
+	8,  // 16: catalogservice.CatalogService.ListStoreFacets:output_type -> catalogservice.ListFacetsResponse
+	11, // 17: catalogservice.CatalogService.ListDirectoryChildren:output_type -> catalogservice.ListDirectoryChildrenResponse
+	11, // [11:18] is the sub-list for method output_type
+	4,  // [4:11] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
