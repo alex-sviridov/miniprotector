@@ -177,8 +177,7 @@ In `src/api/catalog.proto`, in `service CatalogService`, add directly after `rpc
 - [ ] **Step 2: Regenerate and build**
 
 Run: `make proto && cd src && go build ./...`
-Expected: fails — `catalogServer` (in `cmd/catalog`) no longer satisfies `pb.CatalogServiceServer` (missing `ListStoreFacets`), since it embeds `pb.UnimplementedCatalogServiceServer` only as a default, not a real implementation. This is expected; Task 7 adds the method. Confirm the specific error is about the missing method, not something else:
-Expected error text: `cmd/catalog/server.go:... catalogServer does not implement pb.CatalogServiceServer (missing method ListStoreFacets)` — if the error is anything else, stop and investigate before proceeding.
+Expected: succeeds. `catalogServer` (in `cmd/catalog`) embeds `pb.UnimplementedCatalogServiceServer`, which satisfies every `pb.CatalogServiceServer` method — including the new `ListStoreFacets` — with a stub that returns a gRPC `Unimplemented` status at *runtime*, not a compile error. So there is no build break here: `go build ./...` is expected to succeed cleanly, and calling `ListStoreFacets` before Task 7 lands would simply fail at runtime with `Unimplemented`, not at compile time.
 
 - [ ] **Step 3: Commit**
 
@@ -186,8 +185,6 @@ Expected error text: `cmd/catalog/server.go:... catalogServer does not implement
 git add src/api/catalog.proto src/api/catalog.pb.go src/api/catalog_grpc.pb.go
 git commit -m "feat: add ListStoreFacets RPC to catalog service"
 ```
-
-Note: this commit leaves the build broken (`cmd/catalog` doesn't compile) until Task 7. That's expected and short-lived — Tasks 3-6 touch unrelated packages that build fine independently; Task 7 is the very next `cmd/catalog` change and fixes it. If you're executing tasks out of order or need a clean build at every commit, do Task 7 immediately after this one instead of following the numeric order.
 
 ---
 
@@ -906,7 +903,7 @@ Replace the placeholder seeding call with whatever this file's sibling facet tes
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd src && go build ./... && go test ./cmd/catalog/... -run TestListStoreFacets -v`
-Expected: the `go build` from Task 2 Step 2 still fails the same way (missing method) until this step's implementation lands; that's expected.
+Expected: build succeeds (see Task 2 Step 2 — `catalogServer`'s embedded `pb.UnimplementedCatalogServiceServer` already satisfies the interface). The test itself fails at runtime instead: `s.ListStoreFacets(...)` returns a gRPC `Unimplemented` error, so `require.NoError(t, err)` fails — that's the expected "red" state this step's implementation (below) turns "green."
 
 - [ ] **Step 3: Implement the handler**
 
