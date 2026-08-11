@@ -1013,16 +1013,28 @@ git commit -m "feat: resolve destinations for restore policies the same live way
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `src/storage/catalog/facets_test.go`, mirroring its existing `TestListDirectoryFacets_*` cases (grep the file for that exact test name prefix and copy its setup helpers -- e.g. however it inserts `EntryRecord` rows -- verbatim):
+**Correction (found mid-execution):** there is no `newTestStore`/`insertTestEntry` helper, and tests
+never construct an `EntryRecord` GORM row directly. The real, existing pattern (see
+`TestListDirectoryFacets_GroupsByParentDirectoryWithCountAndLastSeen`) is `store, err :=
+New(t.TempDir())` + `defer store.Close()` + `store.EnsureEntries(t.Context(), []Entry{...})`, using
+the public `Entry` input struct (`StoreNode`/`JobID`/`ObjectID`/`SourceHost`/`ParentDirectory`/
+`StoreCreatedAt`, no `ReceivedAt` field — it's assigned internally, not caller-controlled, which is
+also why the existing sibling test never asserts an exact `LastSeen` value, only `Count`). Add,
+mirroring that exact pattern:
 
 ```go
 func TestListStoreFacets_GroupsByStoreNode(t *testing.T) {
-	s := newTestStore(t) // use the file's existing store-construction helper; grep for it first
-	insertTestEntry(t, s, EntryRecord{StoreNode: "bwfs-1", SourceHost: "web-01", ObjectID: "o1", ParentDirectory: "/var/www", ReceivedAt: time.Unix(100, 0)})
-	insertTestEntry(t, s, EntryRecord{StoreNode: "bwfs-1", SourceHost: "web-01", ObjectID: "o2", ParentDirectory: "/var/www", ReceivedAt: time.Unix(200, 0)})
-	insertTestEntry(t, s, EntryRecord{StoreNode: "bwfs-2", SourceHost: "web-02", ObjectID: "o3", ParentDirectory: "/etc", ReceivedAt: time.Unix(150, 0)})
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
 
-	facets, err := s.ListStoreFacets(context.Background(), FacetFilter{})
+	require.NoError(t, store.EnsureEntries(t.Context(), []Entry{
+		{StoreNode: "bwfs-1", JobID: "job-1", ObjectID: "o1", SourceHost: "web-01", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-1", JobID: "job-1", ObjectID: "o2", SourceHost: "web-01", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-2", JobID: "job-1", ObjectID: "o3", SourceHost: "web-02", ParentDirectory: "/etc", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListStoreFacets(t.Context(), FacetFilter{})
 	require.NoError(t, err)
 	require.Len(t, facets, 2)
 
@@ -1031,28 +1043,30 @@ func TestListStoreFacets_GroupsByStoreNode(t *testing.T) {
 		byName[f.Name] = f
 	}
 	assert.Equal(t, int64(2), byName["bwfs-1"].Count)
-	assert.Equal(t, time.Unix(200, 0), byName["bwfs-1"].LastSeen)
 	assert.Equal(t, int64(1), byName["bwfs-2"].Count)
 }
 
 func TestListStoreFacets_FiltersBySourceHostsAndPattern(t *testing.T) {
-	s := newTestStore(t)
-	insertTestEntry(t, s, EntryRecord{StoreNode: "bwfs-1", SourceHost: "web-01", ObjectID: "match-me", ReceivedAt: time.Unix(100, 0)})
-	insertTestEntry(t, s, EntryRecord{StoreNode: "bwfs-2", SourceHost: "web-02", ObjectID: "no-match", ReceivedAt: time.Unix(100, 0)})
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
 
-	facets, err := s.ListStoreFacets(context.Background(), FacetFilter{SourceHosts: []string{"web-01"}})
+	require.NoError(t, store.EnsureEntries(t.Context(), []Entry{
+		{StoreNode: "bwfs-1", JobID: "job-1", ObjectID: "match-me", SourceHost: "web-01", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-2", JobID: "job-1", ObjectID: "no-match", SourceHost: "web-02", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListStoreFacets(t.Context(), FacetFilter{SourceHosts: []string{"web-01"}})
 	require.NoError(t, err)
 	require.Len(t, facets, 1)
 	assert.Equal(t, "bwfs-1", facets[0].Name)
 
-	facets, err = s.ListStoreFacets(context.Background(), FacetFilter{Pattern: "match-me"})
+	facets, err = store.ListStoreFacets(t.Context(), FacetFilter{Pattern: "match-me"})
 	require.NoError(t, err)
 	require.Len(t, facets, 1)
 	assert.Equal(t, "bwfs-1", facets[0].Name)
 }
 ```
-
-Adjust `insertTestEntry`/`newTestStore` to whatever the file's actual existing helpers are named — do not invent new helper names if equivalents already exist; grep `facets_test.go` first.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1129,20 +1143,32 @@ git commit -m "feat: add ListStoreFacets catalog query grouping by store node"
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `src/cmd/catalog/server_test.go`, mirroring its existing `TestListDirectoryFacets_*` gRPC-handler-level test (grep for it and copy its exact server-construction/data-seeding helpers):
+**Correction (found mid-execution):** the real helper is `newTestCatalogServer(t) (*catalogServer,
+*catalogstore.Store)` — two return values, not one — and entries are seeded via
+`store.EnsureEntries(t.Context(), []catalogstore.Entry{...})` (see
+`TestListDirectoryFacets_ReturnsGroupedCounts`, ~line 439). Add, mirroring that exact pattern:
 
 ```go
-func TestListStoreFacets_ReturnsFacetsFromStore(t *testing.T) {
-	s := newTestCatalogServer(t) // use the file's actual existing helper name
-	seedTestEntries(t, s, /* however the existing directory/client facet test seeds rows -- match it, using StoreNode this time */)
+func TestListStoreFacets_ReturnsGroupedCounts(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-3", StoreCreatedAt: time.Now()},
+	}))
 
-	resp, err := s.ListStoreFacets(context.Background(), &pb.ListFacetsRequest{})
+	resp, err := srv.ListStoreFacets(context.Background(), &pb.ListFacetsRequest{})
 	require.NoError(t, err)
-	assert.NotEmpty(t, resp.GetFacets())
+	require.Len(t, resp.GetFacets(), 2)
+
+	byName := map[string]int64{}
+	for _, f := range resp.GetFacets() {
+		byName[f.GetName()] = f.GetCount()
+	}
+	assert.Equal(t, int64(2), byName["bwfs-a"])
+	assert.Equal(t, int64(1), byName["bwfs-b"])
 }
 ```
-
-Replace the placeholder seeding call with whatever this file's sibling facet tests actually do — grep `TestListDirectoryFacets` in `server_test.go` first and copy its body's structure exactly, substituting the RPC name and the expected grouping field.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1210,31 +1236,48 @@ git commit -m "feat: implement ListStoreFacets gRPC handler"
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `src/cmd/api-server/catalog_test.go`, mirroring its existing `TestHandleListCatalogClients` (or whichever sibling handler test exists) exactly — grep for it first:
+**Correction (found mid-execution):** the real `fakeCatalogQueryClient` (already defined in this
+file) reuses one shared `facetsResp *pb.ListFacetsResponse` / `facetsErr error` / `lastFacetsReq
+*pb.ListFacetsRequest` field set across all three existing facet methods (`ListClientFacets`/
+`ListJobFacets`/`ListDirectoryFacets` each read/write the same three fields) — `ListStoreFacets`
+should be added the same way, reusing those fields rather than adding new per-method ones. The real
+server constructor is `newServer(nil, fake, nil, testLogger())`, and every handler test in this file
+dispatches through a real `http.NewServeMux()`/`srv.registerRoutes(mux)`/`mux.ServeHTTP(rec, req)`
+(see `TestHandleListCatalog_ReturnsDataAndHasMore`, ~line 55) — no direct `s.handleX(rec, req)`
+shortcut exists. Add:
 
 ```go
 func TestHandleListCatalogStores_ReturnsFacets(t *testing.T) {
 	fake := &fakeCatalogQueryClient{
-		listStoreFacetsResp: &pb.ListFacetsResponse{
+		facetsResp: &pb.ListFacetsResponse{
 			Facets: []*pb.Facet{{Name: "bwfs-1", Count: 3, LastSeen: 100}},
 		},
 	}
-	s := newTestServerWithCatalog(t, fake) // match whatever this file's existing constructor helper is actually named
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/stores?pattern=/var/www", nil)
 	rec := httptest.NewRecorder()
-	s.handleListCatalogStores(rec, req)
+	mux.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body map[string][]facetDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body["data"], 1)
 	assert.Equal(t, "bwfs-1", body["data"][0].Name)
-	assert.Equal(t, "/var/www", fake.lastListStoreFacetsReq.GetPattern())
+	assert.Equal(t, "/var/www", fake.lastFacetsReq.GetPattern())
 }
 ```
 
-Add `listStoreFacetsResp *pb.ListFacetsResponse` and `lastListStoreFacetsReq *pb.ListFacetsRequest` fields plus a `ListStoreFacets` method to this test file's existing `fakeCatalogQueryClient` (or equivalently-named fake) type — mirror exactly how it already implements `ListClientFacets`/`ListDirectoryFacets`.
+Add a `ListStoreFacets` method to `fakeCatalogQueryClient`, reusing the existing shared fields
+exactly like its three siblings do:
+```go
+func (f *fakeCatalogQueryClient) ListStoreFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error) {
+	f.lastFacetsReq = in
+	return f.facetsResp, f.facetsErr
+}
+```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1313,34 +1356,66 @@ git commit -m "feat: add GET /api/v1/catalog/stores endpoint"
 
 - [ ] **Step 1: Write the failing test**
 
-In `src/cmd/api-server/policies_test.go`, find the existing `TestHandleCreateRestore_*` tests (they currently POST `source_store`/`config`). Replace them:
+**Correction (found mid-execution):** the real existing test names in `policies_test.go` are
+`TestHandleCreateRestore_ReturnsCreatedPolicy` (not `_ComposesCreatePolicyRequest`),
+`TestHandleCreateRestore_BackendValidationErrorReturns400` (not
+`_BackendValidationFailureMapsThroughWriteGRPCError`), and `TestToPolicyDTO_IncludesSourceStoreForRestore`
+(needs renaming, its premise is gone). The real server-construction pattern is `newServer(nil, nil,
+fake, testLogger())` (matching `newServer`'s actual signature — no `s.handleCreateRestore(rec, req)`
+direct-call shortcut exists; every test in this file dispatches through a real
+`http.NewServeMux()`/`srv.registerRoutes(mux)`/`mux.ServeHTTP(rec, req)`, and this task should keep
+that convention rather than introduce a different style). Replace these three existing tests in
+place (find them by their real names above), plus rewrite `TestToPolicyDTO_IncludesSourceStoreForRestore`
+under a new name:
 
 ```go
-func TestHandleCreateRestore_ComposesCreatePolicyRequest(t *testing.T) {
-	fake := &fakePolicyServiceClient{
-		createResp: &pb.Policy{
-			Id: "r1", Name: "x", Type: "restore",
-			StoragePolicyId: "sp-1",
-			Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
-		},
+func TestToPolicyDTO_IncludesRulesAndStoragePolicyIDForRestore(t *testing.T) {
+	p := &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+		Destinations:    []string{"bwfs-east.internal:8080"},
 	}
-	s := newTestServerWithPolicy(t, fake) // match this file's actual existing helper name
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, "sp-1", dto.StoragePolicyID)
+	require.Len(t, dto.Rules, 1)
+	assert.Equal(t, "web-01", dto.Rules[0].Host)
+	assert.Equal(t, "/var/www/index.html", dto.Rules[0].Path)
+	assert.True(t, dto.Rules[0].Include)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, dto.Destinations)
+}
+
+func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}, Labels: map[string]string{}},
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
 
 	body := strings.NewReader(`{
-		"name": "x",
-		"client_filters": {"hostnames": ["web-01"]},
+		"name": "web01-emergency",
+		"client_filters": {"hostnames": ["web-01"], "labels": {}},
 		"storage_policy_id": "sp-1",
 		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
 	rec := httptest.NewRecorder()
-	s.handleCreateRestore(rec, req)
+	mux.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "restore", fake.lastCreateReq.GetType())
+	assert.Equal(t, "web01-emergency", fake.lastCreateReq.GetName())
+	assert.Equal(t, []string{"web-01"}, fake.lastCreateReq.GetClientFilters().GetHostnames())
 	assert.Equal(t, "sp-1", fake.lastCreateReq.GetStoragePolicyId())
 	require.Len(t, fake.lastCreateReq.GetRules(), 1)
 	assert.Equal(t, "web-01", fake.lastCreateReq.GetRules()[0].GetHost())
-	assert.Equal(t, "restore", fake.lastCreateReq.GetType())
 
 	var respBody map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
@@ -1348,43 +1423,40 @@ func TestHandleCreateRestore_ComposesCreatePolicyRequest(t *testing.T) {
 }
 
 func TestHandleCreateRestore_MalformedJSONReturns400(t *testing.T) {
-	s := newTestServerWithPolicy(t, &fakePolicyServiceClient{})
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader("not json"))
 	rec := httptest.NewRecorder()
-	s.handleCreateRestore(rec, req)
+	mux.ServeHTTP(rec, req)
+
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastCreateReq, "backend must not be called on malformed input")
 }
 
-func TestHandleCreateRestore_BackendValidationFailureMapsThroughWriteGRPCError(t *testing.T) {
+func TestHandleCreateRestore_BackendValidationErrorReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "storage_policy_id not found")}
-	s := newTestServerWithPolicy(t, fake)
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader(`{"name": "x", "storage_policy_id": "missing"}`))
 	rec := httptest.NewRecorder()
-	s.handleCreateRestore(rec, req)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
+	mux.ServeHTTP(rec, req)
 
-func TestToPolicyDTO_RestoreIncludesRulesAndStoragePolicyID(t *testing.T) {
-	pp := &pb.Policy{
-		Type:            "restore",
-		StoragePolicyId: "sp-1",
-		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/x", Include: true}},
-		Destinations:    []string{"bwfs-1:8080"},
-	}
-	dto := toPolicyDTO(pp)
-	assert.Equal(t, "sp-1", dto.StoragePolicyID)
-	require.Len(t, dto.Rules, 1)
-	assert.Equal(t, "web-01", dto.Rules[0].Host)
-	assert.Equal(t, []string{"bwfs-1:8080"}, dto.Destinations)
-	assert.Empty(t, dto.SourceStore, "field removed")
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 ```
 
-Use whatever this file's actual existing `fakePolicyServiceClient`/server-construction helper names are — grep the file first; `createResp`/`createErr`/`lastCreateReq` are placeholders for whatever fields the existing fake already has (it must already have equivalents, since the pre-existing restore tests used them).
+Leave `TestHandleUpdatePolicy_RestoreTypeRejectedReturns400` untouched — check it first, but it
+should not reference `source_store`/`config` at all (restore was never updatable, so this test
+never had type-specific fields to begin with).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd src && go test ./cmd/api-server/... -run 'TestHandleCreateRestore|TestToPolicyDTO_Restore' -v`
+Run: `cd src && go test ./cmd/api-server/... -run 'TestHandleCreateRestore|TestToPolicyDTO_IncludesRulesAndStoragePolicyIDForRestore' -v`
 Expected: FAIL to compile — `policyDTO` has no `Rules`/`StoragePolicyID` distinct handling for restore, `restorePolicyInput` has no `Rules`.
 
 - [ ] **Step 3: Rewrite the restore-related types in `policies.go`**
