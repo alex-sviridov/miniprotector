@@ -1588,27 +1588,52 @@ git commit -m "feat: rewrite POST /api/v1/restore for storage_policy_id and rule
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `fetch_test.go`, alongside the existing `TestToCachedPolicies_*` cases (grep for the exact name pattern first):
+**Correction (found mid-execution):** there is no `TestToCachedPolicies_*` test in this file, and
+`toCachedPolicies` is never called directly by any test — every test here (`TestRunFetch_*`) drives
+the full `runFetch` path against a `fakePolicyServiceClient` and reads back the written cache file,
+exactly like `TestRunFetch_StoragePolicyCarriesPortAndConfig` (~line 111) does for storage's
+type-specific fields. Add, mirroring that exact pattern:
 
 ```go
-func TestToCachedPolicies_RestorePolicyIncludesRules(t *testing.T) {
-	policies := toCachedPolicies([]*pb.Policy{
-		{
-			Id: "r1", Name: "x", Type: "restore",
-			StoragePolicyId: "sp-1",
-			Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/x", Include: true}},
-			Destinations:    []string{"bwfs-1:8080"},
+func TestRunFetch_RestorePolicyCarriesStoragePolicyIdAndRules(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "policies-cache.json")
+
+	created := timestamppb.New(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	updated := timestamppb.New(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	fake := &fakePolicyServiceClient{resp: &pb.GetPoliciesResponse{
+		Policies: []*pb.Policy{
+			{
+				Id:              "restore-uuid-1",
+				Name:            "web01-emergency",
+				CreatedAt:       created,
+				UpdatedAt:       updated,
+				Type:            "restore",
+				StoragePolicyId: "sp-1",
+				Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+				Destinations:    []string{"bwfs-east.internal:8080"},
+			},
 		},
-	})
-	require.Len(t, policies, 1)
-	assert.Equal(t, []RestoreRule{{Host: "web-01", Path: "/x", Include: true}}, policies[0].Rules)
-	assert.Equal(t, []string{"bwfs-1:8080"}, policies[0].Destinations)
+	}}
+
+	err := runFetch(context.Background(), fake, cachePath, fetchTestLogger())
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+
+	var got []CachedPolicy
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, "restore", got[0].Type)
+	assert.Equal(t, []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}}, got[0].Rules)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, got[0].Destinations)
 }
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd src && go test ./cmd/policyclient/... -run TestToCachedPolicies_RestorePolicy -v`
+Run: `cd src && go test ./cmd/policyclient/... -run TestRunFetch_RestorePolicy -v`
 Expected: FAIL to compile — `CachedPolicy` has no `Rules` field, `RestoreRule` undefined.
 
 - [ ] **Step 3: Implement**
