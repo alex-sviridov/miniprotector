@@ -56,3 +56,22 @@ func TestParseArguments_InvalidOutputErrors(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestParseArguments_VerifyRulesStdinLeavesServerNameEmpty(t *testing.T) {
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080", "--rules-stdin"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.True(t, args.RulesStdin)
+		assert.Equal(t, "", args.ServerName, "rules-stdin must not default to the local hostname")
+		assert.Equal(t, "", args.PathFilter)
+	})
+}
+
+func TestParseArguments_VerifyWithoutRulesStdinStillDefaultsServerNameToLocalHostname(t *testing.T) {
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.False(t, args.RulesStdin)
+		assert.NotEqual(t, "", args.ServerName, "existing behavior must be unchanged when the flag is absent")
+	})
+}

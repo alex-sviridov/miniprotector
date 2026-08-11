@@ -20,6 +20,7 @@ type Arguments struct {
 	Quiet      bool
 	Streams    int // verify only
 	Retries    int // verify only
+	RulesStdin bool // verify only
 
 	listPositional string
 	bwfsTarget     string
@@ -71,6 +72,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	verifyCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Suppress per-file success lines (warnings and summary always shown)")
 	verifyCmd.Flags().IntVar(&args.Streams, "streams", 4, "Number of concurrent verification workers")
 	verifyCmd.Flags().IntVar(&args.Retries, "retries", 3, "Max retry attempts per file on stream error")
+	verifyCmd.Flags().BoolVar(&args.RulesStdin, "rules-stdin", false, "Read {\"rules\":[{host,path,include}]} from stdin and verify only matching files")
 
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(verifyCmd)
@@ -102,7 +104,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	if err != nil {
 		return nil, fmt.Errorf("positional error: %w", err)
 	}
-	if serverName == "" {
+	if serverName == "" && !args.RulesStdin {
 		serverName = common.GetHostname()
 	}
 	args.ServerName = serverName
