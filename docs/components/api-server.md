@@ -33,6 +33,13 @@ Loki (through `log-gateway`'s read-proxy route) and aggregate the result — the
 exception to that rule, documented in
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
+### Catalog Facet Endpoints
+
+- `GET /api/v1/catalog/clients` — distinct client (source host) facets
+- `GET /api/v1/catalog/jobs` — distinct job/policy name facets
+- `GET /api/v1/catalog/directories` — distinct parent directory facets
+- `GET /api/v1/catalog/stores` — distinct store hosts a pattern/filter combination matches, for restore-cart submission's store discovery — see [Restore Policy Verification design](../superpowers/specs/2026-08-10-restore-policy-verification-design.md)
+
 `policy-server` also supports a `"storage"` policy type (`port`/`config`).
 `GET /policies` accepts an optional `?type=backup|storage|restore` query parameter to filter by type;
 without it, every policy of every type is returned, each with `port`/`config` populated

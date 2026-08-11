@@ -47,6 +47,11 @@ func (f *fakeCatalogQueryClient) ListDirectoryFacets(ctx context.Context, in *pb
 	return f.facetsResp, f.facetsErr
 }
 
+func (f *fakeCatalogQueryClient) ListStoreFacets(ctx context.Context, in *pb.ListFacetsRequest, opts ...grpc.CallOption) (*pb.ListFacetsResponse, error) {
+	f.lastFacetsReq = in
+	return f.facetsResp, f.facetsErr
+}
+
 func (f *fakeCatalogQueryClient) ListDirectoryChildren(ctx context.Context, in *pb.ListDirectoryChildrenRequest, opts ...grpc.CallOption) (*pb.ListDirectoryChildrenResponse, error) {
 	f.lastChildrenReq = in
 	return f.childrenResp, f.childrenErr
@@ -546,4 +551,26 @@ func TestParseDateRange_BothMalformedReturns400OnReceivedAfterFirst(t *testing.T
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	body := w.Body.String()
 	assert.Contains(t, body, "received_after")
+}
+
+func TestHandleListCatalogStores_ReturnsFacets(t *testing.T) {
+	fake := &fakeCatalogQueryClient{
+		facetsResp: &pb.ListFacetsResponse{
+			Facets: []*pb.Facet{{Name: "bwfs-1", Count: 3, LastSeen: 100}},
+		},
+	}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/stores?pattern=/var/www", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string][]facetDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body["data"], 1)
+	assert.Equal(t, "bwfs-1", body["data"][0].Name)
+	assert.Equal(t, "/var/www", fake.lastFacetsReq.GetPattern())
 }

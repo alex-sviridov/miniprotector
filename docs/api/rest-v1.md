@@ -197,6 +197,21 @@ reason.
 }
 ```
 
+## `GET /api/v1/catalog/stores`
+
+Same shape as `/catalog/clients`/`/catalog/jobs`, grouped by the store's `store_host` (the `bwfs`
+node that replicated the entry). Query parameters: `received_after`, `received_before`, `pattern`,
+`source_hosts`, `job_names` (comma-separated) — no other filter dimensions for stores. The `name`
+field is the store's `store_host`.
+
+```json
+{
+  "data": [
+    {"name": "bwfs-east", "count": 42, "last_seen": 1752400010}
+  ]
+}
+```
+
 ## `GET /api/v1/catalog/directories/children`
 
 Backs the web catalog view's directory browsing — one level of a directory tree at a time, not the

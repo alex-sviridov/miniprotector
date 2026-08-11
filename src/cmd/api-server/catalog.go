@@ -247,6 +247,33 @@ func (s *server) handleListCatalogDirectories(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]any{"data": facets})
 }
 
+func (s *server) handleListCatalogStores(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	receivedAfter, receivedBefore, ok := parseDateRange(w, q)
+	if !ok {
+		return
+	}
+
+	resp, err := s.catalog.ListStoreFacets(r.Context(), &pb.ListFacetsRequest{
+		ReceivedAfter:  receivedAfter,
+		ReceivedBefore: receivedBefore,
+		Pattern:        q.Get("pattern"),
+		SourceHosts:    splitCommaParam(q.Get("source_hosts")),
+		JobNames:       splitCommaParam(q.Get("job_names")),
+	})
+	if err != nil {
+		s.logger.Error("handleListCatalogStores: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+
+	facets := make([]facetDTO, len(resp.GetFacets()))
+	for i, f := range resp.GetFacets() {
+		facets[i] = toFacetDTO(f)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": facets})
+}
+
 type directoryChildDTO struct {
 	Path        string `json:"path"`
 	Name        string `json:"name"`
