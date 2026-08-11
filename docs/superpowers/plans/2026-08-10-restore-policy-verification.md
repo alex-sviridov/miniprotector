@@ -934,10 +934,21 @@ func (s *catalogServer) ListStoreFacets(ctx context.Context, req *pb.ListFacetsR
 Run: `cd src && go build ./... && go test ./cmd/catalog/... -v`
 Expected: build succeeds; all tests PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Update `docs/protocols/catalog-sync.md`**
+
+This project's `.claude/CLAUDE.md` requires updating the protocol doc for any new/modified gRPC RPC
+before committing. `docs/protocols/catalog-sync.md` already documents `ListClientFacets`/
+`ListJobFacets`/`ListDirectoryFacets` (and is already cross-linked from `docs/components/catalog.md`
+and `README.md` — no new cross-links needed, only content updates to this one file):
+
+- In its `service CatalogService { ... }` proto listing, add `rpc ListStoreFacets(ListFacetsRequest) returns (ListFacetsResponse);` directly after the existing `ListDirectoryFacets` line.
+- Rename its `## ListClientFacets / ListJobFacets / ListDirectoryFacets` section header to `## ListClientFacets / ListJobFacets / ListDirectoryFacets / ListStoreFacets`, and extend its explanatory prose (the sentence listing what each groups by) with: "; `ListStoreFacets` groups by `store_host` (the bwfs node that sent the batch)". Also extend the sentence about each RPC applying every filter dimension except its own to include `ListStoreFacets` (it applies `source_hosts`/`job_names`, has no own-dimension filter to ignore since `ListFacetsRequest` carries no `store_hosts` field).
+- In its "See Also"-style REST mapping line (the one listing `GET /api/v1/catalog/clients` etc.), add `` `GET /api/v1/catalog/stores` (`ListStoreFacets`) ``.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/cmd/catalog/server.go src/cmd/catalog/server_test.go
+git add src/cmd/catalog/server.go src/cmd/catalog/server_test.go docs/protocols/catalog-sync.md
 git commit -m "feat: implement ListStoreFacets gRPC handler"
 ```
 
