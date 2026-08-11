@@ -3,35 +3,51 @@ import { apiFetch } from '../api/client'
 import { useRestoreCartStore } from './restoreCart'
 import { useStoragePoliciesStore } from './storagePolicies'
 import { useRestorePoliciesStore } from './restorePolicies'
-import { filterResolved, collapseToLatestVersion, groupByStore } from '../utils/restoreResolve'
-import { resolveStoreAddress } from '../utils/storeAddress'
 
-const MAX_PAGE_LIMIT = 500
+// distinctPositiveEntries returns cart.entries (the positively-selected
+// top-level rules), deduped by (host, path) -- submitting the same
+// top-level selection twice would otherwise issue a redundant facet query.
+function distinctPositiveEntries(entries) {
+  const seen = new Set()
+  return entries.filter((e) => {
+    const key = `${e.host ?? ''}:${e.path}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
 
-function buildCatalogQuery(entry, startingAfter) {
+function buildStoreFacetsQuery(entry) {
   const params = new URLSearchParams()
-  if (entry.host) params.set('source_host', entry.host)
+  if (entry.host) params.set('source_hosts', entry.host)
   params.set('pattern', entry.path)
-  if (startingAfter !== undefined) params.set('starting_after', String(startingAfter))
-  params.set('limit', String(MAX_PAGE_LIMIT))
   return params.toString()
 }
 
-// fetchCandidateEntries over-fetches (pattern is a substring match, not an
-// anchored prefix match) on purpose -- filterResolved (restoreResolve.js)
-// is what decides real inclusion, using the same path-segment logic the
-// catalog UI's own checkboxes already rely on.
-async function fetchCandidateEntries(entry) {
-  const collected = []
-  let startingAfter
-  for (;;) {
-    const qs = buildCatalogQuery(entry, startingAfter)
-    const body = await apiFetch(`/catalog?${qs}`)
-    collected.push(...body.data)
-    if (!body.has_more || body.data.length === 0) break
-    startingAfter = body.data[body.data.length - 1].id
+// distinctStoreHosts finds every store_host touched by any of entries'
+// patterns -- a cheap facet query (bounded by distinct-store-count, not by
+// how many files match), replacing the old full-file-pagination approach.
+async function distinctStoreHosts(entries) {
+  const hosts = new Set()
+  for (const entry of entries) {
+    const qs = buildStoreFacetsQuery(entry)
+    const body = await apiFetch(`/catalog/stores?${qs}`)
+    for (const facet of body.data) hosts.add(facet.name)
   }
-  return collected
+  return [...hosts]
+}
+
+// storagePolicyIdForHost finds which storage policy's checkins include
+// storeHost -- same cross-reference resolveStoreAddress used to do, but
+// stopping at the policy id: policy-server finishes the resolution live
+// (see server.go's attachDestination), so staying stale is no longer a
+// risk the frontend needs to avoid by resolving all the way to an address
+// itself.
+function storagePolicyIdForHost(storagePolicies, storeHost) {
+  for (const policy of storagePolicies) {
+    if ((policy.checkins || []).some((c) => c.hostname === storeHost)) return policy.id
+  }
+  return null
 }
 
 export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
@@ -51,50 +67,42 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
       this.error = null
 
       try {
-        const positiveEntries = cart.entries
+        const positiveEntries = distinctPositiveEntries(cart.entries)
         if (positiveEntries.length === 0) {
           this.error = 'Nothing selected for restore.'
           return
         }
 
-        const candidateLists = await Promise.all(positiveEntries.map(fetchCandidateEntries))
-        const candidates = collapseToLatestVersion(candidateLists.flat())
-        const resolved = filterResolved(cart.rules, candidates)
-        const groups = groupByStore(resolved)
+        const storeHosts = await distinctStoreHosts(positiveEntries)
 
         await storagePolicies.fetchAll()
-        // Without this check every group would be reported as having no
-        // reachable storage node, blaming the stores for what is really a
-        // failed policy lookup.
         if (storagePolicies.error) {
           this.error = `Could not look up storage policies: ${storagePolicies.error}`
           return
         }
 
         const results = []
-        for (const group of groups) {
-          const address = resolveStoreAddress(storagePolicies.list, group.storeHost)
-          if (!address) {
+        for (const storeHost of storeHosts) {
+          const storagePolicyId = storagePolicyIdForHost(storagePolicies.list, storeHost)
+          if (!storagePolicyId) {
             results.push({
-              storeHost: group.storeHost,
+              storeHost,
               status: 'error',
-              message: `No reachable storage node found for ${group.storeHost}`,
+              message: `No storage policy found for ${storeHost}`,
             })
             continue
           }
-          const name = `restore-${new Date().toISOString()}-${group.storeHost}`
           try {
+            const name = `restore-${new Date().toISOString()}-${storeHost}`
             const policy = await restorePolicies.create({
               name,
               client_filters: { hostnames: [destinationHost], labels: {} },
-              source_store: address,
-              config: JSON.stringify({
-                files: group.files.map((f) => ({ source_host: f.sourceHost, path: f.path })),
-              }),
+              storage_policy_id: storagePolicyId,
+              rules: cart.rules,
             })
-            results.push({ storeHost: group.storeHost, status: 'success', policy })
+            results.push({ storeHost, status: 'success', policy })
           } catch (err) {
-            results.push({ storeHost: group.storeHost, status: 'error', message: err.message })
+            results.push({ storeHost, status: 'error', message: err.message })
           }
         }
         this.results = results
