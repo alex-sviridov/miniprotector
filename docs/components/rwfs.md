@@ -79,6 +79,30 @@ or stream error after retries). Per-file results and a summary are written via `
 | `--retries` | 3 | Max retry attempts per file on stream error |
 | `--quiet` | false | Suppress per-file success lines (warnings and summary always shown) |
 
+### Restore rule verification (`--rules-stdin`)
+
+```bash
+# Verify exactly the files a restore policy's rules select, piped as JSON
+echo '{"rules":[{"host":"web-01","path":"/var/www/index.html","include":true}]}' \
+  | rwfs verify localhost:8080 --rules-stdin
+```
+
+When set, `rwfs verify` ignores the positional `[[server_name:]path]` filter and `--filter`, and
+instead reads `{"rules":[{"host","path","include"}, ...]}` from stdin -- the same rule shape
+`policy-server`'s `"restore"` policy type and the web restore cart both already use (host-agnostic
+folder rules have an empty/omitted `host`; longest-matching-rule wins, exactly like
+`.gitignore`). Every file on the server is resolved against the rule set (not filtered by
+`server_name`/`path` first) and only included matches are verified.
+
+A **file-level** rule (non-empty `host`, `include: true`) that matches nothing is reported as a
+verification failure ("not found on this store") -- it named one specific file, and it wasn't
+there. A **folder-level** rule (empty `host`) matching nothing is not a failure -- an empty (or
+fully-excluded) folder is a legitimate outcome.
+
+Used by `agent`'s restore-policy verification tasks (see
+[agent](./agent.md#policy-driven-restore-verification)) — never combined with `--filter` or the
+positional filter in that usage.
+
 ## Transport Security
 
 Connections to `bwfs` (both `list` and `verify`) are mutually authenticated TLS. `rwfs` loads

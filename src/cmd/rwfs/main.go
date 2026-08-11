@@ -55,7 +55,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "verify":
-		if err := runVerify(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Streams, arguments.Retries, arguments.Quiet, certsDir); err != nil {
+		if err := runVerify(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.RulesStdin, os.Stdin, arguments.Streams, arguments.Retries, arguments.Quiet, certsDir); err != nil {
 			logger.Error("Verify failed", "error", err)
 			os.Exit(1)
 		}

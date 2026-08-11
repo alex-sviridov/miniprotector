@@ -83,6 +83,11 @@ rwfs verify myhost:/var/log localhost:8080 --filter nginx
   2. For each FileRow: RestoreFile{file_uuid=row.file_uuid}
 ```
 
+With `--rules-stdin`, the `ListFiles` call omits `server_name`/`path` entirely (fetches every row
+on the server) and the returned rows are instead resolved against the piped rule set client-side,
+in `rwfs` itself -- no protocol change; this is purely a different way `rwfs` decides which
+`file_uuid`s to call `RestoreFile` for.
+
 ## Key Design Decisions
 
 **Why server-streaming per file instead of bidi streaming?**

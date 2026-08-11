@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -27,7 +29,51 @@ type verifyResult struct {
 	chunkCount int32
 }
 
-func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilter, filter string, streams, retries int, quiet bool, certsDir string) error {
+// rulesStdinPayload is the JSON shape read from stdin when --rules-stdin is
+// set -- {"rules": [...]}, the same field name policy-server's
+// RestorePolicy.Rules and agent's restore.go use.
+type rulesStdinPayload struct {
+	Rules []RestoreRule `json:"rules"`
+}
+
+// notFoundRule records a file-level rule (non-empty Host) that matched no
+// row in the ListFiles result -- reported as a verification failure,
+// unlike a folder-level rule (empty Host) matching nothing, which is a
+// legitimate outcome (an empty or already-fully-excluded folder), not an
+// error.
+type notFoundRule struct {
+	Host string
+	Path string
+}
+
+// applyRulesStdin resolves rules against rows (a ListFiles result) using
+// resolveRestoreFile (rules.go), returning the rows that are actually
+// selected for verification and any file-level rule that matched nothing.
+func applyRulesStdin(rows []*pb.FileRow, rules []RestoreRule) (selected []*pb.FileRow, notFound []notFoundRule) {
+	for _, row := range rows {
+		if row.Type == "f" && row.Size > 0 && resolveRestoreFile(rules, row.Source, row.Path) {
+			selected = append(selected, row)
+		}
+	}
+	for _, r := range rules {
+		if r.Host == "" || !r.Include {
+			continue
+		}
+		found := false
+		for _, row := range rows {
+			if row.Source == r.Host && row.Path == r.Path {
+				found = true
+				break
+			}
+		}
+		if !found {
+			notFound = append(notFound, notFoundRule{Host: r.Host, Path: r.Path})
+		}
+	}
+	return selected, notFound
+}
+
+func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilter, filter string, rulesStdin bool, stdin io.Reader, streams, retries int, quiet bool, certsDir string) error {
 	conn, err := connection.Connect(host, port, 5, certsDir)
 	if err != nil {
 		return fmt.Errorf("connect to bwfs: %w", err)
@@ -53,7 +99,20 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 		}
 	}
 
-	if len(rows) == 0 {
+	var notFound []notFoundRule
+	if rulesStdin {
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return fmt.Errorf("read rules from stdin: %w", err)
+		}
+		var payload rulesStdinPayload
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return fmt.Errorf("parse rules from stdin: %w", err)
+		}
+		rows, notFound = applyRulesStdin(rows, payload.Rules)
+	}
+
+	if len(rows) == 0 && len(notFound) == 0 {
 		logger.Info("summary", "verified", 0, "warnings", 0)
 		return nil
 	}
@@ -110,6 +169,11 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 			}
 			logger.Warn("verification failed", attrs...)
 		}
+	}
+
+	for _, nf := range notFound {
+		warnings++
+		logger.Warn("verification failed", "source", nf.Host, "path", nf.Path, "reason", "not found on this store")
 	}
 
 	logger.Info("summary", "verified", total, "warnings", warnings)
