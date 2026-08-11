@@ -683,25 +683,30 @@ func TestToPolicyDTO_NoCheckinsYieldsEmptySlice(t *testing.T) {
 	assert.Empty(t, dto.Checkins)
 }
 
-func TestToPolicyDTO_IncludesSourceStoreForRestore(t *testing.T) {
+func TestToPolicyDTO_IncludesRulesAndStoragePolicyIDForRestore(t *testing.T) {
 	p := &pb.Policy{
 		Id: "r1", Name: "web01-emergency", Type: "restore",
-		SourceStore: "bwfs-east.internal:8080",
-		Config:      `{"files": ["/var/www/index.html"]}`,
+		StoragePolicyId: "sp-1",
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+		Destinations:    []string{"bwfs-east.internal:8080"},
 	}
 
 	dto := toPolicyDTO(p)
 
-	assert.Equal(t, "bwfs-east.internal:8080", dto.SourceStore)
-	assert.Equal(t, `{"files": ["/var/www/index.html"]}`, dto.Config)
+	assert.Equal(t, "sp-1", dto.StoragePolicyID)
+	require.Len(t, dto.Rules, 1)
+	assert.Equal(t, "web-01", dto.Rules[0].Host)
+	assert.Equal(t, "/var/www/index.html", dto.Rules[0].Path)
+	assert.True(t, dto.Rules[0].Include)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, dto.Destinations)
 }
 
 func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
 	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
 		Id: "r1", Name: "web01-emergency", Type: "restore",
-		SourceStore: "bwfs-east.internal:8080",
-		Config:      `{"files": ["/var/www/index.html"]}`,
-		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-01"}, Labels: map[string]string{}},
+		StoragePolicyId: "sp-1",
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}, Labels: map[string]string{}},
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
@@ -710,8 +715,8 @@ func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
 		"client_filters": {"hostnames": ["web-01"], "labels": {}},
-		"source_store": "bwfs-east.internal:8080",
-		"config": "{\"files\": [\"/var/www/index.html\"]}"
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
 	rec := httptest.NewRecorder()
@@ -722,12 +727,13 @@ func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
 	assert.Equal(t, "restore", fake.lastCreateReq.GetType())
 	assert.Equal(t, "web01-emergency", fake.lastCreateReq.GetName())
 	assert.Equal(t, []string{"web-01"}, fake.lastCreateReq.GetClientFilters().GetHostnames())
-	assert.Equal(t, "bwfs-east.internal:8080", fake.lastCreateReq.GetSourceStore())
-	assert.Equal(t, `{"files": ["/var/www/index.html"]}`, fake.lastCreateReq.GetConfig())
+	assert.Equal(t, "sp-1", fake.lastCreateReq.GetStoragePolicyId())
+	require.Len(t, fake.lastCreateReq.GetRules(), 1)
+	assert.Equal(t, "web-01", fake.lastCreateReq.GetRules()[0].GetHost())
 
 	var respBody map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
-	assert.Equal(t, "bwfs-east.internal:8080", respBody["source_store"])
+	assert.Equal(t, "sp-1", respBody["storage_policy_id"])
 }
 
 func TestHandleCreateRestore_MalformedJSONReturns400(t *testing.T) {
@@ -745,12 +751,12 @@ func TestHandleCreateRestore_MalformedJSONReturns400(t *testing.T) {
 }
 
 func TestHandleCreateRestore_BackendValidationErrorReturns400(t *testing.T) {
-	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "source_store must be a valid host:port")}
+	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "storage_policy_id not found")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader(`{"name": "x", "source_store": "bad"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader(`{"name": "x", "storage_policy_id": "missing"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

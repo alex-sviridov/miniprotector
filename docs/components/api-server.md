@@ -65,12 +65,16 @@ expire" policy. See [Design: adhoc policy endpoint](../superpowers/specs/2026-08
 and [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
 
 `POST /restore-policies` doesn't exist -- restore policies have exactly one creation path,
-`POST /restore` (fields: `name`/`client_filters`/`source_store`/`config`), and no update path at
+`POST /restore` (fields: `name`/`client_filters`/`storage_policy_id`/`rules`), and no update path at
 all: `PUT /policies/{id}` against a `"restore"`-typed policy is rejected with `400`, enforced by
 `policy-server` itself (`UpdatePolicy` refuses any request whose target policy is type `"restore"`),
 not by any `api-server`-side special-casing. `GET /policies/{id}` and `DELETE /policies/{id}` remain
-type-agnostic and work on restore policies like any other type. See
-[Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md).
+type-agnostic and work on restore policies like any other type. `storage_policy_id` references an
+existing `"storage"`-typed policy (its dial address is resolved live from that policy's check-ins,
+same as a `"backup"` policy's `destinations`), and `rules` is a list of typed
+`{host, path, include}` entries rather than a free-form `source_store`/`config` pair. See
+[Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md) and
+[Design: Restore Policy Verification](../superpowers/specs/2026-08-10-restore-policy-verification-design.md).
 
 ## Authentication
 

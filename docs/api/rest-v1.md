@@ -383,18 +383,20 @@ Creates a new `"restore"`-typed policy -- the only way to create one; there is n
 {
   "name": "web01-emergency",
   "client_filters": {"hostnames": ["web-01"], "labels": {}},
-  "source_store": "bwfs-east.internal:8080",
-  "config": "{\"files\": [\"/var/www/index.html\"]}"
+  "storage_policy_id": "<id of an existing \"storage\" policy>",
+  "rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
 }
 ```
 
-`source_store` must be a syntactically valid `host:port` naming the source `bwfs` to restore from.
-`config` is a JSON string, not a nested object -- `policy-server` treats it as opaque, pass-through
-text; its shape (file list etc.) is defined by a future design, and it's the same field a storage
-policy's `config` is, not a separate one. `client_filters` targets the node that will execute the
-restore, the same mechanism every other policy type uses. `201` with the created policy on success.
-`400` if `name` is empty, `source_store` isn't a valid `host:port`, or `config` isn't well-formed
-JSON -- no file is written when validation fails.
+`storage_policy_id` must reference an existing `"storage"`-typed policy -- its dial address is
+resolved live from that policy's check-ins, exactly like a `"backup"` policy's `destinations`.
+`rules` must contain at least one entry; an entry with `"host": null` (or omitted) is
+host-agnostic, applying across every source host under `path`. `client_filters` targets the node
+that will execute the restore, the same mechanism every other policy type uses. `201` with the
+created policy on success.
+
+`400` if `name` is empty, `storage_policy_id` doesn't reference an existing `"storage"` policy, or
+`rules` is empty or contains an entry with an empty `path`.
 
 An optional integer `disabled_at` (Unix seconds) may also be included; once that time passes,
 `GetPolicies` stops serving the policy. Omit it (or send `0`) for a policy that's never disabled.

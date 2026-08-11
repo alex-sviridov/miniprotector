@@ -27,6 +27,12 @@ type checkinDTO struct {
 	LastSeenAt int64  `json:"last_seen_at"`
 }
 
+type ruleDTO struct {
+	Host    string `json:"host"`
+	Path    string `json:"path"`
+	Include bool   `json:"include"`
+}
+
 type policyDTO struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
@@ -41,7 +47,7 @@ type policyDTO struct {
 	Type            string            `json:"type"`
 	Port            int32             `json:"port"`
 	Config          string            `json:"config"`
-	SourceStore     string            `json:"source_store,omitempty"`
+	Rules           []ruleDTO         `json:"rules,omitempty"`
 	DisabledAt      int64             `json:"disabled_at,omitempty"`
 	Checkins        []checkinDTO      `json:"checkins"`
 }
@@ -54,6 +60,10 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 	checkins := make([]checkinDTO, len(p.GetCheckins()))
 	for i, c := range p.GetCheckins() {
 		checkins[i] = checkinDTO{Hostname: c.GetHostname(), LastSeenAt: c.GetLastSeenAt().AsTime().Unix()}
+	}
+	rules := make([]ruleDTO, len(p.GetRules()))
+	for i, r := range p.GetRules() {
+		rules[i] = ruleDTO{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude()}
 	}
 	dto := policyDTO{
 		ID:        p.GetId(),
@@ -72,7 +82,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		Type:            p.GetType(),
 		Port:            p.GetPort(),
 		Config:          p.GetConfig(),
-		SourceStore:     p.GetSourceStore(),
+		Rules:           rules,
 		Checkins:        checkins,
 	}
 	if p.GetDisabledAt() != nil {
@@ -303,11 +313,11 @@ func (s *server) handleUpdateStoragePolicy(w http.ResponseWriter, r *http.Reques
 }
 
 type restorePolicyInput struct {
-	Name          string           `json:"name"`
-	ClientFilters clientFiltersDTO `json:"client_filters"`
-	SourceStore   string           `json:"source_store"`
-	Config        string           `json:"config"`
-	DisabledAt    int64            `json:"disabled_at,omitempty"`
+	Name            string           `json:"name"`
+	ClientFilters   clientFiltersDTO `json:"client_filters"`
+	StoragePolicyID string           `json:"storage_policy_id"`
+	Rules           []ruleDTO        `json:"rules"`
+	DisabledAt      int64            `json:"disabled_at,omitempty"`
 }
 
 func decodeRestorePolicyInput(r *http.Request) (restorePolicyInput, error) {
@@ -329,13 +339,17 @@ func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	rules := make([]*pb.RestoreRule, len(in.Rules))
+	for i, ru := range in.Rules {
+		rules[i] = &pb.RestoreRule{Host: ru.Host, Path: ru.Path, Include: ru.Include}
+	}
 	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
-		Name:          in.Name,
-		Type:          "restore",
-		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
-		SourceStore:   in.SourceStore,
-		Config:        in.Config,
-		DisabledAt:    disabledAtToProto(in.DisabledAt),
+		Name:            in.Name,
+		Type:            "restore",
+		ClientFilters:   toProtoClientFiltersInput(in.ClientFilters),
+		StoragePolicyId: in.StoragePolicyID,
+		Rules:           rules,
+		DisabledAt:      disabledAtToProto(in.DisabledAt),
 	})
 	if err != nil {
 		s.logger.Error("handleCreateRestore: backend call failed", "error", err)
