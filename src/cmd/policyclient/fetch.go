@@ -42,6 +42,16 @@ type ObjectFilter struct {
 	Exclude []string `json:"exclude,omitempty"`
 }
 
+// RestoreRule mirrors policy-server's RestoreRule -- {host, path, include},
+// where an empty Host means the rule applies across every source host.
+// Pure passthrough here; agent (cmd/agent/restore.go) is what interprets
+// it, via rwfs verify --rules-stdin.
+type RestoreRule struct {
+	Host    string `json:"host"`
+	Path    string `json:"path"`
+	Include bool   `json:"include"`
+}
+
 // CachedPolicy is the on-disk representation of one policy-server Policy --
 // the same fields the GetPolicies RPC response already defines, converted
 // directly from the protobuf message.
@@ -59,6 +69,8 @@ type CachedPolicy struct {
 	// (cmd/agent/storage.go) is what interprets Config.
 	Port   int32  `json:"port,omitempty"`
 	Config string `json:"config,omitempty"`
+	// "restore" policy only, zero/empty for every other type.
+	Rules []RestoreRule `json:"rules,omitempty"`
 	// Derived by policy-server from the subfolder the policy file was
 	// loaded from (e.g. "backup"). Pure passthrough here -- policyclient
 	// itself never branches on it; agent does (see
@@ -136,6 +148,10 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 				Exclude: of.GetExclude(),
 			})
 		}
+		rules := make([]RestoreRule, 0, len(p.GetRules()))
+		for _, r := range p.GetRules() {
+			rules = append(rules, RestoreRule{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude()})
+		}
 		out = append(out, CachedPolicy{
 			ID:            p.GetId(),
 			Name:          p.GetName(),
@@ -147,6 +163,7 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			Destinations:  p.GetDestinations(),
 			Port:          p.GetPort(),
 			Config:        p.GetConfig(),
+			Rules:         rules,
 			Type:          p.GetType(),
 			DisabledAt:    disabledAtFromProto(p.GetDisabledAt()),
 		})

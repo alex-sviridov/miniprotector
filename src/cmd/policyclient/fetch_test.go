@@ -164,3 +164,38 @@ func TestRunFetch_DisabledAtRoundTrips(t *testing.T) {
 	assert.Equal(t, disabledAt.AsTime(), cached[0].DisabledAt)
 	assert.True(t, cached[1].DisabledAt.IsZero(), "an unset disabled_at must cache as the zero time, not the Unix epoch")
 }
+
+func TestRunFetch_RestorePolicyCarriesStoragePolicyIdAndRules(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "policies-cache.json")
+
+	created := timestamppb.New(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	updated := timestamppb.New(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	fake := &fakePolicyServiceClient{resp: &pb.GetPoliciesResponse{
+		Policies: []*pb.Policy{
+			{
+				Id:              "restore-uuid-1",
+				Name:            "web01-emergency",
+				CreatedAt:       created,
+				UpdatedAt:       updated,
+				Type:            "restore",
+				StoragePolicyId: "sp-1",
+				Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+				Destinations:    []string{"bwfs-east.internal:8080"},
+			},
+		},
+	}}
+
+	err := runFetch(context.Background(), fake, cachePath, fetchTestLogger())
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+
+	var got []CachedPolicy
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, "restore", got[0].Type)
+	assert.Equal(t, []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}}, got[0].Rules)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, got[0].Destinations)
+}
