@@ -81,17 +81,16 @@ which is the first actual consumer of `storage`-typed policies. See
 [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
 
 A `"restore"` policy is a one-shot directive: `client_filters` targets the node that will execute
-the restore, `source_store` (required, a syntactically valid `host:port`) names the source `bwfs`
-to restore from, and `config` (required, well-formed JSON, the same field a `"storage"` policy
-carries -- not a separate one) holds the restore spec, whose shape is defined by a future design.
-It has no `object_filters`, `rpo`, `backup_window`, `storage_policy_id`, or `port`. Unlike every
-other type, a `"restore"` policy is never updatable -- `UpdatePolicy` rejects any request targeting
-one with `INVALID_ARGUMENT`, regardless of which fields the request sets, so `api-server`'s generic
-`PUT /api/v1/policies/{id}` rejects it too, with no `api-server`-side special-casing needed.
-`policy-server` only defines this type's schema and validation; a future design covers `agent`
-actually picking up `"restore"`-typed policies and executing a restore, the same way "Storage
-Policy Type" and "agent storage-policy supervision" were split into separate specs. See
-[Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md).
+the restore, `storage_policy_id` (required, references an existing `"storage"`-typed policy's `id`
+— the same field, existence check, and live `destinations` resolution a `"backup"` policy already
+uses) names the source `bwfs` to restore from, and `rules` (required, at least one entry —
+`{host, path, include}`, mirroring the web restore cart's own rule shape; an empty/omitted `host`
+means the rule applies across every source host) says what to restore. It has no `object_filters`,
+`rpo`, `backup_window`, `port`, or `config`. Unlike every other type, a `"restore"` policy is never
+updatable -- `UpdatePolicy` rejects any request targeting one with `INVALID_ARGUMENT`, regardless of
+which fields the request sets, so `api-server`'s generic `PUT /api/v1/policies/{id}` rejects it too,
+with no `api-server`-side special-casing needed. See
+[Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md).
 
 ### Policy files and hot reload
 
@@ -105,7 +104,7 @@ syntactically-valid patterns at load time but otherwise opaque to `policy-server
 [Filesystem Backup Flow](../process/filesystem-backup.md) for how `brfs` applies them), `rpo` (a
 duration string, e.g. `"24h"`), `backup_window` (a list of cron expressions, e.g.
 `["0 2 * * *", "0 20 * * *"]`), and `storage_policy_id` (the `id` of a `"storage"`-typed policy --
-required). `destinations`, unlike every other backup-policy field, is never read from the on-disk JSON: it's
+required). `destinations`, unlike every other backup- or restore-policy field, is never read from the on-disk JSON: it's
 computed at read time from the checkin records against the storage policy `storage_policy_id` names,
 ordered freshest-checked-in-first (`storage/policyserver`'s `CheckinsForPolicy` query, not re-sorted
 downstream). A `"storage"` policy instead has `port` and `config` (an opaque JSON object,

@@ -329,20 +329,34 @@ func TestGetPolicies_ResponseIncludesType(t *testing.T) {
 
 func TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin(t *testing.T) {
 	dir := t.TempDir()
-	writePolicyFile(t, filepath.Join(dir, "restore"), "web01-emergency.json", `{
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"client_filters": {"hostnames": ["bwfs-east.internal"]},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
+
+	writePolicyFile(t, filepath.Join(dir, "restore"), "web01-emergency.json", fmt.Sprintf(`{
 		"metadata": {"name": "web01-emergency"},
 		"client_filters": {"hostnames": ["web-01"]},
-		"source_store": "bwfs-east.internal:8080",
-		"config": {"files": ["/var/www/index.html"]}
-	}`)
+		"storage_policy_id": %q,
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
+	}`, storageID))
 	srv := newTestServerWithPolicies(t, dir)
+	require.NoError(t, srv.checkins.RecordCheckin(t.Context(), storageID, "bwfs-east.internal", time.Now()))
 
 	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Policies, 1)
 	p := resp.Policies[0]
 	assert.Equal(t, "restore", p.Type)
-	assert.Equal(t, "bwfs-east.internal:8080", p.SourceStore)
+	assert.Equal(t, storageID, p.StoragePolicyId)
+	require.Len(t, p.Rules, 1)
+	assert.Equal(t, "/var/www/index.html", p.Rules[0].Path)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, p.Destinations, "destinations must resolve live from storage_policy_id's checkins, same as backup")
 	assert.Nil(t, p.ClientFilters)
 
 	checkins, err := srv.checkins.CheckinsForPolicy(context.Background(), p.Id)
@@ -393,8 +407,8 @@ func TestListPolicies_FilterByRestoreTypeReturnsOnlyRestorePolicies(t *testing.T
 	}`)
 	writePolicyFile(t, filepath.Join(dir, "restore"), "web01-emergency.json", `{
 		"metadata": {"name": "web01-emergency"},
-		"source_store": "bwfs:8080",
-		"config": {}
+		"storage_policy_id": "sp-1",
+		"rules": [{"path": "/var/www"}]
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 
@@ -459,8 +473,8 @@ func TestGetPolicies_ExcludesRestorePolicyPastItsDisabledAt(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "restore"), "expired.json", `{
 		"metadata": {"name": "expired-restore", "disabled_at": "2020-01-01T00:00:00Z"},
-		"source_store": "bwfs:8080",
-		"config": {}
+		"storage_policy_id": "sp-1",
+		"rules": [{"path": "/var/www"}]
 	}`)
 	srv := newTestServerWithPolicies(t, dir)
 

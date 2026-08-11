@@ -97,16 +97,16 @@ func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {
 	return &pb.ClientFilters{Hostnames: cf.Hostnames, Labels: cf.Labels}
 }
 
-// attachDestination resolves pp.Destinations for a backup policy from its
-// StoragePolicyId's checkin list, using cache's live state and checkins'
-// live check-in records. Called right after ToProto at every RPC that
-// returns a pb.Policy (GetPolicies, ListPolicies, CreatePolicy,
+// attachDestination resolves pp.Destinations for a "backup" or "restore"
+// policy from its StoragePolicyId's checkin list, using cache's live state
+// and checkins' live check-in records. Called right after ToProto at every
+// RPC that returns a pb.Policy (GetPolicies, ListPolicies, CreatePolicy,
 // UpdatePolicy). A dangling reference (unknown id, or an id that no longer
 // names a storage policy), or a storage policy with no checkins yet, leaves
 // pp.Destinations empty rather than erroring. A checkin lookup failure is
 // logged and also leaves pp.Destinations empty rather than failing the RPC.
 func attachDestination(ctx context.Context, pp *pb.Policy, cache *Cache, checkins *checkinstore.Store, logger *slog.Logger) {
-	if pp.GetType() != "backup" || pp.GetStoragePolicyId() == "" {
+	if (pp.GetType() != "backup" && pp.GetType() != "restore") || pp.GetStoragePolicyId() == "" {
 		return
 	}
 	p, ok := cache.FindByID(pp.GetStoragePolicyId())

@@ -70,7 +70,7 @@ message Policy {
   google.protobuf.Timestamp disabled_at = 14;
   string storage_policy_id = 15; // backup policy only, required
   repeated PolicyCheckin checkins = 16; // ListPolicies only, not GetPolicies; one entry per host that has received this policy
-  repeated string destinations = 17; // backup policy only, derived, read-only -- see below
+  repeated string destinations = 17; // backup and restore policy only, derived, read-only -- see below
   // "restore" policy only. host:port of the source bwfs to restore from.
   string source_store = 18;
 }
@@ -175,8 +175,8 @@ certificate — the same requirement every server except `issuer`'s own listener
   `policy-server` validates their syntax at load time but never evaluates them; `brfs` is what
   applies them, during its own directory walk.
 - `rpo` and `backup_window` are opaque, pass-through strings — `policy-server` never parses or
-  evaluates either. `destinations` is derived, read-only: a `"backup"` policy instead carries
-  `storage_policy_id`, a required reference to a `"storage"`-typed policy's `id`.
+  evaluates either. `destinations` is derived, read-only: a `"backup"` or `"restore"` policy instead
+  carries `storage_policy_id`, a required reference to a `"storage"`-typed policy's `id`.
   `GetPolicies`/`ListPolicies`/`CreatePolicy`/`UpdatePolicy` all resolve it live, on every response,
   from that storage policy's checkin records (see [Design: backup destination from checkin
   list](../superpowers/specs/2026-08-04-backup-destination-checkin-list-design.md)) — one
