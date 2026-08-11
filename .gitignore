@@ -29,6 +29,7 @@ vendor/
 .vscode/
 .claude/settings.json
 .worktrees/
+.superpowers/
 
 # Frontend
 web/node_modules/
