@@ -10,7 +10,7 @@ A backup system with intelligent deduplication and integrity verification.
 | rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
 | catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
 | catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
-| agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, and policy-driven backup execution via `brfs`) |
+| agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, policy-driven backup execution via `brfs`, and one-shot restore-policy verification via `rwfs verify`) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
 | policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels, reading labels from the peer cert; tracks per-host check-ins in a local SQLite database | Implemented (`agent` fetches, caches, and now acts on its policies — deriving and running scheduled `brfs` backups via `policyclient`) |
@@ -100,8 +100,10 @@ that policy's `backup_window` and `rpo` — see [agent](components/agent.md#poli
 `agent` additionally supervises a `bwfs server` process and a `catalogsync` process, independently
 of each other, for every cached `"storage"`-typed policy targeting this node (ensure-running, not
 scheduled — see [agent](components/agent.md#storage-policy-supervision)), the first actual consumer
-of the `"storage"` policy type. Each policy's (and backup task's, and storage task's) outcome is
-tracked in
+of the `"storage"` policy type. `agent` additionally derives one one-shot verification task per
+cached `"restore"`-typed policy, executing `rwfs verify` against the resolved source `bwfs` — see
+[agent](components/agent.md#policy-driven-restore-verification). Each policy's (and backup task's,
+storage task's, and restore task's) outcome is tracked in
 the same local cache (`agent list-policies` inspects it). See [agent](components/agent.md).
 
 `client-manager` is control plane by role (an admin-facing tool tracking the enrolled-client

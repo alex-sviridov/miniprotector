@@ -69,8 +69,11 @@ func main() {
 		// failed this tick -- see reconcile.go's prune, which must not treat a
 		// failed read as "every backup task was removed."
 		policiesFunc := func() ([]Policy, bool) {
-			tasks, ok := backupTasks(policiesCachePath, logger, conf)
-			return append(policies(conf), tasks...), ok
+			backupTaskList, backupOk := backupTasks(policiesCachePath, logger, conf)
+			restoreTaskList, restoreOk := restoreTasks(policiesCachePath, logger)
+			all := append(policies(conf), backupTaskList...)
+			all = append(all, restoreTaskList...)
+			return all, backupOk && restoreOk
 		}
 
 		certsDir, err := config.ResolveCertsDir()
@@ -134,7 +137,9 @@ func main() {
 		// no-noise character.
 		silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		backupTaskList, _ := backupTasks(policiesCachePath, silentLogger, conf)
+		restoreTaskList, _ := restoreTasks(policiesCachePath, silentLogger)
 		allPolicies := append(policies(conf), backupTaskList...)
+		allPolicies = append(allPolicies, restoreTaskList...)
 		bwfsBinary := resolveExecPath("bwfs")
 		catalogsyncBinary := resolveExecPath("catalogsync")
 		storageTaskList, _ := storageTasks(policiesCachePath, silentLogger, bwfsBinary, catalogsyncBinary)

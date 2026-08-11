@@ -43,6 +43,8 @@ type cachedPolicy struct {
 	// storage.go's storageTasks, the consumer that reads these.
 	Port   int32  `json:"port,omitempty"`
 	Config string `json:"config,omitempty"`
+	// "restore" policy only, zero/empty for every other type.
+	Rules []RestoreRule `json:"rules,omitempty"`
 	// DisabledAt is used by both backup and storage policies -- see backup.go's
 	// backupTasks and storage.go's storageTasks, which both skip policies with
 	// disabled_at in the past.
