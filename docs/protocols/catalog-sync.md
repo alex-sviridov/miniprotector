@@ -142,7 +142,7 @@ request/response shape:
 
 ```protobuf
 message Facet {
-  string name       = 1; // hostname, policy name, or parent directory
+  string name       = 1; // hostname, policy name, parent directory, or store host
   int64  count       = 2; // matching entries in the current scope
   int64  last_seen   = 3; // unix seconds, max(received_at) in scope
 }
@@ -163,13 +163,15 @@ message ListFacetsResponse {
 
 `ListClientFacets` groups by `source_host`; `ListJobFacets` groups by the policy name embedded in
 `job_id` (see [Identity](#identity)'s `job_id` convention); `ListDirectoryFacets` groups by
-`parent_directory`; `ListStoreFacets` groups by `store_host` (the bwfs node that sent the batch). Each RPC applies every *other* dimension's filter fields from the request but
-ignores its own (e.g. `ListDirectoryFacets` applies `source_hosts`/`job_names` but ignores
-`parent_directories`; `ListStoreFacets` applies `source_hosts`/`job_names` but has no own-dimension filter to ignore since `ListFacetsRequest` carries no `store_hosts` field): a facet list is never narrowed by its own current selection, so a caller can
-implement cross-filtering (selecting in one dimension narrows the other dimensions) by passing every other
-dimension's active selection. Rows with an empty grouping key (an undecoded `source_host`/
-`parent_directory`, or a `job_id` that isn't `backup:`-prefixed) are dropped rather than surfaced as
-a blank-named facet.
+`parent_directory`; `ListStoreFacets` groups by `store_host` (the bwfs node that sent the batch).
+Each RPC applies every *other* dimension's filter fields from the request but ignores its own
+(e.g. `ListDirectoryFacets` applies `source_hosts`/`job_names` but ignores `parent_directories`;
+`ListStoreFacets` applies `source_hosts`/`job_names` but has no own-dimension filter to ignore,
+since `ListFacetsRequest` carries no `store_hosts` field): a facet list is never narrowed by its
+own current selection, so a caller can implement cross-filtering (selecting in one dimension
+narrows the other dimensions) by passing every other dimension's active selection. Rows with an
+empty grouping key (an undecoded `source_host`/`parent_directory`, or a `job_id` that isn't
+`backup:`-prefixed) are dropped rather than surfaced as a blank-named facet.
 
 ## ListDirectoryChildren
 
@@ -227,4 +229,5 @@ message ListDirectoryChildrenResponse {
 - [api-server](../components/api-server.md) — calls `ListEntries`, the only intended caller today
 - [REST API v1](../api/rest-v1.md) — `GET /api/v1/catalog` (`ListEntries`), `GET /api/v1/catalog/clients`
   (`ListClientFacets`), `GET /api/v1/catalog/jobs` (`ListJobFacets`), `GET /api/v1/catalog/directories`
-  (`ListDirectoryFacets`), `GET /api/v1/catalog/stores` (`ListStoreFacets`), and `GET /api/v1/catalog/directories/children` (`ListDirectoryChildren`)
+  (`ListDirectoryFacets`), `GET /api/v1/catalog/stores` (`ListStoreFacets`), and
+  `GET /api/v1/catalog/directories/children` (`ListDirectoryChildren`)

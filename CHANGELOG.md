@@ -13,7 +13,17 @@ remains unbuilt) the exact files a future restore would need, against the source
 typed `rules` field carrying the restore cart's actual selection rules, resolved against the real
 file listing at verify time instead of pre-expanded in the browser. `catalog` gained a
 `ListStoreFacets` endpoint so the web UI can cheaply discover which stores a selection touches
-without enumerating every file first.
+without enumerating every file first. `rwfs` also gained the `--job-id` flag both its subcommands
+were missing, so it now carries a correlation ID into its `bwfs` calls like every other binary
+`agent` execs. When a cart spans several stores, the browser now splits the rule set per store —
+folder rules and exclusions go everywhere, but a file rule only goes to the store its own facet
+lookup found it on, since a store asked to verify a file it never held fails permanently.
+
+The schema change is not migrated automatically: an existing `policies/restore/*.json` file written
+under the old `source_store`/`config` schema now fails validation at load, and `policy-server` logs
+and skips it (it is not fatal — every other policy still loads). Since a restore policy is a
+point-in-time instruction that was already carried out or already stale, the intended remedy is to
+delete the old file and, if the restore is still wanted, submit it again from the restore cart.
 
 ## 2026-08-10 — restore cart submission
 

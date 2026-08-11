@@ -68,10 +68,10 @@ message Policy {
   string type = 10;
   reserved 11; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 12;
-  // "storage" and "restore" policy only -- opaque JSON text, verbatim
-  // passthrough. Never parsed or interpreted by policy-server beyond
-  // checking well-formedness. For "restore", this carries the restore spec
-  // (file list etc.); its shape is defined by a future design.
+  // "storage" policy only -- opaque JSON text, verbatim passthrough. Never
+  // parsed or interpreted by policy-server beyond checking
+  // well-formedness. A "restore" policy carries no config: its selection
+  // lives in the structured rules field (19) instead, as of 2026-08-10.
   string config = 13;
   google.protobuf.Timestamp disabled_at = 14;
   string storage_policy_id = 15; // "backup" and "restore" policy only, required
@@ -167,7 +167,10 @@ certificate — the same requirement every server except `issuer`'s own listener
   the same field and live-resolution mechanism a `"backup"` policy already uses; its `destinations` is
   computed the identical way) and `rules` (required, at least one entry — `{host, path, include}`, where
   an empty `host` means the rule applies across every source host). It has no `object_filters`, `rpo`,
-  `backup_window`, `port`, or `config`.
+  `backup_window`, `port`, or `config`. A `"restore"` policy is never updatable: `UpdatePolicy` returns
+  `INVALID_ARGUMENT` for any request whose target policy is type `"restore"`, regardless of which
+  fields it sets -- a restore is a point-in-time instruction, so changing one after the fact is a
+  new policy, not an edit (which is also why `UpdatePolicyRequest` has no `rules` field).
 - `disabled_at` is generic across every policy type -- unset (zero/nil) means never disabled. Once it
   passes, `GetPolicies` stops returning that policy to any node, checked live against the current
   time on every call (not cached at load/reload time) -- no `.changed`-touch or restart needed for a

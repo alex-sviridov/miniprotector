@@ -103,24 +103,27 @@ message Policy {
   reserved "hostname";
   // storage policy only.
   int32 port = 12;
-  // "storage" and "restore" policy only -- opaque JSON text, verbatim
-  // passthrough. Never parsed or interpreted by policy-server beyond
-  // checking well-formedness. For "restore", this carries the restore spec
-  // (file list etc.); its shape is defined by a future design.
+  // "storage" policy only -- opaque JSON text, verbatim passthrough. Never
+  // parsed or interpreted by policy-server beyond checking
+  // well-formedness. A "restore" policy carries no config: its selection
+  // lives in the structured rules field (19) instead, as of 2026-08-10.
   string config = 13;
   // Zero/unset means never disabled. Once this time passes, GetPolicies
   // stops returning the policy (checked live, not cached); ListPolicies is
   // unaffected. Generic across every policy type -- policy-server attaches
   // no meaning to *why* a policy is disabled.
   google.protobuf.Timestamp disabled_at = 14;
-  // "backup" policy only, required. References a "storage"-typed Policy.id;
-  // destination is resolved from it live on every read.
+  // "backup" and "restore" policy only, required. References a
+  // "storage"-typed Policy.id; destination is resolved from it live on
+  // every read.
   string storage_policy_id = 15;
   repeated PolicyCheckin checkins = 16; // ListPolicies only -- see below
-  // "backup" policy only. Derived, read-only: one "host:port" entry per
-  // live checkin against storage_policy_id, freshest checkin first. Empty
-  // if the storage policy has no checkins yet or storage_policy_id is
-  // dangling. Unset for a "storage" policy, as before.
+  // "backup" and "restore" policy only. Derived, read-only: one
+  // "host:port" entry per live checkin against storage_policy_id, freshest
+  // checkin first. Empty if the storage policy has no checkins yet or
+  // storage_policy_id is dangling. Unset for a "storage" policy, as
+  // before. For "restore" these are the stores to verify against, not
+  // write to.
   repeated string destinations = 17;
   // "restore" policy only. host:port of the source bwfs to restore from.
   // Removed 2026-08-10: replaced by storage_policy_id (field 15, shared
@@ -184,7 +187,7 @@ message UpdatePolicyRequest {
   // are only valid when it's already type "backup". "restore"-typed
   // policies cannot be updated at all -- UpdatePolicy rejects any request
   // whose target policy is type "restore" regardless of which fields it
-  // sets, which is why there is no source_store field here.
+  // sets, which is also why there is no rules field here.
   // reserved 8 was "hostname" -- removed, see Policy.reserved 11 above.
   reserved 8;
   reserved "hostname";

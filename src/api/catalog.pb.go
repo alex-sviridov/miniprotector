@@ -523,7 +523,7 @@ func (x *Entry) GetShortFilename() string {
 
 type Facet struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                          // hostname, policy name, or parent directory
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                          // hostname, policy name, parent directory, or store host
 	Count         int64                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`                       // matching entries in the current scope
 	LastSeen      int64                  `protobuf:"varint,3,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"` // unix seconds, max(received_at) in scope
 	unknownFields protoimpl.UnknownFields

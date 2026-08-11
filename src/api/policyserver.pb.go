@@ -460,24 +460,27 @@ type Policy struct {
 	Type string `protobuf:"bytes,10,opt,name=type,proto3" json:"type,omitempty"`
 	// storage policy only.
 	Port int32 `protobuf:"varint,12,opt,name=port,proto3" json:"port,omitempty"`
-	// "storage" and "restore" policy only -- opaque JSON text, verbatim
-	// passthrough. Never parsed or interpreted by policy-server beyond
-	// checking well-formedness. For "restore", this carries the restore spec
-	// (file list etc.); its shape is defined by a future design.
+	// "storage" policy only -- opaque JSON text, verbatim passthrough. Never
+	// parsed or interpreted by policy-server beyond checking
+	// well-formedness. A "restore" policy carries no config: its selection
+	// lives in the structured rules field (19) instead, as of 2026-08-10.
 	Config string `protobuf:"bytes,13,opt,name=config,proto3" json:"config,omitempty"`
 	// Zero/unset means never disabled. Once this time passes, GetPolicies
 	// stops returning the policy (checked live, not cached); ListPolicies is
 	// unaffected. Generic across every policy type -- policy-server attaches
 	// no meaning to *why* a policy is disabled.
 	DisabledAt *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
-	// "backup" policy only, required. References a "storage"-typed Policy.id;
-	// destination is resolved from it live on every read.
+	// "backup" and "restore" policy only, required. References a
+	// "storage"-typed Policy.id; destination is resolved from it live on
+	// every read.
 	StoragePolicyId string           `protobuf:"bytes,15,opt,name=storage_policy_id,json=storagePolicyId,proto3" json:"storage_policy_id,omitempty"`
 	Checkins        []*PolicyCheckin `protobuf:"bytes,16,rep,name=checkins,proto3" json:"checkins,omitempty"` // ListPolicies only -- see below
-	// "backup" policy only. Derived, read-only: one "host:port" entry per
-	// live checkin against storage_policy_id, freshest checkin first. Empty
-	// if the storage policy has no checkins yet or storage_policy_id is
-	// dangling. Unset for a "storage" policy, as before.
+	// "backup" and "restore" policy only. Derived, read-only: one
+	// "host:port" entry per live checkin against storage_policy_id, freshest
+	// checkin first. Empty if the storage policy has no checkins yet or
+	// storage_policy_id is dangling. Unset for a "storage" policy, as
+	// before. For "restore" these are the stores to verify against, not
+	// write to.
 	Destinations []string `protobuf:"bytes,17,rep,name=destinations,proto3" json:"destinations,omitempty"`
 	// "restore" policy only.
 	Rules         []*RestoreRule `protobuf:"bytes,19,rep,name=rules,proto3" json:"rules,omitempty"`

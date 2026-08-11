@@ -71,7 +71,7 @@ message Entry {
 }
 
 message Facet {
-  string name       = 1; // hostname, policy name, or parent directory
+  string name       = 1; // hostname, policy name, parent directory, or store host
   int64  count       = 2; // matching entries in the current scope
   int64  last_seen   = 3; // unix seconds, max(received_at) in scope
 }

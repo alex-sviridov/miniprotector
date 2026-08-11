@@ -65,9 +65,10 @@ type facetRow struct {
 
 // aggregateFacets groups rows by Name -- counting occurrences and tracking
 // the max ReceivedAt per name, in first-seen order -- dropping rows with an
-// empty Name. Shared by ListClientFacets/ListJobFacets/ListDirectoryFacets,
-// which derive Name differently (raw source_host, policyNameFromJobID(job_id),
-// raw parent_directory) but aggregate identically once Name is known.
+// empty Name. Shared by ListClientFacets/ListJobFacets/ListDirectoryFacets/
+// ListStoreFacets, which derive Name differently (raw source_host,
+// policyNameFromJobID(job_id), raw parent_directory, raw store_node) but
+// aggregate identically once Name is known.
 //
 // Aggregation happens in Go, not SQL: an earlier version used SQL-side
 // MAX(received_at) and parsed the result via Go's non-portable time.Time
