@@ -115,6 +115,12 @@ func backupFieldsSet(objectFilters []*pb.ObjectFilter, rpo string, backupWindow 
 	return len(objectFilters) > 0 || rpo != "" || len(backupWindow) > 0 || storagePolicyID != ""
 }
 
+// restoreFieldsSet reports whether the restore-only rules field is set --
+// used to reject a request mixing it into a backup or storage policy.
+func restoreFieldsSet(rules []*pb.RestoreRule) bool {
+	return len(rules) > 0
+}
+
 // policyFieldsGetter is the subset of pb.CreatePolicyRequest/
 // pb.UpdatePolicyRequest that buildPolicy needs to construct a concrete
 // Policy -- both proto messages implement it with identical getters, so one
@@ -135,8 +141,8 @@ type policyFieldsGetter interface {
 // (kind == existing.Kind(), since a policy's type is immutable via update).
 // "restore" is handled separately in buildPolicyForCreate, not routed
 // through here or through policyFieldsGetter -- it's create-only (see
-// buildPolicyForUpdate) and UpdatePolicyRequest has no source_store field
-// for policyFieldsGetter to expose.
+// buildPolicyForUpdate) and UpdatePolicyRequest has no rules field for
+// policyFieldsGetter to expose.
 func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, error) {
 	switch kind {
 	case "backup":
@@ -178,17 +184,30 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 		ClientFilters: fromProtoClientFilters(req.GetClientFilters()),
 	}
 	if req.GetType() == "restore" {
-		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetStoragePolicyId()) || req.GetPort() != 0 {
-			return nil, fmt.Errorf("a restore policy must not set object_filters/rpo/backup_window/storage_policy_id/port")
+		// storage_policy_id is deliberately passed as "" here, not
+		// req.GetStoragePolicyId() -- unlike before this task, it's now a
+		// required restore field, not a disqualifying one; only
+		// object_filters/rpo/backup_window (plus port/config, checked via
+		// storageFieldsSet below) still disqualify a restore request.
+		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), "") || storageFieldsSet(req.GetPort(), req.GetConfig()) {
+			return nil, fmt.Errorf("a restore policy must not set object_filters/rpo/backup_window/port/config")
+		}
+		rules := make([]RestoreRule, len(req.GetRules()))
+		for i, r := range req.GetRules() {
+			rules[i] = RestoreRule{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude()}
 		}
 		return &RestorePolicy{
-			PolicyBase:  base,
-			SourceStore: req.GetSourceStore(),
-			Config:      json.RawMessage(req.GetConfig()),
+			PolicyBase:      base,
+			StoragePolicyID: req.GetStoragePolicyId(),
+			Rules:           rules,
 		}, nil
 	}
-	if req.GetSourceStore() != "" {
-		return nil, fmt.Errorf("only a restore policy may set source_store")
+	// A non-restore request setting rules is rejected here, once, for every
+	// other type -- covers both "storage must not set rules" and "backup
+	// must not set rules" with one check and one message, rather than
+	// duplicating the same test inside buildPolicy's per-type branches.
+	if restoreFieldsSet(req.GetRules()) {
+		return nil, fmt.Errorf("only a restore policy may set rules")
 	}
 	return buildPolicy(req.GetType(), base, req)
 }
@@ -239,6 +258,12 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 		if sp, found := s.cache.FindByID(bp.StoragePolicyID); !found || sp.Kind() != "storage" {
 			s.logger.Error("CreatePolicy: storage_policy_id does not reference an existing storage policy", "storage_policy_id", bp.StoragePolicyID)
 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("storage policy %q not found", bp.StoragePolicyID))
+		}
+	}
+	if rp, ok := p.(*RestorePolicy); ok {
+		if sp, found := s.cache.FindByID(rp.StoragePolicyID); !found || sp.Kind() != "storage" {
+			s.logger.Error("CreatePolicy: storage_policy_id does not reference an existing storage policy", "storage_policy_id", rp.StoragePolicyID)
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("storage policy %q not found", rp.StoragePolicyID))
 		}
 	}
 

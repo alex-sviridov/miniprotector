@@ -415,40 +415,6 @@ func TestCreatePolicy_BackupTypeWithStorageFieldsRejected(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
-func TestCreatePolicy_BackupTypeWithSourceStoreRejected(t *testing.T) {
-	dir := t.TempDir()
-	srv := newTestWriteServer(t, dir)
-	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
-
-	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:            "bad",
-		Type:            "backup",
-		StoragePolicyId: storageID,
-		SourceStore:     "bwfs:8080",
-	})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestCreatePolicy_StorageTypeWithSourceStoreRejected(t *testing.T) {
-	dir := t.TempDir()
-	srv := newTestWriteServer(t, dir)
-
-	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "bad",
-		Type:        "storage",
-		Port:        9400,
-		Config:      `{}`,
-		SourceStore: "bwfs:8080",
-	})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 func TestUpdatePolicy_StoragePolicyRoundTripsAndTypeStaysImmutable(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "storage"), "east-1.json", `{
@@ -674,20 +640,22 @@ func TestDeletePolicy_UnreferencedStoragePolicySucceeds(t *testing.T) {
 func TestCreatePolicy_RestorePolicyWritesIntoRestoreDir(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:          "Web01 Emergency Restore",
-		Type:          "restore",
-		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-01"}},
-		SourceStore:   "bwfs-east.internal:8080",
-		Config:        `{"files": ["/var/www/index.html"]}`,
+		Name:            "Web01 Emergency Restore",
+		Type:            "restore",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
 	})
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.Id)
 	assert.Equal(t, "restore", resp.Type)
-	assert.Equal(t, "bwfs-east.internal:8080", resp.SourceStore)
-	assert.JSONEq(t, `{"files": ["/var/www/index.html"]}`, resp.Config)
+	assert.Equal(t, storageID, resp.StoragePolicyId)
+	require.Len(t, resp.Rules, 1)
+	assert.Equal(t, "/var/www/index.html", resp.Rules[0].Path)
 
 	_, err = os.Stat(filepath.Join(dir, "restore", "web01-emergency-restore.json"))
 	require.NoError(t, err)
@@ -696,9 +664,11 @@ func TestCreatePolicy_RestorePolicyWritesIntoRestoreDir(t *testing.T) {
 func TestCreatePolicy_ResponseIncludesRestoreType(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name: "quick-restore", Type: "restore", SourceStore: "bwfs:8080", Config: `{}`,
+		Name: "quick-restore", Type: "restore", StoragePolicyId: storageID,
+		Rules: []*pb.RestoreRule{{Path: "/x", Include: true}},
 	})
 
 	require.NoError(t, err)
@@ -708,13 +678,17 @@ func TestCreatePolicy_ResponseIncludesRestoreType(t *testing.T) {
 func TestCreatePolicy_RestoreTypeWithBackupFieldsRejected(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
+	// storage_policy_id is now required for restore, not disqualifying -- rpo
+	// (a genuine backup-only field) is what this test must set instead to
+	// stay meaningful.
 	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:            "bad",
 		Type:            "restore",
-		SourceStore:     "bwfs:8080",
-		Config:          `{}`,
-		StoragePolicyId: "sp-1",
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+		Rpo:             "24h",
 	})
 
 	st, ok := status.FromError(err)
@@ -725,39 +699,14 @@ func TestCreatePolicy_RestoreTypeWithBackupFieldsRejected(t *testing.T) {
 func TestCreatePolicy_RestoreTypeWithPortRejected(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
 	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:        "bad",
-		Type:        "restore",
-		SourceStore: "bwfs:8080",
-		Config:      `{}`,
-		Port:        9400,
-	})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestCreatePolicy_RestoreMissingSourceStoreReturnsInvalidArgument(t *testing.T) {
-	dir := t.TempDir()
-	srv := newTestWriteServer(t, dir)
-
-	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name: "no-source", Type: "restore", Config: `{}`,
-	})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestCreatePolicy_RestoreInvalidSourceStoreFormatReturnsInvalidArgument(t *testing.T) {
-	dir := t.TempDir()
-	srv := newTestWriteServer(t, dir)
-
-	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name: "bad-source", Type: "restore", SourceStore: "no-port-here", Config: `{}`,
+		Name:            "bad",
+		Type:            "restore",
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+		Port:            9400,
 	})
 
 	st, ok := status.FromError(err)
@@ -768,8 +717,10 @@ func TestCreatePolicy_RestoreInvalidSourceStoreFormatReturnsInvalidArgument(t *t
 func TestUpdatePolicy_RestoreTypeRejected(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name: "quick-restore", Type: "restore", SourceStore: "bwfs:8080", Config: `{}`,
+		Name: "quick-restore", Type: "restore", StoragePolicyId: storageID,
+		Rules: []*pb.RestoreRule{{Path: "/x", Include: true}},
 	})
 	require.NoError(t, err)
 
@@ -787,4 +738,86 @@ func TestUpdatePolicy_RestoreTypeRejected(t *testing.T) {
 	var onDisk map[string]any
 	require.NoError(t, json.Unmarshal(data, &onDisk))
 	assert.Equal(t, "quick-restore", onDisk["metadata"].(map[string]any)["name"], "the file must be left untouched when the update is rejected")
+}
+
+func TestCreatePolicy_RestoreMissingStoragePolicyIdReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "no-storage-ref", Type: "restore", Rules: []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_RestoreRejectsConfigField(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "x",
+		Type:            "restore",
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+		Config:          `{"a":1}`,
+	})
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "config")
+}
+
+func TestCreatePolicy_StorageRejectsRulesField(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:   "x",
+		Type:   "storage",
+		Port:   8080,
+		Config: `{"backend":"filesystem","root":"/data"}`,
+		Rules:  []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "rules")
+}
+
+func TestCreatePolicy_BackupRejectsRulesField(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "x",
+		Type:            "backup",
+		Rpo:             "24h",
+		BackupWindow:    []string{"0 2 * * *"},
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "rules")
+}
+
+func TestCreatePolicy_RestoreUnknownStoragePolicyIdReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "orphan-restore",
+		Type:            "restore",
+		StoragePolicyId: "does-not-exist",
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
