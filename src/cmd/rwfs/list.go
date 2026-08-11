@@ -7,10 +7,15 @@ import (
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/listformat"
 )
 
-func runList(host string, port int, serverName, pathFilter, filter, output, certsDir string) error {
+// runList lists a remote bwfs store's files. jobID rides the ListFiles RPC
+// as outgoing job-id metadata, so bwfs's log for this exact call is
+// correlatable back to this process's local log -- the same convention brfs
+// and policyclient already follow.
+func runList(host string, port int, serverName, pathFilter, filter, output, certsDir, jobID string) error {
 	conn, err := connection.Connect(host, port, 5, certsDir)
 	if err != nil {
 		return fmt.Errorf("connect to bwfs: %w", err)
@@ -19,7 +24,7 @@ func runList(host string, port int, serverName, pathFilter, filter, output, cert
 
 	client := pb.NewListServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(jobid.Outgoing(context.Background(), jobID), 30*time.Second)
 	defer cancel()
 
 	resp, err := client.ListFiles(ctx, &pb.ListRequest{

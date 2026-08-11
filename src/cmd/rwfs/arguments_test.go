@@ -57,6 +57,38 @@ func TestParseArguments_InvalidOutputErrors(t *testing.T) {
 	})
 }
 
+func TestParseArguments_ListJobIDFlag_ParsesValue(t *testing.T) {
+	withArgs(t, []string{"rwfs", "list", "localhost:8080", "--job-id", "custom-job-123"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, "custom-job-123", args.JobID)
+	})
+}
+
+func TestParseArguments_ListJobIDFlag_DefaultsEmpty(t *testing.T) {
+	withArgs(t, []string{"rwfs", "list", "localhost:8080"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Empty(t, args.JobID, "an omitted --job-id stays empty here; main.go resolves it via jobid.Resolve")
+	})
+}
+
+func TestParseArguments_VerifyJobIDFlag_ParsesValue(t *testing.T) {
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080", "--rules-stdin", "--job-id", "restore:cart-1:1754870000"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, "restore:cart-1:1754870000", args.JobID)
+	})
+}
+
+func TestParseArguments_VerifyJobIDFlag_DefaultsEmpty(t *testing.T) {
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Empty(t, args.JobID)
+	})
+}
+
 func TestParseArguments_VerifyRulesStdinLeavesServerNameEmpty(t *testing.T) {
 	withArgs(t, []string{"rwfs", "verify", "localhost:8080", "--rules-stdin"}, func() {
 		args, err := parseArguments(testConfig())

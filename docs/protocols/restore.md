@@ -86,7 +86,15 @@ rwfs verify myhost:/var/log localhost:8080 --filter nginx
 With `--rules-stdin`, the `ListFiles` call omits `server_name`/`path` entirely (fetches every row
 on the server) and the returned rows are instead resolved against the piped rule set client-side,
 in `rwfs` itself -- no protocol change; this is purely a different way `rwfs` decides which
-`file_uuid`s to call `RestoreFile` for.
+`file_uuid`s to call `RestoreFile` for. Note that this makes the `ListFiles` response unbounded and
+unpaginated; see [rwfs](../components/rwfs.md)'s `--rules-stdin` section for that known limitation.
+
+Both calls carry `rwfs`'s `--job-id` as outgoing `job-id` gRPC metadata (auto-generated per
+invocation when the flag is omitted), the same convention `brfs`/`certclient`/`policyclient` use --
+so a run dispatched by [agent](../components/agent.md#policy-driven-restore-verification) shares
+one correlation ID across `agent`'s log and `rwfs`'s. `bwfs`'s `ListFiles`/`RestoreFile` handlers do
+not require or read this metadata (unlike `BackupService`, which rejects a call without it), so
+sending it is purely additive; a client that omits it entirely still works.
 
 ## Key Design Decisions
 

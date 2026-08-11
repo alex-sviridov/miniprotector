@@ -192,9 +192,13 @@ Every binary `agent` execs writes structured JSON logs to `<log_dir>/<binary-nam
 stable, rotated file per binary — not one file per invocation), and every exec `agent` dispatches
 now carries a `--job-id` (auto-generated per invocation if not explicitly set): `<policy-id>:
 <unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>`
-for backup tasks. That same job-id rides as outgoing gRPC metadata to whatever server the
+for backup tasks, `restore:<policy>:<timestamp>` for restore-verification tasks. That same job-id
+rides as outgoing gRPC metadata to whatever server the
 exec calls (`issuer` for `certclient operating-refresh`, `policy-server` for `policyclient`, `bwfs`
-for `brfs`), and each of those servers tags its own log lines with the identical value — so one
+for `brfs`, and `bwfs` again for `rwfs verify`'s `ListFiles`/`RestoreFile` calls on the
+restore-verification path — `bwfs`'s list/restore handlers don't read that metadata back yet, so
+for now `rwfs`'s half of that pair correlates `agent`'s log with `rwfs`'s own, like
+`bootstrap-refresh` below), and each of the other servers tags its own log lines with the identical value — so one
 job-id correlates `agent`'s own start/completion log line, the exec's local log file, and the
 corresponding log line on whichever remote host it called, end to end. The `bootstrap-refresh`
 policy is the one exception: `certclient renew` talks to step-ca's stock `/renew` endpoint

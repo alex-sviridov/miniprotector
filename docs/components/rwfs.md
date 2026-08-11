@@ -43,6 +43,7 @@ When `server_name` is omitted from the filter (i.e. no positional, or positional
 | `--filter` | | Free-text substring filter on file path |
 | `--debug` | false | Enable debug logging |
 | `--quiet` | false | Suppress console logging |
+| `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
 
 **Table columns:** SOURCE, TYPE, PATH, TIMESTAMP, SIZE, CHUNKS, VERSIONS
 
@@ -78,6 +79,14 @@ or stream error after retries). Per-file results and a summary are written via `
 | `--streams` | 4 | Concurrent verification workers |
 | `--retries` | 3 | Max retry attempts per file on stream error |
 | `--quiet` | false | Suppress per-file success lines (warnings and summary always shown) |
+| `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
+
+Every line `rwfs` logs carries `job_id`, and the same value rides each `ListFiles`/`RestoreFile`
+call as outgoing `job-id` gRPC metadata, so a run's local log and `bwfs`'s server-side log for it
+can be joined — the same convention `brfs`, `certclient`, and `policyclient` follow. `agent` always
+passes an explicit `--job-id` for its restore-verification tasks (see
+[agent](./agent.md#policy-driven-restore-verification)); a human running `rwfs` by hand gets a
+generated UUID.
 
 ### Restore rule verification (`--rules-stdin`)
 
@@ -87,17 +96,37 @@ echo '{"rules":[{"host":"web-01","path":"/var/www/index.html","include":true}]}'
   | rwfs verify localhost:8080 --rules-stdin
 ```
 
-When set, `rwfs verify` ignores the positional `[[server_name:]path]` filter and `--filter`, and
-instead reads `{"rules":[{"host","path","include"}, ...]}` from stdin -- the same rule shape
-`policy-server`'s `"restore"` policy type and the web restore cart both already use (host-agnostic
-folder rules have an empty/omitted `host`; longest-matching-rule wins, exactly like
-`.gitignore`). Every file on the server is resolved against the rule set (not filtered by
-`server_name`/`path` first) and only included matches are verified.
+When set, `rwfs verify` reads `{"rules":[{"host","path","include"}, ...]}` from stdin -- the same
+rule shape `policy-server`'s `"restore"` policy type and the web restore cart both already use
+(host-agnostic folder rules have an empty/omitted `host`; longest-matching-rule wins, exactly like
+`.gitignore`). What the flag changes is the *hostname default*: without it, an omitted
+`server_name` defaults to the local hostname, which would be wrong for rules that are deliberately
+host-agnostic, so with it the default is suppressed and every source host is in scope. The
+positional `[[server_name:]path]` filter and `--filter` still apply if given, as additional
+constraints on the `ListFiles` call, narrowing the rows the rules are then resolved against --
+`agent` never sets either one in practice.
+
+An empty rule set (`{"rules":[]}`, `{"rules":null}`, or `{}`) is rejected as an argument error
+rather than treated as a no-op: it would select zero files and report success without having
+verified anything, which a one-shot caller would record as permanently done.
 
 A **file-level** rule (non-empty `host`, `include: true`) that matches nothing is reported as a
 verification failure ("not found on this store") -- it named one specific file, and it wasn't
 there. A **folder-level** rule (empty `host`) matching nothing is not a failure -- an empty (or
-fully-excluded) folder is a legitimate outcome.
+fully-excluded) folder is a legitimate outcome. "Matches nothing" is judged against the full
+`ListFiles` result, not just the chunk-verifiable subset: a zero-byte file or a directory row is
+*found* (and simply not checksummed, there being nothing to checksum) rather than misreported as
+missing.
+
+**Known limitation — the listing is unbounded.** Because rules can be host-agnostic, `--rules-stdin`
+asks `bwfs` for every row on the store (no `server_name` scoping), and `ListFiles`/`ListResponse`
+have no pagination, so the whole result arrives as one gRPC message. This repo sets no
+`grpc.MaxCallRecvMsgSize` override anywhere, so on a store large enough for that single response to
+exceed gRPC's default 4 MiB receive ceiling, the call fails outright. Nothing here degrades
+gracefully or partially verifies — it is all-or-nothing per run. Fixing it properly means either
+paginating `ListFiles` or scoping the request to the distinct hosts named in the rule set (folder
+rules make the latter only a partial win); both are deliberately out of scope for now, so this is a
+documented constraint rather than a silent one.
 
 Used by `agent`'s restore-policy verification tasks (see
 [agent](./agent.md#policy-driven-restore-verification)) — never combined with `--filter` or the

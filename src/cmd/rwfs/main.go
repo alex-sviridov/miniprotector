@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
 
@@ -39,6 +40,12 @@ func main() {
 	quietForLogger := arguments.Quiet && arguments.Action != "verify"
 	ctx = context.WithValue(ctx, "quietMode", quietForLogger)
 
+	// Resolve the correlation ID before the logger is built, so every line
+	// rwfs writes carries job_id, and pass it down so the bwfs RPCs carry
+	// it as outgoing metadata too (mirrors brfs/policyclient).
+	jobID := jobid.Resolve(arguments.JobID)
+	ctx = context.WithValue(ctx, "jobId", jobID)
+
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
 
@@ -50,12 +57,12 @@ func main() {
 
 	switch arguments.Action {
 	case "list":
-		if err := runList(arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Output, certsDir); err != nil {
+		if err := runList(arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.Output, certsDir, jobID); err != nil {
 			logger.Error("List failed", "error", err)
 			os.Exit(1)
 		}
 	case "verify":
-		if err := runVerify(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.RulesStdin, os.Stdin, arguments.Streams, arguments.Retries, arguments.Quiet, certsDir); err != nil {
+		if err := runVerify(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.ServerName, arguments.PathFilter, arguments.Filter, arguments.RulesStdin, os.Stdin, arguments.Streams, arguments.Retries, arguments.Quiet, certsDir, jobID); err != nil {
 			logger.Error("Verify failed", "error", err)
 			os.Exit(1)
 		}

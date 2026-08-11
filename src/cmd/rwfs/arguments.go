@@ -18,9 +18,10 @@ type Arguments struct {
 	Filter     string
 	Debug      bool
 	Quiet      bool
-	Streams    int // verify only
-	Retries    int // verify only
+	Streams    int  // verify only
+	Retries    int  // verify only
 	RulesStdin bool // verify only
+	JobID      string
 
 	listPositional string
 	bwfsTarget     string
@@ -52,6 +53,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	listCmd.Flags().StringVar(&args.Filter, "filter", "", "Filter by text in file path")
 	listCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
 	listCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Suppress console logging")
+	listCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to bwfs as job-id metadata")
 
 	verifyCmd := &cobra.Command{
 		Use:   "verify [[server_name:]path] <bwfs_host:port>",
@@ -73,6 +75,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	verifyCmd.Flags().IntVar(&args.Streams, "streams", 4, "Number of concurrent verification workers")
 	verifyCmd.Flags().IntVar(&args.Retries, "retries", 3, "Max retry attempts per file on stream error")
 	verifyCmd.Flags().BoolVar(&args.RulesStdin, "rules-stdin", false, "Read {\"rules\":[{host,path,include}]} from stdin and verify only matching files")
+	verifyCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to bwfs as job-id metadata")
 
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(verifyCmd)

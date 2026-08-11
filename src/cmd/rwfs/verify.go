@@ -15,6 +15,7 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/checksum"
 	"github.com/alex-sviridov/miniprotector/common/connection"
+	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"lukechampine.com/blake3"
 )
 
@@ -46,13 +47,44 @@ type notFoundRule struct {
 	Path string
 }
 
+// parseRulesStdin reads and validates the --rules-stdin payload.
+//
+// An empty rule set is rejected rather than accepted as a no-op: it would
+// select zero rows and so report success without having verified anything,
+// and a one-shot caller (agent's restore task) would record that vacuous
+// success as permanently done. agent skips a rules-less policy before it
+// ever gets here (cmd/agent/restore.go); this is the belt-and-suspenders
+// half of the same guarantee, for any other caller.
+func parseRulesStdin(stdin io.Reader) ([]RestoreRule, error) {
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		return nil, fmt.Errorf("read rules from stdin: %w", err)
+	}
+	var payload rulesStdinPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("parse rules from stdin: %w", err)
+	}
+	if len(payload.Rules) == 0 {
+		return nil, fmt.Errorf("--rules-stdin requires at least one rule")
+	}
+	return payload.Rules, nil
+}
+
 // applyRulesStdin resolves rules against rows (a ListFiles result) using
 // resolveRestoreFile (rules.go), returning the rows that are actually
 // selected for verification and any file-level rule that matched nothing.
+//
+// rows must be the UNFILTERED ListFiles result. The type/size filter (only
+// regular, non-empty files can be chunk-verified) is applied here, when
+// building selected -- deliberately not before the not-found scan, so that a
+// real but zero-byte backed-up file named by a file-level rule is found (and
+// simply not verified) rather than misreported as missing from this store.
 func applyRulesStdin(rows []*pb.FileRow, rules []RestoreRule) (selected []*pb.FileRow, notFound []notFoundRule) {
 	for _, row := range rows {
-		if row.Type == "f" && row.Size > 0 && resolveRestoreFile(rules, row.Source, row.Path) {
-			selected = append(selected, row)
+		if resolveRestoreFile(rules, row.Source, row.Path) {
+			if row.Type == "f" && row.Size > 0 {
+				selected = append(selected, row)
+			}
 		}
 	}
 	for _, r := range rules {
@@ -73,15 +105,34 @@ func applyRulesStdin(rows []*pb.FileRow, rules []RestoreRule) (selected []*pb.Fi
 	return selected, notFound
 }
 
-func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilter, filter string, rulesStdin bool, stdin io.Reader, streams, retries int, quiet bool, certsDir string) error {
+// runVerify verifies files on a remote bwfs store. jobID rides both the
+// ListFiles and the per-file RestoreFile RPCs as outgoing job-id metadata,
+// so bwfs's logs for this run correlate with this process's own log -- the
+// same convention brfs and policyclient already follow.
+func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilter, filter string, rulesStdin bool, stdin io.Reader, streams, retries int, quiet bool, certsDir, jobID string) error {
+	// Read and validate the rule set before dialing: it's an argument-shaped
+	// error, and ListFiles below is unscoped (see docs/components/rwfs.md),
+	// so there's no reason to pay for it only to reject the rules after.
+	var rules []RestoreRule
+	if rulesStdin {
+		parsed, err := parseRulesStdin(stdin)
+		if err != nil {
+			return err
+		}
+		rules = parsed
+	}
+
 	conn, err := connection.Connect(host, port, 5, certsDir)
 	if err != nil {
 		return fmt.Errorf("connect to bwfs: %w", err)
 	}
 	defer conn.Close()
 
+	// callCtx carries the job-id metadata every RPC below inherits.
+	callCtx := jobid.Outgoing(context.Background(), jobID)
+
 	listClient := pb.NewListServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(callCtx, 30*time.Second)
 	resp, err := listClient.ListFiles(ctx, &pb.ListRequest{
 		ServerName: serverName,
 		Path:       pathFilter,
@@ -93,23 +144,19 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 	}
 
 	var rows []*pb.FileRow
-	for _, r := range resp.Rows {
-		if r.Type == "f" && r.Size > 0 {
-			rows = append(rows, r)
-		}
-	}
-
 	var notFound []notFoundRule
 	if rulesStdin {
-		data, err := io.ReadAll(stdin)
-		if err != nil {
-			return fmt.Errorf("read rules from stdin: %w", err)
+		// The unfiltered resp.Rows go in: applyRulesStdin does the
+		// type/size filtering itself, but only for the rows it selects for
+		// verification, so a zero-byte file is still seen by its
+		// not-found scan.
+		rows, notFound = applyRulesStdin(resp.Rows, rules)
+	} else {
+		for _, r := range resp.Rows {
+			if r.Type == "f" && r.Size > 0 {
+				rows = append(rows, r)
+			}
 		}
-		var payload rulesStdinPayload
-		if err := json.Unmarshal(data, &payload); err != nil {
-			return fmt.Errorf("parse rules from stdin: %w", err)
-		}
-		rows, notFound = applyRulesStdin(rows, payload.Rules)
 	}
 
 	if len(rows) == 0 && len(notFound) == 0 {
@@ -132,7 +179,7 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 		go func() {
 			defer wg.Done()
 			for row := range workCh {
-				resultCh <- verifyFileWithRetry(context.Background(), logger, restoreClient, row, retries)
+				resultCh <- verifyFileWithRetry(callCtx, logger, restoreClient, row, retries)
 			}
 		}()
 	}
