@@ -63,6 +63,22 @@ func TestRestoreTasks_NoDestinationsSkipsWithNoTask(t *testing.T) {
 	assert.Empty(t, tasks)
 }
 
+// A rules-less restore policy must contribute no task: `rwfs verify
+// --rules-stdin` with zero rules selects zero files, so it would report
+// success without verifying anything, and this one-shot task would record
+// that as permanently done.
+func TestRestoreTasks_NoRulesSkipsWithNoTask(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "policies-cache.json")
+	writeCachedPoliciesJSON(t, cachePath, []cachedPolicy{
+		{Name: "rules-less", Type: "restore", Destinations: []string{"bwfs-1:8080"}},
+	})
+
+	tasks, ok := restoreTasks(cachePath, testLogger())
+	require.True(t, ok)
+	assert.Empty(t, tasks)
+}
+
 func TestRestoreTasks_DisabledPolicySkipped(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "policies-cache.json")

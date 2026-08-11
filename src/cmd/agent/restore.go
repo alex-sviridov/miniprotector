@@ -58,6 +58,15 @@ type rulesStdinPayload struct {
 // checkins yet, or storage_policy_id is dangling) contributes no task --
 // rather than exec'ing rwfs verify against an empty target, which would
 // fail loudly anyway but with a less useful error than simply not trying.
+//
+// A policy whose Rules is empty contributes no task either: agent doesn't
+// trust the cache blindly. policy-server rejects a rules-less restore
+// policy at write time, but a cache file hand-edited or left over from an
+// older schema could still carry one, and `rwfs verify --rules-stdin` with
+// zero rules would select zero files and "succeed" -- which this one-shot
+// task would then record as permanently done without having verified
+// anything. (rwfs rejects that payload itself too; see its parseRulesStdin.)
+//
 // Each skip is logged with the policy name. A disabled policy is skipped
 // the same way backup/storage policies already are.
 func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool) {
@@ -76,6 +85,10 @@ func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool
 		}
 		if len(p.Destinations) == 0 {
 			logger.Error("restore policy has no resolved destination, skipping", "policy", restoreTaskID(p.Name))
+			continue
+		}
+		if len(p.Rules) == 0 {
+			logger.Error("restore policy has no rules, skipping", "policy", restoreTaskID(p.Name))
 			continue
 		}
 
