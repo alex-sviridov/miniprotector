@@ -13,8 +13,8 @@ func TestParsePolicyFile_RestorePolicyParsesAllFields(t *testing.T) {
 	path := writePolicyFile(t, dir, "web01-emergency.json", `{
 		"metadata": {"name": "web01-emergency"},
 		"client_filters": {"hostnames": ["web-01"]},
-		"source_store": "bwfs-east.internal:8080",
-		"config": {"files": ["/var/www/index.html"]}
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
 	}`)
 
 	got, err := parsePolicyFile(path, "restore")
@@ -24,17 +24,31 @@ func TestParsePolicyFile_RestorePolicyParsesAllFields(t *testing.T) {
 	assert.Equal(t, "web01-emergency", p.Metadata.Name)
 	assert.NotEmpty(t, p.Metadata.ID)
 	assert.Equal(t, []string{"web-01"}, p.ClientFilters.Hostnames)
-	assert.Equal(t, "bwfs-east.internal:8080", p.SourceStore)
-	assert.JSONEq(t, `{"files": ["/var/www/index.html"]}`, string(p.Config))
+	assert.Equal(t, "sp-1", p.StoragePolicyID)
+	assert.Equal(t, []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}}, p.Rules)
 	assert.Equal(t, "restore", p.Kind())
 	assert.Equal(t, path, p.SourcePath)
+}
+
+func TestParsePolicyFile_RestorePolicyRuleHostAgnosticWhenNull(t *testing.T) {
+	dir := t.TempDir()
+	path := writePolicyFile(t, dir, "folder.json", `{
+		"metadata": {"name": "folder"},
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": null, "path": "/var/log", "include": true}]
+	}`)
+
+	got, err := parsePolicyFile(path, "restore")
+	require.NoError(t, err)
+	p := got.(*RestorePolicy)
+	assert.Equal(t, "", p.Rules[0].Host, "a JSON null host decodes to the host-agnostic empty string")
 }
 
 func TestParsePolicyFile_RestoreAndBackupSameBasenameYieldDifferentIDs(t *testing.T) {
 	dir := t.TempDir()
 	pathBackup := writePolicyFile(t, filepath.Join(dir, "backup"), "nightly.json", `{"metadata": {"name": "nightly"}, "storage_policy_id": "sp-1"}`)
 	pathRestore := writePolicyFile(t, filepath.Join(dir, "restore"), "nightly.json", `{
-		"metadata": {"name": "nightly"}, "source_store": "bwfs:8080", "config": {}
+		"metadata": {"name": "nightly"}, "storage_policy_id": "sp-1", "rules": [{"path": "/x", "include": true}]
 	}`)
 
 	pBackup, err := parsePolicyFile(pathBackup, "backup")
@@ -47,61 +61,52 @@ func TestParsePolicyFile_RestoreAndBackupSameBasenameYieldDifferentIDs(t *testin
 
 func TestRestorePolicy_ValidateValidPolicyReturnsNil(t *testing.T) {
 	p := &RestorePolicy{
-		PolicyBase:  PolicyBase{Metadata: Metadata{Name: "ok"}},
-		SourceStore: "bwfs:8080",
-		Config:      []byte(`{"files": []}`),
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "ok"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/x", Include: true}},
 	}
 	assert.NoError(t, p.Validate())
 }
 
 func TestRestorePolicy_ValidateMissingNameFails(t *testing.T) {
-	p := &RestorePolicy{SourceStore: "bwfs:8080", Config: []byte(`{}`)}
+	p := &RestorePolicy{StoragePolicyID: "sp-1", Rules: []RestoreRule{{Path: "/x", Include: true}}}
 	assert.Error(t, p.Validate())
 }
 
-func TestRestorePolicy_ValidateEmptySourceStoreFails(t *testing.T) {
+func TestRestorePolicy_ValidateEmptyStoragePolicyIDFails(t *testing.T) {
 	p := &RestorePolicy{
 		PolicyBase: PolicyBase{Metadata: Metadata{Name: "x"}},
-		Config:     []byte(`{}`),
+		Rules:      []RestoreRule{{Path: "/x", Include: true}},
 	}
 	assert.Error(t, p.Validate())
 }
 
-func TestRestorePolicy_ValidateSourceStoreMissingPortFails(t *testing.T) {
+func TestRestorePolicy_ValidateEmptyRulesFails(t *testing.T) {
 	p := &RestorePolicy{
-		PolicyBase:  PolicyBase{Metadata: Metadata{Name: "x"}},
-		SourceStore: "bwfs-no-port",
-		Config:      []byte(`{}`),
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
 	}
 	assert.Error(t, p.Validate())
 }
 
-func TestRestorePolicy_ValidateEmptyConfigFails(t *testing.T) {
+func TestRestorePolicy_ValidateRuleWithEmptyPathFails(t *testing.T) {
 	p := &RestorePolicy{
-		PolicyBase:  PolicyBase{Metadata: Metadata{Name: "x"}},
-		SourceStore: "bwfs:8080",
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "", Include: true}},
 	}
 	assert.Error(t, p.Validate())
 }
 
-func TestRestorePolicy_ValidateMalformedConfigJSONFails(t *testing.T) {
+func TestRestorePolicy_CloneDeepCopiesRules(t *testing.T) {
 	p := &RestorePolicy{
-		PolicyBase:  PolicyBase{Metadata: Metadata{Name: "x"}},
-		SourceStore: "bwfs:8080",
-		Config:      []byte(`not json`),
-	}
-	assert.Error(t, p.Validate())
-}
-
-func TestRestorePolicy_CloneDeepCopiesConfig(t *testing.T) {
-	p := &RestorePolicy{
-		PolicyBase:  PolicyBase{Metadata: Metadata{Name: "x"}},
-		SourceStore: "bwfs:8080",
-		Config:      []byte(`{"a":1}`),
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/a", Include: true}},
 	}
 	cloned := p.Clone().(*RestorePolicy)
-	cloned.Config[2] = 'X'
-	assert.Equal(t, `{"a":1}`, string(p.Config), "mutating the clone's Config must not affect the original")
+	cloned.Rules[0].Path = "/mutated"
+	assert.Equal(t, "/a", p.Rules[0].Path, "mutating the clone's Rules must not affect the original")
 }
 
 func TestRestorePolicy_ToProtoSetsTypeSpecificFields(t *testing.T) {
@@ -111,16 +116,20 @@ func TestRestorePolicy_ToProtoSetsTypeSpecificFields(t *testing.T) {
 			ClientFilters: ClientFilters{Hostnames: []string{"web-01"}},
 			Type:          "restore",
 		},
-		SourceStore: "bwfs:8080",
-		Config:      []byte(`{"files":[]}`),
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
 	}
 
 	pp := p.ToProto(true)
 
 	assert.Equal(t, "r1", pp.GetId())
 	assert.Equal(t, "restore", pp.GetType())
-	assert.Equal(t, "bwfs:8080", pp.GetSourceStore())
-	assert.JSONEq(t, `{"files":[]}`, pp.GetConfig())
+	assert.Equal(t, "sp-1", pp.GetStoragePolicyId())
+	require.Len(t, pp.GetRules(), 1)
+	assert.Equal(t, "web-01", pp.GetRules()[0].GetHost())
+	assert.Equal(t, "/var/www/index.html", pp.GetRules()[0].GetPath())
+	assert.True(t, pp.GetRules()[0].GetInclude())
+	assert.Empty(t, pp.GetDestinations(), "ToProto never resolves destinations itself -- attachDestination does")
 	assert.Equal(t, []string{"web-01"}, pp.GetClientFilters().GetHostnames())
 }
 
@@ -130,8 +139,8 @@ func TestRestorePolicy_ToProtoOmitsClientFiltersWhenNotRequested(t *testing.T) {
 			Metadata:      Metadata{ID: "r1", Name: "x"},
 			ClientFilters: ClientFilters{Hostnames: []string{"web-01"}},
 		},
-		SourceStore: "bwfs:8080",
-		Config:      []byte(`{}`),
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/x", Include: true}},
 	}
 
 	pp := p.ToProto(false)

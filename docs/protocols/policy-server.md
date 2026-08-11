@@ -157,16 +157,11 @@ certificate — the same requirement every server except `issuer`'s own listener
   storage policy (removed -- see
   [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md));
   targeting a node is `client_filters` only, identical to a backup policy.
-- A `"restore"`-typed policy carries `client_filters` (targets the node that will execute the
-  restore), `source_store` (required, a syntactically valid `host:port` naming the source `bwfs`),
-  and `config` (required, well-formed JSON -- the restore spec, format defined by a future design;
-  the same field a `"storage"` policy uses, not a separate one). It has no `object_filters`, `rpo`,
-  `backup_window`, `storage_policy_id`, or `port` -- a `CreatePolicyRequest` of this type setting any
-  of those is rejected with `INVALID_ARGUMENT`. Unlike every other type, a `"restore"` policy is
-  **never updatable**: `UpdatePolicyRequest` has no `source_store` field, and `UpdatePolicy` rejects
-  any request whose target policy is type `"restore"` with `INVALID_ARGUMENT`, regardless of which
-  fields the request sets. See
-  [Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md).
+- A `"restore"` policy has `storage_policy_id` (required, references a `"storage"`-typed policy's `id` —
+  the same field and live-resolution mechanism a `"backup"` policy already uses; its `destinations` is
+  computed the identical way) and `rules` (required, at least one entry — `{host, path, include}`, where
+  an empty `host` means the rule applies across every source host). It has no `object_filters`, `rpo`,
+  `backup_window`, `port`, or `config`.
 - `disabled_at` is generic across every policy type -- unset (zero/nil) means never disabled. Once it
   passes, `GetPolicies` stops returning that policy to any node, checked live against the current
   time on every call (not cached at load/reload time) -- no `.changed`-touch or restart needed for a

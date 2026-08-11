@@ -3,31 +3,44 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// RestorePolicy is the "restore" policy type: a one-shot directive telling a
-// specific mesh node (via PolicyBase's ClientFilters, the same targeting
-// mechanism BackupPolicy/StoragePolicy already use) to restore files from a
-// source bwfs. Unlike BackupPolicy/StoragePolicy it has no recurring-
+// RestoreRule is one restore-cart selection rule -- {host, path, include}
+// mirroring web/src/utils/restoreRules.js's rule shape exactly, so the
+// frontend can send its cart.rules through with no reshaping. Host == ""
+// means host-agnostic (a folder rule that applies across every source
+// host, matching restoreRules.js's `host: null` convention -- a JSON null
+// decodes to Go's zero-value "" automatically); a non-empty Host scopes the
+// rule to exactly that source. policy-server never resolves these against
+// any real file listing -- resolution happens at verify time, in rwfs. See
+// docs/superpowers/specs/2026-08-10-restore-policy-verification-design.md.
+type RestoreRule struct {
+	Host    string `json:"host"`
+	Path    string `json:"path"`
+	Include bool   `json:"include"`
+}
+
+// RestorePolicy is the "restore" policy type: a one-shot directive telling
+// a specific mesh node (via PolicyBase's ClientFilters, the same targeting
+// mechanism BackupPolicy/StoragePolicy already use) to restore files from
+// a source bwfs. Unlike BackupPolicy/StoragePolicy it has no recurring-
 // schedule concept (no rpo/backup_window) -- it's meant to be picked up
-// once by a future agent-side consumer (not yet built), and is never
-// updatable via UpdatePolicy (see buildPolicyForUpdate in write.go). It
-// reuses Config, the same field StoragePolicy already carries, for its
-// restore spec rather than introducing a second opaque-JSON field -- same
-// load-time-well-formed-only semantics, contents interpreted by neither
-// type. See docs/superpowers/specs/2026-08-09-restore-policy-type-design.md.
+// once by agent's restoreTasks (cmd/agent/restore.go), and is never
+// updatable via UpdatePolicy (see buildPolicyForUpdate in write.go).
+//
+// StoragePolicyID reuses BackupPolicy's exact mechanism (references a
+// "storage"-typed Policy.id; the dialable address is resolved live from its
+// checkins, see server.go's attachDestination) rather than a raw
+// source_store host:port baked in at creation time -- avoiding the
+// staleness a pre-resolved address would have if the storage node's
+// checked-in address changes before this one-shot policy is ever executed.
 type RestorePolicy struct {
 	PolicyBase
-	// host:port of the source bwfs to restore from.
-	SourceStore string `json:"source_store"`
-	// Opaque JSON text describing what to restore (file list etc.) -- format
-	// left for a future design. policy-server never interprets it beyond
-	// checking well-formedness, the same way StoragePolicy.Config is opaque.
-	Config json.RawMessage `json:"config"`
+	StoragePolicyID string        `json:"storage_policy_id"`
+	Rules           []RestoreRule `json:"rules"`
 }
 
 func parseRestorePolicyJSON(data []byte) (Policy, error) {
@@ -42,50 +55,59 @@ func parseRestorePolicyJSON(data []byte) (Policy, error) {
 // independent of where it came from (a file on disk or a CreatePolicy RPC
 // request): the fields validateCommon checks (including client_filters,
 // which is how a restore policy targets the node that executes it),
-// source_store must be a non-empty, syntactically valid "host:port", and
-// config must be non-empty, well-formed JSON -- its contents are never
-// interpreted further.
+// storage_policy_id must be non-empty (existence against a live "storage"
+// policy is checked separately in CreatePolicy, where a current cache is
+// in scope -- the same split BackupPolicy.Validate already documents), and
+// rules must contain at least one entry, each with a non-empty path.
 func (p *RestorePolicy) Validate() error {
 	if err := validateCommon(p.PolicyBase); err != nil {
 		return err
 	}
-	if _, _, err := net.SplitHostPort(p.SourceStore); err != nil {
-		return fmt.Errorf("source_store must be a valid host:port: %w", err)
+	if p.StoragePolicyID == "" {
+		return fmt.Errorf("storage_policy_id is required")
 	}
-	if len(p.Config) == 0 {
-		return fmt.Errorf("config is required")
+	if len(p.Rules) == 0 {
+		return fmt.Errorf("rules must contain at least one entry")
 	}
-	if !json.Valid(p.Config) {
-		return fmt.Errorf("config must be well-formed JSON")
+	for i, r := range p.Rules {
+		if r.Path == "" {
+			return fmt.Errorf("rules[%d]: path is required", i)
+		}
 	}
 	return nil
 }
 
-// Clone deep-copies every reference-typed field so mutating the returned
-// value never affects the cached original.
+// Clone deep-copies Rules so mutating the returned value never affects the
+// cached original.
 func (p *RestorePolicy) Clone() Policy {
-	config := make(json.RawMessage, len(p.Config))
-	copy(config, p.Config)
+	rules := make([]RestoreRule, len(p.Rules))
+	copy(rules, p.Rules)
 	return &RestorePolicy{
-		PolicyBase:  p.PolicyBase.clone(),
-		SourceStore: p.SourceStore,
-		Config:      config,
+		PolicyBase:      p.PolicyBase.clone(),
+		StoragePolicyID: p.StoragePolicyID,
+		Rules:           rules,
 	}
 }
 
 // ToProto converts to the wire representation GetPolicies/ListPolicies/
 // CreatePolicy return (never UpdatePolicy -- restore policies are not
-// updatable). client_filters is only populated when includeClientFilters is
-// true, matching BackupPolicy.ToProto/StoragePolicy.ToProto.
+// updatable). Destinations is intentionally left unset here -- the caller
+// (server.go's attachDestination) resolves it live from StoragePolicyId's
+// checkins, the same split BackupPolicy.ToProto already uses. client_filters
+// is only populated when includeClientFilters is true.
 func (p *RestorePolicy) ToProto(includeClientFilters bool) *pb.Policy {
+	rules := make([]*pb.RestoreRule, len(p.Rules))
+	for i, r := range p.Rules {
+		rules[i] = &pb.RestoreRule{Host: r.Host, Path: r.Path, Include: r.Include}
+	}
 	pp := &pb.Policy{
-		Id:          p.Metadata.ID,
-		Name:        p.Metadata.Name,
-		CreatedAt:   timestamppb.New(p.Metadata.CreatedAt),
-		UpdatedAt:   timestamppb.New(p.Metadata.UpdatedAt),
-		Type:        p.Type,
-		SourceStore: p.SourceStore,
-		Config:      string(p.Config),
+		Id:              p.Metadata.ID,
+		Name:            p.Metadata.Name,
+		CreatedAt:       timestamppb.New(p.Metadata.CreatedAt),
+		UpdatedAt:       timestamppb.New(p.Metadata.UpdatedAt),
+		Type:            p.Type,
+		StoragePolicyId: p.StoragePolicyID,
+		Rules:           rules,
 	}
 	if !p.Metadata.DisabledAt.IsZero() {
 		pp.DisabledAt = timestamppb.New(p.Metadata.DisabledAt)
