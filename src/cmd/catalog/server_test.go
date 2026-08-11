@@ -456,6 +456,26 @@ func TestListDirectoryFacets_ReturnsGroupedCounts(t *testing.T) {
 	assert.Equal(t, int64(1), byName["/var/www"])
 }
 
+func TestListStoreFacets_ReturnsGroupedCounts(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b", JobID: "job-1", ObjectID: "obj-3", StoreCreatedAt: time.Now()},
+	}))
+
+	resp, err := srv.ListStoreFacets(context.Background(), &pb.ListFacetsRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetFacets(), 2)
+
+	byName := map[string]int64{}
+	for _, f := range resp.GetFacets() {
+		byName[f.GetName()] = f.GetCount()
+	}
+	assert.Equal(t, int64(2), byName["bwfs-a"])
+	assert.Equal(t, int64(1), byName["bwfs-b"])
+}
+
 func TestListClientFacets_NarrowedByParentDirectories(t *testing.T) {
 	srv, store := newTestCatalogServer(t)
 	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{

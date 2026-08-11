@@ -213,6 +213,21 @@ func (s *catalogServer) ListDirectoryFacets(ctx context.Context, req *pb.ListFac
 	return &pb.ListFacetsResponse{Facets: toProtoFacets(facets)}, nil
 }
 
+func (s *catalogServer) ListStoreFacets(ctx context.Context, req *pb.ListFacetsRequest) (*pb.ListFacetsResponse, error) {
+	facets, err := s.store.ListStoreFacets(ctx, catalogstore.FacetFilter{
+		ReceivedAfter:  unixOrZero(req.GetReceivedAfter()),
+		ReceivedBefore: unixOrZero(req.GetReceivedBefore()),
+		Pattern:        req.GetPattern(),
+		SourceHosts:    req.GetSourceHosts(),
+		JobNames:       req.GetJobNames(),
+	})
+	if err != nil {
+		s.logger.Error("ListStoreFacets: query failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "list store facets: %v", err)
+	}
+	return &pb.ListFacetsResponse{Facets: toProtoFacets(facets)}, nil
+}
+
 func toProtoFacets(facets []catalogstore.Facet) []*pb.Facet {
 	out := make([]*pb.Facet, len(facets))
 	for i, f := range facets {

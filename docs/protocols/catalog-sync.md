@@ -13,6 +13,7 @@ service CatalogService {
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListDirectoryFacets(ListFacetsRequest) returns (ListFacetsResponse);
+  rpc ListStoreFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListDirectoryChildren(ListDirectoryChildrenRequest) returns (ListDirectoryChildrenResponse);
 }
 ```
@@ -132,11 +133,11 @@ message Entry {
   *immediate* containing directory only (not a recursive subtree/prefix match); empty applies no
   filter, additive to every other active filter.
 
-## ListClientFacets / ListJobFacets / ListDirectoryFacets
+## ListClientFacets / ListJobFacets / ListDirectoryFacets / ListStoreFacets
 
-Three read-only aggregate RPCs backing the web catalog view's faceted filter panels — for
+Four read-only aggregate RPCs backing the web catalog view's faceted filter panels — for
 [api-server](../components/api-server.md)'s `GET /api/v1/catalog/clients`,
-`GET /api/v1/catalog/jobs`, and `GET /api/v1/catalog/directories`. All three share one
+`GET /api/v1/catalog/jobs`, `GET /api/v1/catalog/directories`, and `GET /api/v1/catalog/stores`. All four share one
 request/response shape:
 
 ```protobuf
@@ -162,10 +163,10 @@ message ListFacetsResponse {
 
 `ListClientFacets` groups by `source_host`; `ListJobFacets` groups by the policy name embedded in
 `job_id` (see [Identity](#identity)'s `job_id` convention); `ListDirectoryFacets` groups by
-`parent_directory`. Each RPC applies every *other* dimension's filter fields from the request but
+`parent_directory`; `ListStoreFacets` groups by `store_host` (the bwfs node that sent the batch). Each RPC applies every *other* dimension's filter fields from the request but
 ignores its own (e.g. `ListDirectoryFacets` applies `source_hosts`/`job_names` but ignores
-`parent_directories`): a facet list is never narrowed by its own current selection, so a caller can
-implement cross-filtering (selecting in one dimension narrows the other two) by passing every other
+`parent_directories`; `ListStoreFacets` applies `source_hosts`/`job_names` but has no own-dimension filter to ignore since `ListFacetsRequest` carries no `store_hosts` field): a facet list is never narrowed by its own current selection, so a caller can
+implement cross-filtering (selecting in one dimension narrows the other dimensions) by passing every other
 dimension's active selection. Rows with an empty grouping key (an undecoded `source_host`/
 `parent_directory`, or a `job_id` that isn't `backup:`-prefixed) are dropped rather than surfaced as
 a blank-named facet.
@@ -226,4 +227,4 @@ message ListDirectoryChildrenResponse {
 - [api-server](../components/api-server.md) — calls `ListEntries`, the only intended caller today
 - [REST API v1](../api/rest-v1.md) — `GET /api/v1/catalog` (`ListEntries`), `GET /api/v1/catalog/clients`
   (`ListClientFacets`), `GET /api/v1/catalog/jobs` (`ListJobFacets`), `GET /api/v1/catalog/directories`
-  (`ListDirectoryFacets`), and `GET /api/v1/catalog/directories/children` (`ListDirectoryChildren`)
+  (`ListDirectoryFacets`), `GET /api/v1/catalog/stores` (`ListStoreFacets`), and `GET /api/v1/catalog/directories/children` (`ListDirectoryChildren`)
