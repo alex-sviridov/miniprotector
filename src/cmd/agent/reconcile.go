@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -25,7 +26,7 @@ var (
 // certclient/policyclient/brfs. ctx is honored via exec.CommandContext so
 // a cancelled context (agent shutdown) terminates an in-flight process
 // rather than orphaning it.
-type runner func(ctx context.Context, binary string, args []string) error
+type runner func(ctx context.Context, binary string, args []string, stdin []byte) error
 
 // resolveExecPath resolves binary to a colocated sibling of this agent's
 // own executable when one exists there (bare name, no path separator),
@@ -53,8 +54,12 @@ func resolveExecPath(binary string) string {
 
 // realExec runs binary with args under ctx, resolving binary via
 // resolveExecPath first.
-func realExec(ctx context.Context, binary string, args []string) error {
-	return exec.CommandContext(ctx, resolveExecPath(binary), args...).Run()
+func realExec(ctx context.Context, binary string, args []string, stdin []byte) error {
+	cmd := exec.CommandContext(ctx, resolveExecPath(binary), args...)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	return cmd.Run()
 }
 
 // isDue reports whether p should run now, given its last recorded state.
@@ -325,7 +330,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 					defer rs.clearInFlight(p.ID)
 					logExecStart(rs.logger, p)
 					start := time.Now()
-					attemptErr := execute(ctx, p.Binary, p.Args)
+					attemptErr := execute(ctx, p.Binary, p.Args, p.Stdin)
 					logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 					rs.recordOutcome(p.ID, attemptErr, time.Now())
 					if attemptErr == nil && onSuccess != nil {
@@ -337,7 +342,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 
 			logExecStart(rs.logger, p)
 			start := time.Now()
-			attemptErr := execute(ctx, p.Binary, p.Args)
+			attemptErr := execute(ctx, p.Binary, p.Args, p.Stdin)
 			logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 			rs.recordOutcome(p.ID, attemptErr, now)
 			if attemptErr == nil && onSuccess != nil {

@@ -42,7 +42,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 
 	var capturedBinary string
 	var capturedArgs []string
-	fr := func(ctx context.Context, binary string, args []string) error {
+	fr := func(ctx context.Context, binary string, args []string, stdin []byte) error {
 		capturedBinary = binary
 		capturedArgs = args
 		return nil

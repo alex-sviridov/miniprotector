@@ -25,6 +25,11 @@ type Policy struct {
 	Due        func(PolicyState, time.Time) bool
 	NextRun    func(PolicyState, time.Time) time.Time
 	Background bool
+	// Stdin, when non-nil, is piped to the exec'd binary's standard input --
+	// used by restore.go's one-shot verification tasks to pass a policy's
+	// rules to `rwfs verify --rules-stdin`. Every other policy/task leaves
+	// this nil.
+	Stdin []byte
 }
 
 // policies returns agent's three embedded policies, their intervals read

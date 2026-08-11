@@ -30,15 +30,17 @@ func testLoggerWithBuffer() (*slog.Logger, *bytes.Buffer) {
 }
 
 type fakeRunner struct {
-	mu    sync.Mutex
-	calls int
-	failN int // number of subsequent calls to fail before succeeding
+	mu        sync.Mutex
+	calls     int
+	failN     int
+	lastStdin []byte
 }
 
-func (f *fakeRunner) run(ctx context.Context, binary string, args []string) error {
+func (f *fakeRunner) run(ctx context.Context, binary string, args []string, stdin []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	f.lastStdin = stdin
 	if f.failN > 0 {
 		f.failN--
 		return errors.New("simulated failure")
@@ -199,7 +201,7 @@ func TestRealExec_ResolvesBinaryColocatedWithOwnExecutable(t *testing.T) {
 	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
 	defer os.Remove(scriptPath)
 
-	err = realExec(context.Background(), name, nil)
+	err = realExec(context.Background(), name, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -208,13 +210,13 @@ func TestRealExec_ResolvesBinaryColocatedWithOwnExecutable(t *testing.T) {
 // next to the test binary's own directory — a regression guard for local
 // and dev usage where certclient genuinely is on $PATH.
 func TestRealExec_FallsBackToPathWhenNotColocated(t *testing.T) {
-	err := realExec(context.Background(), "true", nil)
+	err := realExec(context.Background(), "true", nil, nil)
 	assert.NoError(t, err)
 }
 
 func TestRun_BackgroundPolicyDoesNotBlockSyncPolicyInSameTick(t *testing.T) {
 	release := make(chan struct{})
-	blockingRunner := func(ctx context.Context, binary string, args []string) error {
+	blockingRunner := func(ctx context.Context, binary string, args []string, stdin []byte) error {
 		if binary == "slow-backup" {
 			<-release
 		}
@@ -251,7 +253,7 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{}, 3)
 
-	blockingRunner := func(ctx context.Context, binary string, args []string) error {
+	blockingRunner := func(ctx context.Context, binary string, args []string, stdin []byte) error {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxObserved {
@@ -303,7 +305,7 @@ func TestRun_SamePolicyNotRedispatchedWhileStillInFlight(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)
 
-	blockingRunner := func(ctx context.Context, binary string, args []string) error {
+	blockingRunner := func(ctx context.Context, binary string, args []string, stdin []byte) error {
 		mu.Lock()
 		dispatchCount++
 		mu.Unlock()
@@ -338,7 +340,7 @@ func TestRun_SamePolicyNotRedispatchedWhileStillInFlight(t *testing.T) {
 
 func TestRun_BackgroundExecReceivesCancelledContextOnShutdown(t *testing.T) {
 	ctxErrCh := make(chan error, 1)
-	blockingRunner := func(ctx context.Context, binary string, args []string) error {
+	blockingRunner := func(ctx context.Context, binary string, args []string, stdin []byte) error {
 		<-ctx.Done()
 		ctxErrCh <- ctx.Err()
 		return ctx.Err()
@@ -372,7 +374,7 @@ func TestRealExec_ContextCancellationKillsProcess(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- realExec(ctx, "sleep", []string{"5"})
+		done <- realExec(ctx, "sleep", []string{"5"}, nil)
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -521,7 +523,7 @@ func TestRun_PruneRaceResurrectedEntryPrunedAgainNextTick(t *testing.T) {
 
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)
-	blockingRunner := func(ctx context.Context, binary string, args []string) error {
+	blockingRunner := func(ctx context.Context, binary string, args []string, stdin []byte) error {
 		select {
 		case entered <- struct{}{}:
 		default:
@@ -594,6 +596,23 @@ func TestRecordOutcome_LastErrorReflectsMostRecentFailure(t *testing.T) {
 	rs.recordOutcome("p", errors.New("second failure"), time.Now())
 
 	assert.Equal(t, "second failure", rs.cache["p"].LastError)
+}
+
+func TestRun_StdinIsPassedThroughToRunner(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "agent-state.json")
+	fr := &fakeRunner{}
+	p := Policy{ID: "restore:x", Binary: "rwfs", Args: []string{"verify"}, Stdin: []byte(`{"rules":[]}`)}
+	policiesFunc := func() ([]Policy, bool) { return []Policy{p}, true }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	_ = run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, policiesFunc, 2, nil, nil, nil)
+
+	assert.Equal(t, []byte(`{"rules":[]}`), fr.lastStdin)
 }
 
 func TestLogExecOutcome_SuccessLogsStartAndCompletionWithJobID(t *testing.T) {
