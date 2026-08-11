@@ -22,8 +22,9 @@ func jobNamesWhere(q *gorm.DB, names []string) *gorm.DB {
 	return q.Where(strings.Join(conds, " OR "), args...)
 }
 
-// FacetFilter narrows a ListClientFacets/ListJobFacets/ListDirectoryFacets
-// aggregate query. A zero-valued filter matches every entry, no date bound.
+// FacetFilter narrows a ListClientFacets/ListJobFacets/ListDirectoryFacets/
+// ListStoreFacets aggregate query. A zero-valued filter matches every entry,
+// no date bound.
 type FacetFilter struct {
 	ReceivedAfter     time.Time
 	ReceivedBefore    time.Time
@@ -202,6 +203,42 @@ func (s *Store) ListDirectoryFacets(ctx context.Context, filter FacetFilter) ([]
 	facetRows := make([]facetRow, len(rows))
 	for i, r := range rows {
 		facetRows[i] = facetRow{Name: r.ParentDirectory, ReceivedAt: r.ReceivedAt}
+	}
+	return aggregateFacets(facetRows), nil
+}
+
+// ListStoreFacets groups entries matching filter by store_node (the bwfs
+// node that sent the batch -- exposed to API callers as "store_host"),
+// dropping rows where it's empty (shouldn't happen -- StoreNode is part of
+// EntryRecord's unique key -- but mirrors ListClientFacets/
+// ListDirectoryFacets's defensive empty-name drop for consistency). Both
+// SourceHosts and JobNames narrow it, the same "apply every other
+// dimension" rule the other three facet queries already follow; there is
+// no "store_hosts" field on FacetFilter to ignore for its own dimension,
+// unlike the other three.
+func (s *Store) ListStoreFacets(ctx context.Context, filter FacetFilter) ([]Facet, error) {
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).
+		Select("store_node, received_at").
+		Where("store_node != ''")
+	q = filter.applyCommon(q)
+	if len(filter.SourceHosts) > 0 {
+		q = q.Where("source_host IN ?", filter.SourceHosts)
+	}
+	if len(filter.JobNames) > 0 {
+		q = jobNamesWhere(q, filter.JobNames)
+	}
+
+	var rows []struct {
+		StoreNode  string
+		ReceivedAt time.Time
+	}
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	facetRows := make([]facetRow, len(rows))
+	for i, r := range rows {
+		facetRows[i] = facetRow{Name: r.StoreNode, ReceivedAt: r.ReceivedAt}
 	}
 	return aggregateFacets(facetRows), nil
 }

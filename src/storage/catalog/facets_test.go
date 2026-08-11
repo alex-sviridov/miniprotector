@@ -322,3 +322,47 @@ func TestAggregateFacets_DropsEmptyNameRows(t *testing.T) {
 	require.Len(t, facets, 1)
 	assert.Equal(t, "host-a", facets[0].Name)
 }
+
+func TestListStoreFacets_GroupsByStoreNode(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries(t.Context(), []Entry{
+		{StoreNode: "bwfs-1", JobID: "job-1", ObjectID: "o1", SourceHost: "web-01", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-1", JobID: "job-1", ObjectID: "o2", SourceHost: "web-01", ParentDirectory: "/var/www", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-2", JobID: "job-1", ObjectID: "o3", SourceHost: "web-02", ParentDirectory: "/etc", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListStoreFacets(t.Context(), FacetFilter{})
+	require.NoError(t, err)
+	require.Len(t, facets, 2)
+
+	byName := map[string]Facet{}
+	for _, f := range facets {
+		byName[f.Name] = f
+	}
+	assert.Equal(t, int64(2), byName["bwfs-1"].Count)
+	assert.Equal(t, int64(1), byName["bwfs-2"].Count)
+}
+
+func TestListStoreFacets_FiltersBySourceHostsAndPattern(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries(t.Context(), []Entry{
+		{StoreNode: "bwfs-1", JobID: "job-1", ObjectID: "match-me", SourceHost: "web-01", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-2", JobID: "job-1", ObjectID: "no-match", SourceHost: "web-02", StoreCreatedAt: time.Now()},
+	}))
+
+	facets, err := store.ListStoreFacets(t.Context(), FacetFilter{SourceHosts: []string{"web-01"}})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "bwfs-1", facets[0].Name)
+
+	facets, err = store.ListStoreFacets(t.Context(), FacetFilter{Pattern: "match-me"})
+	require.NoError(t, err)
+	require.Len(t, facets, 1)
+	assert.Equal(t, "bwfs-1", facets[0].Name)
+}
