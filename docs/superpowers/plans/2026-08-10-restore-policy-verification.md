@@ -507,87 +507,247 @@ git commit -m "feat: rewrite RestorePolicy for storage_policy_id and typed rules
 
 ### Task 4: `policy-server` — `write.go` cross-type field rejection
 
+**IMPORTANT CORRECTION (found mid-execution, after Task 3 landed):** the original version of this
+task said to modify `server_test.go`. That was wrong — `server_test.go` has no `CreatePolicy` tests
+at all; every `TestCreatePolicy_*`/`TestUpdatePolicy_*`/`TestDeletePolicy_*` test (including the
+pre-existing restore-policy ones using the old `source_store`/`config` schema) lives in a separate
+file, `src/cmd/policy-server/write_test.go`, using its own `newTestWriteServer(t, dir)
+*policyServerServer` and `createTestStoragePolicy(t, srv, hostname string, port int32) string`
+helpers (the latter both creates a real `"storage"` policy and records a checkin for it, so its
+returned id is immediately usable as a resolvable `storage_policy_id`). This correction also
+surfaced a real gap in the original design: since `storage_policy_id` is now a *reference* (unlike
+the old free-form `source_store` string), `CreatePolicy` should reject a restore request whose
+`storage_policy_id` doesn't name an existing `"storage"` policy, the exact same way it already does
+for `"backup"` policies — the original task text never added this. Both are fixed below.
+
 **Files:**
 - Modify: `src/cmd/policy-server/write.go`
-- Modify: `src/cmd/policy-server/server_test.go` (restore-related `CreatePolicy` cases)
+- Modify: `src/cmd/policy-server/write_test.go`
 
 **Interfaces:**
 - Consumes: `RestorePolicy{StoragePolicyID, Rules}` (Task 3), `pb.CreatePolicyRequest.GetRules()`/`.GetStoragePolicyId()` (Task 1).
-- Produces: `buildPolicyForCreate` builds a `*RestorePolicy` from `storage_policy_id`+`rules` instead of `source_store`+`config`.
+- Produces: `buildPolicyForCreate` builds a `*RestorePolicy` from `storage_policy_id`+`rules` instead of `source_store`+`config`; `CreatePolicy` rejects an unresolvable `storage_policy_id` for a restore policy, mirroring its existing backup-policy check.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-In `src/cmd/policy-server/server_test.go`, find the existing restore-policy `CreatePolicy` tests (they currently POST `source_store`/`config`). Add:
+In `src/cmd/policy-server/write_test.go`, delete these two tests outright — their entire premise
+was "setting `source_store` on a non-restore policy is rejected," and `source_store` no longer
+exists as a field to set (equivalent coverage for the new `rules` field is added below):
+- `TestCreatePolicy_BackupTypeWithSourceStoreRejected` (currently ~line 418)
+- `TestCreatePolicy_StorageTypeWithSourceStoreRejected` (currently ~line 435)
+
+Delete this one too — it tested `source_store`'s `host:port` format validation, which has no
+equivalent for a plain reference string like `storage_policy_id`:
+- `TestCreatePolicy_RestoreInvalidSourceStoreFormatReturnsInvalidArgument` (currently ~line 755)
+
+Rewrite these five in place, replacing every `SourceStore`/`Config` use with
+`StoragePolicyId`/`Rules`, and (since `storage_policy_id` is now existence-checked) creating a real
+storage policy first via `createTestStoragePolicy` wherever the test needs `CreatePolicy` to
+actually succeed:
+
+```go
+func TestCreatePolicy_RestorePolicyWritesIntoRestoreDir(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "Web01 Emergency Restore",
+		Type:            "restore",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+	})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.Id)
+	assert.Equal(t, "restore", resp.Type)
+	assert.Equal(t, storageID, resp.StoragePolicyId)
+	require.Len(t, resp.Rules, 1)
+	assert.Equal(t, "/var/www/index.html", resp.Rules[0].Path)
+
+	_, err = os.Stat(filepath.Join(dir, "restore", "web01-emergency-restore.json"))
+	require.NoError(t, err)
+}
+
+func TestCreatePolicy_ResponseIncludesRestoreType(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "quick-restore", Type: "restore", StoragePolicyId: storageID,
+		Rules: []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "restore", resp.Type)
+}
+
+func TestCreatePolicy_RestoreTypeWithBackupFieldsRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+
+	// storage_policy_id is now required for restore, not disqualifying -- rpo
+	// (a genuine backup-only field) is what this test must set instead to
+	// stay meaningful.
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "bad",
+		Type:            "restore",
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+		Rpo:             "24h",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestCreatePolicy_RestoreTypeWithPortRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "bad",
+		Type:            "restore",
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+		Port:            9400,
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestUpdatePolicy_RestoreTypeRejected(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
+	created, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "quick-restore", Type: "restore", StoragePolicyId: storageID,
+		Rules: []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+	require.NoError(t, err)
+
+	_, err = srv.UpdatePolicy(context.Background(), &pb.UpdatePolicyRequest{
+		Id:   created.Id,
+		Name: "renamed",
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+
+	data, readErr := os.ReadFile(filepath.Join(dir, "restore", "quick-restore.json"))
+	require.NoError(t, readErr)
+	var onDisk map[string]any
+	require.NoError(t, json.Unmarshal(data, &onDisk))
+	assert.Equal(t, "quick-restore", onDisk["metadata"].(map[string]any)["name"], "the file must be left untouched when the update is rejected")
+}
+```
+
+Rename this test (its old name embedded the removed field's name) and rewrite its body to omit
+`storage_policy_id` entirely rather than test a since-removed field:
+
+```go
+func TestCreatePolicy_RestoreMissingStoragePolicyIdReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "no-storage-ref", Type: "restore", Rules: []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+```
+(replaces `TestCreatePolicy_RestoreMissingSourceStoreReturnsInvalidArgument`, currently ~line 742)
+
+Add these new tests, covering the new `rules`-field rejection and the new restore existence-check:
 
 ```go
 func TestCreatePolicy_RestoreRejectsConfigField(t *testing.T) {
-	s, cleanup := newTestServer(t)
-	defer cleanup()
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
-	_, err := s.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:            "x",
 		Type:            "restore",
-		StoragePolicyId: "sp-1",
+		StoragePolicyId: storageID,
 		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
 		Config:          `{"a":1}`,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "config")
-}
-
-func TestCreatePolicy_RestoreRequiresRules(t *testing.T) {
-	s, cleanup := newTestServer(t)
-	defer cleanup()
-
-	_, err := s.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:            "x",
-		Type:            "restore",
-		StoragePolicyId: "sp-1",
-	})
-	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "config")
 }
 
 func TestCreatePolicy_StorageRejectsRulesField(t *testing.T) {
-	s, cleanup := newTestServer(t)
-	defer cleanup()
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
 
-	_, err := s.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:   "x",
 		Type:   "storage",
 		Port:   8080,
 		Config: `{"backend":"filesystem","root":"/data"}`,
 		Rules:  []*pb.RestoreRule{{Path: "/x", Include: true}},
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rules")
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "rules")
 }
 
 func TestCreatePolicy_BackupRejectsRulesField(t *testing.T) {
-	s, cleanup := newTestServer(t)
-	defer cleanup()
-	createStoragePolicyForTest(t, s, "sp-1")
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs", 8080)
 
-	_, err := s.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
 		Name:            "x",
 		Type:            "backup",
 		Rpo:             "24h",
 		BackupWindow:    []string{"0 2 * * *"},
-		StoragePolicyId: "sp-1",
+		StoragePolicyId: storageID,
 		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rules")
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "rules")
+}
+
+func TestCreatePolicy_RestoreUnknownStoragePolicyIdReturnsInvalidArgument(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "orphan-restore",
+		Type:            "restore",
+		StoragePolicyId: "does-not-exist",
+		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
+	})
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 ```
 
-If `newTestServer`/`createStoragePolicyForTest` aren't the actual existing helper names in `server_test.go`, use whatever helper the file's existing `TestCreatePolicy_*` tests already use to stand up a server and a prerequisite storage policy — grep the file for the pattern before writing these; don't invent new helpers.
-
-Also update the existing (pre-this-plan) restore-policy `CreatePolicy`/parse tests in this file that still POST `source_store`/`config` for type `"restore"` — change them to `storage_policy_id`/`rules`, mirroring Task 3's `restore_policy_test.go` rewrite.
-
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd src && go test ./cmd/policy-server/... -run TestCreatePolicy_Restore -v` and `-run TestCreatePolicy_.*Rejects`
-Expected: FAIL — `pb.CreatePolicyRequest` has no field `Rules` until Task 1 (already done) but `write.go` still builds `RestorePolicy{SourceStore: ...}` which no longer compiles, or accepts `rules` without rejecting it for storage/backup.
+Run: `cd src && go test ./cmd/policy-server/... -run 'TestCreatePolicy|TestUpdatePolicy_RestoreTypeRejected' -v`
+Expected: FAIL to compile — `write_test.go` still references the removed `SourceStore`/`Config`
+fields on `pb.CreatePolicyRequest` in the tests this step didn't yet touch, and `write.go` itself
+still builds `RestorePolicy{SourceStore: ...}`.
 
 - [ ] **Step 3: Update `write.go`**
 
@@ -666,6 +826,30 @@ policyFieldsGetter to expose.` — with:
 // policyFieldsGetter to expose.
 ```
 
+In `(*policyServerServer).CreatePolicy`, directly after the existing block:
+```go
+	if bp, ok := p.(*BackupPolicy); ok {
+		if sp, found := s.cache.FindByID(bp.StoragePolicyID); !found || sp.Kind() != "storage" {
+			s.logger.Error("CreatePolicy: storage_policy_id does not reference an existing storage policy", "storage_policy_id", bp.StoragePolicyID)
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("storage policy %q not found", bp.StoragePolicyID))
+		}
+	}
+```
+add the identical check for restore (this is the existence-check gap the correction note above
+describes — `storage_policy_id` is now a real reference for restore too, not a free-form string,
+so it deserves the same fail-fast validation `"backup"` already gets):
+```go
+	if rp, ok := p.(*RestorePolicy); ok {
+		if sp, found := s.cache.FindByID(rp.StoragePolicyID); !found || sp.Kind() != "storage" {
+			s.logger.Error("CreatePolicy: storage_policy_id does not reference an existing storage policy", "storage_policy_id", rp.StoragePolicyID)
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("storage policy %q not found", rp.StoragePolicyID))
+		}
+	}
+```
+`UpdatePolicy` needs no equivalent addition — a restore policy can never reach `UpdatePolicy`'s
+matching check at all, since `buildPolicyForUpdate` already rejects `kind == "restore"` outright
+before that check would run.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd src && go test ./cmd/policy-server/... -v`
@@ -674,13 +858,31 @@ Expected: PASS, including every pre-existing `CreatePolicy`/`UpdatePolicy` test 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/cmd/policy-server/write.go src/cmd/policy-server/server_test.go
-git commit -m "fix: reject rules on non-restore policies and require it on restore"
+git add src/cmd/policy-server/write.go src/cmd/policy-server/write_test.go
+git commit -m "fix: reject rules on non-restore policies, require it on restore, validate storage_policy_id exists"
 ```
 
 ---
 
 ### Task 5: `policy-server` — `attachDestination` resolves restore too
+
+**IMPORTANT CORRECTION (found mid-execution, after Task 3/4 landed):** the original version of
+this task invented a `TestAttachDestination_*`/`newTestServer`/`createStoragePolicyForTest` shape
+that doesn't exist in this codebase — `server_test.go` tests this kind of behavior at the
+`GetPolicies`/`ListPolicies` RPC level, against on-disk policy JSON files, not via a dedicated
+`attachDestination` unit test or a `CreatePolicy` call. The real pattern (see
+`TestGetPolicies_ResponseFieldsRoundTrip`, ~line 162, and the pre-existing
+`TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin`, ~line 330) is: write a `"storage"` policy
+file, `NewCache()`+`Reload()` it to read back its id, write a dependent policy file referencing
+that id, `newTestServerWithPolicies(t, dir)`, `srv.checkins.RecordCheckin(t.Context(), storageID,
+hostname, time.Now())`, then call `GetPolicies` and assert on `p.Destinations`. This correction also
+surfaced that the pre-existing `TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin` test writes
+an on-disk restore policy file using the *old* `source_store`/`config` JSON keys — since those keys
+no longer exist on `RestorePolicy` (Task 3), that file now silently fails `RestorePolicy.Validate()`
+at load time (a malformed-policy skip, not a compile error), so this pre-existing test would
+currently fail (`require.Len(t, resp.Policies, 1)` sees zero policies). Fixing it (folded into Step
+1 below, since it already covers almost exactly the case this task needs to add) is part of this
+task, not a separate one.
 
 **Files:**
 - Modify: `src/cmd/policy-server/server.go`
@@ -690,35 +892,56 @@ git commit -m "fix: reject rules on non-restore policies and require it on resto
 - Consumes: `pp.GetType()`, `pp.GetStoragePolicyId()` (both already exist and are now populated for restore, Task 3).
 - Produces: `attachDestination` now also fills `pp.Destinations` for a `"restore"`-typed `*pb.Policy`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Fix the pre-existing test to use the new schema, and assert destinations resolve**
 
-Add to `server_test.go`:
+Replace the pre-existing `TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin` (~line 330) in
+full:
 
 ```go
-func TestAttachDestination_RestorePolicyResolvesFromStoragePolicyCheckins(t *testing.T) {
-	s, cleanup := newTestServer(t)
-	defer cleanup()
-	sp := createStoragePolicyForTest(t, s, "sp-1") // however the existing storage-policy test helper is actually named/shaped
-	require.NoError(t, s.checkins.RecordCheckin(context.Background(), sp.GetId(), "bwfs-1", time.Now()))
+func TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin(t *testing.T) {
+	dir := t.TempDir()
+	writePolicyFile(t, filepath.Join(dir, "storage"), "east.json", `{
+		"metadata": {"name": "east-storage"},
+		"port": 8080,
+		"config": {}
+	}`)
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	storageID := c.Policies()[0].Meta().ID
 
-	created, err := s.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
-		Name:            "x",
-		Type:            "restore",
-		StoragePolicyId: sp.GetId(),
-		Rules:           []*pb.RestoreRule{{Path: "/x", Include: true}},
-	})
+	writePolicyFile(t, filepath.Join(dir, "restore"), "web01-emergency.json", fmt.Sprintf(`{
+		"metadata": {"name": "web01-emergency"},
+		"client_filters": {"hostnames": ["web-01"]},
+		"storage_policy_id": %q,
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
+	}`, storageID))
+	srv := newTestServerWithPolicies(t, dir)
+	require.NoError(t, srv.checkins.RecordCheckin(t.Context(), storageID, "bwfs-east.internal", time.Now()))
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "web-01", nil), &pb.GetPoliciesRequest{})
 	require.NoError(t, err)
-	require.Len(t, created.GetDestinations(), 1)
-	assert.Contains(t, created.GetDestinations()[0], "bwfs-1")
+	require.Len(t, resp.Policies, 1)
+	p := resp.Policies[0]
+	assert.Equal(t, "restore", p.Type)
+	assert.Equal(t, storageID, p.StoragePolicyId)
+	require.Len(t, p.Rules, 1)
+	assert.Equal(t, "/var/www/index.html", p.Rules[0].Path)
+	assert.Equal(t, []string{"bwfs-east.internal:8080"}, p.Destinations, "destinations must resolve live from storage_policy_id's checkins, same as backup")
+	assert.Nil(t, p.ClientFilters)
+
+	checkins, err := srv.checkins.CheckinsForPolicy(context.Background(), p.Id)
+	require.NoError(t, err)
+	require.Len(t, checkins, 1)
+	assert.Equal(t, "web-01", checkins[0].Hostname)
 }
 ```
 
-Adapt the exact storage-policy setup + checkin-recording calls to match whatever helpers `TestAttachDestination`'s existing backup-policy equivalent test already uses in this file — grep for `TestAttachDestination` or `attachDestination` in `server_test.go` before writing this, and mirror that test's setup exactly, just with `Type: "restore"` and `Rules` instead of `ObjectFilters`/`Rpo`/`BackupWindow`.
-
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd src && go test ./cmd/policy-server/... -run TestAttachDestination_Restore -v`
-Expected: FAIL — `created.GetDestinations()` is empty, since `attachDestination` currently only acts on `pp.GetType() == "backup"`.
+Run: `cd src && go test ./cmd/policy-server/... -run TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin -v`
+Expected: FAIL — `resp.Policies` is empty (the old-schema on-disk JSON no longer validates), or
+once you've updated the JSON, `p.Destinations` is empty since `attachDestination` currently only
+acts on `pp.GetType() == "backup"`.
 
 - [ ] **Step 3: Update `attachDestination`**
 
@@ -741,12 +964,33 @@ Update the function's doc comment (the one above it) to say `"backup" or "restor
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd src && go test ./cmd/policy-server/... -run TestAttachDestination -v`
-Expected: PASS, including the pre-existing backup-policy version of this test (unaffected).
+Run: `cd src && go test ./cmd/policy-server/... -run TestGetPolicies_MatchesRestorePolicyAndRecordsCheckin -v`
+Expected: PASS. Also run `cd src && go test ./cmd/policy-server/... -v` to confirm the rest of the
+package (including every pre-existing backup-policy destination test) is unaffected.
 
 - [ ] **Step 5: Update `docs/protocols/policy-server.md` and `docs/components/policy-server.md`**
 
 In both files, wherever they describe `destinations` as `"backup" policy only`, change to `"backup" and "restore" policy only` (grep each file for `destinations` to find the exact spots — there are at least two per file per the earlier design's phrasing: the field-comment-mirroring prose and the "Policy files and hot reload" narrative section).
+
+In `docs/components/policy-server.md`, also replace the restore-policy paragraph in "Policy types
+and directory layout" (currently ~line 83, right after the `"storage"` policy paragraph) — it still
+describes the pre-this-plan `source_store`/`config` shape and says restore "has no ...
+storage_policy_id ... or port," which is now wrong (restore requires `storage_policy_id`).
+Replace it in full:
+
+```markdown
+A `"restore"` policy is a one-shot directive: `client_filters` targets the node that will execute
+the restore, `storage_policy_id` (required, references an existing `"storage"`-typed policy's `id`
+— the same field, existence check, and live `destinations` resolution a `"backup"` policy already
+uses) names the source `bwfs` to restore from, and `rules` (required, at least one entry —
+`{host, path, include}`, mirroring the web restore cart's own rule shape; an empty/omitted `host`
+means the rule applies across every source host) says what to restore. It has no `object_filters`,
+`rpo`, `backup_window`, `port`, or `config`. Unlike every other type, a `"restore"` policy is never
+updatable -- `UpdatePolicy` rejects any request targeting one with `INVALID_ARGUMENT`, regardless of
+which fields the request sets, so `api-server`'s generic `PUT /api/v1/policies/{id}` rejects it too,
+with no `api-server`-side special-casing needed. See
+[Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md).
+```
 
 - [ ] **Step 6: Commit**
 
