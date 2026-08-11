@@ -49,6 +49,12 @@ message PolicyCheckin {
   google.protobuf.Timestamp last_seen_at = 2;
 }
 
+message RestoreRule {
+  string host    = 1; // "" = host-agnostic, matches every source host
+  string path    = 2;
+  bool   include = 3;
+}
+
 message Policy {
   string name = 1;
   google.protobuf.Timestamp created_at = 2;
@@ -68,11 +74,12 @@ message Policy {
   // (file list etc.); its shape is defined by a future design.
   string config = 13;
   google.protobuf.Timestamp disabled_at = 14;
-  string storage_policy_id = 15; // backup policy only, required
+  string storage_policy_id = 15; // "backup" and "restore" policy only, required
   repeated PolicyCheckin checkins = 16; // ListPolicies only, not GetPolicies; one entry per host that has received this policy
   repeated string destinations = 17; // backup and restore policy only, derived, read-only -- see below
-  // "restore" policy only. host:port of the source bwfs to restore from.
-  string source_store = 18;
+  reserved 18; reserved "source_store"; // removed 2026-08-10, replaced by storage_policy_id (15) + rules (19) -- see below
+  // "restore" policy only.
+  repeated RestoreRule rules = 19;
 }
 
 message CreatePolicyRequest {
@@ -84,17 +91,16 @@ message CreatePolicyRequest {
   reserved 6; reserved "destination"; // removed -- never itself writable, see below
   // "backup", "storage", or "restore" -- required. Determines which of the
   // type-specific fields are valid; mixing fields across types is rejected
-  // (e.g. a "restore" request must not set object_filters/rpo/
-  // backup_window/storage_policy_id/port).
+  // (e.g. a "restore" request must not set object_filters/rpo/backup_window/port/config).
   string type = 7;
   reserved 8; reserved "hostname"; // formerly hostname -- removed, see below
   int32 port = 9;
   string config = 10;
   google.protobuf.Timestamp disabled_at = 11;
-  string storage_policy_id = 12; // backup policy only, required
-  // "restore" policy only, required. host:port of the source bwfs to
-  // restore from.
-  string source_store = 13;
+  string storage_policy_id = 12; // "backup" and "restore" policy only, required
+  reserved 13; reserved "source_store"; // removed 2026-08-10, see Policy.rules above
+  // "restore" policy only, required.
+  repeated RestoreRule rules = 14;
 }
 
 message UpdatePolicyRequest {

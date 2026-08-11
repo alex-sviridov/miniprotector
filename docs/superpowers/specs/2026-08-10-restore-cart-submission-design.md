@@ -1,5 +1,9 @@
 # Design: restore cart submission
 
+> **Submission flow superseded 2026-08-10:** the file-enumeration-and-`groupByStore` flow this
+> document describes was replaced by a `ListStoreFacets`-based lookup and unsplit rule submission.
+> See [Design: Restore Policy Verification Execution](2026-08-10-restore-policy-verification-design.md).
+
 **Date:** 2026-08-10
 **Status:** Approved for planning
 

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-10 — restore policy verification
+
+`agent` now picks up `"restore"`-typed policies and verifies (not yet restores — `rwfs restore`
+remains unbuilt) the exact files a future restore would need, against the source `bwfs`, via a new
+`rwfs verify --rules-stdin` mode. Getting there required revising the restore policy schema itself:
+`source_store` (a raw address baked in once at submission time, which could go stale) is replaced by
+`storage_policy_id`, resolved live the same way a backup policy's destination already is; and
+`config.files` (a client-expanded, size-capped list of every matched file) is replaced by a small
+typed `rules` field carrying the restore cart's actual selection rules, resolved against the real
+file listing at verify time instead of pre-expanded in the browser. `catalog` gained a
+`ListStoreFacets` endpoint so the web UI can cheaply discover which stores a selection touches
+without enumerating every file first.
+
 ## 2026-08-10 — restore cart submission
 
 The restore cart's `/restore` page can now actually be submitted, not just previewed. Each cart

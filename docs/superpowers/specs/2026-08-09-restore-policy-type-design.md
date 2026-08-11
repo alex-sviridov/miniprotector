@@ -1,5 +1,10 @@
 # Design: Restore Policy Type
 
+> **Schema superseded 2026-08-10:** `source_store` and `config` as described in this document were
+> replaced by `storage_policy_id` (live-resolved, same mechanism as backup) and a typed `rules`
+> field. See [Design: Restore Policy Verification Execution](2026-08-10-restore-policy-verification-design.md)
+> for the current schema and the reasoning behind the change.
+
 **Date:** 2026-08-09
 **Status:** Approved for planning
 
