@@ -21,8 +21,8 @@ describe('restorePolicies store', () => {
     const input = {
       name: created.name,
       client_filters: { hostnames: ['web01'], labels: {} },
-      source_store: 'store-a:8080',
-      config: '{"files":[{"source_host":"database","path":"/var/lib/dbdata/dump.sql"}]}',
+      storage_policy_id: 's1',
+      rules: [{ host: 'database', path: '/var/lib/dbdata/dump.sql', include: true }],
     }
     const result = await restorePolicies.create(input)
 
@@ -37,12 +37,12 @@ describe('restorePolicies store', () => {
   })
 
   it('create records and rethrows an error on failure', async () => {
-    apiFetch.mockRejectedValue(new Error('source_store must be a valid host:port'))
+    apiFetch.mockRejectedValue(new Error('rules must contain at least one entry'))
     const restorePolicies = useRestorePoliciesStore()
 
     await expect(restorePolicies.create({ name: 'x' })).rejects.toThrow(
-      'source_store must be a valid host:port'
+      'rules must contain at least one entry'
     )
-    expect(restorePolicies.error).toBe('source_store must be a valid host:port')
+    expect(restorePolicies.error).toBe('rules must contain at least one entry')
   })
 })

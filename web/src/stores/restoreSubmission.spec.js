@@ -68,7 +68,23 @@ describe('restoreSubmission store', () => {
     })
   })
 
-  it('creates one restore policy per distinct store, each carrying the same full rule list', async () => {
+  // rulesForStore pulls the rules each store's CreatePolicy call carried,
+  // keyed by the store host its generated policy name ends with.
+  function rulesByStoreFromCalls() {
+    const byStore = {}
+    for (const [path, opts] of apiFetch.mock.calls) {
+      if (path !== '/restore') continue
+      const body = JSON.parse(opts.body)
+      byStore[body.name.replace(/^restore-.*Z-/, '')] = body.rules
+    }
+    return byStore
+  }
+
+  // The failure this splitting exists to prevent: rwfs treats a file-level
+  // rule that matches nothing on the store it is checking as a verification
+  // failure, so telling store-b to verify a file that only ever lived on
+  // store-a would fail store-b's one-shot task forever.
+  it('creates one restore policy per distinct store, each carrying only its own file rules', async () => {
     const cart = useRestoreCartStore()
     cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
     cart.toggleFile('web01', '/etc/hosts')
@@ -101,11 +117,109 @@ describe('restoreSubmission store', () => {
       { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
       { storeHost: 'store-b', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-b' } },
     ])
-    const restoreCalls = apiFetch.mock.calls.filter(([path]) => path === '/restore')
-    expect(restoreCalls).toHaveLength(2)
-    for (const [, opts] of restoreCalls) {
-      expect(JSON.parse(opts.body).rules).toEqual(cart.rules)
-    }
+    expect(rulesByStoreFromCalls()).toEqual({
+      'store-a': [{ path: '/var/lib/dbdata/dump.sql', host: 'database', include: true }],
+      'store-b': [{ path: '/etc/hosts', host: 'web01', include: true }],
+    })
+  })
+
+  it('sends folder rules to every store alongside each store\'s own file rules', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/srv/shared')
+    cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
+    cart.toggleFile('web01', '/etc/hosts')
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores?pattern=%2Fsrv%2Fshared')) {
+        return Promise.resolve({
+          data: [
+            { name: 'store-a', count: 1, last_seen: 100 },
+            { name: 'store-b', count: 1, last_seen: 100 },
+          ],
+        })
+      }
+      if (path.startsWith('/catalog/stores?source_hosts=database')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
+      }
+      if (path.startsWith('/catalog/stores?source_hosts=web01')) {
+        return Promise.resolve({ data: [{ name: 'store-b', count: 1, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [
+            { id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] },
+            { id: 's2', port: 9090, checkins: [{ hostname: 'store-b', last_seen_at: 1 }] },
+          ],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01')
+
+    const folderRule = { path: '/srv/shared', host: null, include: true }
+    expect(rulesByStoreFromCalls()).toEqual({
+      'store-a': [folderRule, { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true }],
+      'store-b': [folderRule, { path: '/etc/hosts', host: 'web01', include: true }],
+    })
+  })
+
+  // An exclusion rule can only ever suppress a selection -- rwfs's
+  // not-found scan skips it -- so it is safe on every store, and dropping
+  // it would restore a file the user explicitly deselected.
+  it('sends exclusion rules to every store', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/srv/shared')
+    cart.toggleFile('web01', '/srv/shared/secret.env') // deselects one file under the folder
+    cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
+
+    expect(cart.rules).toEqual([
+      { path: '/srv/shared', host: null, include: true },
+      { path: '/srv/shared/secret.env', host: 'web01', include: false },
+      { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true },
+    ])
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores?pattern=%2Fsrv%2Fshared')) {
+        return Promise.resolve({
+          data: [
+            { name: 'store-a', count: 1, last_seen: 100 },
+            { name: 'store-b', count: 1, last_seen: 100 },
+          ],
+        })
+      }
+      if (path.startsWith('/catalog/stores?source_hosts=database')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [
+            { id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] },
+            { id: 's2', port: 9090, checkins: [{ hostname: 'store-b', last_seen_at: 1 }] },
+          ],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01')
+
+    const shared = [
+      { path: '/srv/shared', host: null, include: true },
+      { path: '/srv/shared/secret.env', host: 'web01', include: false },
+    ]
+    expect(rulesByStoreFromCalls()).toEqual({
+      'store-a': [...shared, { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true }],
+      'store-b': shared,
+    })
   })
 
   it('sets an error and makes no /restore call when the store-facets fetch rejects', async () => {
