@@ -2870,9 +2870,47 @@ git commit -m "feat: submit restore policies with rules instead of an expanded f
 **Files:**
 - Modify: `docs/superpowers/specs/2026-08-09-restore-policy-type-design.md`
 - Modify: `docs/superpowers/specs/2026-08-10-restore-cart-submission-design.md`
+- Modify: `docs/protocols/policy-server.md`
 - Modify: `CHANGELOG.md`
 
 **Interfaces:** none (docs only).
+
+- [ ] **Step 0: Fix the stale proto code block in `docs/protocols/policy-server.md`**
+
+**Found mid-execution (Task 5's reviewer flagged it):** Task 1 changed the real
+`src/api/policyserver.proto`, and Task 5 fixed this file's *prose* (`destinations` wording, the
+restore-policy paragraph), but nobody updated this file's own mirrored `.proto`-formatted code
+block (~lines 40-119) — it still shows the removed `source_store` fields and stale comments. Fix
+it to match the real proto exactly:
+
+- Line 71 (`string storage_policy_id = 15; // backup policy only, required`) → `// "backup" and "restore" policy only, required`.
+- Line 73 (`repeated string destinations = 17; // backup and restore policy only, ...`) — already correct (Task 5 already fixed this one), leave as-is.
+- Lines 74-75 (`// "restore" policy only. host:port of the source bwfs to restore from.` / `string source_store = 18;`) → replace with:
+  ```proto
+  reserved 18; reserved "source_store"; // removed 2026-08-10, replaced by storage_policy_id (15) + rules (19) -- see below
+  // "restore" policy only.
+  repeated RestoreRule rules = 19;
+  ```
+- Add the `RestoreRule` message definition directly above `message Policy {` (mirroring the real proto):
+  ```proto
+  message RestoreRule {
+    string host    = 1; // "" = host-agnostic, matches every source host
+    string path    = 2;
+    bool   include = 3;
+  }
+  ```
+- Lines 85-88 (the `CreatePolicyRequest.type` field's comment: `` mixing fields across types is rejected (e.g. a "restore" request must not set object_filters/rpo/ backup_window/storage_policy_id/port). ``) → change the parenthetical to `` (e.g. a "restore" request must not set object_filters/rpo/backup_window/port/config). ``
+- Line 94 (`string storage_policy_id = 12; // backup policy only, required`) → `// "backup" and "restore" policy only, required`.
+- Lines 95-97 (`// "restore" policy only, required. host:port of the source bwfs to restore from.` / `string source_store = 13;`) → replace with:
+  ```proto
+  reserved 13; reserved "source_store"; // removed 2026-08-10, see Policy.rules above
+  // "restore" policy only, required.
+  repeated RestoreRule rules = 14;
+  ```
+
+No test for this step (it's a markdown code block, not compiled code) — verify by re-reading the
+edited block once and confirming it's byte-identical in shape to the real
+`src/api/policyserver.proto`'s `Policy`/`CreatePolicyRequest`/`RestoreRule` definitions.
 
 - [ ] **Step 1: Add a superseding note to the restore-policy-type design**
 
@@ -2917,7 +2955,7 @@ without enumerating every file first.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-08-09-restore-policy-type-design.md docs/superpowers/specs/2026-08-10-restore-cart-submission-design.md CHANGELOG.md
+git add docs/superpowers/specs/2026-08-09-restore-policy-type-design.md docs/superpowers/specs/2026-08-10-restore-cart-submission-design.md docs/protocols/policy-server.md CHANGELOG.md
 git commit -m "docs: cross-link superseded restore specs and record the changelog entry"
 ```
 
