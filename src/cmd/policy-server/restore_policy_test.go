@@ -102,11 +102,13 @@ func TestRestorePolicy_CloneDeepCopiesRules(t *testing.T) {
 	p := &RestorePolicy{
 		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
 		StoragePolicyID: "sp-1",
-		Rules:           []RestoreRule{{Path: "/a", Include: true}},
+		Rules:           []RestoreRule{{Path: "/a", Include: true, DestPath: "/a-dest"}},
 	}
 	cloned := p.Clone().(*RestorePolicy)
 	cloned.Rules[0].Path = "/mutated"
+	cloned.Rules[0].DestPath = "/mutated-dest"
 	assert.Equal(t, "/a", p.Rules[0].Path, "mutating the clone's Rules must not affect the original")
+	assert.Equal(t, "/a-dest", p.Rules[0].DestPath, "mutating the clone's Rules must not affect the original")
 }
 
 func TestRestorePolicy_ToProtoSetsTypeSpecificFields(t *testing.T) {

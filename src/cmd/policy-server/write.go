@@ -194,7 +194,7 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 		}
 		rules := make([]RestoreRule, len(req.GetRules()))
 		for i, r := range req.GetRules() {
-			rules[i] = RestoreRule{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude()}
+			rules[i] = RestoreRule{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude(), DestPath: r.GetDestPath()}
 		}
 		return &RestorePolicy{
 			PolicyBase:      base,

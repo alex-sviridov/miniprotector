@@ -72,14 +72,14 @@ function submit() {
   <div>
     <PageHeader title="Restore" :crumbs="[{ label: 'Restore' }]" />
     <StatusMessage :empty="restoreCart.entries.length === 0" empty-text="No files selected for restore yet.">
-      <table data-test="restore-table">
+      <table data-test="restore-table" class="w-full text-left">
         <thead>
           <tr>
-            <th>Storage Host</th>
-            <th>Source Host</th>
-            <th>Source Path</th>
-            <th>Destination Path</th>
-            <th>Size</th>
+            <th class="font-medium">Storage Host</th>
+            <th class="font-medium">Source Host</th>
+            <th class="font-medium">Source Path</th>
+            <th class="font-medium">Destination Path</th>
+            <th class="font-medium">Size</th>
             <th></th>
           </tr>
         </thead>
@@ -97,7 +97,14 @@ function submit() {
                 @blur="commitEdit(entry, $event.target.value)"
                 @keyup.enter="commitEdit(entry, $event.target.value)"
               />
-              <span v-else :data-test="`dest-path-text-${entryKey(entry)}`" @click="startEditing(entry)">
+              <span
+                v-else
+                :data-test="`dest-path-text-${entryKey(entry)}`"
+                class="cursor-pointer text-blue-600 hover:underline"
+                tabindex="0"
+                @click="startEditing(entry)"
+                @keyup.enter="startEditing(entry)"
+              >
                 {{ entry.destPath }}
               </span>
             </td>

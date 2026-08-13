@@ -647,7 +647,7 @@ func TestCreatePolicy_RestorePolicyWritesIntoRestoreDir(t *testing.T) {
 		Type:            "restore",
 		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
 		StoragePolicyId: storageID,
-		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true, DestPath: "/var/www/index-restored.html"}},
 	})
 
 	require.NoError(t, err)
@@ -656,6 +656,7 @@ func TestCreatePolicy_RestorePolicyWritesIntoRestoreDir(t *testing.T) {
 	assert.Equal(t, storageID, resp.StoragePolicyId)
 	require.Len(t, resp.Rules, 1)
 	assert.Equal(t, "/var/www/index.html", resp.Rules[0].Path)
+	assert.Equal(t, "/var/www/index-restored.html", resp.Rules[0].DestPath)
 
 	_, err = os.Stat(filepath.Join(dir, "restore", "web01-emergency-restore.json"))
 	require.NoError(t, err)

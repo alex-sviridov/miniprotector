@@ -174,6 +174,16 @@ describe('RestoreView', () => {
     expect(input.element.value).toBe('/etc/hosts')
   })
 
+  it('pressing Enter on the destination path span starts editing (keyboard access)', async () => {
+    const wrapper = mountView({
+      rules: [{ path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }],
+    })
+
+    await wrapper.find('[data-test="dest-path-text-web01:/etc/hosts"]').trigger('keyup.enter')
+
+    expect(wrapper.find('[data-test="dest-path-input-web01:/etc/hosts"]').exists()).toBe(true)
+  })
+
   it('committing an edited destination path calls restoreCart.setDestPath and exits edit mode', async () => {
     const entry = { path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }
     const wrapper = mountView({ rules: [entry] })
