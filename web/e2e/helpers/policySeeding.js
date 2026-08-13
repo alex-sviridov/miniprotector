@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { expect } from '@playwright/test'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const COMPOSE_FILE = path.resolve(__dirname, '../../../demo/docker-compose.yml')
+export const COMPOSE_FILE = path.resolve(__dirname, '../../../demo/docker-compose.yml')
 
 const SOURCE_HOST = 'database'
 const DIR_PATH = '/var/lib/dbdata'
@@ -53,15 +53,23 @@ export async function seedRestoreCartCatalogData(page) {
   return { sourceHost: SOURCE_HOST, dirPath: DIR_PATH, files: FILES }
 }
 
-async function waitForJobSuccess(page, policyName, timeoutMs = 100_000) {
+// waitForJobState polls /jobs (page-reload loop, since job state changes
+// server-side, not via any client-side event this page could listen for)
+// until policyName's row shows state in its State column, or throws after
+// timeoutMs.
+export async function waitForJobState(page, policyName, state, timeoutMs = 100_000) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     await page.goto('/jobs')
     const row = page.locator('tbody tr', { hasText: policyName })
-    if ((await row.count()) > 0 && (await row.locator('text=success').count()) > 0) return
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for job "${policyName}" to reach success`)
+    if ((await row.count()) > 0 && (await row.locator(`text=${state}`).count()) > 0) return
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for job "${policyName}" to reach ${state}`)
     await page.waitForTimeout(3000)
   }
+}
+
+export async function waitForJobSuccess(page, policyName, timeoutMs = 100_000) {
+  return waitForJobState(page, policyName, 'success', timeoutMs)
 }
 
 async function waitForCatalogFiles(page, dirPath, files, timeoutMs = 60_000) {
