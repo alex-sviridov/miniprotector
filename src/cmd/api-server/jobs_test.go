@@ -298,7 +298,7 @@ func itoa(n int64) string {
 
 func TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | job_id="operating-refresh:1752400500"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
 			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Line: "policy execution completed"},
 				{Timestamp: 1752400500000000000, Line: "policy execution started"},
@@ -360,7 +360,7 @@ func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
 
 func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "brfs"}, Values: []lokiValue{
 				{Timestamp: 1752400000000000000, Line: "Backup reader started"},
 			}},
@@ -379,6 +379,31 @@ func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Len(t, body["data"].([]any), 1)
+}
+
+func TestHandleGetJobLogs_IncludesRwfsBinaryLines(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="restore:e2e-restore-verify:1755094200"`: {
+			{Stream: map[string]string{"hostname": "database", "binary": "rwfs"}, Values: []lokiValue{
+				{Timestamp: 1755094201000000000, Line: `{"msg":"verified","path":"/var/lib/dbdata/dump.sql"}`},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:e2e-restore-verify:1755094200/logs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 1, "rwfs-emitted log lines must be included, not filtered out")
+	assert.Equal(t, "rwfs", data[0].(map[string]any)["binary"])
 }
 
 func TestHandleListJobs_InvalidSourceHostCharacterReturns400(t *testing.T) {

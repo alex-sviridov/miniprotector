@@ -324,14 +324,14 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "store_host contains invalid characters")
 		return
 	}
-	labelSelector := `{binary=~"agent|brfs|bwfs"}`
+	labelSelector := `{binary=~"agent|brfs|bwfs|rwfs"}`
 	switch {
 	case sourceHost != "" && storeHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname=~"%s|%s"}`, sourceHost, storeHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"%s|%s"}`, sourceHost, storeHost)
 	case sourceHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname="%s"}`, sourceHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, sourceHost)
 	case storeHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname="%s"}`, storeHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, storeHost)
 	}
 
 	query := fmt.Sprintf(`%s | job_id="%s"`, labelSelector, jobID)
