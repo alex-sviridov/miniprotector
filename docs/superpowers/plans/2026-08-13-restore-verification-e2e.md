@@ -389,6 +389,165 @@ git commit -m "fix(api-server): allow dots in job_id, unblocking restore job log
 
 ---
 
+## Task 7: Include `rwfs` in `handleGetJobLogs`'s Loki binary filter
+
+> Numbered 7 for the same reason Task 6 is numbered 6 — avoids colliding with `task-brief PLAN 3`'s
+> heading match. Discovered live, mid-execution, by Task 3's second genuine attempt to view a
+> restore job's log — after Task 6 fixed the `job_id` 400, the job-detail page loaded but rendered
+> none of the per-file `verified`/`summary` log lines a restore-verify job actually needs to prove
+> anything. See the plan's execution ledger for the full discovery trail.
+
+**Files:**
+- Modify: `src/cmd/api-server/jobs.go:327,330,332,334`
+- Modify: `src/cmd/api-server/jobs_test.go`
+
+**Interfaces:**
+- Produces: `handleGetJobLogs`'s Loki label selector includes `rwfs`. Consumed by: Task 3's and
+  Task 4's live-verification steps (both assert on `verified`/`summary`/`verification failed`
+  log-line content, which only `rwfs` itself emits — see `src/cmd/rwfs/verify.go`).
+
+**Root cause:** `agent` logs a start/finish line for a restore task itself (`binary="agent"` — see
+Task 1), but the actual `rwfs verify` child process it execs writes its **own** structured log
+(`<log_dir>/rwfs.log`, per `docs/components/agent.md`'s "Logging and correlation" section — "every
+binary `agent` execs writes structured JSON logs... one stable, rotated file per binary"), shipped
+to Loki with `binary="rwfs"` by the same Vector pipeline every other binary uses (`agent/vector.go`'s
+`add_binary_label` transform derives the label from the log filename). `rwfs verify`'s own
+per-file `"verified"`/`"summary"`/`"verification failed"` lines (`src/cmd/rwfs/verify.go`) carry
+the same `job_id` (threaded via `--job-id`, per `docs/protocols/restore.md`'s "CLI → RPC Mapping"
+section, which already documents this correlation as intentional). But
+`handleGetJobLogs` (`src/cmd/api-server/jobs.go`) hardcodes its Loki label selector to
+`{binary=~"agent|brfs|bwfs"}` in all four of its branches — `rwfs` was never added when
+restore-verification shipped, so every one of its own log lines is filtered out before reaching
+the browser, even though they exist in Loki, correctly tagged with the right `job_id`. This isn't
+a timing issue (waiting longer doesn't help) — the label filter itself excludes them
+unconditionally.
+
+Unlike Task 6, this selector is **not** kind-scoped — `handleGetJobLogs` takes no `kind` parameter,
+it only takes `job_id` (plus optional `source_host`/`store_host` narrowing) — so the fix widens the
+one shared selector every job-log lookup uses, the same way `brfs`/`bwfs` already sit there
+unconditionally for every kind, not just backup.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `src/cmd/api-server/jobs_test.go`, after `TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector`:
+
+```go
+func TestHandleGetJobLogs_IncludesRwfsBinaryLines(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="restore:e2e-restore-verify:1755094200"`: {
+			{Stream: map[string]string{"hostname": "database", "binary": "rwfs"}, Values: []lokiValue{
+				{Timestamp: 1755094201000000000, Line: `{"msg":"verified","path":"/var/lib/dbdata/dump.sql"}`},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:e2e-restore-verify:1755094200/logs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 1, "rwfs-emitted log lines must be included, not filtered out")
+	assert.Equal(t, "rwfs", data[0].(map[string]any)["binary"])
+}
+```
+
+Also update the two existing tests whose fake Loki query keys hardcode the old selector, since
+after Step 3 the real code will construct queries against the widened selector and an un-updated
+fake-map key would simply never match (silently returning zero rows, not a compile or an obvious
+failure) —
+
+In `TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp`, change the fake's query key:
+
+```go
+		`{binary=~"agent|brfs|bwfs"} | job_id="operating-refresh:1752400500"`: {
+```
+
+to:
+
+```go
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
+```
+
+In `TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector`, change the fake's query key:
+
+```go
+		`{binary=~"agent|brfs|bwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
+```
+
+to:
+
+```go
+		`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
+```
+
+- [ ] **Step 2: Run the tests to verify the new one fails and the two updated ones fail on the old code**
+
+Run: `cd src && go test ./cmd/api-server/... -run 'TestHandleGetJobLogs' -v`
+
+Expected: `TestHandleGetJobLogs_IncludesRwfsBinaryLines` FAILs (`require.Len` — 0 rows returned, the
+fake's query key doesn't match what the current code constructs). The two updated existing tests
+also FAIL now, for the same reason in reverse: their fake map keys were just changed to the
+*post-fix* selector string, which the *pre-fix* code doesn't yet construct.
+
+- [ ] **Step 3: Widen the four hardcoded selectors**
+
+In `src/cmd/api-server/jobs.go`, change:
+
+```go
+	labelSelector := `{binary=~"agent|brfs|bwfs"}`
+	switch {
+	case sourceHost != "" && storeHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname=~"%s|%s"}`, sourceHost, storeHost)
+	case sourceHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname="%s"}`, sourceHost)
+	case storeHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs", hostname="%s"}`, storeHost)
+	}
+```
+
+to:
+
+```go
+	labelSelector := `{binary=~"agent|brfs|bwfs|rwfs"}`
+	switch {
+	case sourceHost != "" && storeHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"%s|%s"}`, sourceHost, storeHost)
+	case sourceHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, sourceHost)
+	case storeHost != "":
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, storeHost)
+	}
+```
+
+- [ ] **Step 4: Run the tests to verify they all pass**
+
+Run: `cd src && go test ./cmd/api-server/... -run 'TestHandleGetJobLogs' -v`
+
+Expected: PASS for all `TestHandleGetJobLogs_*` tests, including the new one and the two updated
+ones.
+
+- [ ] **Step 5: Run the full `api-server` package tests**
+
+Run: `cd src && go test ./cmd/api-server/... -v`
+
+Expected: PASS, no regressions.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/cmd/api-server/jobs.go src/cmd/api-server/jobs_test.go
+git commit -m "fix(api-server): include rwfs in job-log queries, surfacing restore-verify's own log lines"
+```
+
+---
+
 ## Task 3: Success-scenario spec — `web/e2e/restore-verify.spec.js`
 
 **Files:**
@@ -647,8 +806,12 @@ updated when restore-policy verification shipped, even though `agent` already lo
 `event=start`/`event=finish` lines for it. Separately, `GET /api/v1/jobs/{job_id}/logs` no longer
 400s for a restore job specifically — every restore policy's generated name embeds a millisecond
 ISO timestamp (which always contains a `.`), but the endpoint's `job_id` validation regex
-disallowed `.`, so no restore job's log could ever be viewed via the API or the web UI; caught by
-writing this release's own e2e coverage. Restore-policy verification (submit a restore policy,
+disallowed `.`, so no restore job's log could ever be viewed via the API or the web UI. A third,
+related gap: `GET /api/v1/jobs/{job_id}/logs`'s Loki query only ever selected `agent`/`brfs`/`bwfs`
+log lines, so even once a restore job's log page loaded, the actual per-file `verified`/`summary`
+lines `rwfs verify` itself emits (the only lines that say anything about what was actually checked)
+were silently filtered out — `rwfs` is now included. All three were caught by writing this
+release's own e2e coverage — restore-policy verification (submit a restore policy,
 `agent` runs `rwfs verify`, the outcome appears as a job) now has browser-driven Playwright coverage
 (`web/e2e/restore-verify.spec.js`): a real backed-up file verifies successfully, and a rule naming a
 file that was never backed up fails — both scenarios read their outcome from the real, rendered job
