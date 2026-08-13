@@ -63,7 +63,7 @@ describe('restoreSubmission store', () => {
         name: 'restore-2026-08-10T00:00:00.000Z-store-a',
         client_filters: { hostnames: ['web01'], labels: {} },
         storage_policy_id: 's1',
-        rules: cart.rules,
+        rules: [{ host: null, path: '/var/lib/dbdata', include: true }],
       }),
     })
   })
@@ -178,9 +178,9 @@ describe('restoreSubmission store', () => {
     cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
 
     expect(cart.rules).toEqual([
-      { path: '/srv/shared', host: null, include: true },
-      { path: '/srv/shared/secret.env', host: 'web01', include: false },
-      { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true },
+      { path: '/srv/shared', host: null, include: true, destPath: '/srv/shared' },
+      { path: '/srv/shared/secret.env', host: 'web01', include: false, destPath: '/srv/shared/secret.env' },
+      { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true, destPath: '/var/lib/dbdata/dump.sql' },
     ])
 
     apiFetch.mockImplementation((path, opts) => {
@@ -339,5 +339,64 @@ describe('restoreSubmission store', () => {
     expect(submission.submitting).toBe(true)
     await pending
     expect(submission.submitting).toBe(false)
+  })
+
+  it('includes dest_path on the wire only for a rule whose destPath differs from its path', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/nginx/nginx.conf')
+    cart.setDestPath({ host: 'web01', path: '/etc/nginx/nginx.conf' }, '/etc/nginx/nginx.conf.bak')
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01')
+
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    const body = JSON.parse(restoreCall[1].body)
+    expect(body.rules).toEqual([
+      { host: 'web01', path: '/etc/nginx/nginx.conf', include: true, dest_path: '/etc/nginx/nginx.conf.bak' },
+    ])
+  })
+
+  it('never sends storeHost or size on the wire', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts', 'bwfs-1', 4096)
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01')
+
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    const body = JSON.parse(restoreCall[1].body)
+    expect(body.rules[0]).not.toHaveProperty('storeHost')
+    expect(body.rules[0]).not.toHaveProperty('size')
+    expect(body.rules[0]).not.toHaveProperty('dest_path')
   })
 })

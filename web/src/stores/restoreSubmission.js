@@ -80,6 +80,16 @@ async function buildRulesByStore(positiveEntries, allRules) {
   return rulesByStore
 }
 
+// toWireRule strips the cart's client-only display fields (storeHost,
+// size -- see restoreCart.js's toggleFile) and omits dest_path entirely
+// when it's unchanged from path (the "no rename" case), so a rule nobody
+// renamed produces exactly today's wire shape.
+function toWireRule(rule) {
+  const wire = { host: rule.host, path: rule.path, include: rule.include }
+  if (rule.destPath && rule.destPath !== rule.path) wire.dest_path = rule.destPath
+  return wire
+}
+
 // storagePolicyIdForHost finds which storage policy's checkins include
 // storeHost -- the same cross-reference the now-removed resolveStoreAddress
 // helper used to do, but stopping at the policy id: policy-server finishes
@@ -142,7 +152,7 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
               name,
               client_filters: { hostnames: [destinationHost], labels: {} },
               storage_policy_id: storagePolicyId,
-              rules,
+              rules: rules.map(toWireRule),
             })
             results.push({ storeHost, status: 'success', policy })
           } catch (err) {
