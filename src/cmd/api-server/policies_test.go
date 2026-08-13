@@ -775,3 +775,45 @@ func TestHandleUpdatePolicy_RestoreTypeRejectedReturns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestToPolicyDTO_IncludesDestPathForRestore(t *testing.T) {
+	p := &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules: []*pb.RestoreRule{
+			{Host: "web-01", Path: "/var/www/index.html", Include: true, DestPath: "/var/www/index.html.bak"},
+		},
+	}
+
+	dto := toPolicyDTO(p)
+
+	require.Len(t, dto.Rules, 1)
+	assert.Equal(t, "/var/www/index.html.bak", dto.Rules[0].DestPath)
+}
+
+func TestHandleCreateRestore_PassesDestPathThrough(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules: []*pb.RestoreRule{
+			{Host: "web-01", Path: "/var/www/index.html", Include: true, DestPath: "/var/www/index.html.bak"},
+		},
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true, "dest_path": "/var/www/index.html.bak"}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	require.Len(t, fake.lastCreateReq.GetRules(), 1)
+	assert.Equal(t, "/var/www/index.html.bak", fake.lastCreateReq.GetRules()[0].GetDestPath())
+}
