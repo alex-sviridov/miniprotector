@@ -71,17 +71,19 @@ export function resolveFolderState(rules, path) {
 // every rule at-or-under path -- clearing any exceptions or partial
 // selections underneath -- then adds a fresh wildcard only if the
 // remaining rules don't already cover path via an ancestor (avoiding a
-// redundant rule).
-export function toggleFolder(rules, path) {
+// redundant rule). A newly created rule defaults destPath to path (no
+// rename) and merges in any caller-supplied extra display-only
+// properties (see restoreCart.js).
+export function toggleFolder(rules, path, extra = {}) {
   const state = resolveFolderState(rules, path)
   if (state === 'checked') {
     const exact = rules.find((r) => r.host === null && r.path === path)
     if (exact) return rules.filter((r) => r !== exact)
-    return [...rules, { path, host: null, include: false }]
+    return [...rules, { path, host: null, include: false, destPath: path, ...extra }]
   }
   const pruned = rules.filter((r) => r.path !== path && !isStrictDescendantPath(r.path, path))
   if (longestMatchingFolderRule(pruned, path) === true) return pruned
-  return [...pruned, { path, host: null, include: true }]
+  return [...pruned, { path, host: null, include: true, destPath: path, ...extra }]
 }
 
 // toggleFile returns a new rule list with (host, path)'s selection
@@ -90,10 +92,11 @@ export function toggleFolder(rules, path) {
 // a stored rule only ever exists because it overrides its closest
 // ancestor, so removing it always flips the resolved state back.
 // Otherwise a fresh rule is added with the opposite of the current
-// resolved state.
-export function toggleFile(rules, host, path) {
+// resolved state, destPath defaulting to path (no rename), merged with
+// any caller-supplied extra display-only properties.
+export function toggleFile(rules, host, path, extra = {}) {
   const exact = rules.find((r) => r.host === host && r.path === path)
   if (exact) return rules.filter((r) => r !== exact)
   const checked = resolveFile(rules, host, path)
-  return [...rules, { path, host, include: !checked }]
+  return [...rules, { path, host, include: !checked, destPath: path, ...extra }]
 }
