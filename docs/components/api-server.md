@@ -65,7 +65,8 @@ expire" policy. See [Design: adhoc policy endpoint](../superpowers/specs/2026-08
 and [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
 
 `POST /restore-policies` doesn't exist -- restore policies have exactly one creation path,
-`POST /restore` (fields: `name`/`client_filters`/`storage_policy_id`/`rules`), and no update path at
+`POST /restore` (fields: `name`/`client_filters`/`storage_policy_id`/`rules`, each rule optionally
+carrying `dest_path` to rename that selection's restore target), and no update path at
 all: `PUT /policies/{id}` against a `"restore"`-typed policy is rejected with `400`, enforced by
 `policy-server` itself (`UpdatePolicy` refuses any request whose target policy is type `"restore"`),
 not by any `api-server`-side special-casing. `GET /policies/{id}` and `DELETE /policies/{id}` remain

@@ -50,9 +50,10 @@ message PolicyCheckin {
 }
 
 message RestoreRule {
-  string host    = 1; // "" = host-agnostic, matches every source host
-  string path    = 2;
-  bool   include = 3;
+  string host      = 1; // "" = host-agnostic, matches every source host
+  string path      = 2;
+  bool   include    = 3;
+  string dest_path = 4; // destination to restore to if renamed; "" or == path means no rename; only valid when include is true
 }
 
 message Policy {

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-13 — restore destination rename
+
+The restore review screen (`/restore`) is now a table showing each selection's storage host,
+source host, source path, destination path, and size, instead of a plain list. The destination
+path defaults to the source path and is click-to-edit, letting an operator restore a file or
+folder to a different path than it came from (e.g. to avoid clobbering a file that still exists).
+This threads a new optional `dest_path` field through `RestoreRule` end to end -- proto,
+`policy-server`'s schema and validation (a rule may only set `dest_path` when `include` is true),
+and `api-server`'s REST DTO -- stored on the `"restore"` policy alongside the existing
+`host`/`path`/`include` fields. Nothing consumes it yet: no restore executor exists (`rwfs restore`
+remains unbuilt, per the 2026-08-10 restore-verification entry above), so this only makes the data
+available for one to read in the future.
+
 ## 2026-08-10 — restore policy verification
 
 `agent` now picks up `"restore"`-typed policies and verifies (not yet restores — `rwfs restore`

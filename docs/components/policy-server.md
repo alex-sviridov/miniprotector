@@ -84,13 +84,18 @@ A `"restore"` policy is a one-shot directive: `client_filters` targets the node 
 the restore, `storage_policy_id` (required, references an existing `"storage"`-typed policy's `id`
 — the same field, existence check, and live `destinations` resolution a `"backup"` policy already
 uses) names the source `bwfs` to restore from, and `rules` (required, at least one entry —
-`{host, path, include}`, mirroring the web restore cart's own rule shape; an empty/omitted `host`
-means the rule applies across every source host) says what to restore. It has no `object_filters`,
+`{host, path, include, dest_path}`, mirroring the web restore cart's own rule shape; an
+empty/omitted `host` means the rule applies across every source host; `dest_path`, if set and
+different from `path`, is the path to restore to instead — empty or equal to `path` means no
+rename, and it's a validation error to set it on a rule with `include: false`) says what to
+restore. It has no `object_filters`,
 `rpo`, `backup_window`, `port`, or `config`. Unlike every other type, a `"restore"` policy is never
 updatable -- `UpdatePolicy` rejects any request targeting one with `INVALID_ARGUMENT`, regardless of
 which fields the request sets, so `api-server`'s generic `PUT /api/v1/policies/{id}` rejects it too,
 with no `api-server`-side special-casing needed. See
-[Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md).
+[Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md)
+and
+[Design: Restore Destination Rename](../superpowers/specs/2026-08-13-restore-destination-rename-design.md).
 
 ### Policy files and hot reload
 

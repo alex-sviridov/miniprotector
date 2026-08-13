@@ -47,9 +47,17 @@ no data — there's no read-only "guest" mode.
   split across a page boundary. Clearing the pattern restores whichever folder was last being browsed
   (or root, if none). Sizes render human-readable (KB/MB/...); a "Versions" count on multi-version
   files opens a modal (click anywhere on that row) listing that file's other versions. Each row (folder or file) now also carries a checkbox for staging it into the restore cart (`stores/restoreCart.js`): checking a file adds it by `(source_host, path)`; checking a folder adds one host-agnostic wildcard rule covering everything under it, rather than one entry per file, so a large folder selection stays a single rule. Selection state is *resolved* from this small rule list on demand (longest-matching-path wins, like `.gitignore`), which is also what lets a user drill into an already-selected folder and see its contents pre-checked, then uncheck individual items to carve out exceptions — unchecking shows as a partial/indeterminate checkbox on any ancestor folder row. The cart is in-memory only (no persistence yet) and UI-only: nothing is submitted for restore in this pass.
-- `/restore` — lists everything currently staged in the restore cart (folder selections as
-  `path/*`, file selections as `path (host)`), each with a Remove button that unstages it (toggles
-  the same rule back off, via `restoreCart.removeEntry`). Picking a destination host (from the
+- `/restore` — a table, one row per cart selection, listing storage host, source host, source
+  path (folder selections shown as `path/*`), a destination path, and size (file rows only --
+  storage host, source host, and size are `—` on a folder row, since a folder selection can span
+  many of each). The destination path defaults to the source path; clicking it swaps in a text
+  input (`restoreCart.setDestPath`) to rename that selection's restore target, whether a file or a
+  folder -- purely client-side data at this point, sent as `dest_path` on the submitted rule only
+  when it differs from the source path (see
+  [Design: Restore Destination Rename](../superpowers/specs/2026-08-13-restore-destination-rename-design.md));
+  nothing yet reads it back out (no restore executor exists). Each row also has a Remove button
+  that unstages it (toggles the same rule back off, via `restoreCart.removeEntry`). Picking a
+  destination host (from the
   enrolled-client list, `useClientsStore`) and clicking Submit resolves the cart's rules into
   concrete catalog entries (`GET /catalog`), collapses those to one entry per distinct file (the
   catalog returns one row per *version*, so a nightly-backed-up file is many rows — only its latest
