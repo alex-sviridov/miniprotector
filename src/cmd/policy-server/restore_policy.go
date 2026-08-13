@@ -8,19 +8,24 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// RestoreRule is one restore-cart selection rule -- {host, path, include}
-// mirroring web/src/utils/restoreRules.js's rule shape exactly, so the
-// frontend can send its cart.rules through with no reshaping. Host == ""
-// means host-agnostic (a folder rule that applies across every source
-// host, matching restoreRules.js's `host: null` convention -- a JSON null
-// decodes to Go's zero-value "" automatically); a non-empty Host scopes the
-// rule to exactly that source. policy-server never resolves these against
-// any real file listing -- resolution happens at verify time, in rwfs. See
-// docs/superpowers/specs/2026-08-10-restore-policy-verification-design.md.
+// RestoreRule is one restore-cart selection rule -- {host, path, include,
+// dest_path} mirroring web/src/utils/restoreRules.js's rule shape exactly,
+// so the frontend can send its cart.rules through with no reshaping. Host
+// == "" means host-agnostic (a folder rule that applies across every
+// source host, matching restoreRules.js's `host: null` convention -- a
+// JSON null decodes to Go's zero-value "" automatically); a non-empty Host
+// scopes the rule to exactly that source. DestPath, if non-empty and
+// different from Path, is the path to restore to instead of Path -- only
+// meaningful when Include is true (see Validate). policy-server never
+// resolves any of this against a real file listing or acts on DestPath --
+// resolution happens at verify time, in rwfs, and DestPath is not consumed
+// anywhere yet (no restore executor exists). See
+// docs/superpowers/specs/2026-08-13-restore-destination-rename-design.md.
 type RestoreRule struct {
-	Host    string `json:"host"`
-	Path    string `json:"path"`
-	Include bool   `json:"include"`
+	Host     string `json:"host"`
+	Path     string `json:"path"`
+	Include  bool   `json:"include"`
+	DestPath string `json:"dest_path,omitempty"`
 }
 
 // RestorePolicy is the "restore" policy type: a one-shot directive telling
@@ -73,6 +78,9 @@ func (p *RestorePolicy) Validate() error {
 		if r.Path == "" {
 			return fmt.Errorf("rules[%d]: path is required", i)
 		}
+		if r.DestPath != "" && r.DestPath != r.Path && !r.Include {
+			return fmt.Errorf("rules[%d]: dest_path is only valid on an included rule", i)
+		}
 	}
 	return nil
 }
@@ -98,7 +106,7 @@ func (p *RestorePolicy) Clone() Policy {
 func (p *RestorePolicy) ToProto(includeClientFilters bool) *pb.Policy {
 	rules := make([]*pb.RestoreRule, len(p.Rules))
 	for i, r := range p.Rules {
-		rules[i] = &pb.RestoreRule{Host: r.Host, Path: r.Path, Include: r.Include}
+		rules[i] = &pb.RestoreRule{Host: r.Host, Path: r.Path, Include: r.Include, DestPath: r.DestPath}
 	}
 	pp := &pb.Policy{
 		Id:              p.Metadata.ID,

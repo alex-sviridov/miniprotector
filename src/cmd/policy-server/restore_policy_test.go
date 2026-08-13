@@ -147,3 +147,49 @@ func TestRestorePolicy_ToProtoOmitsClientFiltersWhenNotRequested(t *testing.T) {
 
 	assert.Nil(t, pp.GetClientFilters())
 }
+
+func TestRestorePolicy_ValidateDestPathOnExcludedRuleFails(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/a", Include: false, DestPath: "/a-renamed"}},
+	}
+	assert.Error(t, p.Validate())
+}
+
+func TestRestorePolicy_ValidateDestPathEqualToPathOnExcludedRuleSucceeds(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules: []RestoreRule{
+			{Path: "/a", Include: true},
+			{Path: "/a/secret", Include: false, DestPath: "/a/secret"},
+		},
+	}
+	assert.NoError(t, p.Validate())
+}
+
+func TestRestorePolicy_ValidateDestPathOnIncludedRuleSucceeds(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/a", Include: true, DestPath: "/a-renamed"}},
+	}
+	assert.NoError(t, p.Validate())
+}
+
+func TestRestorePolicy_ToProtoIncludesDestPath(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase: PolicyBase{
+			Metadata: Metadata{ID: "r1", Name: "x"},
+			Type:     "restore",
+		},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true, DestPath: "/var/www/index.html.bak"}},
+	}
+
+	pp := p.ToProto(false)
+
+	require.Len(t, pp.GetRules(), 1)
+	assert.Equal(t, "/var/www/index.html.bak", pp.GetRules()[0].GetDestPath())
+}
