@@ -457,7 +457,7 @@ underlying Loki queries hit its own line cap and the result may be incomplete; n
 | `since` | unix seconds | Only lines after this timestamp. Default: 24h before now |
 | `source_host` / `store_host` | string | Optional — narrows the query to the hosts involved, if already known from a prior `/jobs` response. Each must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
 
-`job_id` must match `^[a-zA-Z0-9:_-]+$` — `400` otherwise.
+`job_id` must match `^[a-zA-Z0-9:._-]+$` — `400` otherwise.
 
 ```json
 {

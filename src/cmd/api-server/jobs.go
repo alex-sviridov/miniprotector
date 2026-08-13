@@ -284,7 +284,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": filtered, "truncated": startsTruncated || finishesTruncated})
 }
 
-var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:_-]+$`)
+var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:._-]+$`)
 
 var jobHostnamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
 

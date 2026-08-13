@@ -338,6 +338,26 @@ func TestHandleGetJobLogs_InvalidJobIDCharacterReturns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
+			{Stream: map[string]string{"hostname": "database", "binary": "agent"}, Values: []lokiValue{
+				{Timestamp: 1755094200000000000, Line: "policy execution started"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200/logs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
 		`{binary=~"agent|brfs|bwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
