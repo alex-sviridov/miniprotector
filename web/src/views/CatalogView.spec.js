@@ -327,7 +327,7 @@ describe('CatalogView', () => {
     // component's @click.stop, which is what keeps this from navigating.
     await checkbox.trigger('click')
     await checkbox.trigger('change')
-    expect(restoreCart.toggleFile).toHaveBeenCalledWith('database', '/var/lib/dbdata/data.db')
+    expect(restoreCart.toggleFile).toHaveBeenCalledWith('database', '/var/lib/dbdata/data.db', 'bwfs-east', 8192)
     expect(catalog.navigateTo).not.toHaveBeenCalled()
   })
 

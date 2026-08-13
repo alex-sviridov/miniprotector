@@ -55,7 +55,7 @@ function checkboxProps(row) {
 
 function toggleSelection(row) {
   if (row.isFolder) restoreCart.toggleFolder(row.path)
-  else restoreCart.toggleFile(row.sourceHost, row.path)
+  else restoreCart.toggleFile(row.sourceHost, row.path, row.representative?.store_host, row.representative?.size)
 }
 
 function summaryLabel(names, allLabel) {
