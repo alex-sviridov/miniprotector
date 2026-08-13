@@ -59,12 +59,16 @@ message PolicyCheckin {
 // and host-specific file rules resolve by longest-matching-path-ancestor,
 // exactly like web/src/utils/restoreRules.js's resolveFile. policy-server
 // never interprets these beyond the load-time validation in
-// RestorePolicy.Validate (non-empty Path); resolution happens at verify
-// time, in rwfs.
+// RestorePolicy.Validate (non-empty Path, and dest_path only on an included
+// rule); resolution happens at verify time, in rwfs.
 message RestoreRule {
-  string host    = 1; // "" = host-agnostic, matches every source host
-  string path    = 2;
-  bool   include = 3;
+  string host      = 1; // "" = host-agnostic, matches every source host
+  string path      = 2;
+  bool   include    = 3;
+  // Destination path to restore to, if different from path. Empty (or
+  // equal to path) means "no rename -- restore to the original path."
+  // Only meaningful when include is true; see RestorePolicy.Validate.
+  string dest_path = 4;
 }
 
 message Policy {

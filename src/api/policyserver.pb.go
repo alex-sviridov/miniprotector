@@ -371,13 +371,17 @@ func (x *PolicyCheckin) GetLastSeenAt() *timestamppb.Timestamp {
 // and host-specific file rules resolve by longest-matching-path-ancestor,
 // exactly like web/src/utils/restoreRules.js's resolveFile. policy-server
 // never interprets these beyond the load-time validation in
-// RestorePolicy.Validate (non-empty Path); resolution happens at verify
-// time, in rwfs.
+// RestorePolicy.Validate (non-empty Path, and dest_path only on an included
+// rule); resolution happens at verify time, in rwfs.
 type RestoreRule struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"` // "" = host-agnostic, matches every source host
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Include       bool                   `protobuf:"varint,3,opt,name=include,proto3" json:"include,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Host    string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"` // "" = host-agnostic, matches every source host
+	Path    string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Include bool                   `protobuf:"varint,3,opt,name=include,proto3" json:"include,omitempty"`
+	// Destination path to restore to, if different from path. Empty (or
+	// equal to path) means "no rename -- restore to the original path."
+	// Only meaningful when include is true; see RestorePolicy.Validate.
+	DestPath      string `protobuf:"bytes,4,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -431,6 +435,13 @@ func (x *RestoreRule) GetInclude() bool {
 		return x.Include
 	}
 	return false
+}
+
+func (x *RestoreRule) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
+	}
+	return ""
 }
 
 type Policy struct {
@@ -987,11 +998,12 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\rPolicyCheckin\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12<\n" +
 	"\flast_seen_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"lastSeenAt\"O\n" +
+	"lastSeenAt\"l\n" +
 	"\vRestoreRule\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
-	"\ainclude\x18\x03 \x01(\bR\ainclude\"\xea\x05\n" +
+	"\ainclude\x18\x03 \x01(\bR\ainclude\x12\x1b\n" +
+	"\tdest_path\x18\x04 \x01(\tR\bdestPath\"\xea\x05\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
