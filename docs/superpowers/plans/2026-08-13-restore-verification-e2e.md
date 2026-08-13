@@ -468,9 +468,37 @@ git commit -m "feat(web-e2e): add restore verification failure scenario"
 
 **Files:**
 - Modify: `docs/components/agent.md`
+- Modify: `docs/api/rest-v1.md`
 - Modify: `CHANGELOG.md`
 
 **Interfaces:** None (docs only).
+
+- [ ] **Step 0: Fix the stale `kind` enum in `docs/api/rest-v1.md`** (found by Task 1's review —
+  Task 1's fix added a fifth valid `kind` value, but this file still documents only four)
+
+In `docs/api/rest-v1.md`, in the `GET /api/v1/jobs` query-parameters table, change:
+
+```
+| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update` |
+```
+
+to:
+
+```
+| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update`, `restore` |
+```
+
+A few lines below, change:
+
+```
+`400` if `kind` isn't one of the four valid values, `since`/`until` aren't unix-second integers,
+```
+
+to:
+
+```
+`400` if `kind` isn't one of the five valid values, `since`/`until` aren't unix-second integers,
+```
 
 - [ ] **Step 1: Note the new coverage in `docs/components/agent.md`**
 
@@ -509,7 +537,7 @@ path nor the job list's handling of `kind=restore` had ever been exercised end t
 - [ ] **Step 3: Commit**
 
 ```bash
-git add docs/components/agent.md CHANGELOG.md
+git add docs/components/agent.md docs/api/rest-v1.md CHANGELOG.md
 git commit -m "docs: document restore verification e2e coverage"
 ```
 
