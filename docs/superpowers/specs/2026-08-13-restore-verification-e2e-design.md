@@ -27,10 +27,13 @@ include `"restore"`, so the request is rejected before it ever reaches the other
 ## Scope
 
 1. Fix the `kind=restore` gap in `api-server`.
-2. A Go integration test (`src/e2e`) covering the **failure** path — a file-level rule naming a
-   file that was never backed up.
-3. A Playwright browser test (`web/e2e`) covering the **success** path, UI-driven end to end,
-   including opening the resulting job and checking its rendered log.
+2. A single Playwright browser suite (`web/e2e/restore-verify.spec.js`) covering **both** the
+   success path and the failure path, driven through the real UI wherever a UI surface exists for
+   it — including, for both scenarios, opening the resulting job in the browser and reading its
+   rendered log. No separate Go integration test: everything that can run through the browser does,
+   and the one step that structurally can't (constructing a rule naming a file that was never
+   backed up — see Architecture, below) is a single API call from inside the same Playwright spec,
+   not a second, separate suite.
 
 ## Non-Goals
 
@@ -45,8 +48,10 @@ include `"restore"`, so the request is rejected before it ever reaches the other
 - **No `mode`/intent field added to the restore policy schema.** Confirmed out of scope: today
   `"restore"` implicitly means "verify" because nothing else exists yet; that ambiguity only needs
   resolving once an actual-restore executor exists.
-- **No change to `rwfs verify`'s own behavior**, and no change to `web/e2e/restore-cart.spec.js` or
-  its `policySeeding.js` helper beyond reusing it as-is.
+- **No change to `rwfs verify`'s own behavior**, and no change to `web/e2e/restore-cart.spec.js`.
+  `policySeeding.js` gets only the small, backward-compatible addition described in Architecture
+  below (generalizing `waitForJobSuccess` to `waitForJobState`, exporting `COMPOSE_FILE`) — nothing
+  `restore-cart.spec.js` or `seedRestoreCartCatalogData` itself does changes behavior.
 
 ## Architecture
 
@@ -69,187 +74,192 @@ include `"restore"`, so the request is rejected before it ever reaches the other
 `kind=restore` case asserting it's accepted (no longer 400), and extend `binariesForKind`'s test
 table with `"restore"` → `"agent"`.
 
-### B. Go integration test — `src/e2e/restore_verify_test.go` (new, `//go:build e2e`)
+### B. Playwright suite — `web/e2e/restore-verify.spec.js` (new)
 
-Same package as `lifecycle_test.go`; reuses its unexported helpers (`apiRequest`, `requireStatus`,
-`decodeJSON`, `dockerComposeExec`, `fetchStoragePolicyID`, `composeFile`) rather than duplicating
-them. Targets the same `database`/`store` fixtures the existing Go and Playwright suites already
-use.
+One sequential spec, two `test()`s sharing a single seed (re-seeding per scenario would mean a
+second real backup job to wait on — same reasoning `restore-cart.spec.js` already uses for its own
+sequential-scenarios structure). Reuses `seedRestoreCartCatalogData` from the existing
+`web/e2e/helpers/policySeeding.js`, unmodified — it already creates a real backup of `database`'s
+`/var/lib/dbdata` (`dump.sql`, `schema.sql`) to `store` and confirms catalog visibility through the
+real UI, exactly the fixture both scenarios need.
 
-`TestE2E_RestoreVerification`:
-
-1. **Seed a real backed-up file.** Create a fast one-off backup policy for `database`'s
-   `/var/lib/dbdata` (mirrors `lifecycle_test.go`'s `create_minute_policy_triggers_backup_job`
-   subtest: `rpo: "1m"`, `backup_window: ["* * * * *"]`, a short `disabled_at`), force
-   `./policyclient fetch` on `database`, wait for the backup job to reach `success`. This guarantees
-   `/var/lib/dbdata/dump.sql` genuinely exists on `store` before the restore-verify subtest runs.
-   `t.Cleanup` deletes this seed policy.
-
-2. **Subtest `verify_fails_for_never_backed_up_file`:**
-   - `storagePolicyID := fetchStoragePolicyID(t, "store")`.
-   - `POST /api/v1/restore`:
-     ```json
-     {
-       "name": "e2e-restore-verify-<unix-ts>",
-       "client_filters": {"hostnames": ["database"]},
-       "storage_policy_id": "<storagePolicyID>",
-       "rules": [{"host": "database", "path": "/var/lib/dbdata/does-not-exist.sql", "include": true}]
-     }
-     ```
-     Expect `201 Created`; capture the created policy's `id` for cleanup and its `name` for the
-     job-id prefix.
-   - `dockerComposeExec(t, "database", "./policyclient", "fetch")` to force immediate pickup
-     (default fetch interval is otherwise 900s, same reasoning as every other seeding step in this
-     codebase's e2e suites).
-   - Poll `GET /api/v1/jobs?kind=restore&source_host=database&since=<unix-ts>` (now valid, per fix
-     A) every 5s, up to a 90s deadline (matches `ReconcileIntervalSec=30` + `JobTimeoutSec=30` +
-     headroom, same budget `waitForBackupJob` uses), until a job whose `job_id` has prefix
-     `restore:<policy-name>:` reaches `"state": "failure"`.
-   - `GET /api/v1/jobs/{job_id}/logs`; assert some line's raw JSON contains
-     `"reason":"not found on this store"` and `"path":"/var/lib/dbdata/does-not-exist.sql"` (string
-     `Contains` assertions on the raw log line, same pattern `bwfs/integration_test.go` and
-     `agent/reconcile_test.go` already use — no need to fully decode each line).
-   - `t.Cleanup` deletes this restore policy. This is load-bearing, not just tidiness: a restore
-     task is one-shot-until-success (`docs/components/agent.md`'s "Policy-driven restore
-     verification"), and this one can never succeed (it names a file that doesn't exist) — left
-     alive, it retries with backoff forever, generating jobs and log volume indefinitely after the
-     test run ends.
-
-The success path is deliberately *not* duplicated here in Go — see Testing, below, for why it lives
-in the Playwright suite instead.
-
-### C. Playwright test — `web/e2e/restore-verify.spec.js` (new)
-
-Reuses `seedRestoreCartCatalogData` from the existing `web/e2e/helpers/policySeeding.js`, unmodified
-— it already creates a real backup of `database`'s `/var/lib/dbdata` (`dump.sql`, `schema.sql`) to
-`store` and confirms catalog visibility through the real UI, exactly the fixture this test needs.
+Both scenarios end the same way — navigate to the job in the browser and read its rendered log —
+and both share one unavoidable non-UI step, forcing `policyclient fetch` via `docker compose exec`,
+for the same reason `seedRestoreCartCatalogData` already needs it: the default 900s fetch interval
+would otherwise make the test slow and nondeterministic. The failure scenario needs one additional
+non-UI step: creating the restore policy itself via a direct API call
+(`page.request.post('/api/v1/restore', ...)`), because there is no UI affordance to select a file
+that was never backed up — `CatalogView.vue`'s checkboxes only ever render real catalog rows.
+Everything else — submitting, waiting, opening the job, reading the log — goes through the real
+page for both scenarios.
 
 ```js
-test('restore verification runs and its job log is readable', async ({ page }) => {
-  const { sourceHost, dirPath } = await seedRestoreCartCatalogData(page)
+import { execSync } from 'node:child_process'
+import { test, expect } from '@playwright/test'
+import { seedRestoreCartCatalogData, waitForJobSuccess, waitForJobState, COMPOSE_FILE } from './helpers/policySeeding'
 
-  await page.goto('/catalog')
-  // ...drill into dirPath via the existing breadcrumb-click pattern (see policySeeding.js's
-  // waitForCatalogFiles for the "/" then path-segment click sequence)...
-  await page.locator('[data-test="file-checkbox-database:/var/lib/dbdata/dump.sql"]').click()
+const API_TOKEN = 'dev-placeholder-token-change-me' // see policySeeding.js's auth note
 
-  await page.goto('/restore')
-  await expect(page.locator('[data-test="restore-row-database:/var/lib/dbdata/dump.sql"]')).toBeVisible()
-  await page.locator('[data-test="destination-select"]').selectOption('database')
-  await page.locator('[data-test="submit-restore"]').click()
+test.describe.serial('restore verification', () => {
+  let sourceHost, dirPath
 
-  const resultText = await page.locator('[data-test="submission-results"]').innerText()
-  const policyName = /Created (\S+) from/.exec(resultText)[1]
+  test.beforeAll(async ({ browser }) => {
+    const page = await browser.newPage()
+    ;({ sourceHost, dirPath } = await seedRestoreCartCatalogData(page))
+    await page.close()
+  })
 
-  execSync(`docker compose -f ${COMPOSE_FILE} exec -T database ./policyclient fetch`, { stdio: 'inherit' })
+  test('a real backed-up file verifies successfully, readable in its job log', async ({ page }) => {
+    await page.goto('/catalog')
+    // ...drill into dirPath (same "/" then path-segment click sequence as waitForCatalogFiles)...
+    await page.locator('[data-test="file-checkbox-database:/var/lib/dbdata/dump.sql"]').click()
 
-  await waitForJobSuccess(page, policyName) // reuse the existing helper's poll-by-reload pattern
+    await page.goto('/restore')
+    await expect(page.locator('[data-test="restore-row-database:/var/lib/dbdata/dump.sql"]')).toBeVisible()
+    await page.locator('[data-test="destination-select"]').selectOption('database')
+    await page.locator('[data-test="submit-restore"]').click()
 
-  await page.locator('tbody tr', { hasText: policyName }).locator('a').click() // -> /jobs/:job_id
-  await expect(page.locator('[data-test="log-line"]').first()).toBeVisible()
-  await expect(page.locator('[data-test="log-line-message"]', { hasText: 'verified' }).first()).toBeVisible()
+    const resultText = await page.locator('[data-test="submission-results"]').innerText()
+    const policyName = /Created (\S+) from/.exec(resultText)[1]
 
-  const verifiedLine = page.locator('[data-test="log-line"]', { hasText: 'verified' }).first()
-  await verifiedLine.locator('[data-test="log-line-summary"]').click()
-  await expect(verifiedLine.locator('[data-test="log-line-fields"]')).toContainText('/var/lib/dbdata/dump.sql')
+    execSync(`docker compose -f ${COMPOSE_FILE} exec -T database ./policyclient fetch`, { stdio: 'inherit' })
+    await waitForJobSuccess(page, policyName)
 
-  const summaryLine = page.locator('[data-test="log-line"]', { hasText: 'summary' }).first()
-  await summaryLine.locator('[data-test="log-line-summary"]').click()
-  await expect(summaryLine.locator('[data-test="log-line-fields"]')).toContainText('warnings')
-  await expect(summaryLine.locator('[data-test="log-line-fields"]')).toContainText('0')
+    await page.locator('tbody tr', { hasText: policyName }).locator('a').click() // -> /jobs/:job_id
+    const verifiedLine = page.locator('[data-test="log-line"]', { hasText: 'verified' }).first()
+    await expect(verifiedLine).toBeVisible()
+    await verifiedLine.locator('[data-test="log-line-summary"]').click()
+    await expect(verifiedLine.locator('[data-test="log-line-fields"]')).toContainText('/var/lib/dbdata/dump.sql')
+
+    const summaryLine = page.locator('[data-test="log-line"]', { hasText: 'summary' }).first()
+    await summaryLine.locator('[data-test="log-line-summary"]').click()
+    await expect(summaryLine.locator('[data-test="log-line-fields"]')).toContainText('warnings')
+    await expect(summaryLine.locator('[data-test="log-line-fields"]')).toContainText('0')
+  })
+
+  test('a rule naming a file that was never backed up fails, readable in its job log', async ({ page, request }) => {
+    // No UI surface exists to select a nonexistent file (CatalogView only renders real rows) --
+    // this one step is a direct API call, same escape-hatch precedent as
+    // seedRestoreCartCatalogData's own docker-exec step. Everything after this is browser-driven.
+    const storagePolicies = await request.get('/api/v1/policies?type=storage', {
+      headers: { Authorization: `Bearer ${API_TOKEN}` },
+    })
+    const { data } = await storagePolicies.json()
+    const storagePolicyId = data.find((p) => p.name === 'store').id
+
+    const policyName = `e2e-restore-verify-fail-${Date.now()}`
+    const created = await request.post('/api/v1/restore', {
+      headers: { Authorization: `Bearer ${API_TOKEN}` },
+      data: {
+        name: policyName,
+        client_filters: { hostnames: ['database'] },
+        storage_policy_id: storagePolicyId,
+        rules: [{ host: 'database', path: '/var/lib/dbdata/does-not-exist.sql', include: true }],
+      },
+    })
+    const { id: policyId } = await created.json()
+
+    execSync(`docker compose -f ${COMPOSE_FILE} exec -T database ./policyclient fetch`, { stdio: 'inherit' })
+    await waitForJobState(page, policyName, 'failure') // same reload-poll pattern, terminal state parameterized
+
+    await page.locator('tbody tr', { hasText: policyName }).locator('a').click() // -> /jobs/:job_id
+    const notFoundLine = page.locator('[data-test="log-line"]', { hasText: 'verification failed' }).first()
+    await expect(notFoundLine).toBeVisible()
+    await notFoundLine.locator('[data-test="log-line-summary"]').click()
+    await expect(notFoundLine.locator('[data-test="log-line-fields"]')).toContainText('not found on this store')
+    await expect(notFoundLine.locator('[data-test="log-line-fields"]')).toContainText('/var/lib/dbdata/does-not-exist.sql')
+
+    // One-shot-until-success: left alive, this policy retries with backoff forever. Delete it the
+    // same way it was created.
+    await request.delete(`/api/v1/policies/${policyId}`, { headers: { Authorization: `Bearer ${API_TOKEN}` } })
+  })
 })
 ```
 
 (Exact selectors/assertions above are illustrative of intent; the implementation plan pins them
 down precisely against the real rendered markup, same as every other design in this codebase.)
 
-Steps, in prose:
+`web/e2e/helpers/policySeeding.js` gains one small addition: `waitForJobSuccess`'s existing
+poll-by-reload loop (currently hardcoded to look for `'success'` in the row's text) is generalized
+to `waitForJobState(page, policyName, state, timeoutMs)`, with `waitForJobSuccess` becoming a
+one-line wrapper (`waitForJobState(page, policyName, 'success', timeoutMs)`) so both this spec and
+the existing `restore-cart.spec.js`/its own callers keep working unchanged. `COMPOSE_FILE` is
+exported alongside, since both scenarios above need it directly (today it's a private `const` in
+`policySeeding.js`).
 
-1. Seed via the helper (real backup, real catalog data).
-2. `/catalog` → drill into `/var/lib/dbdata` → check `dump.sql`'s checkbox.
-3. `/restore` → assert the row appears (source and destination path both `/var/lib/dbdata/dump.sql`,
-   since no rename was made), pick `database` as the destination host — restoring a reviewed copy
-   back to its own host, the exact "stage it somewhere inspectable" motivation `dest_path` was built
-   for — click submit.
-4. Read the created policy's name off `[data-test="submission-results"]`'s rendered text
-   (`Created {name} from {storeHost}`, per `RestoreView.vue`'s existing template).
-5. `docker compose exec database ./policyclient fetch` — same non-UI forced-pickup step
-   `seedRestoreCartCatalogData` already uses for its own backup policy.
-6. Poll `/jobs` (page-reload loop, same pattern as the existing `waitForJobSuccess` helper) for a
-   row containing that policy name with `success` in its State column.
-7. Click that row's Job ID link → `/jobs/:job_id` → assert log lines rendered
-   (`[data-test="log-line"]`), a `"verified"` message line whose expanded fields
-   (`[data-test="log-line-fields"]`, reached by clicking `[data-test="log-line-summary"]`) show
-   `path: /var/lib/dbdata/dump.sql`, and a `"summary"` message line whose fields show
-   `warnings: 0`.
-
-This also gives `LogLine.vue` its first real, non-mocked-API coverage — the same rationale
-`restore-cart-e2e`'s own design used to justify a browser suite over mocking: catching real-DOM/
-real-data issues (e.g., a field-expand click not working against real JSON structure) that
-component tests mocking the store one layer up can't.
+This also gives `LogLine.vue` its first real, non-mocked-API coverage for *both* a success and a
+failure line — the same rationale `restore-cart-e2e`'s own design used to justify a browser suite
+over mocking: catching real-DOM/real-data issues (e.g., a field-expand click not working against
+real JSON structure) that component tests mocking the store one layer up can't.
 
 ## Data Flow
 
 ```
-Go test (src/e2e/restore_verify_test.go):
-  POST /api/v1/restore {rules: [nonexistent path]}
-    -> policy-server (restore policy, client_filters targets "database")
-    -> docker compose exec database policyclient fetch (forced pickup)
-    -> agent (on database) reconcile tick -> rwfs verify --rules-stdin
-    -> bwfs ListFiles (store) -> rule matches nothing -> notFound
-    -> rwfs exits non-zero -> agent logs event=finish status=failure
-    -> GET /api/v1/jobs?kind=restore&source_host=database -> job state=failure
-    -> GET /api/v1/jobs/{id}/logs -> "not found on this store" line
-
-Playwright test (web/e2e/restore-verify.spec.js):
+web/e2e/restore-verify.spec.js -- success scenario:
   UI: check dump.sql -> /restore table -> submit
     -> POST /api/v1/restore {rules: [real, backed-up path]}
-    -> docker compose exec database policyclient fetch (forced pickup)
+    -> docker compose exec database policyclient fetch (forced pickup, non-UI)
     -> agent (on database) reconcile tick -> rwfs verify --rules-stdin
     -> bwfs ListFiles + RestoreFile (store) -> chunk hashes verified
     -> rwfs exits 0 -> agent logs event=finish status=success
     -> UI: /jobs shows success -> /jobs/:job_id renders "verified" + "summary" log lines
+
+web/e2e/restore-verify.spec.js -- failure scenario:
+  page.request.post /api/v1/restore {rules: [nonexistent path]} (non-UI, no selectable row exists)
+    -> policy-server (restore policy, client_filters targets "database")
+    -> docker compose exec database policyclient fetch (forced pickup, non-UI)
+    -> agent (on database) reconcile tick -> rwfs verify --rules-stdin
+    -> bwfs ListFiles (store) -> rule matches nothing -> notFound
+    -> rwfs exits non-zero -> agent logs event=finish status=failure
+    -> UI: /jobs shows failure -> /jobs/:job_id renders "verification failed" / "not found on
+       this store" log line
+    -> page.request.delete the policy (non-UI; stops the one-shot task's infinite retry)
 ```
 
 ## Error Handling
 
 No new error-handling code paths beyond fix A itself (an out-of-range `kind` still 400s with an
-accurate message). Both tests use the same bounded-timeout-then-`t.Fatalf`/Playwright-assertion-
-timeout pattern every existing suite in this codebase already uses for eventual-consistency polling
-— no new pattern introduced.
+accurate message). Both scenarios use the same bounded-timeout poll-by-reload pattern
+`restore-cart.spec.js`'s helpers already use for eventual-consistency waits — no new pattern
+introduced. The failure scenario's policy-deletion cleanup runs at the end of its own `test()` body
+(not a separate `afterAll`/`afterEach`), since it's only ever needed by that one scenario and
+keeping it inline keeps the two scenarios independently readable.
 
 ## Testing
 
-This design's deliverable *is* tests, so "Testing" here means: how the two new suites' own
-correctness is established, and why the success/failure split between Go and Playwright is the
-right one (not an arbitrary one).
+This design's deliverable *is* tests, so "Testing" here means: how the new suite's own correctness
+is established, and why putting both scenarios in the browser (rather than splitting failure off
+into a Go integration test) is the right call.
 
-- **Why the failure path is Go-only:** Selecting a file for restore is driven entirely by
-  checkbox-clicking real catalog rows (`CatalogView.vue`) — there is no UI affordance to name an
-  arbitrary, non-existent path. A file-level rule for a file that was never backed up can only be
-  constructed by calling `POST /api/v1/restore` directly, which has no client-side-only behavior to
-  exercise; a Go integration test (REST calls only, no browser) gives full coverage of the
-  server/agent-side "not found" behavior and its log output without paying for a browser.
-- **Why the success path is Playwright-only:** It's the one avenue that provides real UI coverage
-  end-to-end (selection → cart → submit → job list → job detail log rendering) — duplicating it in
-  Go would just re-verify the REST layer a second time with no new signal, the same reasoning
-  `restore-cart-e2e`'s design already used to justify Playwright over a second Go test.
+- **Why both scenarios are browser-driven:** the whole point of e2e coverage here is exercising
+  real, non-mocked behavior — real UI rendering, real job polling, real log rendering via
+  `LogLine.vue`. Splitting the failure scenario into a separate Go-only suite (as originally
+  considered) would mean that path's log-reading assertion never touches `LogLine.vue` at all,
+  duplicating only the REST-layer behavior the success scenario's own submission step already
+  exercises. Keeping both in one Playwright spec means every assertion about "the job log shows the
+  right thing" is checked the same way an operator would actually see it: rendered, in the browser.
+- **The two unavoidable non-UI steps are precedented, not new pattern.** `docker compose exec
+  database policyclient fetch` already exists in `seedRestoreCartCatalogData` for the identical
+  reason (no reachable UI/API surface to force a fetch). `page.request.post`/`.delete` for the
+  failure scenario's policy is the same kind of exception — Playwright's own `request` fixture,
+  not a shell-out — needed only because `CatalogView.vue` structurally cannot render a checkbox for
+  a file that isn't in the catalog.
 - **`jobs_test.go`** (unit, not e2e): `kind=restore` accepted; `binariesForKind("restore") ==
   "agent"`.
-- Both new e2e suites run only under their existing gates (`make test-e2e` for Go's `//go:build
-  e2e`; `npx playwright test` / `test:e2e` script for `web`) — neither runs in the default fast unit
-  test loop, matching every other e2e test in this codebase.
+- The new suite runs only under its existing gate (`npx playwright test` / the `test:e2e` script) —
+  it does not run in the default fast unit test loop, matching every other e2e test in this
+  codebase, including the two other tests it lives alongside.
 
 ## Documentation Impact
 
 Per `.claude/CLAUDE.md`'s feature-change rule:
 
-- **`CHANGELOG.md`** — entry before merge: the `kind=restore` fix, and the new Go + Playwright
-  restore-verification e2e coverage.
+- **`CHANGELOG.md`** — entry before merge: the `kind=restore` fix, and the new
+  restore-verification e2e coverage (both success and failure, browser-driven).
 - **`docs/components/agent.md`**'s "Policy-driven restore verification" section — one sentence
-  noting this path now has integration coverage (Go `TestE2E_RestoreVerification` for the failure
-  case, `web/e2e/restore-verify.spec.js` for the success case), so a future reader doesn't have to
-  rediscover that it was previously untested.
+  noting this path now has browser-driven integration coverage
+  (`web/e2e/restore-verify.spec.js`, both a success and a failure scenario), so a future reader
+  doesn't have to rediscover that it was previously untested.
 - No `docs/protocols/` change (no wire-protocol change) and no `docs/ARCHITECTURE.md` change (no
   topology/data-flow change) — this is a validation-list fix plus new tests, nothing new is added to
   what the system does.
