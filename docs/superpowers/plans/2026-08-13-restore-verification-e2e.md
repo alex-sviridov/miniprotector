@@ -271,6 +271,124 @@ git commit -m "refactor(web-e2e): generalize waitForJobSuccess into waitForJobSt
 
 ---
 
+## Task 6: Fix `job_id` validation to allow restore policy names
+
+> Numbered 6 (out of document order, ahead of Task 3) so `task-brief PLAN 6` never collides with
+> `task-brief PLAN 3`'s `Task 3` heading match. Discovered live, mid-execution, by Task 3's first
+> genuine attempt to view a restore job's log through the real UI — see the plan's execution
+> ledger. This blocks Task 3 and Task 4 outright: neither scenario can complete its "read the job
+> log" step until this is fixed, because **no restore job's log can currently be viewed at all**.
+
+**Files:**
+- Modify: `src/cmd/api-server/jobs.go:287`
+- Modify: `src/cmd/api-server/jobs_test.go`
+- Modify: `docs/api/rest-v1.md:460`
+
+**Interfaces:**
+- Produces: `jobIDPattern` accepts `.` in a `job_id`. Consumed by: Task 3's and Task 4's
+  live-verification steps (both open a restore job's `/jobs/:job_id` page, which calls
+  `GET /api/v1/jobs/{job_id}/logs`).
+
+**Root cause:** `web/src/stores/restoreSubmission.js:150` names every restore policy
+`` `restore-${new Date().toISOString()}-${storeHost}` `` — `Date.prototype.toISOString()` always
+includes a `.` before its millisecond digits (e.g. `2026-08-13T14:30:00.123Z`), so every restore
+job's ID (`restore:<policy-name>:<timestamp>`) always contains a `.`. But
+`src/cmd/api-server/jobs.go:287`'s `jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:_-]+$`)`
+(used by `handleGetJobLogs` to validate the `{job_id}` path parameter) does not allow `.` — so
+`GET /api/v1/jobs/{job_id}/logs` 400s ("job_id contains invalid characters") for every restore
+job, unconditionally. This is not restore-specific in the regex itself — it's that restore is the
+only job kind whose name-generation scheme happens to always produce a `.`. The fix is the
+allowlist, not the frontend's naming (changing `toISOString()`'s output shape would be a much
+larger, riskier change for no added safety — the character just needs to be allowed, the same way
+`jobHostnamePattern` (`jobs.go:289`) already allows `.` for hostnames).
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `src/cmd/api-server/jobs_test.go`, after `TestHandleGetJobLogs_InvalidJobIDCharacterReturns400`:
+
+```go
+func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
+			{Stream: map[string]string{"hostname": "database", "binary": "agent"}, Values: []lokiValue{
+				{Timestamp: 1755094200000000000, Line: "policy execution started"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200/logs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+```
+
+This job ID is exactly the shape `restoreSubmission.js` actually produces (`restore:` prefix +
+`restore-<ISO-timestamp-with-millis>-<storeHost>` policy name + `:<unix-ts>` task suffix) — not a
+simplified stand-in.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `cd src && go test ./cmd/api-server/... -run TestHandleGetJobLogs_JobIDWithDotIsAccepted -v`
+
+Expected: FAIL — `400`, not `200` (the `.` in the job ID is rejected by the current `jobIDPattern`).
+
+- [ ] **Step 3: Widen `jobIDPattern`**
+
+In `src/cmd/api-server/jobs.go`, change:
+
+```go
+var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:_-]+$`)
+```
+
+to:
+
+```go
+var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:._-]+$`)
+```
+
+- [ ] **Step 4: Run the test to verify it passes, plus the existing invalid-character test**
+
+Run: `cd src && go test ./cmd/api-server/... -run 'TestHandleGetJobLogs_JobIDWithDotIsAccepted|TestHandleGetJobLogs_InvalidJobIDCharacterReturns400' -v`
+
+Expected: PASS for both — the new dot-containing job ID is accepted, and the existing test's
+actually-invalid job ID (`not%20valid;job` — a space and a semicolon, still outside the widened
+allowlist) still 400s.
+
+- [ ] **Step 5: Run the full `api-server` package tests**
+
+Run: `cd src && go test ./cmd/api-server/... -v`
+
+Expected: PASS, no regressions.
+
+- [ ] **Step 6: Update `docs/api/rest-v1.md`**
+
+Change:
+
+```
+`job_id` must match `^[a-zA-Z0-9:_-]+$` — `400` otherwise.
+```
+
+to:
+
+```
+`job_id` must match `^[a-zA-Z0-9:._-]+$` — `400` otherwise.
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/cmd/api-server/jobs.go src/cmd/api-server/jobs_test.go docs/api/rest-v1.md
+git commit -m "fix(api-server): allow dots in job_id, unblocking restore job log lookups"
+```
+
+---
+
 ## Task 3: Success-scenario spec — `web/e2e/restore-verify.spec.js`
 
 **Files:**
@@ -526,7 +644,11 @@ Add at the top of `CHANGELOG.md`, above the current top entry:
 
 `GET /api/v1/jobs?kind=restore` no longer 400s — `validJobKinds` and `binariesForKind` were never
 updated when restore-policy verification shipped, even though `agent` already logged correct
-`event=start`/`event=finish` lines for it. Restore-policy verification (submit a restore policy,
+`event=start`/`event=finish` lines for it. Separately, `GET /api/v1/jobs/{job_id}/logs` no longer
+400s for a restore job specifically — every restore policy's generated name embeds a millisecond
+ISO timestamp (which always contains a `.`), but the endpoint's `job_id` validation regex
+disallowed `.`, so no restore job's log could ever be viewed via the API or the web UI; caught by
+writing this release's own e2e coverage. Restore-policy verification (submit a restore policy,
 `agent` runs `rwfs verify`, the outcome appears as a job) now has browser-driven Playwright coverage
 (`web/e2e/restore-verify.spec.js`): a real backed-up file verifies successfully, and a rule naming a
 file that was never backed up fails — both scenarios read their outcome from the real, rendered job
