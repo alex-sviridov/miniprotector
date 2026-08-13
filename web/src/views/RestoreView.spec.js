@@ -1,12 +1,13 @@
 // web/src/views/RestoreView.spec.js
 import { describe, it, expect } from 'vitest'
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import RestoreView from './RestoreView.vue'
 import { useRestoreCartStore } from '../stores/restoreCart'
 import { useRestoreSubmissionStore } from '../stores/restoreSubmission'
 
-function mountView({ rules = [], clientsList = [], submission = {} } = {}) {
+function mountView({ rules = [], clientsList = [], submission = {}, attachTo } = {}) {
   const pinia = createTestingPinia({
     stubActions: true,
     initialState: {
@@ -15,7 +16,7 @@ function mountView({ rules = [], clientsList = [], submission = {} } = {}) {
       restoreSubmission: { submitting: false, results: [], error: null, ...submission },
     },
   })
-  return mount(RestoreView, { global: { plugins: [pinia] } })
+  return mount(RestoreView, { global: { plugins: [pinia] }, ...(attachTo ? { attachTo } : {}) })
 }
 
 describe('RestoreView', () => {
@@ -199,5 +200,36 @@ describe('RestoreView', () => {
     await input.trigger('keyup.enter')
 
     expect(cart.setDestPath).toHaveBeenCalledWith(entry, '/etc/hosts.bak')
+  })
+
+  it('does not double-commit when Enter removes the focused input, which then blurs', async () => {
+    const entry = { path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }
+    const wrapper = mountView({ rules: [entry] })
+    const cart = useRestoreCartStore()
+
+    await wrapper.find('[data-test="dest-path-text-web01:/etc/hosts"]').trigger('click')
+    const input = wrapper.find('[data-test="dest-path-input-web01:/etc/hosts"]')
+    await input.setValue('/etc/hosts.bak')
+    await input.trigger('keyup.enter')
+    // Simulates the native blur a browser fires when a focused element is
+    // removed from the DOM -- jsdom/vue-test-utils don't reproduce this
+    // automatically, so it's triggered explicitly here to exercise the guard.
+    await input.trigger('blur')
+
+    expect(cart.setDestPath).toHaveBeenCalledTimes(1)
+  })
+
+  it('focuses the destination path input when editing starts', async () => {
+    const wrapper = mountView({
+      rules: [{ path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }],
+      attachTo: document.body,
+    })
+    await wrapper.find('[data-test="dest-path-text-web01:/etc/hosts"]').trigger('click')
+    await nextTick()
+
+    const input = wrapper.find('[data-test="dest-path-input-web01:/etc/hosts"]')
+    expect(input.element).toBe(document.activeElement)
+
+    wrapper.unmount()
   })
 })

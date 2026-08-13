@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRestoreCartStore } from '../stores/restoreCart'
 import { useClientsStore } from '../stores/clients'
 import { useRestoreSubmissionStore } from '../stores/restoreSubmission'
@@ -19,6 +19,10 @@ const destinationHost = ref('')
 // destination-path cell is in edit mode. Only one cell can be edited at a
 // time.
 const editingKey = ref(null)
+// Template ref for the single in-flight editing <input> (only one row's
+// input is ever rendered at a time, since editingKey is shared), used to
+// focus it as soon as it's revealed.
+const editingInput = ref(null)
 
 onMounted(() => {
   if (clients.list.length === 0) clients.fetchAll()
@@ -41,9 +45,16 @@ function remove(entry) {
 
 function startEditing(entry) {
   editingKey.value = entryKey(entry)
+  nextTick(() => editingInput.value?.focus())
 }
 
+// Guarded against double-firing: in a real browser, Enter triggers
+// commitEdit -> editingKey is cleared -> Vue removes the (still-focused)
+// input from the DOM -> the removal itself fires a native blur, which is
+// still wired to commitEdit at that instant. Without this guard that fires
+// restoreCart.setDestPath a second time for the same edit.
 function commitEdit(entry, value) {
+  if (editingKey.value !== entryKey(entry)) return
   restoreCart.setDestPath(entry, value)
   editingKey.value = null
 }
@@ -80,6 +91,7 @@ function submit() {
             <td>
               <input
                 v-if="editingKey === entryKey(entry)"
+                :ref="(el) => (editingInput = el)"
                 :data-test="`dest-path-input-${entryKey(entry)}`"
                 :value="entry.destPath"
                 @blur="commitEdit(entry, $event.target.value)"
