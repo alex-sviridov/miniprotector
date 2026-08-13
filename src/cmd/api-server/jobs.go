@@ -25,6 +25,7 @@ var validJobKinds = map[string]bool{
 	"bootstrap-refresh": true,
 	"operating-refresh": true,
 	"policy-update":     true,
+	"restore":           true,
 }
 
 // kindFromJobID derives a job's kind from its own id, per the prefix
@@ -47,7 +48,7 @@ func binariesForKind(kind string) string {
 	switch kind {
 	case "backup":
 		return "brfs|bwfs"
-	case "bootstrap-refresh", "operating-refresh", "policy-update":
+	case "bootstrap-refresh", "operating-refresh", "policy-update", "restore":
 		return "agent"
 	default:
 		return "agent|brfs|bwfs"
@@ -211,7 +212,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	kind := q.Get("kind")
 	if kind != "" && !validJobKinds[kind] {
-		writeJSONError(w, http.StatusBadRequest, "kind must be one of backup, bootstrap-refresh, operating-refresh, policy-update")
+		writeJSONError(w, http.StatusBadRequest, "kind must be one of backup, bootstrap-refresh, operating-refresh, policy-update, restore")
 		return
 	}
 	sourceHost := q.Get("source_host")
