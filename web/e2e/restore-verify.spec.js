@@ -92,7 +92,12 @@ test('restore verification', async ({ page, context }) => {
     const summaryLine = await waitForLogLine('summary')
     await summaryLine.getByTestId('log-line-summary').click()
     await expect(summaryLine.getByTestId('log-line-fields')).toContainText('warnings')
-    await expect(summaryLine.getByTestId('log-line-fields')).toContainText('0')
+    await expect(
+      summaryLine
+        .getByTestId('log-line-fields')
+        .locator('dt', { hasText: 'warnings' })
+        .locator('xpath=following-sibling::dd[1]')
+    ).toHaveText('0')
   })
 
   await test.step('a rule naming a file that was never backed up fails, readable in its job log', async () => {
@@ -142,8 +147,14 @@ test('restore verification', async ({ page, context }) => {
       await expect(notFoundLine.getByTestId('log-line-fields')).toContainText('not found on this store')
       await expect(notFoundLine.getByTestId('log-line-fields')).toContainText(missingPath)
     } finally {
-      // Delete it the same way it was created.
-      await page.request.delete(`/api/v1/policies/${failPolicyId}`, { headers: authHeaders })
+      // Delete it the same way it was created. Don't throw on a failed
+      // delete -- that would mask whatever error the try block raised --
+      // but do warn, since a silently failed delete leaks a policy that
+      // retries forever (see the comment above).
+      const deleteResp = await page.request.delete(`/api/v1/policies/${failPolicyId}`, { headers: authHeaders })
+      if (!deleteResp.ok()) {
+        console.warn(`cleanup: failed to delete policy ${failPolicyId}, status ${deleteResp.status()}`)
+      }
     }
   })
 })
