@@ -146,7 +146,9 @@ describe('RestoreView', () => {
       rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],
       submission: { results: [{ storeHost: 'store-a', status: 'success', policy: { name: 'restore-x' } }] },
     })
-    expect(wrapper.find('[data-test="submission-results"]').text()).toContain('restore-x')
+    expect(wrapper.find('[data-test="submission-results"]').text()).toContain(
+      'Started verification policy restore-x from store-a'
+    )
   })
 
   it('renders a per-group submission error', () => {

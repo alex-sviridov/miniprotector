@@ -401,9 +401,9 @@ never set it are unaffected). `mode: "verify"` creates the policy exactly as bef
 it up and runs `rwfs verify` against it, writing nothing. `mode: "restore"` is validated but
 currently always rejected with `501` (`{"error": "restore execution is not yet implemented; only
 verification (mode=verify) is currently supported"}`) -- `policy-server` is never called in this
-case, since no execution path exists yet. `overwrite` (bool, default `false`) is accepted alongside
-`mode: "restore"` but has no effect yet, for the same reason. `201` with the created policy on
-success (`mode: "verify"` only).
+case, since no execution path exists yet. `overwrite` (bool, default `false`) is accepted in both
+modes and currently ignored either way — no execution path exists yet to act on it. `201` with the
+created policy on success (`mode: "verify"` only).
 
 `400` if `name` is empty, `storage_policy_id` doesn't reference an existing `"storage"` policy,
 `rules` is empty or contains an entry with an empty `path`, or `mode` is neither `"verify"` nor

@@ -58,7 +58,7 @@ no data — there's no read-only "guest" mode.
   nothing yet reads it back out (no restore executor exists). Each row also has a Remove button
   that unstages it (toggles the same rule back off, via `restoreCart.removeEntry`). Picking a
   destination host (from the
-  enrolled-client list, `useClientsStore`) and clicking Submit resolves the cart's rules into
+  enrolled-client list, `useClientsStore`) and clicking **Verify** or **Restore** resolves the cart's rules into
   concrete catalog entries (`GET /catalog`), collapses those to one entry per distinct file (the
   catalog returns one row per *version*, so a nightly-backed-up file is many rows — only its latest
   version's row is kept), groups them by the physical `store_host` each file is
@@ -70,8 +70,15 @@ no data — there's no read-only "guest" mode.
   once the cart itself is emptied; one group failing doesn't block the others. A failure of the
   whole submission (the catalog fetch or the `"storage"` policy lookup itself) is reported as a
   single submission-level error rather than as a per-group one. Submission is still terminal: nothing yet consumes a `"restore"` policy (see
-  `docs/superpowers/specs/2026-08-09-restore-policy-type-design.md`) — this only creates it. The
-  sidebar's Restore link still highlights whenever the cart is non-empty.
+  `docs/superpowers/specs/2026-08-09-restore-policy-type-design.md`) — this only creates it. A
+  separate "Overwrite existing files" checkbox (unchecked by default) is sent as `overwrite` on
+  every submission, alongside `mode` (`verify` for the Verify button, `restore` for the Restore
+  button); `overwrite` has no effect yet either way. Clicking Verify behaves exactly as described
+  above; clicking Restore is validated the same way but currently always fails with a per-store
+  "restore execution is not yet implemented" error, since `api-server` rejects `mode: "restore"`
+  with `501` before ever calling `policy-server` — no real restore execution exists yet (see
+  [Design: Restore Verify/Execute Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md)).
+  The sidebar's Restore link still highlights whenever the cart is non-empty.
 - `/policies` — every policy (name, RPO, destination), with a "New backup" action opening a form modal for creating new policies (fields: name, RPO, backup window, client filters, object filters (each filter's include/exclude glob patterns entered as individual chips via a reusable `TagInput` component (`components/ui/TagInput.vue`) — each pattern is validated client-side for glob syntax and checked against the rest of its own list for parent/child path overlap, e.g. `/var/log` and `/var/log/app` in the same list, before Save is allowed), destination (a required select over `/storage`'s storage policies, replacing free-text host:port entry)) and clickable policy names navigating to each policy's detail view. The modal (`BackupPolicyFormModal` in `components/backup_policies/`) offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after its configured timeout, 1h by default) and redirects to `/jobs`, where the resulting job(s) can be found and opened for their log lines — same modal-plus-detail-page pattern as `/storage` below. Linking to:
 - `/policies/:id` — one policy's full record, in two tabs built on a reusable `Tabs` component
   (`components/ui/Tabs.vue`, active tab synced to `?tab=details`/`?tab=checkins` so either can be
@@ -163,4 +170,5 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/web":/app -w /app node:20-
 - [Design: catalog directory-browsing UI](../superpowers/specs/2026-08-08-catalog-directory-browsing-design.md)
 - [Design: restore cart](../superpowers/specs/2026-08-09-restore-cart-design.md)
 - [Design: restore cart submission](../superpowers/specs/2026-08-10-restore-cart-submission-design.md)
+- [Design: Restore Verify/Execute Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md)
 - [Architecture](../ARCHITECTURE.md)
