@@ -324,6 +324,11 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "store_host contains invalid characters")
 		return
 	}
+	// Unlike binariesForKind's default selector, this includes rwfs: this
+	// endpoint returns every raw log line for a job_id verbatim (no
+	// start/finish pairing), so rwfs's lines are useful signal here even
+	// though handleListJobs excludes rwfs to avoid pairing noise (rwfs never
+	// emits event=start/event=finish).
 	labelSelector := `{binary=~"agent|brfs|bwfs|rwfs"}`
 	switch {
 	case sourceHost != "" && storeHost != "":
@@ -342,7 +347,7 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var lines []logLineDTO
+	lines := []logLineDTO{}
 	for _, stream := range streams {
 		for _, v := range stream.Values {
 			lines = append(lines, logLineDTO{
