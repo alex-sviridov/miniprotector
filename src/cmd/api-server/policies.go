@@ -319,6 +319,8 @@ type restorePolicyInput struct {
 	StoragePolicyID string           `json:"storage_policy_id"`
 	Rules           []ruleDTO        `json:"rules"`
 	DisabledAt      int64            `json:"disabled_at,omitempty"`
+	Mode            string           `json:"mode"`
+	Overwrite       bool             `json:"overwrite"`
 }
 
 func decodeRestorePolicyInput(r *http.Request) (restorePolicyInput, error) {
@@ -334,12 +336,33 @@ func decodeRestorePolicyInput(r *http.Request) (restorePolicyInput, error) {
 // a restore policy is launched, not managed as a long-lived resource, and
 // is never updatable (PUT /api/v1/policies/{id} against one is rejected by
 // policy-server itself, see write.go's buildPolicyForUpdate).
+//
+// mode distinguishes verification (agent runs rwfs verify against the
+// resolved rules, no files written) from actual restore (not yet
+// implemented anywhere below this layer -- see
+// docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md).
+// mode="restore" is rejected here, before policy-server is ever called, so
+// this layer's contract is ready ahead of that future work.
 func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
 	in, err := decodeRestorePolicyInput(r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+
+	mode := in.Mode
+	if mode == "" {
+		mode = "verify"
+	}
+	if mode != "verify" && mode != "restore" {
+		writeJSONError(w, http.StatusBadRequest, "mode must be 'verify' or 'restore'")
+		return
+	}
+	if mode == "restore" {
+		writeJSONError(w, http.StatusNotImplemented, "restore execution is not yet implemented; only verification (mode=verify) is currently supported")
+		return
+	}
+
 	rules := make([]*pb.RestoreRule, len(in.Rules))
 	for i, ru := range in.Rules {
 		rules[i] = &pb.RestoreRule{Host: ru.Host, Path: ru.Path, Include: ru.Include, DestPath: ru.DestPath}

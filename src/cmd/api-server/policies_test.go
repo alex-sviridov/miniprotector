@@ -817,3 +817,73 @@ func TestHandleCreateRestore_PassesDestPathThrough(t *testing.T) {
 	require.Len(t, fake.lastCreateReq.GetRules(), 1)
 	assert.Equal(t, "/var/www/index.html.bak", fake.lastCreateReq.GetRules()[0].GetDestPath())
 }
+
+func TestHandleCreateRestore_ExplicitVerifyModeForwardsToBackend(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}],
+		"mode": "verify",
+		"overwrite": false
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+}
+
+func TestHandleCreateRestore_RestoreModeReturns501AndSkipsBackend(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "r1"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}],
+		"mode": "restore",
+		"overwrite": true
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotImplemented, rec.Code)
+	assert.Nil(t, fake.lastCreateReq, "backend must not be called for mode=restore")
+
+	var respBody map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "restore execution is not yet implemented; only verification (mode=verify) is currently supported", respBody["error"])
+}
+
+func TestHandleCreateRestore_InvalidModeReturns400(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}],
+		"mode": "bogus"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastCreateReq)
+}
