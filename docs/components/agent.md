@@ -185,6 +185,10 @@ actual pass/fail. `list-policies` shows each restore task as an additional row
 (`restore:<policy>`), same columns as everything else; a permanently-succeeded one-shot task's
 `NEXT RUN` column reads "due now" even though it will never run again — a known, accepted display
 quirk (see [Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md)), not a functional bug.
+This path has browser-driven integration coverage in `web/e2e/restore-verify.spec.js`
+(`docs/superpowers/specs/2026-08-13-restore-verification-e2e-design.md`) — a real backed-up file
+verifying successfully, and a rule naming a file that was never backed up failing — both read from
+the real, rendered `/jobs/:job_id` log.
 
 ## Logging and correlation
 

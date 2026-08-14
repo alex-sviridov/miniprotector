@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-13 — restore verification gains e2e coverage
+
+`GET /api/v1/jobs?kind=restore` no longer 400s — `validJobKinds` and `binariesForKind` were never
+updated when restore-policy verification shipped, even though `agent` already logged correct
+`event=start`/`event=finish` lines for it. Separately, `GET /api/v1/jobs/{job_id}/logs` no longer
+400s for a restore job specifically — every restore policy's generated name embeds a millisecond
+ISO timestamp (which always contains a `.`), but the endpoint's `job_id` validation regex
+disallowed `.`, so no restore job's log could ever be viewed via the API or the web UI. A third,
+related gap: `GET /api/v1/jobs/{job_id}/logs`'s Loki query only ever selected `agent`/`brfs`/`bwfs`
+log lines, so even once a restore job's log page loaded, the actual per-file `verified`/`summary`
+lines `rwfs verify` itself emits (the only lines that say anything about what was actually checked)
+were silently filtered out — `rwfs` is now included. All three were caught by writing this
+release's own e2e coverage — restore-policy verification (submit a restore policy,
+`agent` runs `rwfs verify`, the outcome appears as a job) now has browser-driven Playwright coverage
+(`web/e2e/restore-verify.spec.js`): a real backed-up file verifies successfully, and a rule naming a
+file that was never backed up fails — both scenarios read their outcome from the real, rendered job
+log, catching real-DOM issues a mocked-store component test can't. This was a real gap: neither this
+path nor the job list's handling of `kind=restore` had ever been exercised end to end before.
+
 ## 2026-08-13 — restore destination rename
 
 The restore review screen (`/restore`) is now a table showing each selection's storage host,

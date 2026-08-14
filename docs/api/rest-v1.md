@@ -414,7 +414,7 @@ Query parameters (all optional):
 
 | Param | Type | Description |
 |-------|------|--------------|
-| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update` |
+| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update`, `restore` |
 | `source_host` | string | Exact match on the job's start-line hostname. Must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
 | `state` | string | Exact match on the job's terminal status (e.g. `success`, `failure`); jobs still running never match, since they have no finish line yet |
 | `since` | int, unix seconds | Start of the query window, default `now - 24h` |
@@ -446,7 +446,7 @@ outside the window) gets `started_at: null` — never guessed. `truncated: true`
 underlying Loki queries hit its own line cap and the result may be incomplete; narrow `since`/
 `until` and retry.
 
-`400` if `kind` isn't one of the four valid values, `since`/`until` aren't unix-second integers,
+`400` if `kind` isn't one of the five valid values, `since`/`until` aren't unix-second integers,
 `until` is before `since`, the window exceeds 168h, or `limit` isn't an integer in `[1, 500]`.
 `502` if the underlying Loki query fails.
 
