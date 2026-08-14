@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process'
 import { test, expect } from '@playwright/test'
-import { seedRestoreCartCatalogData, waitForJobSuccess, COMPOSE_FILE } from './helpers/policySeeding.js'
+import { seedRestoreCartCatalogData, waitForJobSuccess, waitForJobState, COMPOSE_FILE } from './helpers/policySeeding.js'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -32,6 +32,26 @@ test('restore verification', async ({ page, context }) => {
     await page.getByText('//', { exact: true }).click()
   }
 
+  // JobDetailView only fetches logs once, on mount (no client-side polling) -- and rwfs's
+  // own "verified"/"summary" lines are a separate Loki ingestion stream from the "agent"
+  // binary's start/finish events waitForJobSuccess (or waitForJobState) just observed. Both
+  // land at essentially the same real-world instant, but Loki's ingestion of the two streams
+  // can still land a beat apart, so there's a short race window right after job success/failure
+  // where this page's one-shot fetch can beat rwfs's lines into Loki. Retry by reloading (which
+  // re-runs fetchLogs via onMounted) rather than waiting on the already-rendered, stale DOM --
+  // same reasoning/shape as policySeeding.js's waitForJobState reload loop. Shared by both
+  // steps below.
+  async function waitForLogLine(filterText, timeoutMs = 30_000) {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const line = page.getByTestId('log-line').filter({ hasText: filterText }).first()
+      if ((await line.count()) > 0) return line
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for a "${filterText}" log line`)
+      await page.waitForTimeout(2000)
+      await page.reload()
+    }
+  }
+
   await test.step('a real backed-up file verifies successfully, readable in its job log', async () => {
     await goToCatalogHome()
     for (const segment of segments) {
@@ -61,25 +81,6 @@ test('restore verification', async ({ page, context }) => {
 
     await page.locator('tbody tr', { hasText: policyName }).locator('a').click()
 
-    // JobDetailView only fetches logs once, on mount (no client-side polling) -- and rwfs's
-    // own "verified"/"summary" lines are a separate Loki ingestion stream from the "agent"
-    // binary's start/finish events waitForJobSuccess just observed. Both land at essentially
-    // the same real-world instant, but Loki's ingestion of the two streams can still land a
-    // beat apart, so there's a short race window right after job success where this page's
-    // one-shot fetch can beat rwfs's lines into Loki. Retry by reloading (which re-runs
-    // fetchLogs via onMounted) rather than waiting on the already-rendered, stale DOM --
-    // same reasoning/shape as policySeeding.js's waitForJobState reload loop.
-    async function waitForLogLine(filterText, timeoutMs = 30_000) {
-      const deadline = Date.now() + timeoutMs
-      for (;;) {
-        const line = page.getByTestId('log-line').filter({ hasText: filterText }).first()
-        if ((await line.count()) > 0) return line
-        if (Date.now() > deadline) throw new Error(`Timed out waiting for a "${filterText}" log line`)
-        await page.waitForTimeout(2000)
-        await page.reload()
-      }
-    }
-
     const verifiedLine = await waitForLogLine('verified')
     await expect(verifiedLine).toBeVisible()
     await verifiedLine.getByTestId('log-line-summary').click()
@@ -92,5 +93,49 @@ test('restore verification', async ({ page, context }) => {
     await summaryLine.getByTestId('log-line-summary').click()
     await expect(summaryLine.getByTestId('log-line-fields')).toContainText('warnings')
     await expect(summaryLine.getByTestId('log-line-fields')).toContainText('0')
+  })
+
+  await test.step('a rule naming a file that was never backed up fails, readable in its job log', async () => {
+    const authHeaders = { Authorization: 'Bearer dev-placeholder-token-change-me' }
+
+    // No UI affordance exists to select a file that was never backed up --
+    // CatalogView.vue only ever renders checkboxes for real catalog rows.
+    // This is the one non-UI step in this scenario; everything after it
+    // (waiting, opening the job, reading the log, cleanup) is the same
+    // mix of forced-fetch-then-browser-driven flow the success scenario
+    // above uses.
+    const storagePoliciesResp = await page.request.get('/api/v1/policies?type=storage', { headers: authHeaders })
+    const { data: storagePolicies } = await storagePoliciesResp.json()
+    const storagePolicyId = storagePolicies.find((p) => p.name === 'store').id
+
+    const missingPath = `${dirPath}/does-not-exist.sql`
+    const failPolicyName = `e2e-restore-verify-fail-${Date.now()}`
+    const createResp = await page.request.post('/api/v1/restore', {
+      headers: authHeaders,
+      data: {
+        name: failPolicyName,
+        client_filters: { hostnames: [sourceHost] },
+        storage_policy_id: storagePolicyId,
+        rules: [{ host: sourceHost, path: missingPath, include: true }],
+      },
+    })
+    expect(createResp.status()).toBe(201)
+    const { id: failPolicyId } = await createResp.json()
+
+    execSync(`docker compose -f ${COMPOSE_FILE} exec -T ${sourceHost} ./policyclient fetch`, { stdio: 'inherit' })
+    await waitForJobState(page, failPolicyName, 'failure')
+
+    await page.locator('tbody tr', { hasText: failPolicyName }).locator('a').click()
+
+    const notFoundLine = await waitForLogLine('verification failed')
+    await expect(notFoundLine).toBeVisible()
+    await notFoundLine.getByTestId('log-line-summary').click()
+    await expect(notFoundLine.getByTestId('log-line-fields')).toContainText('not found on this store')
+    await expect(notFoundLine.getByTestId('log-line-fields')).toContainText(missingPath)
+
+    // One-shot-until-success: left alive, this policy retries with backoff
+    // forever (it names a file that can never exist). Delete it the same
+    // way it was created.
+    await page.request.delete(`/api/v1/policies/${failPolicyId}`, { headers: authHeaders })
   })
 })
