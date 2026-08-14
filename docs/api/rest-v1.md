@@ -384,7 +384,9 @@ Creates a new `"restore"`-typed policy -- the only way to create one; there is n
   "name": "web01-emergency",
   "client_filters": {"hostnames": ["web-01"], "labels": {}},
   "storage_policy_id": "<id of an existing \"storage\" policy>",
-  "rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
+  "rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}],
+  "mode": "verify",
+  "overwrite": false
 }
 ```
 
@@ -392,11 +394,20 @@ Creates a new `"restore"`-typed policy -- the only way to create one; there is n
 resolved live from that policy's check-ins, exactly like a `"backup"` policy's `destinations`.
 `rules` must contain at least one entry; an entry with `"host": null` (or omitted) is
 host-agnostic, applying across every source host under `path`. `client_filters` targets the node
-that will execute the restore, the same mechanism every other policy type uses. `201` with the
-created policy on success.
+that will execute the restore, the same mechanism every other policy type uses.
 
-`400` if `name` is empty, `storage_policy_id` doesn't reference an existing `"storage"` policy, or
-`rules` is empty or contains an entry with an empty `path`.
+`mode` is `"verify"` or `"restore"`, defaulting to `"verify"` when omitted (so existing callers that
+never set it are unaffected). `mode: "verify"` creates the policy exactly as before: `agent` picks
+it up and runs `rwfs verify` against it, writing nothing. `mode: "restore"` is validated but
+currently always rejected with `501` (`{"error": "restore execution is not yet implemented; only
+verification (mode=verify) is currently supported"}`) -- `policy-server` is never called in this
+case, since no execution path exists yet. `overwrite` (bool, default `false`) is accepted alongside
+`mode: "restore"` but has no effect yet, for the same reason. `201` with the created policy on
+success (`mode: "verify"` only).
+
+`400` if `name` is empty, `storage_policy_id` doesn't reference an existing `"storage"` policy,
+`rules` is empty or contains an entry with an empty `path`, or `mode` is neither `"verify"` nor
+`"restore"`.
 
 An optional integer `disabled_at` (Unix seconds) may also be included; once that time passes,
 `GetPolicies` stops serving the policy. Omit it (or send `0`) for a policy that's never disabled.

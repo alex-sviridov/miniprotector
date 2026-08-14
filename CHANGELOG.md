@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-14 — restore UI gains separate Verify/Restore actions
+
+The restore view's single "Submit restore" button is now two buttons, Verify and Restore, plus an
+"Overwrite existing files" checkbox. `POST /api/v1/restore` gained `mode` (`verify`/`restore`,
+default `verify`) and `overwrite` fields to carry this through. Verify behaves exactly as the old
+single button did. Restore is deliberately not wired to anything yet -- `api-server` validates and
+rejects it with `501` before ever calling `policy-server`, since real restore execution
+(`rwfs restore`) still doesn't exist. This is UI/API groundwork only, ahead of a later change to
+`policy-server`/`rwfs` that will make Restore actually work.
+
 ## 2026-08-13 — restore verification gains e2e coverage
 
 `GET /api/v1/jobs?kind=restore` no longer 400s — `validJobKinds` and `binariesForKind` were never
