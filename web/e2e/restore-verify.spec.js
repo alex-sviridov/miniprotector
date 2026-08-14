@@ -10,8 +10,11 @@ test('restore verification', async ({ page, context }) => {
   // task brief documents the full run as taking "up to ~3 minutes," which
   // exceeds playwright.config.js's project-wide 120s default (sized for
   // restore-cart.spec.js's shorter, single-job-wait scenario). Scoped to
-  // just this test rather than raising the shared default.
-  test.setTimeout(240_000)
+  // just this test rather than raising the shared default. The
+  // click-Restore step added after verification is UI-only and cheap, but
+  // the budget still needs headroom beyond the original ~3 minutes since
+  // step 1 alone runs close to it in practice.
+  test.setTimeout(300_000)
 
   await context.addInitScript(() => {
     localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
@@ -100,6 +103,34 @@ test('restore verification', async ({ page, context }) => {
     ).toHaveText('0')
   })
 
+  await test.step('clicking Restore reports it is not implemented yet, without creating a job', async () => {
+    // Step 1's waitForLogLine retries via page.reload() -- a real browser
+    // reload, same as page.goto() -- so restoreCart's in-memory selection
+    // doesn't survive step 1; re-select the same file rather than assuming
+    // it's still there. This scenario is UI-only (api-server rejects
+    // mode=restore before any backend/policy-server call), so it's cheap to
+    // run right after verification, with no cleanup required (nothing gets
+    // created).
+    await goToCatalogHome()
+    for (const segment of segments) {
+      await page.getByText(`${segment}/`, { exact: true }).click()
+    }
+    await page.getByTestId(`file-checkbox-${sourceHost}:${filePath}`).click()
+
+    await page.getByRole('link', { name: 'Restore' }).click()
+    await expect(page.getByTestId(`restore-row-${sourceHost}:${filePath}`)).toBeVisible()
+
+    const destinationSelect = page.getByTestId('destination-select')
+    await expect(destinationSelect.locator('option', { hasText: sourceHost })).toHaveCount(1)
+    await destinationSelect.selectOption(sourceHost)
+
+    await page.getByTestId('overwrite-checkbox').check()
+    await page.getByTestId('restore-button').click()
+
+    const resultText = await page.getByTestId('submission-results').innerText()
+    expect(resultText).toContain('restore execution is not yet implemented; only verification (mode=verify) is currently supported')
+  })
+
   await test.step('a rule naming a file that was never backed up fails, readable in its job log', async () => {
     const authHeaders = { Authorization: 'Bearer dev-placeholder-token-change-me' }
 
@@ -122,6 +153,7 @@ test('restore verification', async ({ page, context }) => {
         client_filters: { hostnames: [sourceHost] },
         storage_policy_id: storagePolicyId,
         rules: [{ host: sourceHost, path: missingPath, include: true }],
+        mode: 'verify',
       },
     })
     expect(createResp.status()).toBe(201)
