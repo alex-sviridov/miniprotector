@@ -68,10 +68,10 @@ test('restore verification', async ({ page, context }) => {
     // reasoning as policySeeding.js's own storageSelect wait).
     await expect(destinationSelect.locator('option', { hasText: sourceHost })).toHaveCount(1)
     await destinationSelect.selectOption(sourceHost)
-    await page.getByTestId('submit-restore').click()
+    await page.getByTestId('verify-button').click()
 
     const resultText = await page.getByTestId('submission-results').innerText()
-    const policyName = /Created (\S+) from/.exec(resultText)[1]
+    const policyName = /Started verification policy (\S+) from/.exec(resultText)[1]
 
     // No UI/API surface to force policyclient's pickup faster than its
     // default 900s fetch interval -- same non-UI escape hatch

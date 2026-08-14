@@ -93,19 +93,21 @@ describe('RestoreView', () => {
     expect(options.map((o) => o.element.value)).toEqual(['', 'web01', 'web02'])
   })
 
-  it('disables submit until the cart has a selection and a destination is chosen', async () => {
+  it('disables verify and restore until the cart has a selection and a destination is chosen', async () => {
     const wrapper = mountView({
       rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],
       clientsList: [{ hostname: 'web01' }],
     })
-    expect(wrapper.find('[data-test="submit-restore"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="verify-button"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="restore-button"]').attributes('disabled')).toBeDefined()
 
     await wrapper.find('[data-test="destination-select"]').setValue('web01')
 
-    expect(wrapper.find('[data-test="submit-restore"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-test="verify-button"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-test="restore-button"]').attributes('disabled')).toBeUndefined()
   })
 
-  it('clicking submit calls restoreSubmission.submit with the chosen destination', async () => {
+  it('clicking Verify calls restoreSubmission.submit with mode verify', async () => {
     const wrapper = mountView({
       rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],
       clientsList: [{ hostname: 'web01' }],
@@ -113,9 +115,30 @@ describe('RestoreView', () => {
     const submission = useRestoreSubmissionStore()
 
     await wrapper.find('[data-test="destination-select"]').setValue('web01')
-    await wrapper.find('[data-test="submit-restore"]').trigger('click')
+    await wrapper.find('[data-test="verify-button"]').trigger('click')
 
-    expect(submission.submit).toHaveBeenCalledWith('web01')
+    expect(submission.submit).toHaveBeenCalledWith('web01', { mode: 'verify', overwrite: false })
+  })
+
+  it('clicking Restore calls restoreSubmission.submit with mode restore and the checked overwrite flag', async () => {
+    const wrapper = mountView({
+      rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],
+      clientsList: [{ hostname: 'web01' }],
+    })
+    const submission = useRestoreSubmissionStore()
+
+    await wrapper.find('[data-test="destination-select"]').setValue('web01')
+    await wrapper.find('[data-test="overwrite-checkbox"]').setValue(true)
+    await wrapper.find('[data-test="restore-button"]').trigger('click')
+
+    expect(submission.submit).toHaveBeenCalledWith('web01', { mode: 'restore', overwrite: true })
+  })
+
+  it('the overwrite checkbox defaults to unchecked', () => {
+    const wrapper = mountView({
+      rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],
+    })
+    expect(wrapper.find('[data-test="overwrite-checkbox"]').element.checked).toBe(false)
   })
 
   it('renders a successful submission result', () => {

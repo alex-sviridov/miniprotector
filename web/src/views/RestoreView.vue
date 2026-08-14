@@ -15,6 +15,7 @@ const clients = useClientsStore()
 const submission = useRestoreSubmissionStore()
 
 const destinationHost = ref('')
+const overwrite = ref(false)
 // Key of the entry currently being edited (see entryKey), or null when no
 // destination-path cell is in edit mode. Only one cell can be edited at a
 // time.
@@ -63,8 +64,12 @@ const canSubmit = computed(
   () => restoreCart.hasSelections && destinationHost.value !== '' && !submission.submitting
 )
 
-function submit() {
-  submission.submit(destinationHost.value)
+function verify() {
+  submission.submit(destinationHost.value, { mode: 'verify', overwrite: overwrite.value })
+}
+
+function restore() {
+  submission.submit(destinationHost.value, { mode: 'restore', overwrite: overwrite.value })
 }
 </script>
 
@@ -123,8 +128,15 @@ function submit() {
           </option>
         </BaseSelect>
       </BaseField>
-      <BaseButton data-test="submit-restore" variant="primary" :disabled="!canSubmit" @click="submit">
-        Submit restore
+      <label class="flex items-center gap-2">
+        <input type="checkbox" data-test="overwrite-checkbox" v-model="overwrite" />
+        Overwrite existing files
+      </label>
+      <BaseButton data-test="verify-button" variant="secondary" :disabled="!canSubmit" @click="verify">
+        Verify
+      </BaseButton>
+      <BaseButton data-test="restore-button" variant="primary" :disabled="!canSubmit" @click="restore">
+        Restore
       </BaseButton>
     </StatusMessage>
     <!-- Outside StatusMessage on purpose: its slot only renders for a
@@ -134,7 +146,7 @@ function submit() {
     <p v-if="submission.error" data-test="submission-error">{{ submission.error }}</p>
     <ul v-if="submission.results.length" data-test="submission-results">
       <li v-for="result in submission.results" :key="result.storeHost">
-        <span v-if="result.status === 'success'">Created {{ result.policy.name }} from {{ result.storeHost }}</span>
+        <span v-if="result.status === 'success'">Started verification policy {{ result.policy.name }} from {{ result.storeHost }}</span>
         <span v-else>{{ result.storeHost }}: {{ result.message }}</span>
       </li>
     </ul>
