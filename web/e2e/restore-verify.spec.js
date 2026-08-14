@@ -123,19 +123,27 @@ test('restore verification', async ({ page, context }) => {
     const { id: failPolicyId } = await createResp.json()
 
     execSync(`docker compose -f ${COMPOSE_FILE} exec -T ${sourceHost} ./policyclient fetch`, { stdio: 'inherit' })
-    await waitForJobState(page, failPolicyName, 'failure')
-
-    await page.locator('tbody tr', { hasText: failPolicyName }).locator('a').click()
-
-    const notFoundLine = await waitForLogLine('verification failed')
-    await expect(notFoundLine).toBeVisible()
-    await notFoundLine.getByTestId('log-line-summary').click()
-    await expect(notFoundLine.getByTestId('log-line-fields')).toContainText('not found on this store')
-    await expect(notFoundLine.getByTestId('log-line-fields')).toContainText(missingPath)
 
     // One-shot-until-success: left alive, this policy retries with backoff
-    // forever (it names a file that can never exist). Delete it the same
-    // way it was created.
-    await page.request.delete(`/api/v1/policies/${failPolicyId}`, { headers: authHeaders })
+    // forever (it names a file that can never exist). The wait/assert block
+    // below can throw (timeout or failed assertion) before ever reaching a
+    // cleanup call at the bottom -- wrap it so the delete always runs,
+    // otherwise a flaky run leaks a policy that never stops retrying and
+    // silently degrades every later run's dispatch queue (exactly the
+    // dispatch-starvation failure mode diagnosed earlier in this task).
+    try {
+      await waitForJobState(page, failPolicyName, 'failure')
+
+      await page.locator('tbody tr', { hasText: failPolicyName }).locator('a').click()
+
+      const notFoundLine = await waitForLogLine('verification failed')
+      await expect(notFoundLine).toBeVisible()
+      await notFoundLine.getByTestId('log-line-summary').click()
+      await expect(notFoundLine.getByTestId('log-line-fields')).toContainText('not found on this store')
+      await expect(notFoundLine.getByTestId('log-line-fields')).toContainText(missingPath)
+    } finally {
+      // Delete it the same way it was created.
+      await page.request.delete(`/api/v1/policies/${failPolicyId}`, { headers: authHeaders })
+    }
   })
 })
