@@ -23,7 +23,7 @@ describe('restoreSubmission store', () => {
   it('reports an error and makes no network calls when the cart is empty', async () => {
     const submission = useRestoreSubmissionStore()
 
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(apiFetch).not.toHaveBeenCalled()
     expect(submission.error).toBe('Nothing selected for restore.')
@@ -50,7 +50,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.error).toBeNull()
     expect(submission.results).toEqual([
@@ -64,6 +64,8 @@ describe('restoreSubmission store', () => {
         client_filters: { hostnames: ['web01'], labels: {} },
         storage_policy_id: 's1',
         rules: [{ host: null, path: '/var/lib/dbdata', include: true }],
+        mode: 'verify',
+        overwrite: false,
       }),
     })
   })
@@ -111,7 +113,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.results).toEqual([
       { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
@@ -159,7 +161,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     const folderRule = { path: '/srv/shared', host: null, include: true }
     expect(rulesByStoreFromCalls()).toEqual({
@@ -210,7 +212,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     const shared = [
       { path: '/srv/shared', host: null, include: true },
@@ -232,7 +234,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await expect(submission.submit('web01')).resolves.toBeUndefined()
+    await expect(submission.submit('web01', { mode: 'verify', overwrite: false })).resolves.toBeUndefined()
 
     expect(submission.error).toBe('catalog unavailable')
     expect(submission.results).toEqual([])
@@ -253,7 +255,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.error).toBe('Could not look up storage policies: policy server down')
     expect(submission.results).toEqual([])
@@ -284,7 +286,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.results).toEqual([
       { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
@@ -321,7 +323,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.results).toEqual([
       { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
@@ -335,7 +337,7 @@ describe('restoreSubmission store', () => {
     apiFetch.mockResolvedValue({ data: [] })
 
     const submission = useRestoreSubmissionStore()
-    const pending = submission.submit('web01')
+    const pending = submission.submit('web01', { mode: 'verify', overwrite: false })
     expect(submission.submitting).toBe(true)
     await pending
     expect(submission.submitting).toBe(false)
@@ -362,12 +364,73 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
     const body = JSON.parse(restoreCall[1].body)
     expect(body.rules).toEqual([
       { host: 'web01', path: '/etc/nginx/nginx.conf', include: true, dest_path: '/etc/nginx/nginx.conf.bak' },
+    ])
+  })
+
+  it('sends mode and overwrite through on every per-store /restore call', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'restore', overwrite: true })
+
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    const body = JSON.parse(restoreCall[1].body)
+    expect(body.mode).toBe('restore')
+    expect(body.overwrite).toBe(true)
+  })
+
+  it('reports a per-store error when the backend rejects mode=restore as not implemented', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+
+    apiFetch.mockImplementation((path) => {
+      if (path.startsWith('/catalog/stores')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.reject(
+          new Error('restore execution is not yet implemented; only verification (mode=verify) is currently supported')
+        )
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'restore', overwrite: false })
+
+    expect(submission.results).toEqual([
+      {
+        storeHost: 'store-a',
+        status: 'error',
+        message: 'restore execution is not yet implemented; only verification (mode=verify) is currently supported',
+      },
     ])
   })
 
@@ -391,7 +454,7 @@ describe('restoreSubmission store', () => {
     })
 
     const submission = useRestoreSubmissionStore()
-    await submission.submit('web01')
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
     const body = JSON.parse(restoreCall[1].body)

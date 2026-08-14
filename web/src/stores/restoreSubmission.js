@@ -111,7 +111,7 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
     error: null,
   }),
   actions: {
-    async submit(destinationHost) {
+    async submit(destinationHost, { mode, overwrite }) {
       const cart = useRestoreCartStore()
       const storagePolicies = useStoragePoliciesStore()
       const restorePolicies = useRestorePoliciesStore()
@@ -153,6 +153,8 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
               client_filters: { hostnames: [destinationHost], labels: {} },
               storage_policy_id: storagePolicyId,
               rules: rules.map(toWireRule),
+              mode,
+              overwrite,
             })
             results.push({ storeHost, status: 'success', policy })
           } catch (err) {
