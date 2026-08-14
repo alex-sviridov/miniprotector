@@ -55,7 +55,7 @@ test('restore cart selection', async ({ page, context }) => {
     await expect(restoreLink).toHaveClass(/text-blue-400/)
 
     await page.getByRole('link', { name: 'Restore' }).click()
-    await expect(page.getByText(`${dirPath}/${firstFile} (${sourceHost})`)).toBeVisible()
+    await expect(page.getByTestId(`restore-row-${sourceHost}:${dirPath}/${firstFile}`)).toBeVisible()
   })
 
   await test.step('selecting the parent folder pre-checks its children on drill-down', async () => {
@@ -70,7 +70,7 @@ test('restore cart selection', async ({ page, context }) => {
     }
 
     await page.getByRole('link', { name: 'Restore' }).click()
-    await expect(page.getByText(`${dirPath}/*`)).toBeVisible()
+    await expect(page.getByTestId(`restore-row-:${dirPath}`)).toBeVisible()
   })
 
   await test.step('unchecking a nested file creates an exception, shown as indeterminate on the parent', async () => {
@@ -85,7 +85,7 @@ test('restore cart selection', async ({ page, context }) => {
 
     // the exception itself is never shown -- only the wildcard entry
     await page.getByRole('link', { name: 'Restore' }).click()
-    await expect(page.getByText(`${dirPath}/*`)).toBeVisible()
+    await expect(page.getByTestId(`restore-row-:${dirPath}`)).toBeVisible()
     await expect(page.getByText(`${dirPath}/${secondFile}`)).toHaveCount(0)
   })
 
