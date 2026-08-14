@@ -340,7 +340,7 @@ func TestHandleGetJobLogs_InvalidJobIDCharacterReturns400(t *testing.T) {
 
 func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 1755094200000000000, Line: "policy execution started"},
 			}},
