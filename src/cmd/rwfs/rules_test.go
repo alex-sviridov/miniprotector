@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestResolveRestoreFile_NoRulesIsUnselected(t *testing.T) {
 	if resolveRestoreFile(nil, "web-01", "/var/log/x") {
@@ -46,4 +50,36 @@ func TestResolveRestoreFile_LongestMatchingAncestorWins(t *testing.T) {
 	if !resolveRestoreFile(rules, "any-host", "/var/lib/x") {
 		t.Fatal("/var/lib isn't covered by the /var/log exclude, so the /var include applies")
 	}
+}
+
+func TestResolveRestoreFileRule_ReturnsWinningRuleIndex(t *testing.T) {
+	rules := []RestoreRule{
+		{Host: "", Path: "/var", Include: true},
+		{Host: "", Path: "/var/log", Include: false},
+	}
+	idx, include, found := resolveRestoreFileRule(rules, "any-host", "/var/log/x")
+	assert.True(t, found)
+	assert.False(t, include)
+	assert.Equal(t, 1, idx, "the more specific /var/log exclude (index 1) must be reported as the winner")
+
+	idx, include, found = resolveRestoreFileRule(rules, "any-host", "/var/lib/x")
+	assert.True(t, found)
+	assert.True(t, include)
+	assert.Equal(t, 0, idx, "only the /var include (index 0) covers /var/lib")
+}
+
+func TestResolveRestoreFileRule_NoMatchReportsNotFound(t *testing.T) {
+	_, _, found := resolveRestoreFileRule(nil, "host", "/x")
+	assert.False(t, found)
+}
+
+func TestResolveRestoreFileRule_ExactRuleWinsOverFolderRuleRegardlessOfIndex(t *testing.T) {
+	rules := []RestoreRule{
+		{Host: "web-01", Path: "/var/log/app.log", Include: false}, // index 0
+		{Host: "", Path: "/var/log", Include: true},                // index 1
+	}
+	idx, include, found := resolveRestoreFileRule(rules, "web-01", "/var/log/app.log")
+	assert.True(t, found)
+	assert.False(t, include)
+	assert.Equal(t, 0, idx)
 }

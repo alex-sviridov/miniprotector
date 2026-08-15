@@ -11,9 +11,11 @@ import "strings"
 // RestoreRule mirrors policy-server's RestoreRule / the restore cart's rule
 // shape -- {host, path, include}. Host == "" means host-agnostic.
 type RestoreRule struct {
-	Host    string `json:"host"`
-	Path    string `json:"path"`
-	Include bool   `json:"include"`
+	Host      string `json:"host"`
+	Path      string `json:"path"`
+	Include   bool   `json:"include"`
+	NotBefore int64  `json:"not_before"`
+	NotAfter  int64  `json:"not_after"`
 }
 
 // splitRestorePath derives (parent, base) from p, mirroring
@@ -85,31 +87,43 @@ func ancestorsOrSelfRestorePath(path string) []string {
 	return chain
 }
 
-// longestMatchingFolderRule finds the most specific host-agnostic folder
-// rule covering path (checking path itself before its ancestors), mirrors
-// restoreRules.js's function of the same name.
-func longestMatchingFolderRule(rules []RestoreRule, path string) (include bool, found bool) {
+// longestMatchingFolderRuleIndex finds the most specific host-agnostic
+// folder rule covering path (checking path itself before its ancestors),
+// returning its index into rules.
+func longestMatchingFolderRuleIndex(rules []RestoreRule, path string) (ruleIndex int, include bool, found bool) {
 	chain := ancestorsOrSelfRestorePath(path)
 	for i := len(chain) - 1; i >= 0; i-- {
-		for _, r := range rules {
+		for ri, r := range rules {
 			if r.Host == "" && r.Path == chain[i] {
-				return r.Include, true
+				return ri, r.Include, true
 			}
 		}
 	}
-	return false, false
+	return -1, false, false
 }
 
-// resolveRestoreFile reports whether (host, path) is selected: an exact
-// host-specific rule wins outright; otherwise the longest matching
-// host-agnostic ancestor folder rule applies; no match = unselected.
-// Mirrors restoreRules.js's resolveFile exactly.
-func resolveRestoreFile(rules []RestoreRule, host, path string) bool {
-	for _, r := range rules {
+// resolveRestoreFileRule reports which rule governs (host, path): an exact
+// host-specific rule wins outright (first such rule in rules, by index);
+// otherwise the longest matching host-agnostic ancestor folder rule
+// applies; found=false means no rule matched at all. Exposes the winning
+// rule's index (unlike resolveRestoreFile's plain bool) so a caller can
+// attribute a resolved file back to the specific rule -- and therefore
+// timeframe -- that should govern it. See
+// docs/superpowers/specs/2026-08-15-restore-file-version-resolution-design.md.
+func resolveRestoreFileRule(rules []RestoreRule, host, path string) (ruleIndex int, include bool, found bool) {
+	for i, r := range rules {
 		if r.Host == host && r.Path == path {
-			return r.Include
+			return i, r.Include, true
 		}
 	}
-	include, found := longestMatchingFolderRule(rules, path)
+	return longestMatchingFolderRuleIndex(rules, path)
+}
+
+// resolveRestoreFile reports whether (host, path) is selected. Thin
+// wrapper over resolveRestoreFileRule, kept for the pieces of this package
+// that only need the bool -- see resolveRestoreFileRule for the precedence
+// rules themselves.
+func resolveRestoreFile(rules []RestoreRule, host, path string) bool {
+	_, include, found := resolveRestoreFileRule(rules, host, path)
 	return found && include
 }
