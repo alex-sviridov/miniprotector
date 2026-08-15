@@ -1,11 +1,18 @@
 package main
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"net"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
@@ -118,3 +125,50 @@ func TestResolveRestoreFilter_FolderPrefixDoesNotOverMatchSiblingPath(t *testing
 }
 
 func unixTime(sec int64) time.Time { return time.Unix(sec, 0) }
+
+func TestResolveRestoreFiles_GRPCRoundTrip(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedFile(t, store, "fs://hosta:f:/etc/a.conf:1000", 10, []byte{1}, "job1", 5000)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewListServer(store, logger)
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, srv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient(
+		"passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := pb.NewListServiceClient(conn)
+	stream, err := client.ResolveRestoreFiles(context.Background(), &pb.ResolveRestoreFilesRequest{
+		Filters: []*pb.RestoreFileFilter{
+			{Host: "hosta", Path: "/etc/a.conf"},
+			{Path: "/nonexistent", PathIsPrefix: true},
+		},
+	})
+	require.NoError(t, err)
+
+	var got []*pb.ResolveRestoreFilesResponse
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		got = append(got, resp)
+	}
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "/etc/a.conf", got[0].GetRow().GetPath())
+	assert.Equal(t, int32(0), got[0].GetFilterIndex())
+}

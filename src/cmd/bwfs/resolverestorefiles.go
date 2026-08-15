@@ -99,3 +99,27 @@ func resolveRestoreFilter(store *wfs.Store, filter *pb.RestoreFileFilter, yield 
 	}
 	return rows.Err()
 }
+
+func (s *listServer) ResolveRestoreFiles(req *pb.ResolveRestoreFilesRequest, stream pb.ListService_ResolveRestoreFilesServer) error {
+	for filterIndex, filter := range req.GetFilters() {
+		err := resolveRestoreFilter(s.store, filter, func(c resolvedCandidate) bool {
+			sendErr := stream.Send(&pb.ResolveRestoreFilesResponse{
+				Row: &pb.FileRow{
+					FileUuid: c.FileUUID,
+					Source:   c.Source,
+					Type:     "f",
+					Path:     c.Path,
+					Size:     c.Size,
+					Chunks:   int32(c.ChunkCount),
+				},
+				FilterIndex: int32(filterIndex),
+			})
+			return sendErr == nil
+		})
+		if err != nil {
+			s.logger.Error("ResolveRestoreFiles query failed", "filter_index", filterIndex, "error", err)
+			return err
+		}
+	}
+	return nil
+}
