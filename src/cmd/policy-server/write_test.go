@@ -662,6 +662,48 @@ func TestCreatePolicy_RestorePolicyWritesIntoRestoreDir(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestCreatePolicy_RestoreRuleTimeframePersistsToDisk guards the first hop
+// of the not_before/not_after chain: buildPolicyForCreate is what turns a
+// CreatePolicyRequest into the RestorePolicy that gets serialized into
+// restore/<name>.json. If it drops the timeframe, nothing downstream can
+// ever recover it -- the on-disk policy is the source of truth every later
+// GetPolicies response is rebuilt from. Asserting on the file itself (not
+// just the response) is deliberate: the response is built from the same
+// in-memory value, so a disk check is what proves persistence.
+func TestCreatePolicy_RestoreRuleTimeframePersistsToDisk(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "windowed-restore",
+		Type:            "restore",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		StoragePolicyId: storageID,
+		Rules: []*pb.RestoreRule{
+			{Host: "web-01", Path: "/var/www/index.html", Include: true, NotBefore: 1750000000, NotAfter: 1760000000},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Rules, 1)
+	assert.Equal(t, int64(1750000000), resp.Rules[0].NotBefore)
+	assert.Equal(t, int64(1760000000), resp.Rules[0].NotAfter)
+
+	data, err := os.ReadFile(filepath.Join(dir, "restore", "windowed-restore.json"))
+	require.NoError(t, err)
+	var onDisk struct {
+		Rules []struct {
+			NotBefore int64 `json:"not_before"`
+			NotAfter  int64 `json:"not_after"`
+		} `json:"rules"`
+	}
+	require.NoError(t, json.Unmarshal(data, &onDisk))
+	require.Len(t, onDisk.Rules, 1)
+	assert.Equal(t, int64(1750000000), onDisk.Rules[0].NotBefore)
+	assert.Equal(t, int64(1760000000), onDisk.Rules[0].NotAfter)
+}
+
 func TestCreatePolicy_ResponseIncludesRestoreType(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)

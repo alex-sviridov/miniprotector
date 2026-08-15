@@ -42,14 +42,23 @@ type ObjectFilter struct {
 	Exclude []string `json:"exclude,omitempty"`
 }
 
-// RestoreRule mirrors policy-server's RestoreRule -- {host, path, include},
-// where an empty Host means the rule applies across every source host.
-// Pure passthrough here; agent (cmd/agent/restore.go) is what interprets
-// it, via rwfs verify --rules-stdin.
+// RestoreRule mirrors policy-server's RestoreRule -- {host, path, include}
+// plus the optional restore timeframe, where an empty Host means the rule
+// applies across every source host. Pure passthrough here; agent
+// (cmd/agent/restore.go) is what interprets it, via rwfs verify
+// --rules-stdin, and it decodes policies-cache.json by these exact JSON
+// tags -- so they must stay identical to agent's own RestoreRule.
+//
+// NotBefore/NotAfter are Unix seconds bounding which backed-up version of
+// the rule's path may satisfy it; 0 on either side means unbounded there.
+// They are omitempty so an unbounded rule caches byte-identically to how
+// it did before the timeframe feature existed.
 type RestoreRule struct {
-	Host    string `json:"host"`
-	Path    string `json:"path"`
-	Include bool   `json:"include"`
+	Host      string `json:"host"`
+	Path      string `json:"path"`
+	Include   bool   `json:"include"`
+	NotBefore int64  `json:"not_before,omitempty"`
+	NotAfter  int64  `json:"not_after,omitempty"`
 }
 
 // CachedPolicy is the on-disk representation of one policy-server Policy --
@@ -150,7 +159,13 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 		}
 		rules := make([]RestoreRule, 0, len(p.GetRules()))
 		for _, r := range p.GetRules() {
-			rules = append(rules, RestoreRule{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude()})
+			rules = append(rules, RestoreRule{
+				Host:      r.GetHost(),
+				Path:      r.GetPath(),
+				Include:   r.GetInclude(),
+				NotBefore: r.GetNotBefore(),
+				NotAfter:  r.GetNotAfter(),
+			})
 		}
 		out = append(out, CachedPolicy{
 			ID:            p.GetId(),

@@ -199,3 +199,64 @@ func TestRunFetch_RestorePolicyCarriesStoragePolicyIdAndRules(t *testing.T) {
 	assert.Equal(t, []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}}, got[0].Rules)
 	assert.Equal(t, []string{"bwfs-east.internal:8080"}, got[0].Destinations)
 }
+
+// agentRestoreRuleShape mirrors cmd/agent/restore.go's RestoreRule field
+// for field, json tag for json tag. agent is the only consumer of the
+// rules policyclient caches, and it reads them out of policies-cache.json
+// by these exact JSON keys -- so decoding the cache file through this
+// struct is the real end-to-end contract check, not a Go-struct-identity
+// check that would still pass if the tags drifted apart.
+type agentRestoreRuleShape struct {
+	Host      string `json:"host"`
+	Path      string `json:"path"`
+	Include   bool   `json:"include"`
+	NotBefore int64  `json:"not_before,omitempty"`
+	NotAfter  int64  `json:"not_after,omitempty"`
+}
+
+// TestRunFetch_RestoreRuleTimeframeSurvivesIntoCache guards the hop that
+// silently dropped not_before/not_after: policy-server carries them, agent
+// reads them, but policyclient sits in between and is the only thing that
+// writes policies-cache.json. Decoding through agentRestoreRuleShape
+// proves the values reach agent under the keys agent actually looks for.
+func TestRunFetch_RestoreRuleTimeframeSurvivesIntoCache(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "policies-cache.json")
+
+	fake := &fakePolicyServiceClient{resp: &pb.GetPoliciesResponse{
+		Policies: []*pb.Policy{
+			{
+				Id:              "restore-uuid-tf",
+				Name:            "web01-windowed",
+				CreatedAt:       timestamppb.New(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)),
+				UpdatedAt:       timestamppb.New(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)),
+				Type:            "restore",
+				StoragePolicyId: "sp-1",
+				Rules: []*pb.RestoreRule{
+					{Host: "web-01", Path: "/var/www/index.html", Include: true, NotBefore: 1750000000, NotAfter: 1760000000},
+					{Host: "", Path: "/var/log", Include: true},
+				},
+			},
+		},
+	}}
+
+	require.NoError(t, runFetch(context.Background(), fake, cachePath, fetchTestLogger()))
+
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+
+	var got []struct {
+		Rules []agentRestoreRuleShape `json:"rules"`
+	}
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, []agentRestoreRuleShape{
+		{Host: "web-01", Path: "/var/www/index.html", Include: true, NotBefore: 1750000000, NotAfter: 1760000000},
+		{Host: "", Path: "/var/log", Include: true},
+	}, got[0].Rules, "not_before/not_after must survive the policyclient hop into policies-cache.json")
+
+	// An unset timeframe must stay absent from the file entirely (omitempty),
+	// so an unbounded rule is textually indistinguishable from one written
+	// before this feature existed.
+	assert.NotContains(t, string(data), `"not_before": 0`)
+}

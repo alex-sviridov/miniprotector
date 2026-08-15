@@ -194,7 +194,19 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 		}
 		rules := make([]RestoreRule, len(req.GetRules()))
 		for i, r := range req.GetRules() {
-			rules[i] = RestoreRule{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude(), DestPath: r.GetDestPath()}
+			// Every field of pb.RestoreRule must be carried here: this is
+			// the only place a CreatePolicyRequest's rules become the
+			// on-disk restore policy, which is the source of truth every
+			// later GetPolicies response is rebuilt from. A field dropped
+			// here is unrecoverable downstream.
+			rules[i] = RestoreRule{
+				Host:      r.GetHost(),
+				Path:      r.GetPath(),
+				Include:   r.GetInclude(),
+				DestPath:  r.GetDestPath(),
+				NotBefore: r.GetNotBefore(),
+				NotAfter:  r.GetNotAfter(),
+			}
 		}
 		return &RestorePolicy{
 			PolicyBase:      base,
