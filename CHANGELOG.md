@@ -11,6 +11,17 @@ destination store's entire catalog — `bwfs` gained a scoped, streaming `Resolv
 decomposed, indexed storage columns, so a host-agnostic folder rule (previously an unbounded full-store
 dump) now costs roughly what it matches, not what the store holds.
 
+Four integration gaps found in whole-branch review are fixed alongside it. The timeframe is now actually
+carried end to end — `policy-server` was dropping it when it wrote a newly created restore policy to disk,
+and `policyclient` was dropping it again on the way into the policy cache `agent` reads, so the feature had
+been inert regardless of what the UI sent. A file rule that finds nothing now reports `no version in
+timeframe` only when a window was actually requested, and the plain `not found on this store` otherwise,
+rather than blaming a timeframe the operator never set. Folder rules now match children under either path
+separator and work at a filesystem root, where the previous `/`-only prefix range silently matched nothing
+for Windows-style and root paths alike. Finally, opening a store backfills the `source_host`/`path`/`mtime`
+columns on rows that predate them, since schema migration only created those columns without populating
+them — leaving everything backed up beforehand invisible to restore.
+
 ## 2026-08-14 — restore UI gains separate Verify/Restore actions
 
 The restore view's single "Submit restore" button is now two buttons, Verify and Restore, plus an
