@@ -694,3 +694,25 @@ func TestFailStaleInProgressJobs_NoInProgressJobsReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
 }
+
+func TestCreateFileData_PopulatesDecomposedColumns(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.CreateFileData("fs://workstation:f:C:/Users/foo/bar.txt:1782605538", 42))
+
+	var rec FileDataRecord
+	require.NoError(t, store.RawDB().Where("file_id = ?", "fs://workstation:f:C:/Users/foo/bar.txt:1782605538").First(&rec).Error)
+	assert.Equal(t, "workstation", rec.SourceHost)
+	assert.Equal(t, "C:/Users/foo/bar.txt", rec.Path)
+	assert.Equal(t, int64(1782605538), rec.Mtime)
+}
+
+func TestCreateFileData_MalformedFileIDLeavesColumnsEmpty(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.CreateFileData("not-a-valid-id", 1))
+
+	var rec FileDataRecord
+	require.NoError(t, store.RawDB().Where("file_id = ?", "not-a-valid-id").First(&rec).Error)
+	assert.Equal(t, "", rec.SourceHost)
+	assert.Equal(t, "not-a-valid-id", rec.Path)
+	assert.Equal(t, int64(0), rec.Mtime)
+}
