@@ -35,6 +35,13 @@ On startup, before accepting connections, the server runs a vacuum pass over the
 orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
 
+Opening the store also runs a one-time backfill of the `source_host`/`path`/`mtime` columns on
+`file_data_records`. Those columns were added after the store format already existed, and schema
+migration only creates them — it does not populate them — so any file backed up before they existed
+would otherwise stay invisible to `ResolveRestoreFiles`, which matches on `path`. The backfill
+derives all three from each row's `file_id` in bounded batches, is resumable if interrupted, and
+after its first run costs a single indexed lookup that matches nothing.
+
 On `SIGTERM`/`SIGINT`, `bwfs` now shuts down gracefully: `grpc.Server.GracefulStop()` lets any
 in-flight `BackupService`/`ListService`/`RestoreService` call finish before the process exits,
 rather than killing it mid-stream — the same behavior every other gRPC server in this repo already

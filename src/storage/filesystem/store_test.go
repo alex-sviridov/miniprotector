@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"lukechampine.com/blake3"
 
 	"github.com/alex-sviridov/miniprotector/storage"
@@ -56,6 +57,135 @@ func TestOpenDB_CreatesSchemaAndFile(t *testing.T) {
 	assert.NoError(t, db.Exec("SELECT 1 FROM file_data_chunk_records LIMIT 1").Error)
 	assert.NoError(t, db.Exec("SELECT 1 FROM file_version_records LIMIT 1").Error)
 	assert.NoError(t, db.Exec("SELECT 1 FROM backup_job_records LIMIT 1").Error)
+}
+
+// insertPreMigrationFileData writes a file_data_records row the way rows
+// written before source_host/path/mtime existed look once AutoMigrate has
+// added those columns: a real file_id, all three new columns at their zero
+// values. It goes through raw SQL precisely to bypass CreateFileData,
+// which is what populates them going forward.
+func insertPreMigrationFileData(t *testing.T, db *gorm.DB, fileID string) {
+	t.Helper()
+	require.NoError(t, db.Exec(
+		`INSERT INTO file_data_records (uuid, file_id, source_host, path, mtime, size, checksum, chunk_count, created_at)
+		 VALUES (?, ?, '', '', 0, ?, ?, ?, ?)`,
+		uuid.New().String(), fileID, int64(10), []byte{1, 2, 3}, 1, time.Now(),
+	).Error)
+}
+
+// TestOpenDB_BackfillsPreMigrationFileDataColumns covers rows that predate
+// the source_host/path/mtime columns. AutoMigrate adds the columns but
+// never populates them, so without a backfill those rows stay invisible to
+// ResolveRestoreFiles forever -- a folder rule would "succeed" having
+// verified zero of them, and a file rule would report a file missing that
+// is in fact sitting right there on the store.
+func TestOpenDB_BackfillsPreMigrationFileDataColumns(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := New(dir)
+	require.NoError(t, err)
+	insertPreMigrationFileData(t, store.RawDB(), "fs://hosta:f:/etc/nginx.conf:1782605538")
+	insertPreMigrationFileData(t, store.RawDB(), `fs://winhost:f:C:\Users\foo\bar.txt:1700000000`)
+	// A malformed file_id must still be backfilled, not skipped: parseFileID
+	// falls back to path == the raw id, which is what CreateFileData would
+	// have stored for it too. Leaving such a row unfilled would make it a
+	// permanent re-scan candidate on every single startup.
+	insertPreMigrationFileData(t, store.RawDB(), "not-a-valid-id")
+	// A row already carrying its columns must be left exactly as-is.
+	require.NoError(t, store.CreateFileData("fs://hostb:f:/var/log/syslog:999", 20))
+	require.NoError(t, store.Close())
+
+	// Re-opening runs openDB again, which is where the backfill lives.
+	store, err = New(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	for _, want := range []struct {
+		fileID     string
+		sourceHost string
+		path       string
+		mtime      int64
+	}{
+		{"fs://hosta:f:/etc/nginx.conf:1782605538", "hosta", "/etc/nginx.conf", 1782605538},
+		{`fs://winhost:f:C:\Users\foo\bar.txt:1700000000`, "winhost", `C:\Users\foo\bar.txt`, 1700000000},
+		{"not-a-valid-id", "", "not-a-valid-id", 0},
+		{"fs://hostb:f:/var/log/syslog:999", "hostb", "/var/log/syslog", 999},
+	} {
+		var got FileDataRecord
+		require.NoError(t, store.RawDB().Where("file_id = ?", want.fileID).First(&got).Error, want.fileID)
+		assert.Equal(t, want.sourceHost, got.SourceHost, want.fileID)
+		assert.Equal(t, want.path, got.Path, want.fileID)
+		assert.Equal(t, want.mtime, got.Mtime, want.fileID)
+	}
+
+	// Nothing is left for a third open to do -- the backfill is one-time,
+	// and its empty-path probe is an indexed lookup that finds nothing.
+	var remaining int64
+	require.NoError(t, store.RawDB().Model(&FileDataRecord{}).Where("path = ?", "").Count(&remaining).Error)
+	assert.Zero(t, remaining)
+}
+
+// A file_id that parses to an empty path can never stop matching the
+// backfill's empty-path probe, so the batch loop has to notice it is making
+// no progress and stop instead of spinning forever. A regression here hangs
+// openDB rather than failing an assertion, which is exactly why it is worth
+// pinning down.
+func TestOpenDB_BackfillTerminatesOnUnparseableFileID(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := New(dir)
+	require.NoError(t, err)
+	// tokens[2:len-1] is empty here, so parseFileID yields an empty path.
+	insertPreMigrationFileData(t, store.RawDB(), "fs://host:f::1000")
+	insertPreMigrationFileData(t, store.RawDB(), "fs://hosta:f:/etc/ok.conf:1000")
+	require.NoError(t, store.Close())
+
+	done := make(chan error, 1)
+	go func() {
+		s, err := New(dir)
+		if err == nil {
+			defer s.Close()
+			var got FileDataRecord
+			err = s.RawDB().Where("file_id = ?", "fs://hosta:f:/etc/ok.conf:1000").First(&got).Error
+			if err == nil && got.Path != "/etc/ok.conf" {
+				err = fmt.Errorf("the parseable row was not backfilled, path = %q", got.Path)
+			}
+		}
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("openDB's backfill did not terminate -- the batch loop is spinning on a row it can never update")
+	}
+}
+
+// The repeat-startup cost of the backfill is the cost of its empty-path
+// probe. path is the leading column of idx_file_data_path_host, so SQLite
+// must satisfy that probe from the index rather than scanning the table --
+// otherwise every bwfs start would pay a full scan of a store that can hold
+// millions of rows.
+func TestOpenDB_BackfillProbeUsesPathIndex(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.CreateFileData("fs://hosta:f:/etc/nginx.conf:1000", 10))
+
+	var plan []struct {
+		Detail string
+	}
+	require.NoError(t, store.RawDB().Raw(
+		`EXPLAIN QUERY PLAN SELECT uuid, file_id FROM file_data_records WHERE path = ''`).Scan(&plan).Error)
+	require.NotEmpty(t, plan)
+
+	var detail string
+	for _, p := range plan {
+		detail += p.Detail + "\n"
+	}
+	assert.Contains(t, detail, "idx_file_data_path_host",
+		"the backfill probe must use the path index; plan was:\n"+detail)
+	assert.NotContains(t, detail, "SCAN file_data_records\n",
+		"the backfill probe must not full-scan; plan was:\n"+detail)
 }
 
 func TestEnsureBackupJob_CreatesRow(t *testing.T) {
