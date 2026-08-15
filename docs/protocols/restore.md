@@ -83,11 +83,14 @@ rwfs verify myhost:/var/log localhost:8080 --filter nginx
   2. For each FileRow: RestoreFile{file_uuid=row.file_uuid}
 ```
 
-With `--rules-stdin`, the `ListFiles` call omits `server_name`/`path` entirely (fetches every row
-on the server) and the returned rows are instead resolved against the piped rule set client-side,
-in `rwfs` itself -- no protocol change; this is purely a different way `rwfs` decides which
-`file_uuid`s to call `RestoreFile` for. Note that this makes the `ListFiles` response unbounded and
-unpaginated; see [rwfs](../components/rwfs.md)'s `--rules-stdin` section for that known limitation.
+With `--rules-stdin`, `rwfs` never calls `ListFiles` at all: it instead calls
+`ListService.ResolveRestoreFiles` with one `RestoreFileFilter` per included rule (host, path, and
+that rule's `not_before`/`not_after` timeframe, derived from the piped rule set), streams the
+response, and calls `RestoreFile` for each `file_uuid` the stream yields. Unlike the plain
+`ListFiles` path, this is scoped by the rules themselves rather than fetching the whole store --
+see [list protocol](./list.md#resolverestorefiles) for the RPC's filter semantics and streaming
+resolution behavior, and [rwfs](../components/rwfs.md)'s `--rules-stdin` section for how `rwfs`
+drives it.
 
 Both calls carry `rwfs`'s `--job-id` as outgoing `job-id` gRPC metadata (auto-generated per
 invocation when the flag is omitted), the same convention `brfs`/`certclient`/`policyclient` use --

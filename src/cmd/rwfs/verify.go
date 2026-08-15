@@ -16,6 +16,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/checksum"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
+	"google.golang.org/grpc"
 	"lukechampine.com/blake3"
 )
 
@@ -38,14 +39,12 @@ type rulesStdinPayload struct {
 }
 
 // notFoundRule records a file-level rule (non-empty Host) that matched no
-// row in the ListFiles result -- reported as a verification failure,
+// row from ResolveRestoreFiles -- reported as a verification failure,
 // unlike a folder-level rule (empty Host) matching nothing, which is a
 // legitimate outcome (an empty or already-fully-excluded folder), not an
-// error. Reason distinguishes a version outside a requested timeframe
-// from a path that plain doesn't exist on this store at all (populated by
-// resolve.go's restoreResolver; applyRulesStdin's own construction sites
-// keep using the pre-existing "not found on this store" text literally,
-// unchanged, until Task 10 removes them).
+// error. Reason distinguishes a version outside a requested timeframe from
+// a path that plain doesn't exist on this store at all -- populated by
+// resolve.go's restoreResolver.NotFound.
 type notFoundRule struct {
 	Host   string
 	Path   string
@@ -75,41 +74,6 @@ func parseRulesStdin(stdin io.Reader) ([]RestoreRule, error) {
 	return payload.Rules, nil
 }
 
-// applyRulesStdin resolves rules against rows (a ListFiles result) using
-// resolveRestoreFile (rules.go), returning the rows that are actually
-// selected for verification and any file-level rule that matched nothing.
-//
-// rows must be the UNFILTERED ListFiles result. The type/size filter (only
-// regular, non-empty files can be chunk-verified) is applied here, when
-// building selected -- deliberately not before the not-found scan, so that a
-// real but zero-byte backed-up file named by a file-level rule is found (and
-// simply not verified) rather than misreported as missing from this store.
-func applyRulesStdin(rows []*pb.FileRow, rules []RestoreRule) (selected []*pb.FileRow, notFound []notFoundRule) {
-	for _, row := range rows {
-		if resolveRestoreFile(rules, row.Source, row.Path) {
-			if row.Type == "f" && row.Size > 0 {
-				selected = append(selected, row)
-			}
-		}
-	}
-	for _, r := range rules {
-		if r.Host == "" || !r.Include {
-			continue
-		}
-		found := false
-		for _, row := range rows {
-			if row.Source == r.Host && row.Path == r.Path {
-				found = true
-				break
-			}
-		}
-		if !found {
-			notFound = append(notFound, notFoundRule{Host: r.Host, Path: r.Path})
-		}
-	}
-	return selected, notFound
-}
-
 // runVerify verifies files on a remote bwfs store. jobID rides both the
 // ListFiles and the per-file RestoreFile RPCs as outgoing job-id metadata,
 // so bwfs's logs for this run correlate with this process's own log -- the
@@ -133,50 +97,81 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 	}
 	defer conn.Close()
 
+	return runVerifyWithConn(logger, conn, serverName, pathFilter, filter, rulesStdin, rules, streams, retries, quiet, jobID)
+}
+
+// runVerifyWithConn is runVerify's body, parameterized on an already-dialed
+// conn -- split out purely so tests can exercise it over a bufconn dial
+// without duplicating anything past the transport-level connect (runVerify
+// itself is the only production caller). See verify_test.go's
+// runVerifyWithDialer.
+func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, pathFilter, filter string, rulesStdin bool, rules []RestoreRule, streams, retries int, quiet bool, jobID string) error {
 	// callCtx carries the job-id metadata every RPC below inherits.
 	callCtx := jobid.Outgoing(context.Background(), jobID)
 
-	listClient := pb.NewListServiceClient(conn)
-	ctx, cancel := context.WithTimeout(callCtx, 30*time.Second)
-	resp, err := listClient.ListFiles(ctx, &pb.ListRequest{
-		ServerName: serverName,
-		Path:       pathFilter,
-		Filter:     filter,
-	})
-	cancel()
-	if err != nil {
-		return fmt.Errorf("list files: %w", err)
-	}
-
-	var rows []*pb.FileRow
-	var notFound []notFoundRule
-	if rulesStdin {
-		// The unfiltered resp.Rows go in: applyRulesStdin does the
-		// type/size filtering itself, but only for the rows it selects for
-		// verification, so a zero-byte file is still seen by its
-		// not-found scan.
-		rows, notFound = applyRulesStdin(resp.Rows, rules)
-	} else {
-		for _, r := range resp.Rows {
-			if r.Type == "f" && r.Size > 0 {
-				rows = append(rows, r)
-			}
-		}
-	}
-
-	if len(rows) == 0 && len(notFound) == 0 {
-		logger.Info("summary", "verified", 0, "warnings", 0)
-		return nil
-	}
-
 	restoreClient := pb.NewRestoreServiceClient(conn)
-	workCh := make(chan *pb.FileRow, len(rows))
-	for _, r := range rows {
-		workCh <- r
-	}
-	close(workCh)
+	workCh := make(chan *pb.FileRow, streams)
+	var notFound []notFoundRule
+	var resolver *restoreResolver
+	streamErrCh := make(chan error, 1)
 
-	resultCh := make(chan verifyResult, len(rows))
+	if rulesStdin {
+		// ResolveRestoreFiles is scoped by the rules themselves (host/path/
+		// timeframe), so unlike the plain-verify path below, it never
+		// fetches more than the rules could ever select -- see
+		// docs/components/rwfs.md.
+		filters, filterToRuleIndex := buildRestoreFilters(rules)
+		resolver = newRestoreResolver(rules, filterToRuleIndex)
+
+		listClient := pb.NewListServiceClient(conn)
+		resolveCtx, resolveCancel := context.WithCancel(callCtx)
+		defer resolveCancel()
+		stream, err := listClient.ResolveRestoreFiles(resolveCtx, &pb.ResolveRestoreFilesRequest{Filters: filters})
+		if err != nil {
+			return fmt.Errorf("resolve restore files: %w", err)
+		}
+
+		go func() {
+			defer close(workCh)
+			for {
+				resp, err := stream.Recv()
+				if err == io.EOF {
+					streamErrCh <- nil
+					return
+				}
+				if err != nil {
+					streamErrCh <- fmt.Errorf("resolve restore files: %w", err)
+					return
+				}
+				if resolver.Feed(resp.GetRow(), resp.GetFilterIndex()) {
+					workCh <- resp.GetRow()
+				}
+			}
+		}()
+	} else {
+		listClient := pb.NewListServiceClient(conn)
+		ctx, cancel := context.WithTimeout(callCtx, 30*time.Second)
+		resp, err := listClient.ListFiles(ctx, &pb.ListRequest{
+			ServerName: serverName,
+			Path:       pathFilter,
+			Filter:     filter,
+		})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("list files: %w", err)
+		}
+		go func() {
+			defer close(workCh)
+			for _, r := range resp.Rows {
+				if r.Type == "f" && r.Size > 0 {
+					workCh <- r
+				}
+			}
+		}()
+		streamErrCh <- nil
+	}
+
+	resultCh := make(chan verifyResult, streams)
 
 	var wg sync.WaitGroup
 	for i := 0; i < streams; i++ {
@@ -223,9 +218,16 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 		}
 	}
 
+	if streamErr := <-streamErrCh; streamErr != nil {
+		return streamErr
+	}
+	if rulesStdin {
+		notFound = resolver.NotFound()
+	}
+
 	for _, nf := range notFound {
 		warnings++
-		logger.Warn("verification failed", "source", nf.Host, "path", nf.Path, "reason", "not found on this store")
+		logger.Warn("verification failed", "source", nf.Host, "path", nf.Path, "reason", nf.Reason)
 	}
 
 	logger.Info("summary", "verified", total, "warnings", warnings)

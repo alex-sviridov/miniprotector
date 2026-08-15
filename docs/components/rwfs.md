@@ -101,32 +101,28 @@ rule shape `policy-server`'s `"restore"` policy type and the web restore cart bo
 (host-agnostic folder rules have an empty/omitted `host`; longest-matching-rule wins, exactly like
 `.gitignore`). What the flag changes is the *hostname default*: without it, an omitted
 `server_name` defaults to the local hostname, which would be wrong for rules that are deliberately
-host-agnostic, so with it the default is suppressed and every source host is in scope. The
-positional `[[server_name:]path]` filter and `--filter` still apply if given, as additional
-constraints on the `ListFiles` call, narrowing the rows the rules are then resolved against --
-`agent` never sets either one in practice.
+host-agnostic, so with it the default is suppressed and every source host is in scope. Resolution
+itself no longer goes through `ListFiles` at all: `rwfs verify --rules-stdin` builds one
+`RestoreFileFilter` per included rule (host, path, and that rule's `not_before`/`not_after`
+timeframe) and streams them through `bwfs`'s `ResolveRestoreFiles` RPC (see
+[docs/protocols/list.md#resolverestorefiles](../protocols/list.md#resolverestorefiles)), which
+resolves each filter against the store's indexed columns and streams back only the rows those
+filters actually select -- rather than fetching the whole store and filtering client-side. The
+positional `[[server_name:]path]` filter and `--filter` have no bearing on this call -- it is built
+entirely from the piped rules -- so they're never combined with `--rules-stdin` in practice;
+`agent` never sets either one.
 
 An empty rule set (`{"rules":[]}`, `{"rules":null}`, or `{}`) is rejected as an argument error
 rather than treated as a no-op: it would select zero files and report success without having
 verified anything, which a one-shot caller would record as permanently done.
 
-A **file-level** rule (non-empty `host`, `include: true`) that matches nothing is reported as a
-verification failure ("not found on this store") -- it named one specific file, and it wasn't
-there. A **folder-level** rule (empty `host`) matching nothing is not a failure -- an empty (or
-fully-excluded) folder is a legitimate outcome. "Matches nothing" is judged against the full
-`ListFiles` result, not just the chunk-verifiable subset: a zero-byte file or a directory row is
-*found* (and simply not checksummed, there being nothing to checksum) rather than misreported as
-missing.
-
-**Known limitation — the listing is unbounded.** Because rules can be host-agnostic, `--rules-stdin`
-asks `bwfs` for every row on the store (no `server_name` scoping), and `ListFiles`/`ListResponse`
-have no pagination, so the whole result arrives as one gRPC message. This repo sets no
-`grpc.MaxCallRecvMsgSize` override anywhere, so on a store large enough for that single response to
-exceed gRPC's default 4 MiB receive ceiling, the call fails outright. Nothing here degrades
-gracefully or partially verifies — it is all-or-nothing per run. Fixing it properly means either
-paginating `ListFiles` or scoping the request to the distinct hosts named in the rule set (folder
-rules make the latter only a partial win); both are deliberately out of scope for now, so this is a
-documented constraint rather than a silent one.
+A **file-level** rule (non-empty `host`, `include: true`) that matches no row within its timeframe
+is reported as a verification failure -- it named one specific file (and, if a timeframe was given,
+a specific window), and no version of it was found there. A **folder-level** rule (empty `host`)
+matching nothing is not a failure -- an empty (or fully-excluded) folder is a legitimate outcome.
+"Matches nothing" is judged against every row `ResolveRestoreFiles` streams back for that rule's
+filter, not just the chunk-verifiable subset: a zero-byte file or a directory row is *found* (and
+simply not checksummed, there being nothing to checksum) rather than misreported as missing.
 
 Used by `agent`'s restore-policy verification tasks (see
 [agent](./agent.md#policy-driven-restore-verification)) — never combined with `--filter` or the
