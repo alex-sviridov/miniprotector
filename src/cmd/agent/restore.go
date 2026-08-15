@@ -16,9 +16,11 @@ import (
 // -- Go forbids importing another command's main package -- so this field
 // set is duplicated here, the same way backup.go's ObjectFilter already is.
 type RestoreRule struct {
-	Host    string `json:"host"`
-	Path    string `json:"path"`
-	Include bool   `json:"include"`
+	Host      string `json:"host"`
+	Path      string `json:"path"`
+	Include   bool   `json:"include"`
+	NotBefore int64  `json:"not_before,omitempty"`
+	NotAfter  int64  `json:"not_after,omitempty"`
 }
 
 // restoreTaskID is the stable identifier for one restore policy's task in
