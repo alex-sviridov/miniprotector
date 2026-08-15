@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-15 — restore rules gain timeframes and scoped resolution
+
+Restore rules can now pin a per-rule timeframe (`not_before`/`not_after`): the latest backed-up version
+inside that window is used, and anything outside it is ignored rather than falling back to whatever's
+newest overall. Resolving a restore policy's rules into an actual file list no longer requires scanning a
+destination store's entire catalog — `bwfs` gained a scoped, streaming `ResolveRestoreFiles` RPC backed by
+decomposed, indexed storage columns, so a host-agnostic folder rule (previously an unbounded full-store
+dump) now costs roughly what it matches, not what the store holds.
+
 ## 2026-08-14 — restore UI gains separate Verify/Restore actions
 
 The restore view's single "Submit restore" button is now two buttons, Verify and Restore, plus an
