@@ -41,10 +41,15 @@ type rulesStdinPayload struct {
 // row in the ListFiles result -- reported as a verification failure,
 // unlike a folder-level rule (empty Host) matching nothing, which is a
 // legitimate outcome (an empty or already-fully-excluded folder), not an
-// error.
+// error. Reason distinguishes a version outside a requested timeframe
+// from a path that plain doesn't exist on this store at all (populated by
+// resolve.go's restoreResolver; applyRulesStdin's own construction sites
+// keep using the pre-existing "not found on this store" text literally,
+// unchanged, until Task 10 removes them).
 type notFoundRule struct {
-	Host string
-	Path string
+	Host   string
+	Path   string
+	Reason string
 }
 
 // parseRulesStdin reads and validates the --rules-stdin payload.
