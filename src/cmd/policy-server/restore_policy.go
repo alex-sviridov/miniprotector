@@ -21,11 +21,19 @@ import (
 // resolution happens at verify time, in rwfs, and DestPath is not consumed
 // anywhere yet (no restore executor exists). See
 // docs/superpowers/specs/2026-08-13-restore-destination-rename-design.md.
+// NotBefore/NotAfter bound which backed-up version of this rule's
+// selection to use: the latest version whose backup date falls inside
+// [NotBefore, NotAfter] wins; nothing in the window means no fallback
+// -- this rule selects nothing. Unix seconds; 0 = unbounded on that
+// side. Only meaningful when Include is true (see Validate). See
+// docs/superpowers/specs/2026-08-15-restore-file-version-resolution-design.md.
 type RestoreRule struct {
-	Host     string `json:"host"`
-	Path     string `json:"path"`
-	Include  bool   `json:"include"`
-	DestPath string `json:"dest_path,omitempty"`
+	Host      string `json:"host"`
+	Path      string `json:"path"`
+	Include   bool   `json:"include"`
+	DestPath  string `json:"dest_path,omitempty"`
+	NotBefore int64  `json:"not_before,omitempty"`
+	NotAfter  int64  `json:"not_after,omitempty"`
 }
 
 // RestorePolicy is the "restore" policy type: a one-shot directive telling
@@ -81,6 +89,12 @@ func (p *RestorePolicy) Validate() error {
 		if r.DestPath != "" && r.DestPath != r.Path && !r.Include {
 			return fmt.Errorf("rules[%d]: dest_path is only valid on an included rule", i)
 		}
+		if (r.NotBefore != 0 || r.NotAfter != 0) && !r.Include {
+			return fmt.Errorf("rules[%d]: not_before/not_after is only valid on an included rule", i)
+		}
+		if r.NotBefore != 0 && r.NotAfter != 0 && r.NotAfter < r.NotBefore {
+			return fmt.Errorf("rules[%d]: not_after must not be before not_before", i)
+		}
 	}
 	return nil
 }
@@ -106,7 +120,7 @@ func (p *RestorePolicy) Clone() Policy {
 func (p *RestorePolicy) ToProto(includeClientFilters bool) *pb.Policy {
 	rules := make([]*pb.RestoreRule, len(p.Rules))
 	for i, r := range p.Rules {
-		rules[i] = &pb.RestoreRule{Host: r.Host, Path: r.Path, Include: r.Include, DestPath: r.DestPath}
+		rules[i] = &pb.RestoreRule{Host: r.Host, Path: r.Path, Include: r.Include, DestPath: r.DestPath, NotBefore: r.NotBefore, NotAfter: r.NotAfter}
 	}
 	pp := &pb.Policy{
 		Id:              p.Metadata.ID,

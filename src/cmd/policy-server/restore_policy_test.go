@@ -195,3 +195,49 @@ func TestRestorePolicy_ToProtoIncludesDestPath(t *testing.T) {
 	require.Len(t, pp.GetRules(), 1)
 	assert.Equal(t, "/var/www/index.html.bak", pp.GetRules()[0].GetDestPath())
 }
+
+func TestRestorePolicy_Validate_RejectsNotBeforeAfterOnExcludedRule(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Host: "h", Path: "/etc", Include: false, NotBefore: 100}},
+	}
+	err := p.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only valid on an included rule")
+}
+
+func TestRestorePolicy_Validate_RejectsNotAfterBeforeNotBefore(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Host: "h", Path: "/etc", Include: true, NotBefore: 200, NotAfter: 100}},
+	}
+	err := p.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not_after")
+}
+
+func TestRestorePolicy_Validate_AcceptsUnboundedTimeframe(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Host: "h", Path: "/etc", Include: true}},
+	}
+	assert.NoError(t, p.Validate())
+}
+
+func TestRestorePolicy_ToProto_IncludesTimeframe(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase: PolicyBase{
+			Metadata: Metadata{ID: "r1", Name: "x"},
+			Type:     "restore",
+		},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Host: "h", Path: "/etc", Include: true, NotBefore: 100, NotAfter: 200}},
+	}
+	proto := p.ToProto(false)
+	require.Len(t, proto.Rules, 1)
+	assert.Equal(t, int64(100), proto.Rules[0].GetNotBefore())
+	assert.Equal(t, int64(200), proto.Rules[0].GetNotAfter())
+}
