@@ -87,14 +87,24 @@ func (r *restoreResolver) Feed(row *pb.FileRow, filterIndex int32) bool {
 
 // NotFound reports, for each file-level (non-host-agnostic) filter that
 // never had a matching row observed via Feed (see filterFoundAny above),
-// a failure. Every entry uses the "no version in timeframe" reason --
-// resolve.go's whole domain is version-within-a-window resolution, and an
-// unbounded window (both NotBefore and NotAfter zero) is still a
-// timeframe, just one covering all of history, so "no version [was found]
-// in [that] timeframe" holds either way. The legacy "not found on this
-// store" text belongs solely to applyRulesStdin's own hardcoded log call
-// site in runVerify (verify.go) and is never produced here. Call once,
-// after the response stream ends.
+// a failure. Call once, after the response stream ends.
+//
+// The reason discriminates on whether the rule actually requested a
+// window, because the two cases point the operator at different problems:
+//
+//   - Bounded window (NotBefore and/or NotAfter set), zero rows: the file
+//     may well exist on this store, just not with any version backed up
+//     inside the requested window -- "no version in timeframe". The
+//     actionable fix is usually to widen the window.
+//   - Unbounded window (neither set), zero rows: the query covered all of
+//     history, so the file genuinely isn't on this store at all --
+//     "not found on this store", the same generic text applyRulesStdin
+//     used before this feature existed. Reporting a timeframe problem
+//     here would misdirect toward a window the operator never set.
+//
+// See the design doc's Error Handling section, which introduces
+// "no version in timeframe" explicitly as a case *distinguished from*
+// the generic reason, not a replacement for it.
 func (r *restoreResolver) NotFound() []notFoundRule {
 	var out []notFoundRule
 	for i, ruleIndex := range r.filterToRuleIndex {
@@ -105,7 +115,11 @@ func (r *restoreResolver) NotFound() []notFoundRule {
 		if rule.Host == "" {
 			continue // folder-level rule matching nothing is legitimate
 		}
-		out = append(out, notFoundRule{Host: rule.Host, Path: rule.Path, Reason: "no version in timeframe"})
+		reason := "not found on this store"
+		if rule.NotBefore != 0 || rule.NotAfter != 0 {
+			reason = "no version in timeframe"
+		}
+		out = append(out, notFoundRule{Host: rule.Host, Path: rule.Path, Reason: reason})
 	}
 	return out
 }

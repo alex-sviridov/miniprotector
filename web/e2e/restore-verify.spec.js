@@ -176,7 +176,12 @@ test('restore verification', async ({ page, context }) => {
       const notFoundLine = await waitForLogLine('verification failed')
       await expect(notFoundLine).toBeVisible()
       await notFoundLine.getByTestId('log-line-summary').click()
-      await expect(notFoundLine.getByTestId('log-line-fields')).toContainText('no version in timeframe')
+      // This rule sets no not_before/not_after, so the window covered all
+      // of history and zero rows means the file is genuinely absent --
+      // restoreResolver.NotFound reports the generic reason here, and
+      // reserves "no version in timeframe" for a rule that actually asked
+      // for a window. See cmd/rwfs/resolve.go's NotFound.
+      await expect(notFoundLine.getByTestId('log-line-fields')).toContainText('not found on this store')
       await expect(notFoundLine.getByTestId('log-line-fields')).toContainText(missingPath)
     } finally {
       // Delete it the same way it was created. Don't throw on a failed

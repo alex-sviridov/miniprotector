@@ -118,7 +118,11 @@ verified anything, which a one-shot caller would record as permanently done.
 
 A **file-level** rule (non-empty `host`, `include: true`) that matches no row within its timeframe
 is reported as a verification failure -- it named one specific file (and, if a timeframe was given,
-a specific window), and no version of it was found there. A **folder-level** rule (empty `host`)
+a specific window), and no version of it was found there. The logged `reason` distinguishes the two
+causes: a rule that set `not_before` and/or `not_after` reports `no version in timeframe` (the file
+may exist, just not in the requested window -- usually fixed by widening it), while a rule with no
+timeframe at all reports `not found on this store` (the search covered all of history, so the file
+is genuinely absent). A **folder-level** rule (empty `host`)
 matching nothing is not a failure -- an empty (or fully-excluded) folder is a legitimate outcome.
 "Matches nothing" is judged against every row `ResolveRestoreFiles` streams back for that rule's
 filter, not just the chunk-verifiable subset: a zero-byte file or a directory row is *found* (and

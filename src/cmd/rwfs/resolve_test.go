@@ -98,8 +98,11 @@ func TestRestoreResolver_ZeroByteOrNonFileRowIsFoundButNotKept(t *testing.T) {
 	}
 }
 
+// A bounded window that matched nothing gets the distinguished reason:
+// the file may well exist on the store, just not inside the window, which
+// is a diagnosably different problem from a typo'd path.
 func TestRestoreResolver_NotFound_FileLevelFilterWithNoKeptRowIsAFailure(t *testing.T) {
-	rules := []RestoreRule{{Host: "h", Path: "/etc/missing", Include: true}}
+	rules := []RestoreRule{{Host: "h", Path: "/etc/missing", Include: true, NotBefore: 100, NotAfter: 200}}
 	_, filterToRuleIndex := buildRestoreFilters(rules)
 	resolver := newRestoreResolver(rules, filterToRuleIndex)
 	// No Feed calls at all -- bwfs never resolved anything for filter 0.
@@ -113,6 +116,37 @@ func TestRestoreResolver_NotFound_FileLevelFilterWithNoKeptRowIsAFailure(t *test
 	}
 	if notFound[0].Reason != "no version in timeframe" {
 		t.Fatalf("expected the distinguished reason, got %q", notFound[0].Reason)
+	}
+}
+
+// The other half of that discriminator: with no timeframe requested at
+// all, the query window covered all of history, so zero rows means the
+// file genuinely isn't on this store -- and saying "no version in
+// timeframe" there would misdirect the operator toward a window they never
+// set. Only one side may be set for the window to count as bounded.
+func TestRestoreResolver_NotFound_FileLevelFilterWithNoTimeframeAndNoKeptRowUsesGenericReason(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		rule       RestoreRule
+		wantReason string
+	}{
+		{"unbounded", RestoreRule{Host: "h", Path: "/etc/missing", Include: true}, "not found on this store"},
+		{"lower bound only", RestoreRule{Host: "h", Path: "/etc/missing", Include: true, NotBefore: 100}, "no version in timeframe"},
+		{"upper bound only", RestoreRule{Host: "h", Path: "/etc/missing", Include: true, NotAfter: 200}, "no version in timeframe"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rules := []RestoreRule{tc.rule}
+			_, filterToRuleIndex := buildRestoreFilters(rules)
+			resolver := newRestoreResolver(rules, filterToRuleIndex)
+
+			notFound := resolver.NotFound()
+			if len(notFound) != 1 {
+				t.Fatalf("expected exactly one not-found entry, got %v", notFound)
+			}
+			if notFound[0].Reason != tc.wantReason {
+				t.Fatalf("expected reason %q, got %q", tc.wantReason, notFound[0].Reason)
+			}
+		})
 	}
 }
 
