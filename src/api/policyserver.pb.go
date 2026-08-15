@@ -371,8 +371,8 @@ func (x *PolicyCheckin) GetLastSeenAt() *timestamppb.Timestamp {
 // and host-specific file rules resolve by longest-matching-path-ancestor,
 // exactly like web/src/utils/restoreRules.js's resolveFile. policy-server
 // never interprets these beyond the load-time validation in
-// RestorePolicy.Validate (non-empty Path, and dest_path only on an included
-// rule); resolution happens at verify time, in rwfs.
+// RestorePolicy.Validate (non-empty Path, dest_path/not_before/not_after
+// only on an included rule); resolution happens at verify time, in rwfs.
 type RestoreRule struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Host    string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"` // "" = host-agnostic, matches every source host
@@ -381,7 +381,15 @@ type RestoreRule struct {
 	// Destination path to restore to, if different from path. Empty (or
 	// equal to path) means "no rename -- restore to the original path."
 	// Only meaningful when include is true; see RestorePolicy.Validate.
-	DestPath      string `protobuf:"bytes,4,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`
+	DestPath string `protobuf:"bytes,4,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`
+	// Timeframe bounding which backed-up version of this rule's selection to
+	// use: the latest version whose backup date falls inside
+	// [not_before, not_after] wins; a version outside the window is ignored
+	// entirely, never used as a fallback. Unix seconds; 0 = unbounded on
+	// that side. Only meaningful when include is true; see
+	// RestorePolicy.Validate.
+	NotBefore     int64 `protobuf:"varint,5,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`
+	NotAfter      int64 `protobuf:"varint,6,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -442,6 +450,20 @@ func (x *RestoreRule) GetDestPath() string {
 		return x.DestPath
 	}
 	return ""
+}
+
+func (x *RestoreRule) GetNotBefore() int64 {
+	if x != nil {
+		return x.NotBefore
+	}
+	return 0
+}
+
+func (x *RestoreRule) GetNotAfter() int64 {
+	if x != nil {
+		return x.NotAfter
+	}
+	return 0
 }
 
 type Policy struct {
@@ -998,12 +1020,15 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\rPolicyCheckin\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12<\n" +
 	"\flast_seen_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"lastSeenAt\"l\n" +
+	"lastSeenAt\"\xa8\x01\n" +
 	"\vRestoreRule\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
 	"\ainclude\x18\x03 \x01(\bR\ainclude\x12\x1b\n" +
-	"\tdest_path\x18\x04 \x01(\tR\bdestPath\"\xea\x05\n" +
+	"\tdest_path\x18\x04 \x01(\tR\bdestPath\x12\x1d\n" +
+	"\n" +
+	"not_before\x18\x05 \x01(\x03R\tnotBefore\x12\x1b\n" +
+	"\tnot_after\x18\x06 \x01(\x03R\bnotAfter\"\xea\x05\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +

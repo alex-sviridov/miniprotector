@@ -233,6 +233,181 @@ func (x *FileRow) GetCreatedAt() string {
 	return ""
 }
 
+// RestoreFileFilter is one restore rule's selection criteria, sent as-is
+// (only included rules become filters -- exclude rules never need file
+// data, see docs/protocols/list.md#resolverestorefiles).
+type RestoreFileFilter struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"` // "" = host-agnostic (folder rule)
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	PathIsPrefix  bool                   `protobuf:"varint,3,opt,name=path_is_prefix,json=pathIsPrefix,proto3" json:"path_is_prefix,omitempty"` // true = folder rule (recursive subtree), false = exact file rule
+	NotBefore     int64                  `protobuf:"varint,4,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`            // 0 = unbounded
+	NotAfter      int64                  `protobuf:"varint,5,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`               // 0 = unbounded
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreFileFilter) Reset() {
+	*x = RestoreFileFilter{}
+	mi := &file_api_list_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreFileFilter) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreFileFilter) ProtoMessage() {}
+
+func (x *RestoreFileFilter) ProtoReflect() protoreflect.Message {
+	mi := &file_api_list_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreFileFilter.ProtoReflect.Descriptor instead.
+func (*RestoreFileFilter) Descriptor() ([]byte, []int) {
+	return file_api_list_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RestoreFileFilter) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *RestoreFileFilter) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *RestoreFileFilter) GetPathIsPrefix() bool {
+	if x != nil {
+		return x.PathIsPrefix
+	}
+	return false
+}
+
+func (x *RestoreFileFilter) GetNotBefore() int64 {
+	if x != nil {
+		return x.NotBefore
+	}
+	return 0
+}
+
+func (x *RestoreFileFilter) GetNotAfter() int64 {
+	if x != nil {
+		return x.NotAfter
+	}
+	return 0
+}
+
+type ResolveRestoreFilesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Filters       []*RestoreFileFilter   `protobuf:"bytes,1,rep,name=filters,proto3" json:"filters,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolveRestoreFilesRequest) Reset() {
+	*x = ResolveRestoreFilesRequest{}
+	mi := &file_api_list_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolveRestoreFilesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolveRestoreFilesRequest) ProtoMessage() {}
+
+func (x *ResolveRestoreFilesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_list_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolveRestoreFilesRequest.ProtoReflect.Descriptor instead.
+func (*ResolveRestoreFilesRequest) Descriptor() ([]byte, []int) {
+	return file_api_list_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ResolveRestoreFilesRequest) GetFilters() []*RestoreFileFilter {
+	if x != nil {
+		return x.Filters
+	}
+	return nil
+}
+
+type ResolveRestoreFilesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Row           *FileRow               `protobuf:"bytes,1,opt,name=row,proto3" json:"row,omitempty"`
+	FilterIndex   int32                  `protobuf:"varint,2,opt,name=filter_index,json=filterIndex,proto3" json:"filter_index,omitempty"` // index into the request's filters -- which filter resolved this row
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolveRestoreFilesResponse) Reset() {
+	*x = ResolveRestoreFilesResponse{}
+	mi := &file_api_list_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolveRestoreFilesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolveRestoreFilesResponse) ProtoMessage() {}
+
+func (x *ResolveRestoreFilesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_list_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolveRestoreFilesResponse.ProtoReflect.Descriptor instead.
+func (*ResolveRestoreFilesResponse) Descriptor() ([]byte, []int) {
+	return file_api_list_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ResolveRestoreFilesResponse) GetRow() *FileRow {
+	if x != nil {
+		return x.Row
+	}
+	return nil
+}
+
+func (x *ResolveRestoreFilesResponse) GetFilterIndex() int32 {
+	if x != nil {
+		return x.FilterIndex
+	}
+	return 0
+}
+
 var File_api_list_proto protoreflect.FileDescriptor
 
 const file_api_list_proto_rawDesc = "" +
@@ -255,9 +430,22 @@ const file_api_list_proto_rawDesc = "" +
 	"\x06chunks\x18\a \x01(\x05R\x06chunks\x12\x1a\n" +
 	"\bversions\x18\b \x01(\x03R\bversions\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\t \x01(\tR\tcreatedAt2O\n" +
+	"created_at\x18\t \x01(\tR\tcreatedAt\"\x9d\x01\n" +
+	"\x11RestoreFileFilter\x12\x12\n" +
+	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12$\n" +
+	"\x0epath_is_prefix\x18\x03 \x01(\bR\fpathIsPrefix\x12\x1d\n" +
+	"\n" +
+	"not_before\x18\x04 \x01(\x03R\tnotBefore\x12\x1b\n" +
+	"\tnot_after\x18\x05 \x01(\x03R\bnotAfter\"V\n" +
+	"\x1aResolveRestoreFilesRequest\x128\n" +
+	"\afilters\x18\x01 \x03(\v2\x1e.listservice.RestoreFileFilterR\afilters\"h\n" +
+	"\x1bResolveRestoreFilesResponse\x12&\n" +
+	"\x03row\x18\x01 \x01(\v2\x14.listservice.FileRowR\x03row\x12!\n" +
+	"\ffilter_index\x18\x02 \x01(\x05R\vfilterIndex2\xbb\x01\n" +
 	"\vListService\x12@\n" +
-	"\tListFiles\x12\x18.listservice.ListRequest\x1a\x19.listservice.ListResponseB\tZ\a./protob\x06proto3"
+	"\tListFiles\x12\x18.listservice.ListRequest\x1a\x19.listservice.ListResponse\x12j\n" +
+	"\x13ResolveRestoreFiles\x12'.listservice.ResolveRestoreFilesRequest\x1a(.listservice.ResolveRestoreFilesResponse0\x01B\tZ\a./protob\x06proto3"
 
 var (
 	file_api_list_proto_rawDescOnce sync.Once
@@ -271,21 +459,28 @@ func file_api_list_proto_rawDescGZIP() []byte {
 	return file_api_list_proto_rawDescData
 }
 
-var file_api_list_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_api_list_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_api_list_proto_goTypes = []any{
-	(*ListRequest)(nil),  // 0: listservice.ListRequest
-	(*ListResponse)(nil), // 1: listservice.ListResponse
-	(*FileRow)(nil),      // 2: listservice.FileRow
+	(*ListRequest)(nil),                 // 0: listservice.ListRequest
+	(*ListResponse)(nil),                // 1: listservice.ListResponse
+	(*FileRow)(nil),                     // 2: listservice.FileRow
+	(*RestoreFileFilter)(nil),           // 3: listservice.RestoreFileFilter
+	(*ResolveRestoreFilesRequest)(nil),  // 4: listservice.ResolveRestoreFilesRequest
+	(*ResolveRestoreFilesResponse)(nil), // 5: listservice.ResolveRestoreFilesResponse
 }
 var file_api_list_proto_depIdxs = []int32{
 	2, // 0: listservice.ListResponse.rows:type_name -> listservice.FileRow
-	0, // 1: listservice.ListService.ListFiles:input_type -> listservice.ListRequest
-	1, // 2: listservice.ListService.ListFiles:output_type -> listservice.ListResponse
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	3, // 1: listservice.ResolveRestoreFilesRequest.filters:type_name -> listservice.RestoreFileFilter
+	2, // 2: listservice.ResolveRestoreFilesResponse.row:type_name -> listservice.FileRow
+	0, // 3: listservice.ListService.ListFiles:input_type -> listservice.ListRequest
+	4, // 4: listservice.ListService.ResolveRestoreFiles:input_type -> listservice.ResolveRestoreFilesRequest
+	1, // 5: listservice.ListService.ListFiles:output_type -> listservice.ListResponse
+	5, // 6: listservice.ListService.ResolveRestoreFiles:output_type -> listservice.ResolveRestoreFilesResponse
+	5, // [5:7] is the sub-list for method output_type
+	3, // [3:5] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_api_list_proto_init() }
@@ -299,7 +494,7 @@ func file_api_list_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_list_proto_rawDesc), len(file_api_list_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -54,6 +54,8 @@ message RestoreRule {
   string path      = 2;
   bool   include    = 3;
   string dest_path = 4; // destination to restore to if renamed; "" or == path means no rename; only valid when include is true
+  int64  not_before = 5; // restore this rule's latest backup dated on/after this unix time; 0 = unbounded
+  int64  not_after  = 6; // ...and on/before this unix time; 0 = unbounded. Outside the window = ignored, not a fallback.
 }
 
 message Policy {
@@ -167,9 +169,10 @@ certificate — the same requirement every server except `issuer`'s own listener
 - A `"restore"` policy has `storage_policy_id` (required, references a `"storage"`-typed policy's `id` —
   the same field and live-resolution mechanism a `"backup"` policy already uses; its `destinations` is
   computed the identical way) and `rules` (required, at least one entry — `{host, path, include}`, where
-  an empty `host` means the rule applies across every source host). It has no `object_filters`, `rpo`,
-  `backup_window`, `port`, or `config`. A `"restore"` policy is never updatable: `UpdatePolicy` returns
-  `INVALID_ARGUMENT` for any request whose target policy is type `"restore"`, regardless of which
+  an empty `host` means the rule applies across every source host; each rule may also set `not_before`
+  and `not_after` to scope which backed-up version of that rule's selection is used — resolved at verify time).
+  It has no `object_filters`, `rpo`, `backup_window`, `port`, or `config`. A `"restore"` policy is never updatable:
+  `UpdatePolicy` returns `INVALID_ARGUMENT` for any request whose target policy is type `"restore"`, regardless of which
   fields it sets -- a restore is a point-in-time instruction, so changing one after the fact is a
   new policy, not an edit (which is also why `UpdatePolicyRequest` has no `rules` field).
 - `disabled_at` is generic across every policy type -- unset (zero/nil) means never disabled. Once it

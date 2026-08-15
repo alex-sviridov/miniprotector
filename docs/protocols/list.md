@@ -122,3 +122,49 @@ The local read avoids a network round-trip and keeps the local path simple. Both
 
 **Why is `path` filtering done in Go rather than SQL?**  
 The path is embedded inside the composite `file_id` string (`fs://host:type:path:mtime`). Extracting it for a SQL `LIKE` prefix match would require fragile string slicing inside SQLite. Post-query filtering in Go is simpler and correct; result sets per host are small enough that it is not a performance concern.
+
+## ResolveRestoreFiles
+
+The `ResolveRestoreFiles` RPC resolves a batch of restore-rule-shaped filters directly, scoped by host, path, and timeframe, instead of the unbounded dump `ListFiles` would require for the same job. This is used by `rwfs verify --rules-stdin` (and its future `restore` sibling) to efficiently find the exact backed-up versions matching each restore rule.
+
+### Protocol Definition
+
+```proto
+service ListService {
+  rpc ResolveRestoreFiles(ResolveRestoreFilesRequest) returns (stream ResolveRestoreFilesResponse);
+}
+
+message RestoreFileFilter {
+  string host           = 1; // "" = host-agnostic (folder rule)
+  string path           = 2;
+  bool   path_is_prefix = 3; // true = folder rule (recursive subtree), false = exact file rule
+  int64  not_before     = 4; // 0 = unbounded
+  int64  not_after      = 5; // 0 = unbounded
+}
+
+message ResolveRestoreFilesRequest {
+  repeated RestoreFileFilter filters = 1;
+}
+
+message ResolveRestoreFilesResponse {
+  FileRow row          = 1;
+  int32   filter_index = 2; // index into the request's filters -- which filter resolved this row
+}
+```
+
+### Why Streaming?
+
+A single folder-rule filter can match far more rows than a `bwfs` node's whole catalog (which inspired `ListFiles` when it was written for "thousands of entries per host, not millions"). Server streaming allows the server to emit one response per resolved row, so a filter matching millions of rows never has to be buffered whole on either side. The client can begin processing results as they arrive.
+
+### Filter Semantics
+
+- `host` and `path_is_prefix` mirror `RestoreRule`'s convention: empty `host` means the filter applies across every source host (folder rule); `path_is_prefix=true` means folder rule (recursive subtree), `false` means exact file rule.
+- `not_before` and `not_after` (both 0 = unbounded on that side) scope which backed-up version of this filter's selection is used. For each distinct `(source_host, path)` pair, the version with the latest `file_version_records.created_at` inside the window `[not_before, not_after]` wins. A version outside the window is ignored entirely, never used as a fallback; zero versions in the window means that filter contributes no row for that path.
+
+### Filter Index
+
+`filter_index` in the response indicates which of the request's `filters` entries produced this row — the position (0-indexed) in the request's `filters` array. Clients that send more than one filter (i.e., `rwfs`) use this to associate each resolved row with the rule it came from. A single-filter caller can ignore it.
+
+### Usage
+
+This RPC is used only by `rwfs verify --rules-stdin` (and its future `restore` sibling). Plain `bwfs list` and `rwfs list` continue to use `ListFiles` unchanged.

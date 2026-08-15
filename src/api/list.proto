@@ -6,6 +6,13 @@ option go_package = "./proto";
 
 service ListService {
   rpc ListFiles(ListRequest) returns (ListResponse);
+  // ResolveRestoreFiles resolves a batch of restore-rule-shaped filters
+  // directly, scoped by host/path/timeframe, instead of the unbounded dump
+  // ListFiles would require for the same job. Server-streaming: one
+  // response per resolved row, so a filter matching millions of rows never
+  // has to be buffered whole on either side. See
+  // docs/protocols/list.md#resolverestorefiles.
+  rpc ResolveRestoreFiles(ResolveRestoreFilesRequest) returns (stream ResolveRestoreFilesResponse);
 }
 
 message ListRequest {
@@ -28,4 +35,24 @@ message FileRow {
   int32  chunks         = 7;
   int64  versions       = 8;
   string created_at     = 9; // RFC3339 UTC, matches listformat's JSON rendering
+}
+
+// RestoreFileFilter is one restore rule's selection criteria, sent as-is
+// (only included rules become filters -- exclude rules never need file
+// data, see docs/protocols/list.md#resolverestorefiles).
+message RestoreFileFilter {
+  string host           = 1; // "" = host-agnostic (folder rule)
+  string path           = 2;
+  bool   path_is_prefix = 3; // true = folder rule (recursive subtree), false = exact file rule
+  int64  not_before     = 4; // 0 = unbounded
+  int64  not_after      = 5; // 0 = unbounded
+}
+
+message ResolveRestoreFilesRequest {
+  repeated RestoreFileFilter filters = 1;
+}
+
+message ResolveRestoreFilesResponse {
+  FileRow row          = 1;
+  int32   filter_index = 2; // index into the request's filters -- which filter resolved this row
 }

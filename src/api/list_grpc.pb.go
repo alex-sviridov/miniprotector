@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ListService_ListFiles_FullMethodName = "/listservice.ListService/ListFiles"
+	ListService_ListFiles_FullMethodName           = "/listservice.ListService/ListFiles"
+	ListService_ResolveRestoreFiles_FullMethodName = "/listservice.ListService/ResolveRestoreFiles"
 )
 
 // ListServiceClient is the client API for ListService service.
@@ -27,6 +28,13 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ListServiceClient interface {
 	ListFiles(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
+	// ResolveRestoreFiles resolves a batch of restore-rule-shaped filters
+	// directly, scoped by host/path/timeframe, instead of the unbounded dump
+	// ListFiles would require for the same job. Server-streaming: one
+	// response per resolved row, so a filter matching millions of rows never
+	// has to be buffered whole on either side. See
+	// docs/protocols/list.md#resolverestorefiles.
+	ResolveRestoreFiles(ctx context.Context, in *ResolveRestoreFilesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ResolveRestoreFilesResponse], error)
 }
 
 type listServiceClient struct {
@@ -47,11 +55,37 @@ func (c *listServiceClient) ListFiles(ctx context.Context, in *ListRequest, opts
 	return out, nil
 }
 
+func (c *listServiceClient) ResolveRestoreFiles(ctx context.Context, in *ResolveRestoreFilesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ResolveRestoreFilesResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ListService_ServiceDesc.Streams[0], ListService_ResolveRestoreFiles_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ResolveRestoreFilesRequest, ResolveRestoreFilesResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ListService_ResolveRestoreFilesClient = grpc.ServerStreamingClient[ResolveRestoreFilesResponse]
+
 // ListServiceServer is the server API for ListService service.
 // All implementations must embed UnimplementedListServiceServer
 // for forward compatibility.
 type ListServiceServer interface {
 	ListFiles(context.Context, *ListRequest) (*ListResponse, error)
+	// ResolveRestoreFiles resolves a batch of restore-rule-shaped filters
+	// directly, scoped by host/path/timeframe, instead of the unbounded dump
+	// ListFiles would require for the same job. Server-streaming: one
+	// response per resolved row, so a filter matching millions of rows never
+	// has to be buffered whole on either side. See
+	// docs/protocols/list.md#resolverestorefiles.
+	ResolveRestoreFiles(*ResolveRestoreFilesRequest, grpc.ServerStreamingServer[ResolveRestoreFilesResponse]) error
 	mustEmbedUnimplementedListServiceServer()
 }
 
@@ -64,6 +98,9 @@ type UnimplementedListServiceServer struct{}
 
 func (UnimplementedListServiceServer) ListFiles(context.Context, *ListRequest) (*ListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
+}
+func (UnimplementedListServiceServer) ResolveRestoreFiles(*ResolveRestoreFilesRequest, grpc.ServerStreamingServer[ResolveRestoreFilesResponse]) error {
+	return status.Error(codes.Unimplemented, "method ResolveRestoreFiles not implemented")
 }
 func (UnimplementedListServiceServer) mustEmbedUnimplementedListServiceServer() {}
 func (UnimplementedListServiceServer) testEmbeddedByValue()                     {}
@@ -104,6 +141,17 @@ func _ListService_ListFiles_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ListService_ResolveRestoreFiles_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ResolveRestoreFilesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ListServiceServer).ResolveRestoreFiles(m, &grpc.GenericServerStream[ResolveRestoreFilesRequest, ResolveRestoreFilesResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ListService_ResolveRestoreFilesServer = grpc.ServerStreamingServer[ResolveRestoreFilesResponse]
+
 // ListService_ServiceDesc is the grpc.ServiceDesc for ListService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -116,6 +164,12 @@ var ListService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ListService_ListFiles_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ResolveRestoreFiles",
+			Handler:       _ListService_ResolveRestoreFiles_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "api/list.proto",
 }
