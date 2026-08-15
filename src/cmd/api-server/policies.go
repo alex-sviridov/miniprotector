@@ -28,10 +28,12 @@ type checkinDTO struct {
 }
 
 type ruleDTO struct {
-	Host     string `json:"host"`
-	Path     string `json:"path"`
-	Include  bool   `json:"include"`
-	DestPath string `json:"dest_path,omitempty"`
+	Host      string `json:"host"`
+	Path      string `json:"path"`
+	Include   bool   `json:"include"`
+	DestPath  string `json:"dest_path,omitempty"`
+	NotBefore int64  `json:"not_before,omitempty"`
+	NotAfter  int64  `json:"not_after,omitempty"`
 }
 
 type policyDTO struct {
@@ -64,7 +66,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 	}
 	rules := make([]ruleDTO, len(p.GetRules()))
 	for i, r := range p.GetRules() {
-		rules[i] = ruleDTO{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude(), DestPath: r.GetDestPath()}
+		rules[i] = ruleDTO{Host: r.GetHost(), Path: r.GetPath(), Include: r.GetInclude(), DestPath: r.GetDestPath(), NotBefore: r.GetNotBefore(), NotAfter: r.GetNotAfter()}
 	}
 	dto := policyDTO{
 		ID:        p.GetId(),
@@ -365,7 +367,7 @@ func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
 
 	rules := make([]*pb.RestoreRule, len(in.Rules))
 	for i, ru := range in.Rules {
-		rules[i] = &pb.RestoreRule{Host: ru.Host, Path: ru.Path, Include: ru.Include, DestPath: ru.DestPath}
+		rules[i] = &pb.RestoreRule{Host: ru.Host, Path: ru.Path, Include: ru.Include, DestPath: ru.DestPath, NotBefore: ru.NotBefore, NotAfter: ru.NotAfter}
 	}
 	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
 		Name:            in.Name,

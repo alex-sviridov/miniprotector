@@ -818,6 +818,50 @@ func TestHandleCreateRestore_PassesDestPathThrough(t *testing.T) {
 	assert.Equal(t, "/var/www/index.html.bak", fake.lastCreateReq.GetRules()[0].GetDestPath())
 }
 
+func TestToPolicyDTO_RoundTripsTimeframe(t *testing.T) {
+	p := &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules: []*pb.RestoreRule{
+			{Host: "h", Path: "/etc", Include: true, NotBefore: 100, NotAfter: 200},
+		},
+	}
+
+	dto := toPolicyDTO(p)
+
+	require.Len(t, dto.Rules, 1)
+	assert.Equal(t, int64(100), dto.Rules[0].NotBefore)
+	assert.Equal(t, int64(200), dto.Rules[0].NotAfter)
+}
+
+func TestHandleCreateRestore_PassesThroughTimeframe(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules: []*pb.RestoreRule{
+			{Host: "h", Path: "/etc", Include: true, NotBefore: 100, NotAfter: 200},
+		},
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "h", "path": "/etc", "include": true, "not_before": 100, "not_after": 200}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	require.Len(t, fake.lastCreateReq.GetRules(), 1)
+	assert.Equal(t, int64(100), fake.lastCreateReq.GetRules()[0].GetNotBefore())
+	assert.Equal(t, int64(200), fake.lastCreateReq.GetRules()[0].GetNotAfter())
+}
+
 func TestHandleCreateRestore_ExplicitVerifyModeForwardsToBackend(t *testing.T) {
 	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
 		Id: "r1", Name: "web01-emergency", Type: "restore",
