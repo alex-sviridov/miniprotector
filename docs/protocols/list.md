@@ -159,6 +159,7 @@ A single folder-rule filter can match far more rows than a `bwfs` node's whole c
 ### Filter Semantics
 
 - `host` and `path_is_prefix` mirror `RestoreRule`'s convention: empty `host` means the filter applies across every source host (folder rule); `path_is_prefix=true` means folder rule (recursive subtree), `false` means exact file rule.
+- A folder filter matches the folder path itself plus everything beneath it under *either* path separator (`/` or `\`), so one host-agnostic filter serves Unix-style and Windows-style source hosts in the same call. A single trailing separator on `path` is ignored, so a root filter (`/`, `C:\`) matches that root's children rather than nothing.
 - `not_before` and `not_after` (both 0 = unbounded on that side) scope which backed-up version of this filter's selection is used. For each distinct `(source_host, path)` pair, the version with the latest `file_version_records.created_at` inside the window `[not_before, not_after]` wins. A version outside the window is ignored entirely, never used as a fallback; zero versions in the window means that filter contributes no row for that path.
 
 ### Filter Index

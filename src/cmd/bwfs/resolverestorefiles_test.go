@@ -70,6 +70,112 @@ func TestResolveRestoreFilter_HostAgnosticFolderMatchesEveryHost(t *testing.T) {
 	assert.ElementsMatch(t, []string{"/etc/a.conf", "/etc/sub/b.conf"}, paths)
 }
 
+// A folder rule on a Windows-style path must match its children. The
+// separator there is a backslash, so a range built only around '/' never
+// matched anything and the rule silently verified zero files.
+func TestResolveRestoreFilter_WindowsBackslashFolderMatchesChildren(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	seedFile(t, store, `fs://winhost:f:C:\Users\foo\bar.txt:1000`, 10, []byte{1}, "job1", 5000)
+	seedFile(t, store, `fs://winhost:f:C:\Users2\other.txt:1000`, 10, []byte{1}, "job1", 5000)
+
+	got := collectResolved(t, store, &pb.RestoreFileFilter{Path: `C:\Users`, PathIsPrefix: true})
+	require.Len(t, got, 1, "a backslash folder rule must match its backslash children, and only those")
+	assert.Equal(t, `C:\Users\foo\bar.txt`, got[0].Path)
+}
+
+// A folder rule at a filesystem root already ends in a separator.
+// Appending another one produced an upper bound ("/0") that sorts below
+// every real child, so a root rule matched nothing at all.
+func TestResolveRestoreFilter_RootFolderMatchesChildren(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		rulePath string
+		fileID   string
+		wantPath string
+		otherID  string
+	}{
+		{
+			name:     "unix root",
+			rulePath: "/",
+			fileID:   "fs://hosta:f:/etc/nginx.conf:1000",
+			wantPath: "/etc/nginx.conf",
+			otherID:  `fs://winhost:f:C:\Users\x.txt:1000`,
+		},
+		{
+			name:     "windows drive root",
+			rulePath: `C:\`,
+			fileID:   `fs://winhost:f:C:\Users\anything.txt:1000`,
+			wantPath: `C:\Users\anything.txt`,
+			otherID:  "fs://hosta:f:/etc/nginx.conf:1000",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := wfs.New(t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { store.Close() })
+
+			seedFile(t, store, tc.fileID, 10, []byte{1}, "job1", 5000)
+			// A file under the *other* root, proving the range stays scoped
+			// to the requested root rather than degenerating into match-all.
+			seedFile(t, store, tc.otherID, 10, []byte{1}, "job1", 5000)
+
+			got := collectResolved(t, store, &pb.RestoreFileFilter{Path: tc.rulePath, PathIsPrefix: true})
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.wantPath, got[0].Path)
+		})
+	}
+}
+
+// One host-agnostic folder rule can span source hosts of both conventions,
+// so both separator ranges have to be live in the same query -- picking
+// one convention per query would silently drop the other host's files.
+func TestResolveRestoreFilter_FolderMatchesBothSeparatorConventionsInOneQuery(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	seedFile(t, store, "fs://nixhost:f:/srv/data/a.txt:1000", 10, []byte{1}, "job1", 5000)
+	seedFile(t, store, `fs://winhost:f:/srv/data\b.txt:1000`, 10, []byte{1}, "job1", 5000)
+	seedFile(t, store, "fs://nixhost:f:/srv/database/c.txt:1000", 10, []byte{1}, "job1", 5000)
+
+	got := collectResolved(t, store, &pb.RestoreFileFilter{Path: "/srv/data", PathIsPrefix: true})
+	require.Len(t, got, 2)
+	assert.ElementsMatch(t, []string{"/srv/data/a.txt", `/srv/data\b.txt`},
+		[]string{got[0].Path, got[1].Path},
+		"both separators must match, and the /srv/database sibling must not")
+}
+
+func TestRestoreChildRanges(t *testing.T) {
+	for _, tc := range []struct {
+		name                         string
+		path                         string
+		wantUnixLo, wantUnixHi       string
+		wantWindowsLo, wantWindowsHi string
+	}{
+		{"plain unix path", "/etc", "/etc/", "/etc0", `/etc\`, "/etc]"},
+		{"trailing slash stripped", "/etc/", "/etc/", "/etc0", `/etc\`, "/etc]"},
+		{"unix root", "/", "/", "0", `\`, "]"},
+		{"windows path", `C:\Users`, `C:\Users/`, `C:\Users0`, `C:\Users\`, `C:\Users]`},
+		{"windows drive root", `C:\`, "C:/", "C:0", `C:\`, "C:]"},
+		{"windows drive root without separator", "C:", "C:/", "C:0", `C:\`, "C:]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := restoreChildRanges(tc.path)
+			assert.Equal(t, tc.wantUnixLo, got.Unix.Lower)
+			assert.Equal(t, tc.wantUnixHi, got.Unix.Upper)
+			assert.Equal(t, tc.wantWindowsLo, got.Windows.Lower)
+			assert.Equal(t, tc.wantWindowsHi, got.Windows.Upper)
+			// The upper bound must be the immediate successor byte of the
+			// separator, or the range would leak into sibling paths.
+			assert.Equal(t, got.Unix.Lower[len(got.Unix.Lower)-1]+1, got.Unix.Upper[len(got.Unix.Upper)-1])
+			assert.Equal(t, got.Windows.Lower[len(got.Windows.Lower)-1]+1, got.Windows.Upper[len(got.Windows.Upper)-1])
+		})
+	}
+}
+
 func TestResolveRestoreFilter_PicksLatestVersionInsideWindow(t *testing.T) {
 	store, err := wfs.New(t.TempDir())
 	require.NoError(t, err)
@@ -188,12 +294,12 @@ func (f *failingStream) Send(*pb.ResolveRestoreFilesResponse) error {
 	return nil
 }
 
-func (f *failingStream) SetHeader(metadata.MD) error     { return nil }
-func (f *failingStream) SendHeader(metadata.MD) error    { return nil }
-func (f *failingStream) SetTrailer(metadata.MD)          {}
-func (f *failingStream) Context() context.Context        { return context.Background() }
-func (f *failingStream) RecvMsg(interface{}) error       { return nil }
-func (f *failingStream) SendMsg(interface{}) error       { return nil }
+func (f *failingStream) SetHeader(metadata.MD) error  { return nil }
+func (f *failingStream) SendHeader(metadata.MD) error { return nil }
+func (f *failingStream) SetTrailer(metadata.MD)       {}
+func (f *failingStream) Context() context.Context     { return context.Background() }
+func (f *failingStream) RecvMsg(interface{}) error    { return nil }
+func (f *failingStream) SendMsg(interface{}) error    { return nil }
 
 func TestResolveRestoreFiles_SendErrorIsReturned(t *testing.T) {
 	store, err := wfs.New(t.TempDir())
