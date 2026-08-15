@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"hash/crc32"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +19,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -147,6 +151,36 @@ func (s *testResolveServer) ResolveRestoreFiles(req *pb.ResolveRestoreFilesReque
 	return nil
 }
 
+// recordingRestoreServer is a minimal RestoreServiceServer that records
+// which file_uuids it was asked to restore, then declines to actually serve
+// chunks -- it exists solely to prove that runVerifyWithConn's producer
+// goroutine actually dispatches a kept row to the worker pool (which calls
+// RestoreFile), as distinct from the not-found path, which never does.
+// What RestoreFile itself returns is irrelevant to that question, so it
+// always fails; verifyFile's own chunk-streaming behavior against a real
+// implementation is already covered by TestVerifyFile-shaped coverage
+// elsewhere (verifyFile/verifyFileWithRetry are untouched by Task 10).
+type recordingRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	mu        sync.Mutex
+	requested []string
+}
+
+func (s *recordingRestoreServer) RestoreFile(req *pb.RestoreRequest, _ pb.RestoreService_RestoreFileServer) error {
+	s.mu.Lock()
+	s.requested = append(s.requested, req.GetFileUuid())
+	s.mu.Unlock()
+	return status.Error(codes.Unimplemented, "recordingRestoreServer does not serve chunks")
+}
+
+func (s *recordingRestoreServer) Requested() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.requested))
+	copy(out, s.requested)
+	return out
+}
+
 // runVerifyWithDialer is a test-only wrapper around runVerify's dial step.
 // runVerify always dials via connection.Connect (host/port plus mTLS
 // certs), which has no injection seam for a bufconn listener, and no such
@@ -174,6 +208,14 @@ func runVerifyWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listene
 	return runVerifyWithConn(logger, conn, "", "", "", true, rules, 4, 1, true, "test-job")
 }
 
+// TestRunVerify_RulesStdin_UsesResolveRestoreFilesAndReportsTimeframeNotFound
+// covers the exclude-by-timeframe path: it not only checks the generic
+// failure count (which an UnimplementedRestoreServiceServer would also
+// produce if the row were instead incorrectly dispatched and failed for an
+// unrelated reason -- see recordingRestoreServer/the sibling dispatch test
+// below for the other half of that discrimination) but asserts the actual
+// logged reason text, so this test can only pass if resolver.NotFound's
+// "no version in timeframe" reason genuinely made it out to the log.
 func TestRunVerify_RulesStdin_UsesResolveRestoreFilesAndReportsTimeframeNotFound(t *testing.T) {
 	store, err := wfs.New(t.TempDir())
 	require.NoError(t, err)
@@ -182,13 +224,15 @@ func TestRunVerify_RulesStdin_UsesResolveRestoreFilesAndReportsTimeframeNotFound
 	require.NoError(t, store.FinalizeFileData("fs://hosta:f:/etc/a.conf:1000", expectedCRC32(t, [][]byte{{1, 2, 3, 4}})))
 	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{ObjectID: "fs://hosta:f:/etc/a.conf:1000", JobID: "job1", CreatedAt: time.Unix(5000, 0)}).Error)
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
 	listSrv := &testResolveServer{store: store}
+	restoreSrv := &recordingRestoreServer{}
 
 	lis := bufconn.Listen(1 << 20)
 	grpcSrv := grpc.NewServer()
 	pb.RegisterListServiceServer(grpcSrv, listSrv)
-	pb.RegisterRestoreServiceServer(grpcSrv, &pb.UnimplementedRestoreServiceServer{})
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
 	go grpcSrv.Serve(lis)
 	defer grpcSrv.GracefulStop()
 
@@ -199,4 +243,58 @@ func TestRunVerify_RulesStdin_UsesResolveRestoreFilesAndReportsTimeframeNotFound
 	err = runVerifyWithDialer(t, logger, lis, rulesJSON)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 file(s) failed verification")
+	assert.Contains(t, logBuf.String(), `reason="no version in timeframe"`,
+		"the not-found log line must carry restoreResolver.NotFound's actual reason text, not just any failure")
+	assert.Empty(t, restoreSrv.Requested(),
+		"a row excluded by the timeframe must never reach RestoreFile -- if it did, this test's failure count would be a false positive for the wrong reason")
+}
+
+// TestRunVerify_RulesStdin_TimeframeIncludingVersionDispatchesToWorkerPool
+// is the sibling of the test above: a rule whose timeframe DOES cover the
+// file's only version. It proves the row is actually fed into workCh and
+// reaches RestoreFile (via recordingRestoreServer), rather than merely
+// proving *some* failure occurs -- mutation-testing the "exclude" test
+// alone (e.g. zeroing buildRestoreFilters's timeframe, or gating
+// resolver.Feed's dispatch behind `false &&`) still produces exactly one
+// generic verification failure either way, so that test alone can't tell
+// "correctly excluded" apart from "incorrectly never dispatched". This one
+// closes that gap on the dispatch side.
+func TestRunVerify_RulesStdin_TimeframeIncludingVersionDispatchesToWorkerPool(t *testing.T) {
+	const fileID = "fs://hosta:f:/etc/a.conf:1000"
+
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	require.NoError(t, store.CreateFileData(fileID, 4))
+	require.NoError(t, store.FinalizeFileData(fileID, expectedCRC32(t, [][]byte{{1, 2, 3, 4}})))
+	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{ObjectID: fileID, JobID: "job1", CreatedAt: time.Unix(5000, 0)}).Error)
+
+	var fd wfs.FileDataRecord
+	require.NoError(t, store.RawDB().Where("file_id = ?", fileID).First(&fd).Error)
+	require.NotEmpty(t, fd.UUID, "seed setup must have produced a finalized file_data_records row")
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &recordingRestoreServer{}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	// Unlike the sibling test above, this rule's [not_before, not_after]
+	// window (1000..9999) covers the file's only version (created_at =
+	// 5000), so ResolveRestoreFiles must yield the row and resolver.Feed
+	// must keep it.
+	rulesJSON := `{"rules":[{"host":"hosta","path":"/etc/a.conf","include":true,"not_before":1000,"not_after":9999}]}`
+
+	// The error return is expected and irrelevant here: recordingRestoreServer
+	// always fails RestoreFile (it exists to record, not to serve chunks).
+	// Only dispatch -- what reached the restore service -- is under test.
+	_ = runVerifyWithDialer(t, logger, lis, rulesJSON)
+
+	assert.Equal(t, []string{fd.UUID}, restoreSrv.Requested(),
+		"the in-window row must be dispatched to the worker pool and reach RestoreFile with its file_uuid")
 }
