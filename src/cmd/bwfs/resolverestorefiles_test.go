@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -171,4 +172,51 @@ func TestResolveRestoreFiles_GRPCRoundTrip(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "/etc/a.conf", got[0].GetRow().GetPath())
 	assert.Equal(t, int32(0), got[0].GetFilterIndex())
+}
+
+// failingStream is a minimal mock implementing pb.ListService_ResolveRestoreFilesServer
+// that fails on the second Send call.
+type failingStream struct {
+	sendCount int
+}
+
+func (f *failingStream) Send(*pb.ResolveRestoreFilesResponse) error {
+	f.sendCount++
+	if f.sendCount > 1 {
+		return io.EOF // simulate send failure
+	}
+	return nil
+}
+
+func (f *failingStream) SetHeader(metadata.MD) error     { return nil }
+func (f *failingStream) SendHeader(metadata.MD) error    { return nil }
+func (f *failingStream) SetTrailer(metadata.MD)          {}
+func (f *failingStream) Context() context.Context        { return context.Background() }
+func (f *failingStream) RecvMsg(interface{}) error       { return nil }
+func (f *failingStream) SendMsg(interface{}) error       { return nil }
+
+func TestResolveRestoreFiles_SendErrorIsReturned(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	// Seed two files so the handler tries to send twice
+	seedFile(t, store, "fs://hosta:f:/etc/a.conf:1000", 10, []byte{1}, "job1", 5000)
+	seedFile(t, store, "fs://hosta:f:/etc/b.conf:2000", 20, []byte{2}, "job1", 5000)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewListServer(store, logger)
+
+	stream := &failingStream{}
+
+	// Call ResolveRestoreFiles with a filter that matches both files
+	err = srv.ResolveRestoreFiles(&pb.ResolveRestoreFilesRequest{
+		Filters: []*pb.RestoreFileFilter{
+			{Path: "/etc", PathIsPrefix: true},
+		},
+	}, stream)
+
+	// The handler should return the send error, not nil or the query error
+	require.Error(t, err)
+	assert.Equal(t, io.EOF, err, "should return the stream.Send error, not query error or nil")
 }
