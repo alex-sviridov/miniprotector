@@ -15,6 +15,17 @@ channel still guaranteed to work in that window, instead of only in logs the nod
 ship at all. Existing enrolled nodes keep their current certificate lineage until re-bootstrapped with a
 fresh enrollment token — this fix does not apply retroactively.
 
+**Operators, read this before rolling out.** step-ca does not clamp an over-long certificate request down
+to its provisioner's ceiling; it rejects it with a Forbidden error and fails the whole signing call. So
+raising `BootstrapCertTTLSec` above the CA's configured `--x509-max-dur` (2200h, against the 2160h/90-day
+default request) does not silently truncate the granted lifetime — it breaks enrollment outright. For the
+same reason this rollout is order-dependent: restart the CA first, so its `provisioner update
+--x509-max-dur=2200h` actually takes effect, and only then roll the fixed `certclient` out to nodes.
+Bootstrapping against a not-yet-restarted CA — or against an externally managed step-ca whose ceiling you
+control separately — now fails where the old, buggy client silently succeeded with a 24h certificate. As a
+side benefit, the raised ceiling also unblocks `issuer` minting its own self-certificate at the configured
+`IssuerSelfCertTTLSec` (also 90 days), which the old unconfigured 24h ceiling had been rejecting too.
+
 ## 2026-08-15 — restore rules gain timeframes and scoped resolution
 
 Restore rules can now pin a per-rule timeframe (`not_before`/`not_after`): the latest backed-up version

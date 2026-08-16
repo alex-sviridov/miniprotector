@@ -288,7 +288,15 @@ git commit -m "fix(certclient): request BootstrapCertTTLSec instead of taking st
 - Produces: no code interface — an operational config change. Task 2's fixed client requests
   `BootstrapCertTTLSec` (2160h/90 days by default); without this, step-ca's provisioner ceiling stays
   at its own unconfigured default (`MaxTLSDur = 24h`, from the pinned `smallstep/certificates` library),
-  silently clamping the request straight back down to 24h in production.
+  and every bootstrap enrollment fails outright in production.
+
+  > **Corrected after final review.** This originally said step-ca would "silently clamp the request
+  > straight back down to 24h." It does not clamp — `authority/provisioner/sign_options.go`'s
+  > `validityValidator.Valid` in the pinned `smallstep/certificates@v0.30.2` returns a Forbidden
+  > error when the requested duration exceeds the ceiling, failing the whole `Sign`/`Renew` call.
+  > The task's actual change (adding `--x509-max-dur=2200h`) is unaffected and still correct; only
+  > this rationale's description of the failure mode was wrong. See the design doc's Error Handling
+  > section and `CHANGELOG.md` for the rollout-ordering consequence.
 
 - [ ] **Step 1: Confirm the current entrypoint has no duration override**
 

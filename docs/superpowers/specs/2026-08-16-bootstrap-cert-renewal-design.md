@@ -296,9 +296,28 @@ policyclient fetch (every 15 min, agent's policy-update policy):
 - A node that never reports (too old to have the fix, or `agent-state.json` genuinely absent) simply
   never has a `NodeCertStatus` row — `api-server`'s new field is absent/omitted for it, not a zero
   value implying "known healthy."
-- `--x509-max-dur` set too low relative to `BootstrapCertTTLSec` → step-ca clamps the grant to the
-  provisioner's ceiling rather than erroring; worth a one-line note in the CHANGELOG entry so a future
-  `BootstrapCertTTLSec` increase doesn't silently stop taking effect.
+- `--x509-max-dur` set too low relative to `BootstrapCertTTLSec` → step-ca **rejects the request
+  outright** (a Forbidden error, `"requested duration of %v is more than the authorized maximum
+  certificate duration of %v"`), failing the whole `Sign`/`Renew` call. It does *not* clamp the grant
+  down to the provisioner's ceiling.
+
+  > **Corrected after final review.** This bullet originally claimed step-ca clamps rather than
+  > errors. That is wrong against the pinned `smallstep/certificates@v0.30.2`:
+  > `authority/provisioner/sign_options.go`'s `validityValidator.Valid` returns
+  > `errs.Forbidden(...)` when the requested duration exceeds `max + backdate`. The shipped
+  > configuration is unaffected — the 2200h ceiling comfortably exceeds the 2160h/90-day request —
+  > but the operational consequences differ sharply from what was originally written, so they are
+  > now called out in `CHANGELOG.md` rather than left as a "silently stops taking effect" note.
+
+  Two consequences follow, both now documented in the CHANGELOG entry for this change:
+  - Raising `BootstrapCertTTLSec` above the CA's configured ceiling **breaks enrollment outright**
+    rather than quietly under-delivering a shorter certificate. That is the safer failure direction,
+    but it is a hard failure, not a degradation.
+  - Rollout is order-dependent: the CA must be restarted so its `provisioner update
+    --x509-max-dur=2200h` actually takes effect **before** any node runs the fixed `certclient
+    bootstrap`. Bootstrapping against a not-yet-restarted CA — or any externally managed step-ca
+    whose provisioner ceiling an operator controls independently — now fails where the old, buggy
+    client silently succeeded with a 24h certificate.
 
 ## Security Considerations
 
