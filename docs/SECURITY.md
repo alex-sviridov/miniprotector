@@ -53,7 +53,7 @@ Every enrolled node holds **two** distinct certificates in the same certs direct
 | | Bootstrap credential | Operating credential |
 |---|---|---|
 | Files | `bootstrap.crt` / `bootstrap.key` | `client.crt` / `client.key` |
-| Lifetime | Long, governed entirely by the CA provisioner's own claims today — `BootstrapCertTTLSec` (~90 days by default) is parsed and defaulted but not yet consumed by any request path (tracked follow-up) | Short (`OperatingCertTTLSec`, 1 hour by default) |
+| Lifetime | Long, governed by `BootstrapCertTTLSec` (~90 days by default): `bootstrap`'s `Sign` request sets `NotAfter` from it, and step-ca's `/renew` carries that duration forward for the credential's whole lineage | Short (`OperatingCertTTLSec`, 1 hour by default) |
 | Obtained via | `certclient bootstrap` (redeems a one-time enrollment token from `client-manager`), refreshed by `certclient renew` (step-ca's stock `/renew`) | `certclient operating-refresh`, authenticated *with* the bootstrap credential, talking to `issuer` |
 | Consumed by | Only `certclient operating-refresh`'s connection to `issuer` | Every other component's mTLS transport (`common/mtls`'s hardcoded `client.crt`/`client.key`) — `bwfs`, `brfs`, `rwfs`, `catalogsync`, `catalog`, `log-gateway` |
 | Scheduled by | `agent`'s `bootstrap-refresh` policy (`BootstrapCertRefreshIntervalSec`, daily by default) | `agent`'s `operating-refresh` policy (`OperatingCertFetchIntervalSec`, every 15 minutes by default) |
@@ -139,6 +139,18 @@ A brief `issuer` outage degrades mesh access temporarily but never destroys a no
 requires re-enrollment to recover: the bootstrap credential keeps renewing independently via
 step-ca's stock `/renew`, and normal operating-refresh traffic resumes automatically once `issuer`
 is reachable again.
+
+There's a second, distinct failure mode this doesn't cover: a bootstrap credential that's actually
+allowed to lapse (missed renewals exceeding its own `BootstrapCertTTLSec` lifetime) is
+unrecoverable via `/renew` — an expired client certificate is rejected at the TLS handshake, before
+any application code runs — and requires a fresh `certclient bootstrap` with a new enrollment
+token. This failure is now visible via `GetNodeCertStatus` (`GET
+/api/v1/clients/{hostname}/cert-status`) for up to `OperatingCertTTLSec` after `bootstrap-refresh`
+starts failing, since reporting rides the independently-scheduled operating credential.
+
+**Rollout note:** the `BootstrapCertTTLSec` fix above is forward-only. A node's certificate lineage
+keeps whatever duration its *original* `bootstrap` call was granted — existing enrolled nodes stay
+on their current (pre-fix, ~24h) lineage until re-bootstrapped with a fresh enrollment token.
 
 ## See Also
 

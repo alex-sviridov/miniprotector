@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-16 — bootstrap certificates get their real TTL, renewal failures become visible
+
+`certclient bootstrap` was never requesting a certificate duration, so every bootstrap credential
+silently got step-ca's own 24-hour default instead of the configured ~90-day `BootstrapCertTTLSec` —
+and because step-ca's renewal always carries a certificate's *original* duration forward, that 24-hour
+window applied to every future renewal too, leaving essentially no safety margin between "renewed" and
+"expired unrecoverably." Newly-bootstrapped nodes now get the intended lifetime; production's CA
+provisioner gained the ceiling to actually grant it. Separately, when a node's daily renewal starts
+failing, that's now visible centrally (`GET /api/v1/clients/{hostname}/cert-status`) via the one
+channel still guaranteed to work in that window, instead of only in logs the node may soon be unable to
+ship at all. Existing enrolled nodes keep their current certificate lineage until re-bootstrapped with a
+fresh enrollment token — this fix does not apply retroactively.
+
 ## 2026-08-15 — restore rules gain timeframes and scoped resolution
 
 Restore rules can now pin a per-rule timeframe (`not_before`/`not_after`): the latest backed-up version
