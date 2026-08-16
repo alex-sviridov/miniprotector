@@ -36,7 +36,7 @@ type BackupStore interface {
 	MarkChunkCorrupted(chunkHash []byte) error
 
 	// FileVersion operations - create metadata version for each backup
-	EnsureFileVersion(jobID, objectID string, metadata []byte, ctime int64) error
+	EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64) error
 	RemoveFileVersion(jobID, objectID string) error
 
 	// Backup job operations - track discrete backup runs (one brfs invocation each).

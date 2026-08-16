@@ -16,32 +16,28 @@ import (
 )
 
 // parseFileID splits "fs://host:type:path:mtime" into its components, so
-// CreateFileData can persist them as indexed columns instead of leaving
-// them locked inside an opaque string only parseable in Go, at read time,
-// across the whole table. Mirrors cmd/bwfs/list.go's parseFileID exactly
-// (duplicated here -- storage/filesystem can't import a cmd package, and
-// that copy also returns a "type" this package has no column for, since
-// file_data_records only ever holds type 'f' rows -- see
-// cmd/bwfs/handler.go's handleFileInfoRequest). Malformed input never
-// errors: it leaves path == the raw fileID and host/mtime at their zero
-// values, the same permissive fallback the cmd/bwfs copy uses.
-func parseFileID(fileID string) (source, path string, mtime int64) {
+// SourceHost/Type/Path/Mtime can be derived once, at write time, instead of
+// re-parsed on every query -- mirrors cmd/bwfs/list.go's parseFileID
+// exactly (duplicated, not imported: this is package "filesystem", that is
+// package "main").
+func parseFileID(fileID string) (source, objType, path string, mtime int64) {
 	const prefix = "fs://"
 	if !strings.HasPrefix(fileID, prefix) {
-		return "", fileID, 0
+		return "", "", fileID, 0
 	}
 	rest := fileID[len(prefix):]
 	tokens := strings.Split(rest, ":")
 	if len(tokens) < 4 {
-		return "", fileID, 0
+		return "", "", fileID, 0
 	}
 	source = tokens[0]
+	objType = tokens[1]
 	mt, err := strconv.ParseInt(tokens[len(tokens)-1], 10, 64)
 	if err != nil {
-		return "", fileID, 0
+		return "", "", fileID, 0
 	}
 	path = strings.Join(tokens[2:len(tokens)-1], ":")
-	return source, path, mt
+	return source, objType, path, mt
 }
 
 func (s *Store) FileDataExists(fileID string) (bool, error) {
@@ -59,7 +55,7 @@ func (s *Store) FileDataExists(fileID string) (bool, error) {
 }
 
 func (s *Store) CreateFileData(fileID string, size int64) error {
-	source, path, mtime := parseFileID(fileID)
+	source, _, path, mtime := parseFileID(fileID)
 	record := FileDataRecord{
 		UUID:       uuid.New().String(),
 		FileID:     fileID,

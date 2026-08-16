@@ -13,9 +13,9 @@ func TestOpenReplicaReader_FileVersionsSince_ReturnsNewRowsInOrder(t *testing.T)
 	require.NoError(t, err)
 	defer store.Close()
 
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("v1"), 100))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-2", []byte("v2"), 100))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-3", []byte("v3"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-2", "hosta", "/path", "f", []byte("v2"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-3", "hosta", "/path", "f", []byte("v3"), 100))
 
 	reader, err := OpenReplicaReader(dir)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestOpenReplicaReader_FileVersionsSince_EmptyWhenCaughtUp(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", []byte("v1"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100))
 
 	reader, err := OpenReplicaReader(dir)
 	require.NoError(t, err)

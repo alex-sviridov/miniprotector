@@ -27,12 +27,15 @@ type FileDataChunkRecord struct {
 }
 
 type FileVersionRecord struct {
-	Seq       int64  `gorm:"primaryKey;autoIncrement"`
-	ObjectID  string `gorm:"uniqueIndex:idx_job_object;index:idx_file_version_object_created,priority:1"`
-	JobID     string `gorm:"uniqueIndex:idx_job_object"`
-	Metadata  []byte
-	Ctime     int64
-	CreatedAt time.Time `gorm:"index:idx_file_version_object_created,priority:2"`
+	Seq        int64  `gorm:"primaryKey;autoIncrement"`
+	ObjectID   string `gorm:"uniqueIndex:idx_job_object;index:idx_file_version_object_created,priority:1"`
+	JobID      string `gorm:"uniqueIndex:idx_job_object"`
+	SourceHost string `gorm:"index:idx_file_version_path_host,priority:2"`
+	Path       string `gorm:"index:idx_file_version_path_host,priority:1"`
+	Type       string // single char, from FileInfo.GetType() -- 'f', 'd', 'l', ...
+	Metadata   []byte
+	Ctime      int64
+	CreatedAt  time.Time `gorm:"index:idx_file_version_object_created,priority:2"`
 }
 
 type BackupJobRecord struct {

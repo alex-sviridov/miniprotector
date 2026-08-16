@@ -54,6 +54,10 @@ func openDB(basePath string) (*gorm.DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("backfill file data columns: %w", err)
 	}
+	if err := backfillFileVersionColumns(db); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("backfill file version columns: %w", err)
+	}
 	return db, nil
 }
 
@@ -110,7 +114,7 @@ func backfillFileDataColumns(db *gorm.DB) error {
 		progressed := 0
 		err := db.Transaction(func(tx *gorm.DB) error {
 			for _, r := range stale {
-				source, path, mtime := parseFileID(r.FileID)
+				source, _, path, mtime := parseFileID(r.FileID)
 				if path == "" {
 					continue
 				}
@@ -122,6 +126,57 @@ func backfillFileDataColumns(db *gorm.DB) error {
 						"mtime":       mtime,
 					}).Error; err != nil {
 					return fmt.Errorf("update row %s: %w", r.UUID, err)
+				}
+				progressed++
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if progressed == 0 {
+			return nil
+		}
+	}
+}
+
+// backfillFileVersionColumns populates source_host/path/type on
+// file_version_records rows written before those columns existed --
+// otherwise every such row (including every directory ever backed up
+// before this migration) stays permanently invisible to
+// ResolveRestoreFiles's directory query. Same batched, idempotent,
+// empty-path-marker approach as backfillFileDataColumns above -- see that
+// function's comment for the full rationale (bounded batches, index-
+// assisted probe, safe-to-interrupt).
+func backfillFileVersionColumns(db *gorm.DB) error {
+	const batchSize = 1000
+	for {
+		var stale []FileVersionRecord
+		if err := db.Select("seq", "object_id").
+			Where("path = ?", "").
+			Limit(batchSize).
+			Find(&stale).Error; err != nil {
+			return fmt.Errorf("select stale rows: %w", err)
+		}
+		if len(stale) == 0 {
+			return nil
+		}
+
+		progressed := 0
+		err := db.Transaction(func(tx *gorm.DB) error {
+			for _, r := range stale {
+				source, objType, path, _ := parseFileID(r.ObjectID)
+				if path == "" {
+					continue
+				}
+				if err := tx.Model(&FileVersionRecord{}).
+					Where("seq = ?", r.Seq).
+					Updates(map[string]any{
+						"source_host": source,
+						"path":        path,
+						"type":        objType,
+					}).Error; err != nil {
+					return fmt.Errorf("update row %d: %w", r.Seq, err)
 				}
 				progressed++
 			}

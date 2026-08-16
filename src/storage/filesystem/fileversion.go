@@ -15,13 +15,19 @@ import (
 // jobID's backup run. The first observation of a given (jobID, objectID)
 // pair wins — a duplicate send of the same object within the same job (e.g.
 // a future retry) is a safe no-op rather than a second catalog row.
-func (s *Store) EnsureFileVersion(jobID, objectID string, metadata []byte, ctime int64) error {
+// sourceHost/path/objType are the caller's already-known values (from
+// filesystem.FileInfo's Source()/Path()/GetType() accessors at both
+// cmd/bwfs/handler.go call sites) -- never re-derived from objectID here.
+func (s *Store) EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64) error {
 	record := FileVersionRecord{
-		JobID:     jobID,
-		ObjectID:  objectID,
-		Metadata:  metadata,
-		Ctime:     ctime,
-		CreatedAt: time.Now(),
+		JobID:      jobID,
+		ObjectID:   objectID,
+		SourceHost: sourceHost,
+		Path:       path,
+		Type:       objType,
+		Metadata:   metadata,
+		Ctime:      ctime,
+		CreatedAt:  time.Now(),
 	}
 	return s.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "job_id"}, {Name: "object_id"}},
