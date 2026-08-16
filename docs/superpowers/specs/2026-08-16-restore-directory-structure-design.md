@@ -58,6 +58,15 @@ which remains unbuilt future work.
 - **No fleet-wide or `catalog`-routed directory resolution** — same acceptance the 2026-08-15
   design already made for files: a restore always targets exactly one `destinations[0]` store,
   resolution stays local to that node.
+- **No destination-collision detection between two different rules' directories.** If two distinct
+  source directories (different rules, e.g. two folder rules with different `dest_path`s, or a
+  host-specific and a host-agnostic rule) resolve to the same `DestPath`, the dedup step in phase 1
+  silently collapses them into one create-or-reuse — mechanically harmless (the second one always
+  finds "already exists, reuse"), but the design does not warn that two logically distinct source
+  trees are being merged into one destination. Same deferral the 2026-08-13 rename design already
+  made for `dest_path` collisions generally ("becomes relevant once something actually writes
+  files") — this round writes directories, not file content, so the blast radius of a silent
+  collision is still just an empty folder, not overwritten data.
 
 ## Architecture
 
