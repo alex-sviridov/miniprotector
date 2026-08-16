@@ -51,6 +51,8 @@ type policyDTO struct {
 	Port            int32             `json:"port"`
 	Config          string            `json:"config"`
 	Rules           []ruleDTO         `json:"rules,omitempty"`
+	Mode            string            `json:"mode,omitempty"`
+	Overwrite       bool              `json:"overwrite,omitempty"`
 	DisabledAt      int64             `json:"disabled_at,omitempty"`
 	Checkins        []checkinDTO      `json:"checkins"`
 }
@@ -86,6 +88,8 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		Port:            p.GetPort(),
 		Config:          p.GetConfig(),
 		Rules:           rules,
+		Mode:            p.GetMode(),
+		Overwrite:       p.GetOverwrite(),
 		Checkins:        checkins,
 	}
 	if p.GetDisabledAt() != nil {
@@ -340,11 +344,12 @@ func decodeRestorePolicyInput(r *http.Request) (restorePolicyInput, error) {
 // policy-server itself, see write.go's buildPolicyForUpdate).
 //
 // mode distinguishes verification (agent runs rwfs verify against the
-// resolved rules, no files written) from actual restore (not yet
-// implemented anywhere below this layer -- see
-// docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md).
-// mode="restore" is rejected here, before policy-server is ever called, so
-// this layer's contract is ready ahead of that future work.
+// resolved rules, no files written) from restore execution (agent runs
+// rwfs restore, which this round only resolves and logs the file list --
+// still no files written -- see
+// docs/superpowers/specs/2026-08-16-restore-execute-log-only-design.md).
+// Both modes reach policy-server identically; only the created policy's
+// mode field differs.
 func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
 	in, err := decodeRestorePolicyInput(r)
 	if err != nil {
@@ -360,10 +365,6 @@ func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "mode must be 'verify' or 'restore'")
 		return
 	}
-	if mode == "restore" {
-		writeJSONError(w, http.StatusNotImplemented, "restore execution is not yet implemented; only verification (mode=verify) is currently supported")
-		return
-	}
 
 	rules := make([]*pb.RestoreRule, len(in.Rules))
 	for i, ru := range in.Rules {
@@ -376,6 +377,8 @@ func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
 		StoragePolicyId: in.StoragePolicyID,
 		Rules:           rules,
 		DisabledAt:      disabledAtToProto(in.DisabledAt),
+		Mode:            mode,
+		Overwrite:       in.Overwrite,
 	})
 	if err != nil {
 		s.logger.Error("handleCreateRestore: backend call failed", "error", err)

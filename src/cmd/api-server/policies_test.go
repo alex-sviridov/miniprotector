@@ -896,8 +896,14 @@ func TestHandleCreateRestore_ExplicitVerifyModeForwardsToBackend(t *testing.T) {
 	require.NotNil(t, fake.lastCreateReq)
 }
 
-func TestHandleCreateRestore_RestoreModeReturns501AndSkipsBackend(t *testing.T) {
-	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "r1"}}
+func TestHandleCreateRestore_RestoreModeForwardsToBackend(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+		Mode:            "restore",
+		Overwrite:       true,
+	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
@@ -913,12 +919,40 @@ func TestHandleCreateRestore_RestoreModeReturns501AndSkipsBackend(t *testing.T) 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusNotImplemented, rec.Code)
-	assert.Nil(t, fake.lastCreateReq, "backend must not be called for mode=restore")
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "restore", fake.lastCreateReq.GetMode())
+	assert.True(t, fake.lastCreateReq.GetOverwrite())
 
-	var respBody map[string]string
+	var respBody map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
-	assert.Equal(t, "restore execution is not yet implemented; only verification (mode=verify) is currently supported", respBody["error"])
+	assert.Equal(t, "restore", respBody["mode"])
+	assert.Equal(t, true, respBody["overwrite"])
+}
+
+func TestHandleCreateRestore_VerifyModeStillForwardsModeExplicitly(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		StoragePolicyId: "sp-1",
+		Rules:           []*pb.RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
+		Mode:            "verify",
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, fake.lastCreateReq)
+	assert.Equal(t, "verify", fake.lastCreateReq.GetMode(), "an omitted mode must still forward the defaulted value")
 }
 
 func TestHandleGetClientCertStatus_ReturnsStatus(t *testing.T) {
