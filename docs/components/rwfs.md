@@ -132,6 +132,35 @@ Used by `agent`'s restore-policy verification tasks (see
 [agent](./agent.md#policy-driven-restore-verification)) — never combined with `--filter` or the
 positional filter in that usage.
 
+## restore
+
+Resolves a restore policy's rules against a remote `bwfs` server's file listing and logs what a
+real restore of that policy would do -- **this round writes nothing to disk**. Requires
+`--rules-stdin` (the only way to select files; there is no plain-listing restore mode).
+
+```bash
+# Preview a restore policy's resolved file list
+echo '{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":"/data/photos_recovered"}]}' \
+  | rwfs restore localhost:8080 --rules-stdin
+```
+
+For each resolved file, logs `source`, `path` (original), and `dest_path` (the `dest_path` rename
+rule applied -- see [restore protocol](../protocols/restore.md)). Logs the run's `overwrite`
+setting once at start; `overwrite` currently has no effect (nothing is written yet, so there is
+nothing to overwrite or skip).
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|--------------|
+| `--rules-stdin` | | **Required.** Read `{"rules":[...]}` from stdin -- same shape `verify --rules-stdin` uses. |
+| `--overwrite` | false | Logged only; not yet enforced. |
+| `--quiet` | false | Suppress per-file resolved lines (warnings and summary always shown) |
+| `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
+
+Exit code follows the same not-found rule `verify --rules-stdin` uses: a file-level rule matching no
+row is a failure (non-zero exit); a folder-level rule matching nothing is not.
+
 ## Transport Security
 
 Connections to `bwfs` (both `list` and `verify`) are mutually authenticated TLS. `rwfs` loads

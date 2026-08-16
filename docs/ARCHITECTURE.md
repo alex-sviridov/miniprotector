@@ -101,7 +101,9 @@ that policy's `backup_window` and `rpo` — see [agent](components/agent.md#poli
 of each other, for every cached `"storage"`-typed policy targeting this node (ensure-running, not
 scheduled — see [agent](components/agent.md#storage-policy-supervision)), the first actual consumer
 of the `"storage"` policy type. `agent` additionally derives one one-shot verification task per
-cached `"restore"`-typed policy, executing `rwfs verify` against the resolved source `bwfs` — see
+cached `"restore"`-typed policy, executing `rwfs verify` against the resolved source `bwfs` (or,
+when that policy's `mode` is `"restore"`, the new log-only `rwfs restore`, which this round only
+resolves and logs the file list) — see
 [agent](components/agent.md#policy-driven-restore-verification). Each policy's (and backup task's,
 storage task's, and restore task's) outcome is tracked in
 the same local cache (`agent list-policies` inspects it). See [agent](components/agent.md).

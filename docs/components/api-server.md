@@ -78,8 +78,11 @@ same as a `"backup"` policy's `destinations`), and `rules` is a list of typed
 [Design: Restore Policy Type](../superpowers/specs/2026-08-09-restore-policy-type-design.md) and
 [Design: Restore Policy Verification](../superpowers/specs/2026-08-10-restore-policy-verification-design.md).
 `mode` (`"verify"`, the default, or `"restore"`) and `overwrite` (bool) prepare the contract for a
-real restore action: `mode: "restore"` is validated and rejected with `501` today, since no
-execution path exists below `api-server` yet -- see [Design: Restore Verify/Execute
+real restore action: `mode: "restore"` now creates a real restore-typed policy, exactly like `mode:
+"verify"` -- `agent` picks it up and runs the new `rwfs restore` subcommand, which this round only
+resolves and logs the file list (see [Design: Restore Execution — Log-Only First
+Slice](../superpowers/specs/2026-08-16-restore-execute-log-only-design.md)); no file is written to
+disk yet -- see [Design: Restore Verify/Execute
 Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md).
 
 `GET /clients/{hostname}/cert-status` reports a node's most recent **bootstrap**-certificate

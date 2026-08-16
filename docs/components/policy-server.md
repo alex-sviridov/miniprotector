@@ -94,7 +94,9 @@ restore. It has no `object_filters`,
 `rpo`, `backup_window`, `port`, or `config`. Unlike every other type, a `"restore"` policy is never
 updatable -- `UpdatePolicy` rejects any request targeting one with `INVALID_ARGUMENT`, regardless of
 which fields the request sets, so `api-server`'s generic `PUT /api/v1/policies/{id}` rejects it too,
-with no `api-server`-side special-casing needed. See
+with no `api-server`-side special-casing needed. `mode` and `overwrite` (see
+[Design: Restore Execution — Log-Only First Slice](../superpowers/specs/2026-08-16-restore-execute-log-only-design.md))
+select and parameterize which action `agent` performs for this policy. See
 [Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md)
 and
 [Design: Restore Destination Rename](../superpowers/specs/2026-08-13-restore-destination-rename-design.md).

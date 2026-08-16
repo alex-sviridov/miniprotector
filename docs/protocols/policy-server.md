@@ -97,6 +97,18 @@ message Policy {
   reserved 18; reserved "source_store"; // removed 2026-08-10, replaced by storage_policy_id (15) + rules (19) -- see below
   // "restore" policy only.
   repeated RestoreRule rules = 19;
+  // "restore" policy only. "" or "verify" behaves exactly as every restore
+  // policy does today (agent runs rwfs verify, writes nothing). "restore"
+  // is the log-only-for-now execution path (rwfs restore). A restore
+  // policy JSON file written before this field existed has no "mode" key
+  // at all and is unaffected -- absent is read as "verify".
+  string mode = 20;
+  // "restore" policy only. Carried through and logged by rwfs restore;
+  // has no effect when mode is "verify" or unset -- the web UI already
+  // sends this checkbox unconditionally on every submit (see
+  // docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md),
+  // so it is simply inert for a verify submission.
+  bool overwrite = 21;
 }
 
 message CreatePolicyRequest {
@@ -118,6 +130,10 @@ message CreatePolicyRequest {
   reserved 13; reserved "source_store"; // removed 2026-08-10, see Policy.rules above
   // "restore" policy only, required.
   repeated RestoreRule rules = 14;
+  // "restore" policy only. See Policy.mode above.
+  string mode = 15;
+  // "restore" policy only. See Policy.overwrite above.
+  bool overwrite = 16;
 }
 
 message UpdatePolicyRequest {
@@ -189,7 +205,11 @@ certificate — the same requirement every server except `issuer`'s own listener
   It has no `object_filters`, `rpo`, `backup_window`, `port`, or `config`. A `"restore"` policy is never updatable:
   `UpdatePolicy` returns `INVALID_ARGUMENT` for any request whose target policy is type `"restore"`, regardless of which
   fields it sets -- a restore is a point-in-time instruction, so changing one after the fact is a
-  new policy, not an edit (which is also why `UpdatePolicyRequest` has no `rules` field).
+  new policy, not an edit (which is also why `UpdatePolicyRequest` has no `rules` field). `mode`
+  (`"verify"`, the default, or `"restore"`) selects which action `agent` performs -- `rwfs verify`
+  (unchanged) or the new log-only `rwfs restore` (resolves and logs the file list, writes nothing
+  yet). `overwrite` is carried through and logged by `rwfs restore`; it has no effect under
+  `mode: "verify"`.
 - `disabled_at` is generic across every policy type -- unset (zero/nil) means never disabled. Once it
   passes, `GetPolicies` stops returning that policy to any node, checked live against the current
   time on every call (not cached at load/reload time) -- no `.changed`-touch or restart needed for a

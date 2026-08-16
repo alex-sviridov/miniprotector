@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-16 — restore execution: first slice (log-only)
+
+`mode: "restore"` on `POST /api/v1/restore` now actually creates a restore policy instead of always
+returning `501` -- `agent` picks it up and runs a new `rwfs restore` subcommand under a `restore:`
+task-id prefix (verification tasks move to a `verify:` prefix, freeing `restore:` for this). This
+round, `rwfs restore` only resolves the policy's rules against the live store (reusing `rwfs
+verify --rules-stdin`'s exact resolution pipeline) and logs each file's source path, its `dest_path`
+rename applied, and the policy's `overwrite` setting -- it writes nothing to disk. A future round
+adds the actual write path.
+
 ## 2026-08-16 — bootstrap certificates get their real TTL, renewal failures become visible
 
 `certclient bootstrap` was never requesting a certificate duration, so every bootstrap credential

@@ -5,13 +5,15 @@ It runs three embedded, statically-configured policies — `bootstrap-refresh`, 
 and `policy-update` — the first two keep this node's two-tier mTLS credential (see
 [Security Model](../SECURITY.md)) fresh via `certclient`; the third fetches this node's applicable
 policies (backup and storage) from `policy-server` (see [policy-server](./policy-server.md)) into a
-local cache via `policyclient`. On top of those three, `agent` derives three kinds of dynamic work
+local cache via `policyclient`. On top of those three, `agent` derives four kinds of dynamic work
 from that cache: a **backup task** for every `(cached policy, object_filters path)` pair, executed
 via `brfs` on its own schedule (see "Policy-driven backup execution" below); a supervised
 `bwfs server` process for every cached `"storage"`-typed policy, kept running rather than scheduled
-(see "Storage-policy supervision" below); and a one-shot **restore verification task** for every
-cached `"restore"`-typed policy, executed via `rwfs verify` (see "Policy-driven restore
-verification" below).
+(see "Storage-policy supervision" below); a one-shot **restore verification task** for every
+cached `"restore"`-typed policy whose `mode` is unset or `"verify"`, executed via `rwfs verify`
+(see "Policy-driven restore verification" below); and a one-shot **restore execution task**
+instead, for every cached `"restore"`-typed policy whose `mode` is `"restore"`, executed via the
+new log-only `rwfs restore` (see "Policy-driven restore execution" below).
 
 ## Usage
 
@@ -177,11 +179,12 @@ and [Design: agent catalogsync supervision](../superpowers/specs/2026-07-31-agen
 ## Policy-driven restore verification
 
 Every reconcile tick, alongside backup tasks and storage supervision, `agent` derives one
-verification task per cached `"restore"`-typed policy (ID: `restore:<policy-name>`) — unlike a
-backup task, there is exactly one task per policy, not one per rule or per host, since a restore
-policy's `rules` aren't cleanly partitionable by host (a folder rule can be host-agnostic). A
-policy whose `destinations` is empty (its `storage_policy_id` has no live checkins yet, or is
-dangling) contributes no task, logged the same way an unresolved backup destination already is.
+verification task per cached `"restore"`-typed policy whose `mode` is `""`/`"verify"` (ID:
+`verify:<policy-name>`) — unlike a backup task, there is exactly one task per policy, not one per
+rule or per host, since a restore policy's `rules` aren't cleanly partitionable by host (a folder
+rule can be host-agnostic). A policy whose `destinations` is empty (its `storage_policy_id` has no
+live checkins yet, or is dangling) contributes no task, logged the same way an unresolved backup
+destination already is.
 
 A restore task is **one-shot**: due until it first succeeds, retried with the same jittered
 backoff every other failing policy uses, and never dispatched again afterward for as long as this
@@ -189,10 +192,10 @@ exact policy still appears in `policies-cache.json` (a restore policy is deletab
 removes its task the same way any orphaned task's `agent-state.json` entry is pruned).
 
 When due, `agent` execs `rwfs verify <destinations[0]> --rules-stdin --job-id
-restore:<policy>:<timestamp>`, piping the policy's `rules` as `{"rules": [...]}` on the child's
+verify:<policy>:<timestamp>`, piping the policy's `rules` as `{"rules": [...]}` on the child's
 standard input — see [rwfs](./rwfs.md)'s `--rules-stdin` mode for how that's resolved into an
 actual pass/fail. `list-policies` shows each restore task as an additional row
-(`restore:<policy>`), same columns as everything else; a permanently-succeeded one-shot task's
+(`verify:<policy>`), same columns as everything else; a permanently-succeeded one-shot task's
 `NEXT RUN` column reads "due now" even though it will never run again — a known, accepted display
 quirk (see [Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md)), not a functional bug.
 This path has browser-driven integration coverage in `web/e2e/restore-verify.spec.js`
@@ -200,13 +203,27 @@ This path has browser-driven integration coverage in `web/e2e/restore-verify.spe
 verifying successfully, and a rule naming a file that was never backed up failing — both read from
 the real, rendered `/jobs/:job_id` log.
 
+## Policy-driven restore execution
+
+A `"restore"`-typed policy whose `mode` is `"restore"` gets a task with a `restore:<policy-name>`
+ID instead -- otherwise identical to restore verification above (one task per policy, one-shot,
+same failure backoff, `list-policies` row). `agent` execs `rwfs restore <destinations[0]>
+--rules-stdin --job-id restore:<policy>:<timestamp>`, with `--overwrite` appended when the policy's
+`overwrite` field is set, piping the same `{"rules": [...]}` payload verification uses.
+
+This round, `rwfs restore` only resolves the policy's rules against the live store and logs each
+file's source path and renamed destination path -- see [rwfs](./rwfs.md)'s `restore` section. No
+file is written to disk yet; a future round adds that. See [Design: Restore Execution — Log-Only
+First Slice](../superpowers/specs/2026-08-16-restore-execute-log-only-design.md).
+
 ## Logging and correlation
 
 Every binary `agent` execs writes structured JSON logs to `<log_dir>/<binary-name>.log` (one
 stable, rotated file per binary — not one file per invocation), and every exec `agent` dispatches
 now carries a `--job-id` (auto-generated per invocation if not explicitly set): `<policy-id>:
 <unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>`
-for backup tasks, `restore:<policy>:<timestamp>` for restore-verification tasks. That same job-id
+for backup tasks, `verify:<policy>:<timestamp>` for restore *verification* tasks,
+`restore:<policy>:<timestamp>` for restore *execution* tasks. That same job-id
 rides as outgoing gRPC metadata to whatever server the
 exec calls (`issuer` for `certclient operating-refresh`, `policy-server` for `policyclient`, `bwfs`
 for `brfs`, and `bwfs` again for `rwfs verify`'s `ListFiles`/`RestoreFile` calls on the

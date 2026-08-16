@@ -99,6 +99,10 @@ one correlation ID across `agent`'s log and `rwfs`'s. `bwfs`'s `ListFiles`/`Rest
 not require or read this metadata (unlike `BackupService`, which rejects a call without it), so
 sending it is purely additive; a client that omits it entirely still works.
 
+`rwfs restore --rules-stdin` calls only `ListService.ResolveRestoreFiles` -- unlike `rwfs verify
+--rules-stdin`, it never calls `RestoreFile`, since this round only resolves and logs the file
+list without reading any chunk data.
+
 ## Key Design Decisions
 
 **Why server-streaming per file instead of bidi streaming?**
