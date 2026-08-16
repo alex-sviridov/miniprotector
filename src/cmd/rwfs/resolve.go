@@ -73,10 +73,12 @@ func newRestoreResolver(rules []RestoreRule, filterToRuleIndex []int) *restoreRe
 // below, mirroring applyRulesStdin's existing found-vs-selected split: a
 // real zero-byte file or directory row is present on the store (found) but
 // has nothing to checksum (not selected), and must not be misreported as
-// missing by NotFound. Only a real, non-empty file is ever dispatched
-// (type/size defense-in-depth -- bwfs's file_data_records only ever holds
-// such rows today, but this guards against that invariant ever changing
-// silently).
+// missing by NotFound. A real, non-empty file or a directory is dispatched;
+// anything else (zero-byte file, symlink, or other non-regular/non-directory
+// type) is found but not dispatched -- rwfs restore's phase 1 (directory
+// creation) and file resolution are the only two things bwfs's data can
+// currently be turned into. See
+// docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md.
 func (r *restoreResolver) Feed(row *pb.FileRow, filterIndex int32) (dispatch bool, ruleIndex int) {
 	winningRuleIndex, include, found := resolveRestoreFileRule(r.rules, row.GetSource(), row.GetPath())
 	if !found || !include {
@@ -86,7 +88,9 @@ func (r *restoreResolver) Feed(row *pb.FileRow, filterIndex int32) (dispatch boo
 		return false, winningRuleIndex
 	}
 	r.filterFoundAny[filterIndex] = true
-	if row.GetType() != "f" || row.GetSize() <= 0 {
+	isRestorableFile := row.GetType() == "f" && row.GetSize() > 0
+	isDirectory := row.GetType() == "d"
+	if !isRestorableFile && !isDirectory {
 		return false, winningRuleIndex
 	}
 	return true, winningRuleIndex

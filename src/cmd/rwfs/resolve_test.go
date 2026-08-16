@@ -85,24 +85,38 @@ func TestRestoreResolver_DropsRowWhoseWinningRuleIsExcluded(t *testing.T) {
 	}
 }
 
-func TestRestoreResolver_ZeroByteOrNonFileRowIsFoundButNotKept(t *testing.T) {
+func TestRestoreResolver_ZeroByteFileRowIsFoundButNotKept(t *testing.T) {
 	rules := []RestoreRule{{Host: "h", Path: "/etc/a", Include: true}}
 	_, filterToRuleIndex := buildRestoreFilters(rules)
 
 	resolver := newRestoreResolver(rules, filterToRuleIndex)
 	zeroByte := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "f", Size: 0}
 	if dispatch, _ := resolver.Feed(zeroByte, 0); dispatch {
-		t.Fatal("a zero-byte row must be found but not selected")
+		t.Fatal("a zero-byte file row must be found but not selected")
 	}
 	notFound := resolver.NotFound()
 	if len(notFound) != 0 {
 		t.Fatalf("a found-but-unselected row must not be reported as not-found, got %v", notFound)
 	}
+}
 
-	resolver = newRestoreResolver(rules, filterToRuleIndex)
-	dir := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "d", Size: 10}
-	if dispatch, _ := resolver.Feed(dir, 0); dispatch {
-		t.Fatal("a directory row must be found but not selected")
+func TestRestoreResolver_DirectoryRowIsDispatched(t *testing.T) {
+	rules := []RestoreRule{{Host: "h", Path: "/etc/a", Include: true}}
+	_, filterToRuleIndex := buildRestoreFilters(rules)
+
+	resolver := newRestoreResolver(rules, filterToRuleIndex)
+	dir := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "d"}
+	dispatch, ruleIndex := resolver.Feed(dir, 0)
+	if !dispatch {
+		t.Fatal("a directory row must now be dispatched, not dropped")
+	}
+	if ruleIndex != 0 {
+		t.Fatalf("expected the winning rule index to be 0, got %d", ruleIndex)
+	}
+
+	notFound := resolver.NotFound()
+	if len(notFound) != 0 {
+		t.Fatalf("a dispatched directory must not be reported as not-found, got %v", notFound)
 	}
 }
 
