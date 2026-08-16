@@ -12,8 +12,8 @@ via `brfs` on its own schedule (see "Policy-driven backup execution" below); a s
 (see "Storage-policy supervision" below); a one-shot **restore verification task** for every
 cached `"restore"`-typed policy whose `mode` is unset or `"verify"`, executed via `rwfs verify`
 (see "Policy-driven restore verification" below); and a one-shot **restore execution task**
-instead, for every cached `"restore"`-typed policy whose `mode` is `"restore"`, executed via the
-new log-only `rwfs restore` (see "Policy-driven restore execution" below).
+instead, for every cached `"restore"`-typed policy whose `mode` is `"restore"`, executed via
+`rwfs restore` (see "Policy-driven restore execution" below).
 
 ## Usage
 
@@ -211,10 +211,12 @@ same failure backoff, `list-policies` row). `agent` execs `rwfs restore <destina
 --rules-stdin --job-id restore:<policy>:<timestamp>`, with `--overwrite` appended when the policy's
 `overwrite` field is set, piping the same `{"rules": [...]}` payload verification uses.
 
-This round, `rwfs restore` only resolves the policy's rules against the live store and logs each
-file's source path and renamed destination path -- see [rwfs](./rwfs.md)'s `restore` section. No
-file is written to disk yet; a future round adds that. See [Design: Restore Execution — Log-Only
-First Slice](../superpowers/specs/2026-08-16-restore-execute-log-only-design.md).
+`rwfs restore` resolves the policy's rules against the live store and creates the resolved
+directory structure on the destination filesystem (parent before child, aborting on the first
+failure) -- see [rwfs](./rwfs.md)'s `restore` section and [Design: Restore Directory Structure
+Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md). File content restore
+is still log-only: for each resolved file it logs the source path and renamed destination path but
+writes nothing; a future round adds that.
 
 ## Logging and correlation
 

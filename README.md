@@ -52,10 +52,10 @@ rwfs verify localhost:8080
 rwfs verify localhost:8080 --streams 8 --quiet
 ```
 
-**Preview a restore (log-only, writes nothing yet):**
+**Restore a policy's directory structure (file content is still log-only):**
 ```bash
-# Resolve a restore policy's rules against the store and log what a
-# real restore would do
+# Resolve a restore policy's rules against the store, create the
+# resolved directories on disk, and log what a real file restore would do
 echo '{"rules":[{"host":"","path":"/data","include":true}]}' \
   | rwfs restore localhost:8080 --rules-stdin
 ```
@@ -64,7 +64,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true}]}' \
 
 - **[brfs](docs/components/brfs.md)** - Backup Reader for File System — reads files and streams them to `bwfs`
 - **[bwfs](docs/components/bwfs.md)** - Backup Writer for File System — receives, deduplicates, and stores files; also serves the list subprotocol
-- **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity; resolves and logs a policy-driven restore (log-only so far, does not yet write files)
+- **[rwfs](docs/components/rwfs.md)** - Restore Writer for File System — queries a remote `bwfs` for backed-up file listings; verifies backup integrity; runs a policy-driven restore, creating the resolved directory structure on disk (file content restore is still log-only)
 - **[certclient](docs/components/certclient.md)** - Bootstraps or renews a node's mTLS bootstrap credential from the CA, and refreshes its short-lived operating certificate from `issuer`
 - **[agent](docs/components/agent.md)** - Node agent — reconciles local state against embedded policies (credential renewal via `certclient`, policy fetch via `policyclient`, and policy-driven backup execution via `brfs`)
 - **[policyclient](docs/components/policyclient.md)** - Fetches backup policies from `policy-server` into a local cache (consumed by `agent` for policy-driven backup execution)
