@@ -338,3 +338,22 @@ func TestToCachedPolicies_RestoreRuleDestPathRoundTrips(t *testing.T) {
 	require.Len(t, cached[0].Rules, 1)
 	assert.Equal(t, "/etc/nginx/nginx.conf.bak", cached[0].Rules[0].DestPath)
 }
+
+// This is the one hop where a dropped mode/overwrite would silently degrade
+// every restore policy back to plain verification, with no error anywhere
+// -- agent branches purely on CachedPolicy.Mode (see cmd/agent's restore
+// dispatch), so a field lost here is never caught by a proto/RPC-level
+// check, only by exercising this exact conversion.
+func TestToCachedPolicies_RestoreModeAndOverwriteRoundTrip(t *testing.T) {
+	policies := []*pb.Policy{
+		{
+			Type:      "restore",
+			Mode:      "restore",
+			Overwrite: true,
+		},
+	}
+	cached := toCachedPolicies(policies)
+	require.Len(t, cached, 1)
+	assert.Equal(t, "restore", cached[0].Mode)
+	assert.True(t, cached[0].Overwrite)
+}
