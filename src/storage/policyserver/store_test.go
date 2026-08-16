@@ -126,3 +126,54 @@ func TestDeleteForPolicy_RemovesOnlyThatPolicysRows(t *testing.T) {
 	require.Len(t, records, 1, "policy-2's rows must be untouched")
 	assert.Equal(t, "host-c", records[0].Hostname)
 }
+
+func TestRecordCertStatus_ThenCertStatusForHost_RoundTrips(t *testing.T) {
+	store := newTestStore(t)
+	at := time.Now().Truncate(time.Second)
+
+	require.NoError(t, store.RecordCertStatus(t.Context(), "host-a", "renew failed: timeout", at))
+
+	got, found, err := store.CertStatusForHost(t.Context(), "host-a")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "host-a", got.Hostname)
+	assert.Equal(t, "renew failed: timeout", got.LastError)
+	assert.True(t, at.Equal(got.LastAttemptAt))
+}
+
+func TestRecordCertStatus_UpsertOverwritesRatherThanDuplicating(t *testing.T) {
+	store := newTestStore(t)
+	first := time.Now().Add(-time.Hour).Truncate(time.Second)
+	second := time.Now().Truncate(time.Second)
+
+	require.NoError(t, store.RecordCertStatus(t.Context(), "host-a", "first error", first))
+	require.NoError(t, store.RecordCertStatus(t.Context(), "host-a", "second error", second))
+
+	got, found, err := store.CertStatusForHost(t.Context(), "host-a")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "second error", got.LastError)
+	assert.True(t, second.Equal(got.LastAttemptAt))
+}
+
+func TestRecordCertStatus_EmptyErrorOverwritesPriorFailure(t *testing.T) {
+	store := newTestStore(t)
+	failedAt := time.Now().Add(-time.Hour).Truncate(time.Second)
+	recoveredAt := time.Now().Truncate(time.Second)
+
+	require.NoError(t, store.RecordCertStatus(t.Context(), "host-a", "renew failed", failedAt))
+	require.NoError(t, store.RecordCertStatus(t.Context(), "host-a", "", recoveredAt))
+
+	got, found, err := store.CertStatusForHost(t.Context(), "host-a")
+	require.NoError(t, err)
+	require.True(t, found, "a healthy report must still be recorded, not treated as nothing to store")
+	assert.Equal(t, "", got.LastError, "recovery must actually clear the stale failure")
+	assert.True(t, recoveredAt.Equal(got.LastAttemptAt))
+}
+
+func TestCertStatusForHost_UnknownHostReturnsNotFound(t *testing.T) {
+	store := newTestStore(t)
+	_, found, err := store.CertStatusForHost(t.Context(), "ghost")
+	require.NoError(t, err)
+	assert.False(t, found)
+}

@@ -2,6 +2,7 @@ package policyserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -19,7 +20,7 @@ type Store struct {
 func New(varDir string) (*Store, error) {
 	db, err := sqlitedb.Open(sqlitedb.Options{
 		Path:   filepath.Join(varDir, "policy-server.sqlite"),
-		Models: []any{&CheckinRecord{}},
+		Models: []any{&CheckinRecord{}, &NodeCertStatus{}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open policy-server db: %w", err)
@@ -64,6 +65,34 @@ func (s *Store) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, e
 // check-ins from the policy it replaced.
 func (s *Store) DeleteForPolicy(ctx context.Context, policyID string) error {
 	return s.db.WithContext(ctx).Where("policy_id = ?", policyID).Delete(&CheckinRecord{}).Error
+}
+
+// RecordCertStatus upserts hostname's current bootstrap-refresh status --
+// called on every GetPolicies request, healthy or not, so a recovery
+// (an empty-error report overwriting a stale failure) is captured, not
+// left stuck. See docs/superpowers/specs/
+// 2026-08-16-bootstrap-cert-renewal-design.md.
+func (s *Store) RecordCertStatus(ctx context.Context, hostname, lastError string, lastAttemptAt time.Time) error {
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "hostname"}},
+		DoUpdates: clause.AssignmentColumns([]string{"last_error", "last_attempt_at"}),
+	}).Create(&NodeCertStatus{Hostname: hostname, LastError: lastError, LastAttemptAt: lastAttemptAt}).Error
+}
+
+// CertStatusForHost returns hostname's most recently recorded status.
+// found is false when hostname has never called GetPolicies with this
+// feature active -- distinct from a present row with an empty LastError
+// (reported healthy).
+func (s *Store) CertStatusForHost(ctx context.Context, hostname string) (NodeCertStatus, bool, error) {
+	var out NodeCertStatus
+	err := s.db.WithContext(ctx).Where("hostname = ?", hostname).First(&out).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return NodeCertStatus{}, false, nil
+	}
+	if err != nil {
+		return NodeCertStatus{}, false, err
+	}
+	return out, true, nil
 }
 
 func (s *Store) Close() error {

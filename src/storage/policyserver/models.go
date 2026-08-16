@@ -12,3 +12,17 @@ type CheckinRecord struct {
 	Hostname   string `gorm:"primaryKey"`
 	LastSeenAt time.Time
 }
+
+// NodeCertStatus is the most recently reported bootstrap-refresh status
+// for hostname -- separate from CheckinRecord (scoped to (PolicyID,
+// Hostname) pairs, tracking which policies a node is actively polling)
+// because this is a node-wide property with no policy_id to key on:
+// bootstrap-refresh is agent's own built-in task, never a policy fetched
+// from policy-server. Absence of a row (see Store.CertStatusForHost's
+// bool return) means "never reported", distinct from a present row with
+// an empty LastError, which means "reported healthy as of LastAttemptAt".
+type NodeCertStatus struct {
+	Hostname      string `gorm:"primaryKey"`
+	LastError     string
+	LastAttemptAt time.Time
+}
