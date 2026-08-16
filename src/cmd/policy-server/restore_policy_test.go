@@ -241,3 +241,56 @@ func TestRestorePolicy_ToProto_IncludesTimeframe(t *testing.T) {
 	assert.Equal(t, int64(100), proto.Rules[0].GetNotBefore())
 	assert.Equal(t, int64(200), proto.Rules[0].GetNotAfter())
 }
+
+func TestRestorePolicy_ValidateAcceptsEmptyVerifyOrRestoreMode(t *testing.T) {
+	for _, mode := range []string{"", "verify", "restore"} {
+		p := &RestorePolicy{
+			PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+			StoragePolicyID: "sp-1",
+			Rules:           []RestoreRule{{Path: "/a", Include: true}},
+			Mode:            mode,
+		}
+		assert.NoError(t, p.Validate(), "mode %q must be accepted", mode)
+	}
+}
+
+func TestRestorePolicy_ValidateRejectsUnknownMode(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/a", Include: true}},
+		Mode:            "bogus",
+	}
+	err := p.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mode must be 'verify' or 'restore'")
+}
+
+func TestRestorePolicy_ValidateOverwriteWithVerifyModeIsNotAnError(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase:      PolicyBase{Metadata: Metadata{Name: "x"}},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/a", Include: true}},
+		Mode:            "verify",
+		Overwrite:       true,
+	}
+	assert.NoError(t, p.Validate())
+}
+
+func TestRestorePolicy_ToProtoIncludesModeAndOverwrite(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase: PolicyBase{
+			Metadata: Metadata{ID: "r1", Name: "x"},
+			Type:     "restore",
+		},
+		StoragePolicyID: "sp-1",
+		Rules:           []RestoreRule{{Path: "/a", Include: true}},
+		Mode:            "restore",
+		Overwrite:       true,
+	}
+
+	pp := p.ToProto(false)
+
+	assert.Equal(t, "restore", pp.GetMode())
+	assert.True(t, pp.GetOverwrite())
+}

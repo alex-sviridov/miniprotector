@@ -212,6 +212,8 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 			PolicyBase:      base,
 			StoragePolicyID: req.GetStoragePolicyId(),
 			Rules:           rules,
+			Mode:            req.GetMode(),
+			Overwrite:       req.GetOverwrite(),
 		}, nil
 	}
 	// A non-restore request setting rules is rejected here, once, for every

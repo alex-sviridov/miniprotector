@@ -54,6 +54,15 @@ type RestorePolicy struct {
 	PolicyBase
 	StoragePolicyID string        `json:"storage_policy_id"`
 	Rules           []RestoreRule `json:"rules"`
+	// "" or "verify" is today's verify-only behavior (zero on-disk
+	// migration for a restore policy written before this field existed).
+	// "restore" is the log-only restore-execution path -- see
+	// docs/superpowers/specs/2026-08-16-restore-execute-log-only-design.md.
+	Mode string `json:"mode,omitempty"`
+	// Carried through and logged by rwfs restore; has no effect when Mode
+	// is "verify" or unset. Not tied to Mode by validation -- the web UI
+	// sends this checkbox unconditionally on every submit.
+	Overwrite bool `json:"overwrite,omitempty"`
 }
 
 func parseRestorePolicyJSON(data []byte) (Policy, error) {
@@ -82,6 +91,9 @@ func (p *RestorePolicy) Validate() error {
 	if len(p.Rules) == 0 {
 		return fmt.Errorf("rules must contain at least one entry")
 	}
+	if p.Mode != "" && p.Mode != "verify" && p.Mode != "restore" {
+		return fmt.Errorf("mode must be 'verify' or 'restore'")
+	}
 	for i, r := range p.Rules {
 		if r.Path == "" {
 			return fmt.Errorf("rules[%d]: path is required", i)
@@ -108,6 +120,8 @@ func (p *RestorePolicy) Clone() Policy {
 		PolicyBase:      p.PolicyBase.clone(),
 		StoragePolicyID: p.StoragePolicyID,
 		Rules:           rules,
+		Mode:            p.Mode,
+		Overwrite:       p.Overwrite,
 	}
 }
 
@@ -130,6 +144,8 @@ func (p *RestorePolicy) ToProto(includeClientFilters bool) *pb.Policy {
 		Type:            p.Type,
 		StoragePolicyId: p.StoragePolicyID,
 		Rules:           rules,
+		Mode:            p.Mode,
+		Overwrite:       p.Overwrite,
 	}
 	if !p.Metadata.DisabledAt.IsZero() {
 		pp.DisabledAt = timestamppb.New(p.Metadata.DisabledAt)

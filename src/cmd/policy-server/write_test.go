@@ -704,6 +704,36 @@ func TestCreatePolicy_RestoreRuleTimeframePersistsToDisk(t *testing.T) {
 	assert.Equal(t, int64(1760000000), onDisk.Rules[0].NotAfter)
 }
 
+func TestCreatePolicy_RestoreModeAndOverwritePersistToDisk(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "actual-restore",
+		Type:            "restore",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/var/www", Include: true}},
+		Mode:            "restore",
+		Overwrite:       true,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "restore", resp.GetMode())
+	assert.True(t, resp.GetOverwrite())
+
+	data, err := os.ReadFile(filepath.Join(dir, "restore", "actual-restore.json"))
+	require.NoError(t, err)
+	var onDisk struct {
+		Mode      string `json:"mode"`
+		Overwrite bool   `json:"overwrite"`
+	}
+	require.NoError(t, json.Unmarshal(data, &onDisk))
+	assert.Equal(t, "restore", onDisk.Mode)
+	assert.True(t, onDisk.Overwrite)
+}
+
 func TestCreatePolicy_ResponseIncludesRestoreType(t *testing.T) {
 	dir := t.TempDir()
 	srv := newTestWriteServer(t, dir)
