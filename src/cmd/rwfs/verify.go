@@ -143,7 +143,13 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 					streamErrCh <- fmt.Errorf("resolve restore files: %w", err)
 					return
 				}
-				if dispatch, _ := resolver.Feed(resp.GetRow(), resp.GetFilterIndex()); dispatch {
+				// resolver.Feed also dispatches directory rows (Type == "d")
+				// for restore.go's benefit -- verify has no use for those
+				// (a directory's FileUuid is always empty, and RestoreFile
+				// answers an empty/unknown file_uuid with NotFound), so
+				// gate on row type here too: only a real file ever reaches
+				// the worker pool.
+				if dispatch, _ := resolver.Feed(resp.GetRow(), resp.GetFilterIndex()); dispatch && resp.GetRow().GetType() == "f" {
 					workCh <- resp.GetRow()
 				}
 			}

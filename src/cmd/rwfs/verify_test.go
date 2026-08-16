@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -23,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"lukechampine.com/blake3"
 )
 
 func TestParseRulesStdin_ParsesRules(t *testing.T) {
@@ -227,6 +230,126 @@ func (s *recordingRestoreServer) Requested() []string {
 	return out
 }
 
+// seedDirectory writes a directory-only file_version_records row -- reused
+// from restore_test.go, already defined in this package (package main,
+// cmd/rwfs, not cmd/bwfs, so no import needed).
+
+// seedRestorableFile writes a single-chunk file all the way through the
+// real storage primitives (StoreChunk, LinkChunkToFileData, CreateFileData,
+// FinalizeFileData) plus its file_version_records row, so realRestoreServer
+// below can serve it back over a genuine RestoreFile call -- not just a
+// row testResolveServer can list. Returns the finalized file's UUID.
+func seedRestorableFile(t *testing.T, store *wfs.Store, source, path, jobID string, createdAtUnix int64, data []byte) string {
+	t.Helper()
+	fileID := fmt.Sprintf("fs://%s:f:%s:%d", source, path, createdAtUnix)
+
+	require.NoError(t, store.CreateFileData(fileID, int64(len(data))))
+
+	hash := blake3.Sum256(data)
+	require.NoError(t, store.StoreChunk(hash[:], data))
+	require.NoError(t, store.LinkChunkToFileData(hash[:], fileID, 0))
+
+	require.NoError(t, store.FinalizeFileData(fileID, expectedCRC32(t, [][]byte{data})))
+	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{
+		ObjectID:   fileID,
+		JobID:      jobID,
+		SourceHost: source,
+		Path:       path,
+		Type:       "f",
+		CreatedAt:  time.Unix(createdAtUnix, 0),
+	}).Error)
+
+	var fd wfs.FileDataRecord
+	require.NoError(t, store.RawDB().Where("file_id = ?", fileID).First(&fd).Error)
+	require.NotEmpty(t, fd.UUID, "seedRestorableFile setup must have produced a finalized file_data_records row")
+	return fd.UUID
+}
+
+// realRestoreServer is a reimplementation of cmd/bwfs's real
+// RestoreServiceServer (cmd/bwfs/restoreserver.go's restoreServer) trimmed
+// to what this file's regression test needs: serve a genuinely valid chunk
+// stream for a file_uuid seeded via seedRestorableFile above, so a run
+// that only ever dispatches real files can actually succeed end to end --
+// unlike recordingRestoreServer, which always fails and exists only to
+// record what it was asked for. Duplicated, not imported: cmd/bwfs is a
+// different "package main" and cannot be imported from here.
+type realRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	store     *wfs.Store
+	mu        sync.Mutex
+	requested []string
+}
+
+// Requested returns every file_uuid RestoreFile was ever asked for, in
+// call order -- mirrors recordingRestoreServer.Requested's contract, so a
+// test can assert dispatch (what reached RestoreFile) the same way
+// regardless of which fixture served the RPC.
+func (s *realRestoreServer) Requested() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.requested))
+	copy(out, s.requested)
+	return out
+}
+
+func (s *realRestoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	s.mu.Lock()
+	s.requested = append(s.requested, req.GetFileUuid())
+	s.mu.Unlock()
+
+	var fd wfs.FileDataRecord
+	err := s.store.RawDB().
+		Where("uuid = ? AND checksum IS NOT NULL", req.GetFileUuid()).
+		First(&fd).Error
+	if err != nil {
+		return status.Errorf(codes.NotFound, "file_uuid not found or unfinalized: %s", req.GetFileUuid())
+	}
+
+	if err := stream.Send(&pb.RestoreEvent{
+		Payload: &pb.RestoreEvent_Meta{
+			Meta: &pb.RestoreFileMeta{
+				Size:             fd.Size,
+				ChunkCount:       int32(fd.ChunkCount),
+				ExpectedChecksum: fd.Checksum,
+			},
+		},
+	}); err != nil {
+		return err
+	}
+
+	var links []wfs.FileDataChunkRecord
+	if err := s.store.RawDB().
+		Where("file_id = ?", fd.FileID).
+		Order("`index` ASC").
+		Find(&links).Error; err != nil {
+		return status.Errorf(codes.Internal, "query chunks: %v", err)
+	}
+
+	for i, link := range links {
+		hash, err := hex.DecodeString(link.ChunkHash)
+		if err != nil {
+			return status.Errorf(codes.Internal, "decode chunk hash: %v", err)
+		}
+		data, err := s.store.ReadChunk(hash)
+		if err != nil {
+			return status.Errorf(codes.Internal, "read chunk %s: %v", link.ChunkHash, err)
+		}
+		if err := stream.Send(&pb.RestoreEvent{
+			Payload: &pb.RestoreEvent_Chunk{
+				Chunk: &pb.RestoreChunk{
+					Index: link.Index,
+					Hash:  hash,
+					Data:  data,
+					Eof:   i == len(links)-1,
+				},
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // runVerifyWithDialer is a test-only wrapper around runVerify's dial step.
 // runVerify always dials via connection.Connect (host/port plus mTLS
 // certs), which has no injection seam for a bufconn listener, and no such
@@ -343,4 +466,51 @@ func TestRunVerify_RulesStdin_TimeframeIncludingVersionDispatchesToWorkerPool(t 
 
 	assert.Equal(t, []string{fd.UUID}, restoreSrv.Requested(),
 		"the in-window row must be dispatched to the worker pool and reach RestoreFile with its file_uuid")
+}
+
+// TestRunVerify_RulesStdin_HostAgnosticFolderRuleSkipsDirectoryRows is the
+// regression test for the bug this final review round found: a
+// host-agnostic folder rule (empty host) makes buildRestoreFilters set
+// PathIsPrefix = true, and ResolveRestoreFiles streams back both the
+// file(s) under that path AND the directory row(s) -- restoreResolver.Feed
+// dispatches both (Task 5 widened it for restore.go's benefit), but before
+// this fix runVerifyWithConn's producer goroutine handed every dispatched
+// row straight to the worker pool with no type check, so the directory row
+// reached RestoreFile with an empty FileUuid, which bwfs answers NotFound,
+// counted as a verification failure -- meaning every folder rule failed
+// verification even when its one real file was perfectly fine.
+//
+// This uses realRestoreServer (not recordingRestoreServer) precisely
+// because the fix must be provable end to end: a run that dispatches only
+// the file must actually succeed, not merely avoid dispatching the
+// directory while still failing for some other reason.
+func TestRunVerify_RulesStdin_HostAgnosticFolderRuleSkipsDirectoryRows(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	fileUUID := seedRestorableFile(t, store, "hosta", "/data/photos/a.jpg", "job1", 5000, []byte{1, 2, 3, 4})
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	// Host-agnostic folder rule -- buildRestoreFilters sets PathIsPrefix =
+	// true for it (rule.Host == ""), so ResolveRestoreFiles streams back
+	// both the file and the directory seeded above under /data/photos.
+	rulesJSON := `{"rules":[{"host":"","path":"/data/photos","include":true}]}`
+
+	err = runVerifyWithDialer(t, logger, lis, rulesJSON)
+	require.NoError(t, err, "a directory row under a host-agnostic folder rule must never fail verification: %s", logBuf.String())
+	assert.Equal(t, []string{fileUUID}, restoreSrv.Requested(),
+		"only the file's uuid must ever reach RestoreFile -- the directory row must never be dispatched to the worker pool")
 }
