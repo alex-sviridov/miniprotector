@@ -58,6 +58,16 @@ The cache file lives at `<var_dir>/agent-state.json`, where `<var_dir>` is `var_
 A missing or corrupt cache is treated as empty — every policy then looks "never run" and executes
 on the next tick, the same fail-safe direction used everywhere else in this component.
 
+`agent-state.json` now has a second reader: `policyclient fetch` reads the `"bootstrap-refresh"`
+entry's `last_attempt_at`/`last_error` out of it to report a stuck bootstrap renewal to
+`policy-server` (see [policyclient](policyclient.md) and
+[Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)),
+so the file's shape — the task IDs used as top-level keys, and `PolicyState`'s JSON tags — is a
+cross-binary contract, not purely `agent`-internal state; a change to either must account for that
+reader, which cannot import `cmd/agent` and would otherwise silently start reporting every node as
+healthy. `cache_test.go`'s
+`TestWriteCache_BootstrapRefreshEntryMatchesPolicyclientReadShape` pins that contract.
+
 ## Policy-driven backup execution
 
 Every reconcile tick, `agent` re-reads `policies-cache.json` fresh (so it notices `policy-update`
