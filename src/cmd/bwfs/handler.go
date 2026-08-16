@@ -101,6 +101,9 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		if err := h.store.EnsureFileVersion(
 			h.jobID,
 			h.currentFile.ID(),
+			h.currentFile.Source(),
+			h.currentFile.Path(),
+			fmt.Sprintf("%c", h.currentFile.GetType()),
 			h.currentFile.MetadataBlob(),
 			h.currentFile.Ctime(),
 		); err != nil {
@@ -236,6 +239,9 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 	if err := h.store.EnsureFileVersion(
 		h.jobID,
 		h.currentFile.ID(),
+		h.currentFile.Source(),
+		h.currentFile.Path(),
+		fmt.Sprintf("%c", h.currentFile.GetType()),
 		h.currentFile.MetadataBlob(),
 		h.currentFile.Ctime(),
 	); err != nil {
