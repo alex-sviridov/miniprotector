@@ -55,7 +55,9 @@ no data — there's no read-only "guest" mode.
   folder -- purely client-side data at this point, sent as `dest_path` on the submitted rule only
   when it differs from the source path (see
   [Design: Restore Destination Rename](../superpowers/specs/2026-08-13-restore-destination-rename-design.md));
-  nothing yet reads it back out (no restore executor exists). Each row also has a Remove button
+  `rwfs restore` now reads it back out and logs it as each resolved file's renamed destination
+  path, but nothing writes it to disk yet (see `docs/components/rwfs.md`'s `## restore` section).
+  Each row also has a Remove button
   that unstages it (toggles the same rule back off, via `restoreCart.removeEntry`). Picking a
   destination host (from the
   enrolled-client list, `useClientsStore`) and clicking **Verify** or **Restore** resolves the cart's rules into
@@ -69,16 +71,25 @@ no data — there's no read-only "guest" mode.
   error such as an unresolvable store address) render inline below the cart, and stay visible even
   once the cart itself is emptied; one group failing doesn't block the others. A failure of the
   whole submission (the catalog fetch or the `"storage"` policy lookup itself) is reported as a
-  single submission-level error rather than as a per-group one. Submission is still terminal: nothing yet consumes a `"restore"` policy (see
-  `docs/superpowers/specs/2026-08-09-restore-policy-type-design.md`) — this only creates it. A
-  separate "Overwrite existing files" checkbox (unchecked by default) is sent as `overwrite` on
-  every submission, alongside `mode` (`verify` for the Verify button, `restore` for the Restore
-  button); `overwrite` has no effect yet either way. Clicking Verify behaves exactly as described
-  above; clicking Restore is validated the same way but currently always fails with a per-store
-  "restore execution is not yet implemented" error, since `api-server` rejects `mode: "restore"`
-  with `501` before ever calling `policy-server` — no real restore execution exists yet (see
+  single submission-level error rather than as a per-group one. Verify and Restore now succeed
+  identically at the submission layer: either `mode` creates a real `"restore"`-typed policy and
+  `api-server` returns `201` (see
+  `docs/superpowers/specs/2026-08-09-restore-policy-type-design.md`) — `api-server` no longer
+  rejects `mode: "restore"`. A separate "Overwrite existing files" checkbox (unchecked by default)
+  is sent as `overwrite` on every submission, alongside `mode` (`verify` for the Verify button,
+  `restore` for the Restore button). The two modes diverge once `agent` picks up the resulting
+  policy: a `verify` policy runs `rwfs verify` as before, while a `restore` policy runs the new
+  `rwfs restore` subcommand (task/job-ID prefix `restore:<policy-name>`, with `--overwrite`
+  appended when the policy's `overwrite` field is true) — this round, `rwfs restore` only resolves
+  the policy's rules against the live store and logs each file's source path and its
+  `dest_path`-renamed destination path, writing nothing to disk and calling no restore-execution
+  RPC (see `docs/components/rwfs.md`'s `## restore` section and
+  [Design: Restore Execute, Log-Only](../superpowers/specs/2026-08-16-restore-execute-log-only-design.md),
+  which supersedes the 501-rejection split originally described in
   [Design: Restore Verify/Execute Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md)).
-  The sidebar's Restore link still highlights whenever the cart is non-empty.
+  The inline success message reflects which button was clicked: "Started restore policy ..." for a
+  `mode: "restore"` submission vs "Started verification policy ..." for `mode: "verify"`. The
+  sidebar's Restore link still highlights whenever the cart is non-empty.
 - `/policies` — every policy (name, RPO, destination), with a "New backup" action opening a form modal for creating new policies (fields: name, RPO, backup window, client filters, object filters (each filter's include/exclude glob patterns entered as individual chips via a reusable `TagInput` component (`components/ui/TagInput.vue`) — each pattern is validated client-side for glob syntax and checked against the rest of its own list for parent/child path overlap, e.g. `/var/log` and `/var/log/app` in the same list, before Save is allowed), destination (a required select over `/storage`'s storage policies, replacing free-text host:port entry)) and clickable policy names navigating to each policy's detail view. The modal (`BackupPolicyFormModal` in `components/backup_policies/`) offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after its configured timeout, 1h by default) and redirects to `/jobs`, where the resulting job(s) can be found and opened for their log lines — same modal-plus-detail-page pattern as `/storage` below. Linking to:
 - `/policies/:id` — one policy's full record, in two tabs built on a reusable `Tabs` component
   (`components/ui/Tabs.vue`, active tab synced to `?tab=details`/`?tab=checkins` so either can be
