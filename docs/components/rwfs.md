@@ -163,7 +163,7 @@ row is a failure (non-zero exit); a folder-level rule matching nothing is not.
 
 ## Transport Security
 
-Connections to `bwfs` (both `list` and `verify`) are mutually authenticated TLS. `rwfs` loads
+Connections to `bwfs` (`list`, `verify`, and `restore` -- all three dial through the same `connection.Connect`) are mutually authenticated TLS. `rwfs` loads
 its identity cert and the trusted CA from `MP_CONFIG_PATH/certs/{ca.crt,client.crt,client.key}`
 (`MP_CONFIG_PATH` defaults to the binary's own directory). Missing or invalid certs are a fatal
 error before any query is sent. When the `bwfs_host:port` target's host is loopback (`localhost`,

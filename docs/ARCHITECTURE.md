@@ -7,10 +7,10 @@ A backup system with intelligent deduplication and integrity verification.
 |-----------|-----------|--------|
 | brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
-| rwfs | Restore Writer for File System — queries bwfs (list, verify; restore TBD) | list + verify implemented; full restore not yet implemented |
+| rwfs | Restore Writer for File System — queries bwfs (list, verify, restore) | list + verify implemented; `restore` resolves rules and logs the would-be restore, does not yet write files |
 | catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
 | catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
-| agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, policy-driven backup execution via `brfs`, and one-shot restore-policy verification via `rwfs verify`) |
+| agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, policy-driven backup execution via `brfs`, one-shot restore-policy verification via `rwfs verify`, and one-shot restore execution via `rwfs restore` for `mode: "restore"` policies, log-only for now) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
 | policy-server | Serves backup policies filtered by a requesting client's hostname and attribute labels, reading labels from the peer cert; tracks per-host check-ins in a local SQLite database | Implemented (`agent` fetches, caches, and now acts on its policies — deriving and running scheduled `brfs` backups via `policyclient`) |

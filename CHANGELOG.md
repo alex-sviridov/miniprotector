@@ -10,7 +10,11 @@ task-id prefix (verification tasks move to a `verify:` prefix, freeing `restore:
 round, `rwfs restore` only resolves the policy's rules against the live store (reusing `rwfs
 verify --rules-stdin`'s exact resolution pipeline) and logs each file's source path, its `dest_path`
 rename applied, and the policy's `overwrite` setting -- it writes nothing to disk. A future round
-adds the actual write path.
+adds the actual write path. One upgrade note: because the verify-task ID prefix moved from
+`restore:<policy>` to `verify:<policy>` to free `restore:` for execution, every existing restore
+policy's one-shot "already succeeded" state is orphaned on upgrade -- each re-runs `rwfs verify`
+exactly once under its new task-ID key before `agent` prunes the old, now-unreferenced
+`agent-state.json` entry. Harmless (verify writes nothing), just an observable one-time re-run.
 
 ## 2026-08-16 — bootstrap certificates get their real TTL, renewal failures become visible
 
