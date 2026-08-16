@@ -224,11 +224,41 @@ fields at all (an old, unpatched binary) reports proto3's zero values, indisting
 — acceptable, since an unpatched node predates this feature entirely and its checkin `last_seen_at`
 still functions unaffected.
 
-**`src/cmd/api-server`** — the smallest possible surface: add `CertStatus` (hostname, last_error,
-last_attempt_at, or omitted entirely when there's nothing to report) to whatever DTO already lists
-per-client info, sourced from a new small `policy-server` read method
-(`Store.CertStatusForHosts`/similar, mirroring `CheckinsForPolicy`'s existing shape). No new REST
-route — an addition to an existing response, matching how `checkinDTO` was added previously.
+**`src/api/policyserver.proto`** — confirmed no existing RPC fits: `RecordCheckin`
+(`server.go:84-85`) only runs *inside* the per-matched-policy loop in `GetPolicies`, so a host with no
+matching policies gets no checkin row at all today — piggybacking cert status onto
+`PolicyCheckin`/`Policy.checkins` would silently drop exactly the hosts most likely to be
+mid-enrollment-trouble. One small new RPC on the existing `PolicyService`:
+
+```proto
+service PolicyService {
+  // ...existing RPCs unchanged...
+  rpc GetNodeCertStatus(GetNodeCertStatusRequest) returns (GetNodeCertStatusResponse);
+}
+
+message GetNodeCertStatusRequest {
+  string hostname = 1; // exact match; empty = all known hosts
+}
+
+message NodeCertStatus {
+  string hostname                  = 1;
+  string last_error                = 2; // "" = healthy or never reported
+  google.protobuf.Timestamp last_attempt_at = 3;
+}
+
+message GetNodeCertStatusResponse {
+  repeated NodeCertStatus statuses = 1;
+}
+```
+
+**`src/cmd/policy-server`** — new handler backed by a new `Store.CertStatusForHosts`/`AllCertStatuses`
+read method (mirroring `CheckinsForPolicy`'s existing shape), called once per `GetPolicies` request as
+described above — not from inside the per-policy loop.
+
+**`src/cmd/api-server`** — one new small `GET` route proxying `GetNodeCertStatus`, following this
+codebase's existing route-registration pattern. This is a genuine new piece — correcting the earlier,
+too-optimistic "no new REST route" — but stays to exactly one RPC and one route; nothing else in this
+design changes as a result.
 
 ## Data Flow
 
@@ -250,8 +280,8 @@ policyclient fetch (every 15 min, agent's policy-update policy):
   -> if LastError set, include it on the already-happening GetPolicies call
   -> policy-server: hostname resolved from verified mTLS identity (operating cert,
      independently still valid for up to OperatingCertTTLSec after bootstrap starts failing)
-  -> RecordCertStatus upserts NodeCertStatus, alongside the existing RecordCheckin call
-  -> api-server: new field on existing client-info DTO, queryable via REST
+  -> RecordCertStatus upserts NodeCertStatus once per call (not per matched policy)
+  -> api-server: new GET route proxying policy-server's new GetNodeCertStatus RPC
      (UI rendering: follow-on, not this round)
 ```
 
@@ -295,8 +325,11 @@ policyclient fetch (every 15 min, agent's policy-update policy):
   one the self-review pass exists to catch: a healthy report must actually clear a stale failure, not
   leave it stuck), mirroring `CheckinRecord`'s existing test pattern.
 - `cmd/policy-server`: `TestGetPolicies_RecordsCertStatusOnEveryCall` (both a failing and a healthy
-  report land in the store), `TestGetPolicies_SucceedsEvenIfCertStatusRecordFails` (non-fatal path).
-- `cmd/api-server`: DTO round-trip test for the new field, present/absent cases.
+  report land in the store), `TestGetPolicies_RecordsCertStatusEvenWithNoMatchingPolicies` (the exact
+  gap that ruled out piggybacking on `RecordCheckin`), `TestGetPolicies_SucceedsEvenIfCertStatusRecordFails`
+  (non-fatal path), `TestGetNodeCertStatus_ReturnsRecordedStatus`, `TestGetNodeCertStatus_FiltersByHostname`.
+- `cmd/api-server`: new route's handler test — proxies the RPC, DTO shape round-trips present/absent
+  cases.
 - Manual/integration: rebuild the demo stack fresh (`make demo-down && make demo-up`), confirm a newly
   enrolled node's `bootstrap.crt` `NotAfter` is ~90 days out (`openssl x509 -enddate -noout` against
   the cert in the container), not 24h.
@@ -313,7 +346,8 @@ Per `.claude/CLAUDE.md`'s feature-change rule:
 - **`docs/components/policy-server.md`** — note `GetPolicies` now also records cert-renewal status
   alongside checkins.
 - **`docs/components/api-server.md`** — note the new field on the relevant client-info response.
-- **`docs/protocols/policy-server.md`** — `GetPoliciesRequest`'s proto block gains the two new fields.
+- **`docs/protocols/policy-server.md`** — `GetPoliciesRequest`'s proto block gains the two new fields;
+  new section for `GetNodeCertStatus` (request/response shape, "empty hostname = all known hosts").
 - **Operator-facing rollout note** (`CHANGELOG.md` or a short addition to `docs/SECURITY.md`): existing
   enrolled nodes keep their current (24h-lineage) bootstrap credential until re-bootstrapped; this fix
   is forward-only, not retroactive.
