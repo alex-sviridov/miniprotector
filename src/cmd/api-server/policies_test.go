@@ -35,6 +35,10 @@ type fakePolicyServiceClient struct {
 	deleteResp    *pb.DeletePolicyResponse
 	deleteErr     error
 	lastDeleteReq *pb.DeletePolicyRequest
+
+	certStatusResp    *pb.NodeCertStatus
+	certStatusErr     error
+	lastCertStatusReq *pb.GetNodeCertStatusRequest
 }
 
 func (f *fakePolicyServiceClient) ListPolicies(ctx context.Context, in *pb.ListPoliciesRequest, opts ...grpc.CallOption) (*pb.ListPoliciesResponse, error) {
@@ -55,6 +59,11 @@ func (f *fakePolicyServiceClient) UpdatePolicy(ctx context.Context, in *pb.Updat
 func (f *fakePolicyServiceClient) DeletePolicy(ctx context.Context, in *pb.DeletePolicyRequest, opts ...grpc.CallOption) (*pb.DeletePolicyResponse, error) {
 	f.lastDeleteReq = in
 	return f.deleteResp, f.deleteErr
+}
+
+func (f *fakePolicyServiceClient) GetNodeCertStatus(ctx context.Context, in *pb.GetNodeCertStatusRequest, opts ...grpc.CallOption) (*pb.NodeCertStatus, error) {
+	f.lastCertStatusReq = in
+	return f.certStatusResp, f.certStatusErr
 }
 
 func TestHandleListPolicies_ReturnsDataEnvelope(t *testing.T) {
@@ -910,6 +919,59 @@ func TestHandleCreateRestore_RestoreModeReturns501AndSkipsBackend(t *testing.T) 
 	var respBody map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
 	assert.Equal(t, "restore execution is not yet implemented; only verification (mode=verify) is currently supported", respBody["error"])
+}
+
+func TestHandleGetClientCertStatus_ReturnsStatus(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	fake.certStatusResp = &pb.NodeCertStatus{Hostname: "host-a", LastError: "renew failed", LastAttemptAt: timestamppb.New(time.Unix(1723800000, 0))}
+
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/host-a/cert-status", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got certStatusDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "host-a", got.Hostname)
+	assert.Equal(t, "renew failed", got.LastError)
+	assert.Equal(t, int64(1723800000), got.LastAttemptAt)
+	require.NotNil(t, fake.lastCertStatusReq)
+	assert.Equal(t, "host-a", fake.lastCertStatusReq.GetHostname())
+}
+
+func TestHandleGetClientCertStatus_NeverReportedOmitsFieldsAndReturns200(t *testing.T) {
+	fake := &fakePolicyServiceClient{certStatusResp: &pb.NodeCertStatus{Hostname: "host-b"}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/host-b/cert-status", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "host-b", body["hostname"])
+	assert.NotContains(t, body, "last_error")
+	assert.NotContains(t, body, "last_attempt_at")
+}
+
+func TestHandleGetClientCertStatus_BackendErrorTranslated(t *testing.T) {
+	fake := &fakePolicyServiceClient{certStatusErr: status.Error(codes.Unavailable, "down")}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/host-a/cert-status", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
 }
 
 func TestHandleCreateRestore_InvalidModeReturns400(t *testing.T) {

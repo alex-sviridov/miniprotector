@@ -107,6 +107,25 @@ Body:
 `200` with the client's updated record. `404` if `hostname` isn't enrolled. Adding an already-present
 alias or removing an absent one is a no-op, not an error.
 
+## `GET /api/v1/clients/{hostname}/cert-status`
+
+Reports a node's most recent bootstrap/operating-certificate renewal failure, if any. Proxies
+`PolicyService.GetNodeCertStatus` on `policy-server` (see
+[Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)).
+
+```json
+{
+  "hostname": "host-a",
+  "last_error": "renew failed",
+  "last_attempt_at": 1723800000
+}
+```
+
+`200` even when `hostname` has never reported a renewal attempt — `last_error` and
+`last_attempt_at` are simply omitted (proto3 zero values: empty string, unset timestamp), not a
+`404`. This mirrors `GetNodeCertStatus`'s own "absence isn't an error" contract; a `404` is
+reserved for genuinely malformed requests, not "nothing to report yet."
+
 ## `GET /api/v1/catalog`
 
 Query parameters (all optional):

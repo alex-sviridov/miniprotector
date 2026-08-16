@@ -82,6 +82,15 @@ real restore action: `mode: "restore"` is validated and rejected with `501` toda
 execution path exists below `api-server` yet -- see [Design: Restore Verify/Execute
 Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md).
 
+`GET /clients/{hostname}/cert-status` reports a node's most recent bootstrap/operating-certificate
+renewal failure, proxying `policy-server`'s `GetNodeCertStatus` RPC. Its handler lives in
+`policies.go`, not `clients.go`, despite the `/clients/...` URL -- this codebase's api-server files
+are organized by which backend a handler calls (`s.policy` vs `s.clientManager`), not by URL
+namespace, and this route calls `s.policy`. It returns `200` even for a hostname that has never
+reported a renewal attempt, with `last_error`/`last_attempt_at` simply omitted, never `404` --
+absence isn't an error. See
+[Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
+
 ## Authentication
 
 Every request must present `Authorization: Bearer <token>`, checked against the single
@@ -137,4 +146,5 @@ make api-server
 - [catalog](./catalog.md) — the other backend
 - [REST API v1](../api/rest-v1.md)
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
+- [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
 - [Architecture](../ARCHITECTURE.md)

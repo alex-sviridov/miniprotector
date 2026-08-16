@@ -51,6 +51,7 @@ type policyServiceClient interface {
 	CreatePolicy(ctx context.Context, in *pb.CreatePolicyRequest, opts ...grpc.CallOption) (*pb.Policy, error)
 	UpdatePolicy(ctx context.Context, in *pb.UpdatePolicyRequest, opts ...grpc.CallOption) (*pb.Policy, error)
 	DeletePolicy(ctx context.Context, in *pb.DeletePolicyRequest, opts ...grpc.CallOption) (*pb.DeletePolicyResponse, error)
+	GetNodeCertStatus(ctx context.Context, in *pb.GetNodeCertStatusRequest, opts ...grpc.CallOption) (*pb.NodeCertStatus, error)
 }
 
 type server struct {
@@ -81,6 +82,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/description", s.handleUpdateDescription)
 	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/attributes", s.handleUpdateAttributes)
 	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/sans", s.handleUpdateSANs)
+	mux.HandleFunc("GET /api/v1/clients/{hostname}/cert-status", s.handleGetClientCertStatus)
 	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
 	mux.HandleFunc("GET /api/v1/catalog/clients", s.handleListCatalogClients)
 	mux.HandleFunc("GET /api/v1/catalog/jobs", s.handleListCatalogJobs)

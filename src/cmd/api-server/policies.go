@@ -385,6 +385,34 @@ func (s *server) handleCreateRestore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
 }
 
+type certStatusDTO struct {
+	Hostname      string `json:"hostname"`
+	LastError     string `json:"last_error,omitempty"`
+	LastAttemptAt int64  `json:"last_attempt_at,omitempty"`
+}
+
+// handleGetClientCertStatus reports a node's most recent bootstrap/renewal
+// certificate error, if any. A hostname that has never had a renewal
+// failure (or has never reported at all) returns 200 with last_error and
+// last_attempt_at omitted -- proto3's zero values, empty string and a nil
+// Timestamp whose AsTime().Unix() is 0 -- rather than 404, matching
+// GetNodeCertStatus's own "not an error" contract (Task 1/6). See
+// docs/superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md.
+func (s *server) handleGetClientCertStatus(w http.ResponseWriter, r *http.Request) {
+	hostname := r.PathValue("hostname")
+	resp, err := s.policy.GetNodeCertStatus(r.Context(), &pb.GetNodeCertStatusRequest{Hostname: hostname})
+	if err != nil {
+		s.logger.Error("handleGetClientCertStatus: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, certStatusDTO{
+		Hostname:      resp.GetHostname(),
+		LastError:     resp.GetLastError(),
+		LastAttemptAt: resp.GetLastAttemptAt().AsTime().Unix(),
+	})
+}
+
 func (s *server) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	_, err := s.policy.DeletePolicy(r.Context(), &pb.DeletePolicyRequest{Id: id})
