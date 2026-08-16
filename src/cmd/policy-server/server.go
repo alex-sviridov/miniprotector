@@ -52,7 +52,7 @@ func isDisabled(m Metadata, now time.Time) bool {
 	return !m.DisabledAt.IsZero() && !m.DisabledAt.After(now)
 }
 
-func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesRequest) (*pb.GetPoliciesResponse, error) {
+func (s *policyServerServer) GetPolicies(ctx context.Context, req *pb.GetPoliciesRequest) (*pb.GetPoliciesResponse, error) {
 	hostname, err := mtls.PeerHostname(ctx)
 	if err != nil {
 		s.logger.Error("GetPolicies: could not determine peer identity", "error", err)
@@ -69,6 +69,13 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 	if err != nil {
 		s.logger.Error("GetPolicies: could not read peer attributes", "hostname", hostname, "job_id", jobID, "error", err)
 		return nil, err
+	}
+
+	if err := s.checkins.RecordCertStatus(ctx, hostname, req.GetBootstrapRefreshLastError(),
+		time.Unix(req.GetBootstrapRefreshLastAttemptAt(), 0)); err != nil {
+		s.logger.Error("GetPolicies: failed to record cert status", "hostname", hostname, "job_id", jobID, "error", err)
+		// non-fatal: unlike RecordCheckin below, a cert-status recording
+		// failure must not prevent this node from getting its policies.
 	}
 
 	now := time.Now()
@@ -91,6 +98,24 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, _ *pb.GetPoliciesR
 
 	s.logger.Info("GetPolicies", "hostname", hostname, "job_id", jobID, "matched", len(matched))
 	return &pb.GetPoliciesResponse{Policies: matched}, nil
+}
+
+// GetNodeCertStatus returns hostname's most recently recorded
+// bootstrap-refresh status, as captured by every GetPolicies call. A
+// hostname that has never called GetPolicies -- or has, and reported
+// healthy -- both correctly produce an empty-LastError NodeCertStatus;
+// see NodeCertStatus's own doc comment for the "not an error" contract.
+func (s *policyServerServer) GetNodeCertStatus(ctx context.Context, req *pb.GetNodeCertStatusRequest) (*pb.NodeCertStatus, error) {
+	certStatus, _, err := s.checkins.CertStatusForHost(ctx, req.GetHostname())
+	if err != nil {
+		s.logger.Error("GetNodeCertStatus: store read failed", "hostname", req.GetHostname(), "error", err)
+		return nil, status.Error(codes.Internal, "failed to read cert status")
+	}
+	return &pb.NodeCertStatus{
+		Hostname:      req.GetHostname(),
+		LastError:     certStatus.LastError,
+		LastAttemptAt: timestamppb.New(certStatus.LastAttemptAt),
+	}, nil
 }
 
 func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {

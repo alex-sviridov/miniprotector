@@ -28,10 +28,10 @@ policy-server --port 9300
 
 ## Behavior
 
-`GetPolicies` (see [protocol](../protocols/policy-server.md)) is `policy-server`'s only RPC. The
-caller's hostname is always the verified mTLS peer identity; the caller's attribute labels are
-parsed from the same peer certificate's embedded extension (`mtls.PeerAttributes`) — neither is
-ever a field on the request.
+`GetPolicies` (see [protocol](../protocols/policy-server.md)) is `policy-server`'s main RPC, and the
+only one every mesh node calls. The caller's hostname is always the verified mTLS peer identity;
+the caller's attribute labels are parsed from the same peer certificate's embedded extension
+(`mtls.PeerAttributes`) — neither is ever a field on the request.
 
 A policy matches a client when: (`client_filters.hostnames` is empty, or the client's hostname
 matches at least one glob pattern in it) **and** (every key/value pair in `client_filters.labels`
@@ -173,6 +173,24 @@ policy — decommissioned, or no longer matched — simply ages out of that poli
 its one row passes the retention window. See
 [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md).
 
+### Bootstrap-refresh cert status tracking
+
+Every `GetPolicies` call also records the caller's `bootstrap_refresh_last_error` /
+`bootstrap_refresh_last_attempt_at` request fields into a `(hostname, last_error, last_attempt_at)`
+row in the same SQLite database, one row per hostname (a re-poll overwrites the prior row, so a
+subsequent healthy report clears a previously recorded failure). Unlike check-in tracking above,
+this happens exactly once per request, unconditionally, *before* the per-matched-policy loop —
+not once per matched policy — so a host with zero matching policies (an unenrolled or
+misconfigured node, exactly the case most likely to be having certificate trouble) still gets its
+status recorded. It is also intentionally non-fatal: a recording failure is logged but does not
+fail `GetPolicies`, unlike a check-in write failure.
+
+The `GetNodeCertStatus` RPC (see [protocol](../protocols/policy-server.md)) serves this data back —
+used by `api-server`/UI-facing tooling to surface renewal failures, not called by mesh nodes
+themselves. A hostname that has never called `GetPolicies`, and one that has and reported healthy,
+both correctly return a present result with an empty `last_error` — never an error. See
+[Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
+
 ## Configuration Keys
 
 - `policy_server_host` / `policy_server_port` — where `policy-server` listens *(default port:
@@ -194,4 +212,5 @@ make policy-server
 - [Policy Server Protocol](../protocols/policy-server.md)
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
 - [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md)
+- [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
 - [Architecture](../ARCHITECTURE.md)

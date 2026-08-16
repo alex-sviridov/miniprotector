@@ -244,6 +244,80 @@ func TestGetPolicies_CheckinStoreFailureFailsTheRPC(t *testing.T) {
 	assert.Error(t, err, "a check-in write failure must fail GetPolicies, not be swallowed")
 }
 
+func TestGetPolicies_RecordsCertStatusOnEveryCall(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestServerWithPolicies(t, dir)
+
+	req := &pb.GetPoliciesRequest{BootstrapRefreshLastError: "renew failed: timeout", BootstrapRefreshLastAttemptAt: time.Now().Unix()}
+	_, err := srv.GetPolicies(fakeAuthContext(t, "host-a", nil), req)
+	require.NoError(t, err)
+
+	status, err := srv.GetNodeCertStatus(fakeAuthContext(t, "host-a", nil), &pb.GetNodeCertStatusRequest{Hostname: "host-a"})
+	require.NoError(t, err)
+	assert.Equal(t, "renew failed: timeout", status.GetLastError())
+}
+
+func TestGetPolicies_RecordsCertStatusEvenWithNoMatchingPolicies(t *testing.T) {
+	// Empty policies dir: no policy files at all, so nothing can match
+	// "host-a" -- the exact gap that rules out piggybacking on RecordCheckin,
+	// which only runs inside the per-matched-policy loop.
+	dir := t.TempDir()
+	srv := newTestServerWithPolicies(t, dir)
+
+	req := &pb.GetPoliciesRequest{BootstrapRefreshLastError: "renew failed: timeout", BootstrapRefreshLastAttemptAt: time.Now().Unix()}
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "host-a", nil), req)
+	require.NoError(t, err)
+	require.Empty(t, resp.GetPolicies(), "this test's premise is that nothing matches host-a")
+
+	status, err := srv.GetNodeCertStatus(fakeAuthContext(t, "host-a", nil), &pb.GetNodeCertStatusRequest{Hostname: "host-a"})
+	require.NoError(t, err)
+	assert.Equal(t, "renew failed: timeout", status.GetLastError(), "status must be recorded even when GetPolicies matches nothing -- this is exactly the gap that ruled out piggybacking on RecordCheckin")
+}
+
+func TestGetPolicies_HealthyReportOverwritesPriorFailure(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestServerWithPolicies(t, dir)
+
+	_, err := srv.GetPolicies(fakeAuthContext(t, "host-a", nil), &pb.GetPoliciesRequest{BootstrapRefreshLastError: "renew failed"})
+	require.NoError(t, err)
+	_, err = srv.GetPolicies(fakeAuthContext(t, "host-a", nil), &pb.GetPoliciesRequest{}) // healthy: no error fields set
+	require.NoError(t, err)
+
+	status, err := srv.GetNodeCertStatus(fakeAuthContext(t, "host-a", nil), &pb.GetNodeCertStatusRequest{Hostname: "host-a"})
+	require.NoError(t, err)
+	assert.Equal(t, "", status.GetLastError(), "a subsequent healthy GetPolicies call must clear the prior failure")
+}
+
+func TestGetNodeCertStatus_UnknownHostReturnsEmptyNotError(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestServerWithPolicies(t, dir)
+
+	status, err := srv.GetNodeCertStatus(fakeAuthContext(t, "whoever", nil), &pb.GetNodeCertStatusRequest{Hostname: "never-reported-host"})
+	require.NoError(t, err)
+	assert.Equal(t, "", status.GetLastError())
+}
+
+// TestGetPolicies_CertStatusStoreFailureDoesNotFailTheRPC mirrors
+// TestGetPolicies_CheckinStoreFailureFailsTheRPC's failure-injection
+// mechanism (closing the store so every subsequent write fails), but
+// asserts the opposite outcome: unlike the check-in write in the
+// per-policy loop, a cert-status recording failure must not fail
+// GetPolicies. The policies dir is empty so no policy matches "host-a" --
+// this keeps RecordCheckin (still fatal, unchanged) out of the picture
+// entirely, isolating the cert-status path.
+func TestGetPolicies_CertStatusStoreFailureDoesNotFailTheRPC(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	checkins := newTestCheckinStore(t)
+	require.NoError(t, checkins.Close()) // force every subsequent write to fail
+	srv := NewPolicyServerServer(c, dir, testLogger(), checkins)
+
+	resp, err := srv.GetPolicies(fakeAuthContext(t, "host-a", nil), &pb.GetPoliciesRequest{BootstrapRefreshLastError: "renew failed"})
+	require.NoError(t, err, "a cert-status write failure must not fail GetPolicies")
+	assert.Empty(t, resp.GetPolicies())
+}
+
 func TestListPolicies_ReturnsAllPoliciesRegardlessOfIdentity(t *testing.T) {
 	dir := t.TempDir()
 	writePolicyFile(t, filepath.Join(dir, "backup"), "web.json", `{
