@@ -428,11 +428,11 @@ describe('restoreSubmission store', () => {
     ])
   })
 
-  it('reports a per-store error when the backend rejects mode=restore as not implemented', async () => {
+  it('reports a per-store error when the /restore call is rejected, without dropping mode/overwrite from the request', async () => {
     const cart = useRestoreCartStore()
     cart.toggleFolder('/var/lib/dbdata')
 
-    apiFetch.mockImplementation((path) => {
+    apiFetch.mockImplementation((path, opts) => {
       if (path.startsWith('/catalog/stores')) {
         return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
       }
@@ -442,9 +442,10 @@ describe('restoreSubmission store', () => {
         })
       }
       if (path === '/restore') {
-        return Promise.reject(
-          new Error('restore execution is not yet implemented; only verification (mode=verify) is currently supported')
-        )
+        const body = JSON.parse(opts.body)
+        expect(body.mode).toBe('restore')
+        expect(body.overwrite).toBe(false)
+        return Promise.reject(new Error('policy creation failed'))
       }
       throw new Error(`unexpected apiFetch call: ${path}`)
     })
@@ -456,7 +457,7 @@ describe('restoreSubmission store', () => {
       {
         storeHost: 'store-a',
         status: 'error',
-        message: 'restore execution is not yet implemented; only verification (mode=verify) is currently supported',
+        message: 'policy creation failed',
       },
     ])
   })
