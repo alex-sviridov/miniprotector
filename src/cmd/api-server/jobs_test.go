@@ -237,12 +237,12 @@ func TestHandleListJobs_RestoreKindUsesAgentBinaryLabel(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
 		`{binary=~"agent"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
-				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-verify:1752400500"}},
+				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-exec:1752400500"}},
 			}},
 		},
 		`{binary=~"agent"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
-				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-verify:1752400500", "status": "success"}},
+				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-exec:1752400500", "status": "success"}},
 			}},
 		},
 	}}

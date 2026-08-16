@@ -55,8 +55,12 @@ func newRestoreResolver(rules []RestoreRule, filterToRuleIndex []int) *restoreRe
 // Feed decides whether row (resolved by filters[filterIndex]) should be
 // dispatched. Also returns the winning rule's index, so a caller (e.g.
 // rwfs restore, which needs to know which rule's dest_path governs the
-// row) can look it up without a second resolution pass. It is dropped
-// when: the rule that actually governs row's
+// row) can look it up without a second resolution pass -- ruleIndex is -1
+// when no rule matched row's path at all (found == false from
+// resolveRestoreFileRule below), which today's callers never observe
+// (verify.go discards the index outright; restore.go only consults it after
+// gating on dispatch), but a future caller must check before indexing r.rules
+// with it. It is dropped when: the rule that actually governs row's
 // path (per resolveRestoreFileRule's longest-ancestor-wins precedence,
 // evaluated fresh per row, over the whole rule list including excludes) is
 // excluded or doesn't match filterIndex's own rule -- meaning a more
