@@ -134,9 +134,14 @@ positional filter in that usage.
 
 ## restore
 
-Resolves a restore policy's rules against a remote `bwfs` server's file listing and logs what a
-real restore of that policy would do -- **this round writes nothing to disk**. Requires
-`--rules-stdin` (the only way to select files; there is no plain-listing restore mode).
+Resolves a restore policy's rules against a remote `bwfs` server's file listing. **File content
+restore is still log-only** -- it resolves and logs what a real file restore would do, writing
+nothing. **Directory structure restore is real**: for every resolved directory (see [list
+protocol](../protocols/list.md#directory-rows)), `rwfs restore` actually creates it on the
+destination filesystem -- phase 1 of two, in parent-before-child order, before any file content
+would be written (phase 2, still unbuilt). Requires `--rules-stdin` (the only way to select
+anything; there is no plain-listing restore mode). See [Design: Restore Directory Structure
+Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md).
 
 ```bash
 # Preview a restore policy's resolved file list
@@ -159,7 +164,15 @@ nothing to overwrite or skip).
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
 
 Exit code follows the same not-found rule `verify --rules-stdin` uses: a file-level rule matching no
-row is a failure (non-zero exit); a folder-level rule matching nothing is not.
+row is a failure (non-zero exit); a folder-level rule matching nothing is not. A not-found failure
+aborts before directory creation (phase 1) ever starts.
+
+Phase 1 logs `creating restored directory structure` once at start, then either a `restored
+directory structure created` summary (with `created`/`reused` counts) on full success, or a
+`failed to create restored directory` error and an immediate abort on the first failure -- no
+further directories are attempted, and the summary line is never reached. A pre-existing directory
+is always reused, regardless of `--overwrite`; a pre-existing non-directory at the destination path
+is always a hard error.
 
 ## Transport Security
 

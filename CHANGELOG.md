@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-16 — restore execution: directory structure phase
+
+`rwfs restore` now actually creates the resolved directory structure on the destination filesystem
+-- the first write this restore-execution line has ever performed; file content restore remains
+unbuilt, still log-only. Directories are now real, queryable, restorable objects: `bwfs`'s
+`file_version_records` table (the only place a directory is ever recorded -- it never gets the
+content-bearing `file_data_records` row a file does) gained real `source_host`/`path`/`type`
+columns, and `ResolveRestoreFiles` streams matching directory rows for folder-rule selections
+alongside its existing file rows. `rwfs restore` creates them one at a time, parent before child,
+stopping at the first failure with a detailed error; a pre-existing directory is always safely
+reused, a pre-existing non-directory at the target path is always a hard error.
+
 ## 2026-08-16 — restore execution: first slice (log-only)
 
 `mode: "restore"` on `POST /api/v1/restore` now actually creates a restore policy instead of always

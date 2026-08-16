@@ -125,7 +125,7 @@ The path is embedded inside the composite `file_id` string (`fs://host:type:path
 
 ## ResolveRestoreFiles
 
-The `ResolveRestoreFiles` RPC resolves a batch of restore-rule-shaped filters directly, scoped by host, path, and timeframe, instead of the unbounded dump `ListFiles` would require for the same job. This is used by `rwfs verify --rules-stdin` and its `restore` sibling (log-only so far -- it resolves and logs the would-be restore, but does not yet write files) to efficiently find the exact backed-up versions matching each restore rule.
+The `ResolveRestoreFiles` RPC resolves a batch of restore-rule-shaped filters directly, scoped by host, path, and timeframe, instead of the unbounded dump `ListFiles` would require for the same job. This is used by `rwfs verify --rules-stdin` and its `restore` sibling to efficiently find the exact backed-up versions matching each restore rule -- `restore`'s file-content resolution is still log-only (it resolves and logs the would-be file restore, but does not yet write file content), but as of this round it also actually creates the resolved directory structure on disk (see [rwfs](../components/rwfs.md#restore)).
 
 ### Protocol Definition
 
@@ -162,10 +162,23 @@ A single folder-rule filter can match far more rows than a `bwfs` node's whole c
 - A folder filter matches the folder path itself plus everything beneath it under *either* path separator (`/` or `\`), so one host-agnostic filter serves Unix-style and Windows-style source hosts in the same call. A single trailing separator on `path` is ignored, so a root filter (`/`, `C:\`) matches that root's children rather than nothing.
 - `not_before` and `not_after` (both 0 = unbounded on that side) scope which backed-up version of this filter's selection is used. For each distinct `(source_host, path)` pair, the version with the latest `file_version_records.created_at` inside the window `[not_before, not_after]` wins. A version outside the window is ignored entirely, never used as a fallback; zero versions in the window means that filter contributes no row for that path.
 
+### Directory Rows
+
+For a `path_is_prefix` filter (a folder rule), the response also includes a row per real,
+backed-up directory under that path -- `type = "d"`, empty `file_uuid` (a directory has no
+content, and nothing ever calls `RestoreFile` against one), zero `size`/`chunks`. These come from
+`file_version_records` directly rather than `file_data_records` -- a directory never gets a
+`file_data_records` row (see [Design: Restore Directory Structure
+Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md)'s Problem section for
+why), so this is the only place its existence is queryable at all. An exact-path (non-prefix,
+file-level) filter never returns a directory row.
+
 ### Filter Index
 
 `filter_index` in the response indicates which of the request's `filters` entries produced this row — the position (0-indexed) in the request's `filters` array. Clients that send more than one filter (i.e., `rwfs`) use this to associate each resolved row with the rule it came from. A single-filter caller can ignore it.
 
 ### Usage
 
-This RPC is used only by `rwfs verify --rules-stdin` and `rwfs restore --rules-stdin` (the latter still log-only -- see [rwfs](../components/rwfs.md#restore)). Plain `bwfs list` and `rwfs list` continue to use `ListFiles` unchanged.
+This RPC is used only by `rwfs verify --rules-stdin` and `rwfs restore --rules-stdin` (the latter's
+directory rows are acted on -- see [rwfs](../components/rwfs.md#restore) -- its file rows are still
+log-only). Plain `bwfs list` and `rwfs list` continue to use `ListFiles` unchanged.
