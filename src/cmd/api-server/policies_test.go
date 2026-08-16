@@ -943,6 +943,14 @@ func TestHandleGetClientCertStatus_ReturnsStatus(t *testing.T) {
 	assert.Equal(t, "host-a", fake.lastCertStatusReq.GetHostname())
 }
 
+// The stubbed response's nil LastAttemptAt is load-bearing, and is exactly
+// what the real policy-server returns for a never-reported host -- pinned
+// on that side by cmd/policy-server's
+// TestGetNodeCertStatus_UnknownHostLeavesLastAttemptAtNil. If that ever
+// regresses to an unconditional timestamppb.New over a zero time.Time, the
+// wire value is a valid non-nil year-1 Timestamp whose Unix() is
+// -62135596800, and `omitempty` keeps the field in the body rather than
+// dropping it. This test cannot see that on its own; keep the two paired.
 func TestHandleGetClientCertStatus_NeverReportedOmitsFieldsAndReturns200(t *testing.T) {
 	fake := &fakePolicyServiceClient{certStatusResp: &pb.NodeCertStatus{Hostname: "host-b"}}
 	srv := newServer(nil, nil, fake, testLogger())

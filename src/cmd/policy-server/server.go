@@ -105,17 +105,29 @@ func (s *policyServerServer) GetPolicies(ctx context.Context, req *pb.GetPolicie
 // hostname that has never called GetPolicies -- or has, and reported
 // healthy -- both correctly produce an empty-LastError NodeCertStatus;
 // see NodeCertStatus's own doc comment for the "not an error" contract.
+//
+// LastAttemptAt is left nil rather than filled in when nothing was
+// recorded. CertStatusForHost returns a zero-value NodeCertStatus for an
+// unknown host, and Go's zero time.Time is year 1, not the Unix epoch --
+// so an unconditional timestamppb.New would hand back a valid, non-nil
+// Timestamp of seconds=-62135596800, which api-server renders into its
+// `omitempty` int64 as a very-much-present "last_attempt_at":
+// -62135596800. Only a nil Timestamp actually produces the omitted field
+// the REST contract promises (docs/api/rest-v1.md).
 func (s *policyServerServer) GetNodeCertStatus(ctx context.Context, req *pb.GetNodeCertStatusRequest) (*pb.NodeCertStatus, error) {
 	certStatus, _, err := s.checkins.CertStatusForHost(ctx, req.GetHostname())
 	if err != nil {
 		s.logger.Error("GetNodeCertStatus: store read failed", "hostname", req.GetHostname(), "error", err)
 		return nil, status.Error(codes.Internal, "failed to read cert status")
 	}
-	return &pb.NodeCertStatus{
-		Hostname:      req.GetHostname(),
-		LastError:     certStatus.LastError,
-		LastAttemptAt: timestamppb.New(certStatus.LastAttemptAt),
-	}, nil
+	out := &pb.NodeCertStatus{
+		Hostname:  req.GetHostname(),
+		LastError: certStatus.LastError,
+	}
+	if !certStatus.LastAttemptAt.IsZero() {
+		out.LastAttemptAt = timestamppb.New(certStatus.LastAttemptAt)
+	}
+	return out, nil
 }
 
 func toProtoClientFilters(cf ClientFilters) *pb.ClientFilters {

@@ -297,6 +297,31 @@ func TestGetNodeCertStatus_UnknownHostReturnsEmptyNotError(t *testing.T) {
 	assert.Equal(t, "", status.GetLastError())
 }
 
+// TestGetNodeCertStatus_UnknownHostLeavesLastAttemptAtNil pins the field to
+// nil, not merely "zero-ish". CertStatusForHost returns a zero-value
+// NodeCertStatus for a host with no row, and Go's zero time.Time is year 1,
+// not the Unix epoch -- so timestamppb.New on it yields a perfectly valid
+// non-nil Timestamp of seconds=-62135596800. api-server renders this field
+// as resp.GetLastAttemptAt().AsTime().Unix() into an `omitempty` int64, so a
+// non-nil year-1 timestamp becomes a very-much-present
+// "last_attempt_at": -62135596800 in the REST body, contradicting every doc
+// that promises the field is simply omitted for a never-reported host.
+// Asserting nil (not Unix() == 0) is the whole point: Unix() == 0 would also
+// pass for an epoch timestamp, which is a different thing from "unset".
+func TestGetNodeCertStatus_UnknownHostLeavesLastAttemptAtNil(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestServerWithPolicies(t, dir)
+
+	status, err := srv.GetNodeCertStatus(fakeAuthContext(t, "whoever", nil), &pb.GetNodeCertStatusRequest{Hostname: "never-reported-host"})
+	require.NoError(t, err)
+	assert.Nil(t, status.GetLastAttemptAt(), "a never-reported host must leave last_attempt_at unset, not carry a year-1 timestamp api-server would render as -62135596800")
+
+	// The consequence this exists to protect, spelled out: api-server's
+	// handleGetClientCertStatus renders exactly this expression into an
+	// `omitempty` int64, so only 0 gets the field dropped from the JSON body.
+	assert.Equal(t, int64(0), status.GetLastAttemptAt().AsTime().Unix(), "api-server renders this expression into an omitempty int64; anything but 0 leaves last_attempt_at in the REST body")
+}
+
 // TestGetPolicies_CertStatusStoreFailureDoesNotFailTheRPC mirrors
 // TestGetPolicies_CheckinStoreFailureFailsTheRPC's failure-injection
 // mechanism (closing the store so every subsequent write fails), but
