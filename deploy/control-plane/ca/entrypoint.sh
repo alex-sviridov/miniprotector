@@ -8,5 +8,5 @@ if [ ! -f /home/step/config/ca.json ]; then
     --provisioner="admin@backup.internal" \
     --password-file=/home/step/secrets/password
 fi
-step ca provisioner update admin@backup.internal --x509-template=/home/step/templates/leaf.tpl
+step ca provisioner update admin@backup.internal --x509-template=/home/step/templates/leaf.tpl --x509-max-dur=2200h
 exec step-ca /home/step/config/ca.json --password-file=/home/step/secrets/password
