@@ -109,9 +109,14 @@ alias or removing an absent one is a no-op, not an error.
 
 ## `GET /api/v1/clients/{hostname}/cert-status`
 
-Reports a node's most recent bootstrap/operating-certificate renewal failure, if any. Proxies
+Reports a node's most recent **bootstrap**-certificate renewal failure, if any. Proxies
 `PolicyService.GetNodeCertStatus` on `policy-server` (see
 [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)).
+
+Scope: only `agent`'s `bootstrap-refresh` task is reported here. `operating-refresh` failures are
+an explicit non-goal of this design — `policyclient` reads exactly the `"bootstrap-refresh"` key
+out of `agent-state.json` and nothing else. An empty `last_error` therefore says nothing about
+operating-certificate renewal health, which this route does not monitor at all.
 
 ```json
 {

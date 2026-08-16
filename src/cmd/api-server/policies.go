@@ -391,12 +391,18 @@ type certStatusDTO struct {
 	LastAttemptAt int64  `json:"last_attempt_at,omitempty"`
 }
 
-// handleGetClientCertStatus reports a node's most recent bootstrap/renewal
-// certificate error, if any. A hostname that has never had a renewal
-// failure (or has never reported at all) returns 200 with last_error and
-// last_attempt_at omitted -- proto3's zero values, empty string and a nil
-// Timestamp whose AsTime().Unix() is 0 -- rather than 404, matching
-// GetNodeCertStatus's own "not an error" contract (Task 1/6). See
+// handleGetClientCertStatus reports a node's most recent bootstrap-certificate
+// renewal error, if any. Scope is exactly agent's "bootstrap-refresh" task --
+// the only key policyclient reads out of agent-state.json. "operating-refresh"
+// failures are an explicit non-goal of this design and are never reported
+// here, so an empty last_error means "bootstrap renewal reported nothing," not
+// "certificate renewal is healthy."
+//
+// A hostname that has never had a bootstrap renewal failure (or has never
+// reported at all) returns 200 with last_error and last_attempt_at omitted --
+// proto3's zero values, empty string and a nil Timestamp whose AsTime().Unix()
+// is 0 -- rather than 404, matching GetNodeCertStatus's own "not an error"
+// contract (Task 1/6). See
 // docs/superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md.
 func (s *server) handleGetClientCertStatus(w http.ResponseWriter, r *http.Request) {
 	hostname := r.PathValue("hostname")

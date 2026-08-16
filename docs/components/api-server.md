@@ -82,8 +82,11 @@ real restore action: `mode: "restore"` is validated and rejected with `501` toda
 execution path exists below `api-server` yet -- see [Design: Restore Verify/Execute
 Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md).
 
-`GET /clients/{hostname}/cert-status` reports a node's most recent bootstrap/operating-certificate
-renewal failure, proxying `policy-server`'s `GetNodeCertStatus` RPC. Its handler lives in
+`GET /clients/{hostname}/cert-status` reports a node's most recent **bootstrap**-certificate
+renewal failure, proxying `policy-server`'s `GetNodeCertStatus` RPC. Only `agent`'s
+`bootstrap-refresh` task is covered — `operating-refresh` failures are an explicit non-goal of that
+design and are never reported here, so an empty `last_error` must not be read as "operating-cert
+renewal is healthy," only as "bootstrap renewal has reported nothing." Its handler lives in
 `policies.go`, not `clients.go`, despite the `/clients/...` URL -- this codebase's api-server files
 are organized by which backend a handler calls (`s.policy` vs `s.clientManager`), not by URL
 namespace, and this route calls `s.policy`. It returns `200` even for a hostname that has never
