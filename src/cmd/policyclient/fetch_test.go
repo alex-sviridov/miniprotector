@@ -25,9 +25,12 @@ func fetchTestLogger() *slog.Logger {
 type fakePolicyServiceClient struct {
 	resp *pb.GetPoliciesResponse
 	err  error
+
+	gotReq *pb.GetPoliciesRequest
 }
 
-func (f *fakePolicyServiceClient) GetPolicies(_ context.Context, _ *pb.GetPoliciesRequest, _ ...grpc.CallOption) (*pb.GetPoliciesResponse, error) {
+func (f *fakePolicyServiceClient) GetPolicies(_ context.Context, req *pb.GetPoliciesRequest, _ ...grpc.CallOption) (*pb.GetPoliciesResponse, error) {
+	f.gotReq = req
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -198,6 +201,66 @@ func TestRunFetch_RestorePolicyCarriesStoragePolicyIdAndRules(t *testing.T) {
 	assert.Equal(t, "restore", got[0].Type)
 	assert.Equal(t, []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}}, got[0].Rules)
 	assert.Equal(t, []string{"bwfs-east.internal:8080"}, got[0].Destinations)
+}
+
+func TestBootstrapRefreshFailure_ReadsFailingEntry(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentState(t, dir, `{"bootstrap-refresh":{"last_attempt_at":"2026-08-16T12:00:00Z","last_error":"renew request: connection refused"}}`)
+
+	lastErr, lastAt := bootstrapRefreshFailure(dir)
+	assert.Equal(t, "renew request: connection refused", lastErr)
+	assert.Equal(t, time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC).Unix(), lastAt)
+}
+
+func TestBootstrapRefreshFailure_HealthyEntryReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentState(t, dir, `{"bootstrap-refresh":{"last_attempt_at":"2026-08-16T12:00:00Z","last_error":""},"operating-refresh":{"last_error":"unrelated failure"}}`)
+
+	lastErr, lastAt := bootstrapRefreshFailure(dir)
+	assert.Equal(t, "", lastErr, "a healthy bootstrap-refresh entry must report nothing, even if another task is failing")
+	assert.Equal(t, int64(0), lastAt)
+}
+
+func TestBootstrapRefreshFailure_MissingKeyReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentState(t, dir, `{"operating-refresh":{"last_error":"unrelated"}}`)
+
+	lastErr, lastAt := bootstrapRefreshFailure(dir)
+	assert.Equal(t, "", lastErr)
+	assert.Equal(t, int64(0), lastAt)
+}
+
+func TestBootstrapRefreshFailure_MissingFileReturnsEmpty(t *testing.T) {
+	lastErr, lastAt := bootstrapRefreshFailure(t.TempDir()) // no agent-state.json written
+	assert.Equal(t, "", lastErr)
+	assert.Equal(t, int64(0), lastAt)
+}
+
+func TestBootstrapRefreshFailure_MalformedFileReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentState(t, dir, `not valid json`)
+
+	lastErr, lastAt := bootstrapRefreshFailure(dir)
+	assert.Equal(t, "", lastErr)
+	assert.Equal(t, int64(0), lastAt)
+}
+
+func writeAgentState(t *testing.T, dir, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "agent-state.json"), []byte(content), 0o644))
+}
+
+func TestRunFetch_IncludesBootstrapRefreshStatusFromAgentState(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentState(t, dir, `{"bootstrap-refresh":{"last_attempt_at":"2026-08-16T12:00:00Z","last_error":"renew request: connection refused"}}`)
+	cachePath := filepath.Join(dir, "policies-cache.json")
+
+	fake := &fakePolicyServiceClient{resp: &pb.GetPoliciesResponse{}}
+	require.NoError(t, runFetch(context.Background(), fake, cachePath, fetchTestLogger()))
+
+	require.NotNil(t, fake.gotReq)
+	assert.Equal(t, "renew request: connection refused", fake.gotReq.GetBootstrapRefreshLastError())
+	assert.Equal(t, time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC).Unix(), fake.gotReq.GetBootstrapRefreshLastAttemptAt())
 }
 
 // agentRestoreRuleShape mirrors cmd/agent/restore.go's RestoreRule field

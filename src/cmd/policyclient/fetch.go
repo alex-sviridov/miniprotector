@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -89,6 +91,38 @@ type CachedPolicy struct {
 	DisabledAt time.Time `json:"disabled_at,omitempty"`
 }
 
+// bootstrapRefreshFailure does a best-effort read of agent-state.json's
+// "bootstrap-refresh" entry -- the one piece of agent's local state this
+// binary has any reason to look at, so agent-state.json's other entries
+// (backup/storage/restore task history) are decoded into but otherwise
+// ignored. A missing file, unparseable JSON, or an absent/healthy
+// "bootstrap-refresh" key are all "nothing to report", the same fail-safe
+// direction agent's own readCache already takes for this identical file
+// (cmd/agent/cache.go). This must never block the GetPolicies call that
+// follows it -- every error path here returns cleanly, never panics or
+// propagates.
+func bootstrapRefreshFailure(varDir string) (lastError string, lastAttemptAt int64) {
+	data, err := os.ReadFile(filepath.Join(varDir, "agent-state.json"))
+	if err != nil {
+		return "", 0
+	}
+	var cache map[string]struct {
+		LastAttemptAt *time.Time `json:"last_attempt_at"`
+		LastError     string     `json:"last_error,omitempty"`
+	}
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return "", 0
+	}
+	entry, ok := cache["bootstrap-refresh"]
+	if !ok || entry.LastError == "" {
+		return "", 0
+	}
+	if entry.LastAttemptAt != nil {
+		lastAttemptAt = entry.LastAttemptAt.Unix()
+	}
+	return entry.LastError, lastAttemptAt
+}
+
 // policyServiceClient is the subset of pb.PolicyServiceClient runFetch
 // needs -- satisfied directly by the real generated client, and by a fake
 // in tests, mirroring certclient's issuerClient pattern.
@@ -121,10 +155,20 @@ func fetchAndCache(certsDir, host string, port, timeoutSec int, cachePath, jobID
 // runFetch is the testable core: given an already-connected
 // policyServiceClient, fetch the current policy list and atomically write
 // it to cachePath via common/atomicfile. On any failure, cachePath is left
-// completely untouched.
+// completely untouched. Before calling GetPolicies, it also does a
+// best-effort local read of agent-state.json's "bootstrap-refresh" entry
+// (via bootstrapRefreshFailure) so policy-server can surface a stuck
+// bootstrap-certificate renewal without agent needing its own RPC --
+// agent-state.json lives in the same directory as cachePath
+// (filepath.Dir(cachePath)), since both are written under the same varDir.
+
 func runFetch(ctx context.Context, client policyServiceClient, cachePath string, logger *slog.Logger) error {
 	logger.Debug("fetching policies")
-	resp, err := client.GetPolicies(ctx, &pb.GetPoliciesRequest{})
+	lastErr, lastAt := bootstrapRefreshFailure(filepath.Dir(cachePath))
+	resp, err := client.GetPolicies(ctx, &pb.GetPoliciesRequest{
+		BootstrapRefreshLastError:     lastErr,
+		BootstrapRefreshLastAttemptAt: lastAt,
+	})
 	if err != nil {
 		return fmt.Errorf("get policies: %w", err)
 	}

@@ -35,6 +35,20 @@ handles all of them identically. Always fetches when invoked; there's no stalene
 on a schedule (`agent`'s `policy-update` policy, or a bare cron/systemd timer) if periodic
 refreshing is wanted.
 
+Before calling `GetPolicies`, `fetch` also does a best-effort local read of `agent-state.json` (the
+same `<var_dir>/agent-state.json` `agent` itself writes, in the same directory as
+`policies-cache.json`) and looks up its `"bootstrap-refresh"` entry's `last_error`/`last_attempt_at`.
+If present and non-empty, those values ride along on the `GetPolicies` request as
+`bootstrap_refresh_last_error`/`bootstrap_refresh_last_attempt_at`, so `policy-server` — and anything
+built on top of it — can surface a node stuck failing its bootstrap-certificate renewal without
+`agent` needing a separate RPC of its own. A missing or unparseable `agent-state.json`, or an
+absent/healthy `"bootstrap-refresh"` entry, are all "nothing to report" and never block or fail the
+fetch. `policyclient` cannot import `cmd/agent` (a different `main` package), so it reads and decodes
+the file directly rather than calling into `agent`'s own cache-reading code; `agent` never reads
+this field back out of anything `policyclient` writes — the value only flows outward, to
+`policy-server`. See
+[Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
+
 The cache file is a plain JSON array, one object per policy, mirroring the RPC response's fields
 directly:
 
@@ -94,4 +108,5 @@ make policyclient
 - [agent](./agent.md) — runs `policy-update` as a scheduled policy
 - [certclient](./certclient.md) — the sibling binary `agent` execs for credential refresh
 - [Design: Agent Policy-Update Job](../superpowers/specs/2026-07-10-agent-policy-update-job-design.md)
+- [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
 - [Architecture](../ARCHITECTURE.md)
