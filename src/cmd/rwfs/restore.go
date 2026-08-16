@@ -130,9 +130,29 @@ func createRestoreDirectoryStructure(logger *slog.Logger, dirs []restoreDirector
 		seen[d.DestPath] = true
 		unique = append(unique, d)
 	}
-	sort.Slice(unique, func(i, j int) bool {
-		return len(ancestorsOrSelfRestorePath(unique[i].DestPath)) < len(ancestorsOrSelfRestorePath(unique[j].DestPath))
+	// Precompute each directory's depth once rather than recomputing
+	// ancestorsOrSelfRestorePath inside less on every comparison (O(n log
+	// n) redundant allocations for a value that's fixed per element). The
+	// depth rides alongside its directory in one struct slice so a sort
+	// swap can never desync depth from directory the way two
+	// independently-sorted parallel slices could. sort.SliceStable costs
+	// nothing extra here -- same-depth directories never nest (a directory
+	// can't be its own sibling's parent), so ordering among same-depth
+	// entries never affects correctness.
+	withDepth := make([]struct {
+		dir   restoreDirectory
+		depth int
+	}, len(unique))
+	for i, d := range unique {
+		withDepth[i].dir = d
+		withDepth[i].depth = len(ancestorsOrSelfRestorePath(d.DestPath))
+	}
+	sort.SliceStable(withDepth, func(i, j int) bool {
+		return withDepth[i].depth < withDepth[j].depth
 	})
+	for i, wd := range withDepth {
+		unique[i] = wd.dir
+	}
 
 	logger.Info("creating restored directory structure")
 	created, reused := 0, 0

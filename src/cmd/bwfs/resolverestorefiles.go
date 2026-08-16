@@ -159,21 +159,25 @@ func resolveRestoreFilter(store *wfs.Store, filter *pb.RestoreFileFilter, yield 
 // restoreChildRanges verbatim -- same separator-aware subtree matching. A
 // directory has no content-version concept to disambiguate the way a
 // file's checksum does, so GROUP BY (source_host, path) alone fully
-// collapses to one row per directory; MAX(created_at) only needs to prove
-// at least one version exists inside [filter.NotBefore, filter.NotAfter],
-// not identify which one, since this round only checks existence -- see
+// collapses to one row per directory; the [filter.NotBefore,
+// filter.NotAfter] window is enforced entirely in WHERE below, and since
+// this round only checks existence (not which version), no aggregate is
+// needed to pick a winner among a directory's versions the way
+// resolveRestoreFilter's MAX(fv.created_at)/ORDER BY dedup does for files
+// -- see
 // docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md.
 //
-// Only ever called for a path_is_prefix filter -- an exact-path filter
-// naturally matches nothing here (its own literal path is a leaf a
-// directory could share, but "d" rows this query returns are folder
-// containers a caller is about to recreate, and an exact-file rule has no
-// reason to ask for that), so callers don't need to gate this themselves,
-// though ResolveRestoreFiles does anyway for clarity (see below).
+// Only ever called for a path_is_prefix filter -- an exact-path filter is
+// forced to match nothing here, via the unconditional "1 = 0" branch below
+// (its own literal path is a leaf a directory could share, but "d" rows
+// this query returns are folder containers a caller is about to recreate,
+// and an exact-file rule has no reason to ask for that), so callers don't
+// need to gate this themselves, though ResolveRestoreFiles does anyway for
+// clarity (see below).
 func resolveRestoreDirectoryFilter(store *wfs.Store, filter *pb.RestoreFileFilter, yield func(source, path string) bool) error {
 	query := store.RawDB().
 		Table("file_version_records").
-		Select("source_host, path, MAX(created_at) AS best_version_at").
+		Select("source_host, path").
 		Where("type = ?", "d").
 		Group("source_host, path").
 		Order("source_host ASC, path ASC")
@@ -210,8 +214,7 @@ func resolveRestoreDirectoryFilter(store *wfs.Store, filter *pb.RestoreFileFilte
 
 	for rows.Next() {
 		var source, path string
-		var bestVersionAt any
-		if err := rows.Scan(&source, &path, &bestVersionAt); err != nil {
+		if err := rows.Scan(&source, &path); err != nil {
 			return fmt.Errorf("scan resolved directory: %w", err)
 		}
 		if !yield(source, path) {
