@@ -80,8 +80,10 @@ type CachedPolicy struct {
 	// (cmd/agent/storage.go) is what interprets Config.
 	Port   int32  `json:"port,omitempty"`
 	Config string `json:"config,omitempty"`
-	// "restore" policy only, zero/empty for every other type.
-	Rules []RestoreRule `json:"rules,omitempty"`
+	// "restore" policy only, empty/false for every other type.
+	Rules     []RestoreRule `json:"rules,omitempty"`
+	Mode      string        `json:"mode,omitempty"`
+	Overwrite bool          `json:"overwrite,omitempty"`
 	// Derived by policy-server from the subfolder the policy file was
 	// loaded from (e.g. "backup"). Pure passthrough here -- policyclient
 	// itself never branches on it; agent does (see
@@ -223,6 +225,8 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			Port:          p.GetPort(),
 			Config:        p.GetConfig(),
 			Rules:         rules,
+			Mode:          p.GetMode(),
+			Overwrite:     p.GetOverwrite(),
 			Type:          p.GetType(),
 			DisabledAt:    disabledAtFromProto(p.GetDisabledAt()),
 		})
