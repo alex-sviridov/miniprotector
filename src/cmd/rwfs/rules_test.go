@@ -102,3 +102,12 @@ func TestRestoreDestPath_FolderLevelRuleSubstitutesPrefix(t *testing.T) {
 	assert.Equal(t, "/data/photos_recovered/vacation.jpg", restoreDestPath(rule, "/data/photos/vacation.jpg"))
 	assert.Equal(t, "/data/photos_recovered/2024/beach.jpg", restoreDestPath(rule, "/data/photos/2024/beach.jpg"))
 }
+
+func TestRestoreDestPath_RootFolderRuleSubstitutesPrefix(t *testing.T) {
+	// rule.Path == "/" is a degenerate case for strings.TrimPrefix: the
+	// separator itself IS the prefix being trimmed, so a naive
+	// TrimPrefix(rowPath, rule.Path) strips it and leaves no leading "/"
+	// to glue DestPath onto (regression case for the missing-separator bug).
+	rule := RestoreRule{Path: "/", DestPath: "/recovered"}
+	assert.Equal(t, "/recovered/etc/hosts", restoreDestPath(rule, "/etc/hosts"))
+}

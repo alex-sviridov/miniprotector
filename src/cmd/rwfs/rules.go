@@ -144,5 +144,13 @@ func restoreDestPath(rule RestoreRule, rowPath string) string {
 	if rule.DestPath == "" || rule.DestPath == rule.Path {
 		return rowPath
 	}
-	return rule.DestPath + strings.TrimPrefix(rowPath, rule.Path)
+	// For a root folder rule (rule.Path == "/"), TrimPrefix strips the
+	// separator itself along with the prefix, leaving a suffix with no
+	// leading "/" -- restore it so the concatenation below doesn't glue
+	// DestPath directly onto suffix with no separator between them.
+	suffix := strings.TrimPrefix(rowPath, rule.Path)
+	if suffix != "" && !strings.HasPrefix(suffix, "/") {
+		suffix = "/" + suffix
+	}
+	return rule.DestPath + suffix
 }
