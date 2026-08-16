@@ -103,14 +103,19 @@ test('restore verification', async ({ page, context }) => {
     ).toHaveText('0')
   })
 
-  await test.step('clicking Restore reports it is not implemented yet, without creating a job', async () => {
+  await test.step('clicking Restore creates a real restore-execution policy, which agent picks up', async () => {
     // Step 1's waitForLogLine retries via page.reload() -- a real browser
     // reload, same as page.goto() -- so restoreCart's in-memory selection
     // doesn't survive step 1; re-select the same file rather than assuming
-    // it's still there. This scenario is UI-only (api-server rejects
-    // mode=restore before any backend/policy-server call), so it's cheap to
-    // run right after verification, with no cleanup required (nothing gets
-    // created).
+    // it's still there. mode: "restore" now succeeds end to end (agent runs
+    // the new log-only `rwfs restore`), so unlike the old 501-rejection
+    // scenario this creates a real policy that must be cleaned up -- same
+    // try/finally-wrapped delete pattern as the sibling step below, minus
+    // that step's infinite-retry risk: `rwfs restore` is one-shot and only
+    // ever logs, so a leaked policy here can't starve later runs' dispatch
+    // queue the way a permanently-failing verify policy would.
+    const authHeaders = { Authorization: 'Bearer dev-placeholder-token-change-me' }
+
     await goToCatalogHome()
     for (const segment of segments) {
       await page.getByText(`${segment}/`, { exact: true }).click()
@@ -127,8 +132,48 @@ test('restore verification', async ({ page, context }) => {
     await page.getByTestId('overwrite-checkbox').check()
     await page.getByTestId('restore-button').click()
 
-    const resultText = await page.getByTestId('submission-results').innerText()
-    expect(resultText).toContain('restore execution is not yet implemented; only verification (mode=verify) is currently supported')
+    // Unlike step 1's first-ever submission (where submission-results starts
+    // absent and Playwright's own actionability wait for the element to
+    // attach happens to synchronize with the async submit call), this step
+    // starts with a stale submission-results <ul> already on the page --
+    // step 1's own verify result, carried over in the (page-navigation-
+    // persisted) restoreSubmission Pinia store. A plain .innerText() read
+    // right after the click can win the race against submit()'s own reset
+    // (results = [] synchronously, then repopulated once the POST
+    // resolves) and return step 1's stale text. expect(...).toContainText
+    // is a web-first assertion that polls until the DOM actually reflects
+    // this step's own submission, so it can't observe that transient state.
+    const resultsLocator = page.getByTestId('submission-results')
+    await expect(resultsLocator).toContainText('Started restore policy')
+    const resultText = await resultsLocator.innerText()
+    const policyName = /Started restore policy (\S+) from/.exec(resultText)[1]
+
+    // RestoreView's success copy confirms the /restore call returned 201,
+    // but not the policy's id -- look it up by name via the REST API (the
+    // UI has no affordance to read it back) so it can be deleted afterward.
+    // Wrapped in try/finally, same shape as the sibling step below: if the
+    // lookup/assertion throws, cleanup should still run rather than leaving
+    // the policy behind.
+    let policy
+    try {
+      const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: authHeaders })
+      const { data: restorePolicies } = await restorePoliciesResp.json()
+      policy = restorePolicies.find((p) => p.name === policyName)
+      expect(policy).toBeTruthy()
+    } finally {
+      // Don't throw on a failed delete -- that would mask whatever error
+      // the try block raised -- but do warn, consistent with the sibling
+      // step's cleanup below. `rwfs restore` is one-shot and log-only, so
+      // unlike the sibling step's intentionally-failing policy, a leaked
+      // policy here can't retry forever and starve later runs' dispatch
+      // queue -- but it still shouldn't be left lying around.
+      if (policy) {
+        const deleteResp = await page.request.delete(`/api/v1/policies/${policy.id}`, { headers: authHeaders })
+        if (!deleteResp.ok()) {
+          console.warn(`cleanup: failed to delete policy ${policy.id}, status ${deleteResp.status()}`)
+        }
+      }
+    }
   })
 
   await test.step('a rule naming a file that was never backed up fails, readable in its job log', async () => {
