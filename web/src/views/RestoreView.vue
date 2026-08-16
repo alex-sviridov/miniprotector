@@ -146,7 +146,9 @@ function restore() {
     <p v-if="submission.error" data-test="submission-error">{{ submission.error }}</p>
     <ul v-if="submission.results.length" data-test="submission-results">
       <li v-for="result in submission.results" :key="result.storeHost">
-        <span v-if="result.status === 'success'">Started verification policy {{ result.policy.name }} from {{ result.storeHost }}</span>
+        <span v-if="result.status === 'success'">
+          Started {{ result.mode === 'restore' ? 'restore' : 'verification' }} policy {{ result.policy.name }} from {{ result.storeHost }}
+        </span>
         <span v-else>{{ result.storeHost }}: {{ result.message }}</span>
       </li>
     </ul>

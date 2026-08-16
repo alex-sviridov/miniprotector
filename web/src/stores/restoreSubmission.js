@@ -156,7 +156,7 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
               mode,
               overwrite,
             })
-            results.push({ storeHost, status: 'success', policy })
+            results.push({ storeHost, status: 'success', policy, mode })
           } catch (err) {
             results.push({ storeHost, status: 'error', message: err.message })
           }

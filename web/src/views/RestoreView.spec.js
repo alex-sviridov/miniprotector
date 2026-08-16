@@ -151,6 +151,26 @@ describe('RestoreView', () => {
     )
   })
 
+  it('renders restore-specific copy for a mode=restore success result', () => {
+    const wrapper = mountView({
+      rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],
+      submission: { results: [{ storeHost: 'store-a', status: 'success', policy: { name: 'r1' }, mode: 'restore' }] },
+    })
+    expect(wrapper.find('[data-test="submission-results"]').text()).toContain(
+      'Started restore policy r1 from store-a'
+    )
+  })
+
+  it('keeps verification copy for a mode=verify success result', () => {
+    const wrapper = mountView({
+      rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],
+      submission: { results: [{ storeHost: 'store-a', status: 'success', policy: { name: 'r1' }, mode: 'verify' }] },
+    })
+    expect(wrapper.find('[data-test="submission-results"]').text()).toContain(
+      'Started verification policy r1 from store-a'
+    )
+  })
+
   it('renders a per-group submission error', () => {
     const wrapper = mountView({
       rules: [{ path: '/var', host: null, include: true, destPath: '/var' }],

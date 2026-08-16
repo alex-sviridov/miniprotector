@@ -54,7 +54,7 @@ describe('restoreSubmission store', () => {
 
     expect(submission.error).toBeNull()
     expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
+      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
     ])
     expect(apiFetch).toHaveBeenCalledWith('/restore', {
       method: 'POST',
@@ -116,8 +116,8 @@ describe('restoreSubmission store', () => {
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
-      { storeHost: 'store-b', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-b' } },
+      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
+      { storeHost: 'store-b', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-b' }, mode: 'verify' },
     ])
     expect(rulesByStoreFromCalls()).toEqual({
       'store-a': [{ path: '/var/lib/dbdata/dump.sql', host: 'database', include: true }],
@@ -289,7 +289,7 @@ describe('restoreSubmission store', () => {
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
+      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
       { storeHost: 'store-b', status: 'error', message: 'No storage policy found for store-b' },
     ])
   })
@@ -326,7 +326,7 @@ describe('restoreSubmission store', () => {
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' } },
+      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
       { storeHost: 'store-b', status: 'error', message: 'name already exists' },
     ])
   })
@@ -399,6 +399,33 @@ describe('restoreSubmission store', () => {
     const body = JSON.parse(restoreCall[1].body)
     expect(body.mode).toBe('restore')
     expect(body.overwrite).toBe(true)
+  })
+
+  it('tags each success result with the mode it was submitted under', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
+        })
+      }
+      if (path === '/restore') {
+        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name, mode: 'restore' })
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'restore', overwrite: true })
+
+    expect(submission.results).toEqual([
+      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: expect.any(String), mode: 'restore' }, mode: 'restore' },
+    ])
   })
 
   it('reports a per-store error when the backend rejects mode=restore as not implemented', async () => {
