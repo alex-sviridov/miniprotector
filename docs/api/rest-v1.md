@@ -424,11 +424,12 @@ that will execute the restore, the same mechanism every other policy type uses.
 never set it are unaffected). `mode: "verify"` creates the policy exactly as before: `agent` picks
 it up and runs `rwfs verify` against it, writing nothing. `mode: "restore"` creates the policy
 exactly like `mode: "verify"` (`201` with the created policy), but `agent` runs `rwfs restore`
-against it instead of `rwfs verify` -- this round, `rwfs restore` only resolves the policy's rules
-against the live store and logs each file's source path, computed destination path, and the
-policy's `overwrite` setting; it writes nothing. `overwrite` (bool, default `false`) is accepted in
-both modes; under `mode: "verify"` it has no effect, since `rwfs verify` doesn't read it. `201`
-with the created policy on success, for either mode.
+against it instead of `rwfs verify` -- `rwfs restore` resolves the policy's rules against the live
+store, logs each file's source path and computed destination path, and actually creates the
+resolved directory structure at each destination (parent-before-child, stopping at the first
+failure); file content restore itself remains log-only, writing nothing. `overwrite` (bool, default
+`false`) is accepted in both modes; under `mode: "verify"` it has no effect, since `rwfs verify`
+doesn't read it. `201` with the created policy on success, for either mode.
 
 `400` if `name` is empty, `storage_policy_id` doesn't reference an existing `"storage"` policy,
 `rules` is empty or contains an entry with an empty `path`, or `mode` is neither `"verify"` nor

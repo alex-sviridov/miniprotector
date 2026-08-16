@@ -144,15 +144,16 @@ anything; there is no plain-listing restore mode). See [Design: Restore Director
 Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md).
 
 ```bash
-# Preview a restore policy's resolved file list
+# Resolve a restore policy's rules, create the resolved directory structure
+# on disk, and log what a real file restore would do
 echo '{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":"/data/photos_recovered"}]}' \
   | rwfs restore localhost:8080 --rules-stdin
 ```
 
 For each resolved file, logs `source`, `path` (original), and `dest_path` (the `dest_path` rename
 rule applied -- see [restore protocol](../protocols/restore.md)). Logs the run's `overwrite`
-setting once at start; `overwrite` currently has no effect (nothing is written yet, so there is
-nothing to overwrite or skip).
+setting once at start; `overwrite` has no effect on phase 1 -- an existing directory is always
+reused regardless of it; it will govern file content once phase 2 exists.
 
 ### Flags
 
@@ -172,7 +173,10 @@ directory structure created` summary (with `created`/`reused` counts) on full su
 `failed to create restored directory` error and an immediate abort on the first failure -- no
 further directories are attempted, and the summary line is never reached. A pre-existing directory
 is always reused, regardless of `--overwrite`; a pre-existing non-directory at the destination path
-is always a hard error.
+is always a hard error. Directories are created with `os.Mkdir`, not a recursive `MkdirAll`, so
+the shallowest directory in any resolved set -- a folder rule's own `dest_path`, verbatim -- fails
+immediately if its parent doesn't already exist on the destination host; that parent must be
+created ahead of time.
 
 ## Transport Security
 

@@ -56,7 +56,7 @@ rwfs verify localhost:8080 --streams 8 --quiet
 ```bash
 # Resolve a restore policy's rules against the store, create the
 # resolved directories on disk, and log what a real file restore would do
-echo '{"rules":[{"host":"","path":"/data","include":true}]}' \
+echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_recovered"}]}' \
   | rwfs restore localhost:8080 --rules-stdin
 ```
 
