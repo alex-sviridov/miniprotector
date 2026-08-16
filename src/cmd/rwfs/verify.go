@@ -143,7 +143,7 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 					streamErrCh <- fmt.Errorf("resolve restore files: %w", err)
 					return
 				}
-				if resolver.Feed(resp.GetRow(), resp.GetFilterIndex()) {
+				if dispatch, _ := resolver.Feed(resp.GetRow(), resp.GetFilterIndex()); dispatch {
 					workCh <- resp.GetRow()
 				}
 			}

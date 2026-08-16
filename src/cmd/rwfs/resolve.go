@@ -53,7 +53,10 @@ func newRestoreResolver(rules []RestoreRule, filterToRuleIndex []int) *restoreRe
 }
 
 // Feed decides whether row (resolved by filters[filterIndex]) should be
-// dispatched. It is dropped when: the rule that actually governs row's
+// dispatched. Also returns the winning rule's index, so a caller (e.g.
+// rwfs restore, which needs to know which rule's dest_path governs the
+// row) can look it up without a second resolution pass. It is dropped
+// when: the rule that actually governs row's
 // path (per resolveRestoreFileRule's longest-ancestor-wins precedence,
 // evaluated fresh per row, over the whole rule list including excludes) is
 // excluded or doesn't match filterIndex's own rule -- meaning a more
@@ -70,19 +73,19 @@ func newRestoreResolver(rules []RestoreRule, filterToRuleIndex []int) *restoreRe
 // (type/size defense-in-depth -- bwfs's file_data_records only ever holds
 // such rows today, but this guards against that invariant ever changing
 // silently).
-func (r *restoreResolver) Feed(row *pb.FileRow, filterIndex int32) bool {
+func (r *restoreResolver) Feed(row *pb.FileRow, filterIndex int32) (dispatch bool, ruleIndex int) {
 	winningRuleIndex, include, found := resolveRestoreFileRule(r.rules, row.GetSource(), row.GetPath())
 	if !found || !include {
-		return false
+		return false, winningRuleIndex
 	}
 	if winningRuleIndex != r.filterToRuleIndex[filterIndex] {
-		return false
+		return false, winningRuleIndex
 	}
 	r.filterFoundAny[filterIndex] = true
 	if row.GetType() != "f" || row.GetSize() <= 0 {
-		return false
+		return false, winningRuleIndex
 	}
-	return true
+	return true, winningRuleIndex
 }
 
 // NotFound reports, for each file-level (non-host-agnostic) filter that

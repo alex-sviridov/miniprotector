@@ -83,3 +83,22 @@ func TestResolveRestoreFileRule_ExactRuleWinsOverFolderRuleRegardlessOfIndex(t *
 	assert.False(t, include)
 	assert.Equal(t, 0, idx)
 }
+
+func TestRestoreDestPath_NoRenameReturnsRowPathUnchanged(t *testing.T) {
+	rule := RestoreRule{Path: "/var/www", DestPath: ""}
+	assert.Equal(t, "/var/www/index.html", restoreDestPath(rule, "/var/www/index.html"))
+
+	ruleEqual := RestoreRule{Path: "/var/www", DestPath: "/var/www"}
+	assert.Equal(t, "/var/www/index.html", restoreDestPath(ruleEqual, "/var/www/index.html"))
+}
+
+func TestRestoreDestPath_FileLevelRuleSwapsExactPath(t *testing.T) {
+	rule := RestoreRule{Path: "/etc/nginx/nginx.conf", DestPath: "/etc/nginx/nginx.conf.bak"}
+	assert.Equal(t, "/etc/nginx/nginx.conf.bak", restoreDestPath(rule, "/etc/nginx/nginx.conf"))
+}
+
+func TestRestoreDestPath_FolderLevelRuleSubstitutesPrefix(t *testing.T) {
+	rule := RestoreRule{Path: "/data/photos", DestPath: "/data/photos_recovered"}
+	assert.Equal(t, "/data/photos_recovered/vacation.jpg", restoreDestPath(rule, "/data/photos/vacation.jpg"))
+	assert.Equal(t, "/data/photos_recovered/2024/beach.jpg", restoreDestPath(rule, "/data/photos/2024/beach.jpg"))
+}

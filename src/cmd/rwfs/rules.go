@@ -9,11 +9,15 @@ package main
 import "strings"
 
 // RestoreRule mirrors policy-server's RestoreRule / the restore cart's rule
-// shape -- {host, path, include}. Host == "" means host-agnostic.
+// shape -- {host, path, include, dest_path}. Host == "" means
+// host-agnostic. DestPath, when non-empty and different from Path, is the
+// path to restore to instead of Path -- see restoreDestPath, which
+// interprets it uniformly for both file-level and folder-level rules.
 type RestoreRule struct {
 	Host      string `json:"host"`
 	Path      string `json:"path"`
 	Include   bool   `json:"include"`
+	DestPath  string `json:"dest_path"`
 	NotBefore int64  `json:"not_before"`
 	NotAfter  int64  `json:"not_after"`
 }
@@ -126,4 +130,19 @@ func resolveRestoreFileRule(rules []RestoreRule, host, path string) (ruleIndex i
 func resolveRestoreFile(rules []RestoreRule, host, path string) bool {
 	_, include, found := resolveRestoreFileRule(rules, host, path)
 	return found && include
+}
+
+// restoreDestPath computes row's destination path under rule's dest_path
+// rename, if any. Works uniformly for a file-level rule (rowPath ==
+// rule.Path exactly, a straight swap) and a folder-level rule (rowPath is
+// always a rule.Path-prefixed descendant, by construction of
+// longestMatchingFolderRuleIndex's ancestor-chain match) -- the "single
+// replacement prefix for the whole folder" semantics
+// docs/superpowers/specs/2026-08-13-restore-destination-rename-design.md
+// already specified for a future executor to interpret.
+func restoreDestPath(rule RestoreRule, rowPath string) string {
+	if rule.DestPath == "" || rule.DestPath == rule.Path {
+		return rowPath
+	}
+	return rule.DestPath + strings.TrimPrefix(rowPath, rule.Path)
 }

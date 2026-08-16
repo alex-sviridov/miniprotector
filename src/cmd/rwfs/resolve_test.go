@@ -35,14 +35,18 @@ func TestRestoreResolver_KeepsRowMatchingItsOwnRule(t *testing.T) {
 	resolver := newRestoreResolver(rules, filterToRuleIndex)
 
 	row := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "f", Size: 10}
-	if !resolver.Feed(row, 0) {
+	dispatch, ruleIndex := resolver.Feed(row, 0)
+	if !dispatch {
 		t.Fatal("expected the row to be kept")
+	}
+	if ruleIndex != 0 {
+		t.Fatalf("expected the winning rule index to be 0, got %d", ruleIndex)
 	}
 }
 
 func TestRestoreResolver_DropsRowShadowedByMoreSpecificRule(t *testing.T) {
 	rules := []RestoreRule{
-		{Host: "", Path: "/etc", Include: true, NotBefore: 1, NotAfter: 100},     // filter 0 -- broad
+		{Host: "", Path: "/etc", Include: true, NotBefore: 1, NotAfter: 100},      // filter 0 -- broad
 		{Host: "h", Path: "/etc/a", Include: true, NotBefore: 200, NotAfter: 300}, // filter 1 -- specific
 	}
 	_, filterToRuleIndex := buildRestoreFilters(rules)
@@ -53,11 +57,15 @@ func TestRestoreResolver_DropsRowShadowedByMoreSpecificRule(t *testing.T) {
 	broadVersionRow := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "f", Size: 10}
 	specificVersionRow := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "f", Size: 20}
 
-	if resolver.Feed(broadVersionRow, 0) {
+	if dispatch, _ := resolver.Feed(broadVersionRow, 0); dispatch {
 		t.Fatal("the broad rule's row for /etc/a must be dropped: the specific rule (index 1) governs this path")
 	}
-	if !resolver.Feed(specificVersionRow, 1) {
+	dispatch, ruleIndex := resolver.Feed(specificVersionRow, 1)
+	if !dispatch {
 		t.Fatal("the specific rule's own row for its own path must be kept")
+	}
+	if ruleIndex != 1 {
+		t.Fatalf("expected the winning rule index to be 1, got %d", ruleIndex)
 	}
 }
 
@@ -72,7 +80,7 @@ func TestRestoreResolver_DropsRowWhoseWinningRuleIsExcluded(t *testing.T) {
 	// bwfs resolved /etc/secret under the broad folder filter (filter 0),
 	// since the exclude rule never becomes a filter at all.
 	row := &pb.FileRow{Source: "h", Path: "/etc/secret", Type: "f", Size: 10}
-	if resolver.Feed(row, 0) {
+	if dispatch, _ := resolver.Feed(row, 0); dispatch {
 		t.Fatal("the exclude rule governs /etc/secret, so this row must be dropped")
 	}
 }
@@ -83,7 +91,7 @@ func TestRestoreResolver_ZeroByteOrNonFileRowIsFoundButNotKept(t *testing.T) {
 
 	resolver := newRestoreResolver(rules, filterToRuleIndex)
 	zeroByte := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "f", Size: 0}
-	if resolver.Feed(zeroByte, 0) {
+	if dispatch, _ := resolver.Feed(zeroByte, 0); dispatch {
 		t.Fatal("a zero-byte row must be found but not selected")
 	}
 	notFound := resolver.NotFound()
@@ -93,7 +101,7 @@ func TestRestoreResolver_ZeroByteOrNonFileRowIsFoundButNotKept(t *testing.T) {
 
 	resolver = newRestoreResolver(rules, filterToRuleIndex)
 	dir := &pb.FileRow{Source: "h", Path: "/etc/a", Type: "d", Size: 10}
-	if resolver.Feed(dir, 0) {
+	if dispatch, _ := resolver.Feed(dir, 0); dispatch {
 		t.Fatal("a directory row must be found but not selected")
 	}
 }
