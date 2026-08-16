@@ -188,7 +188,10 @@ fail `GetPolicies`, unlike a check-in write failure.
 The `GetNodeCertStatus` RPC (see [protocol](../protocols/policy-server.md)) serves this data back —
 used by `api-server`/UI-facing tooling to surface renewal failures, not called by mesh nodes
 themselves. A hostname that has never called `GetPolicies`, and one that has and reported healthy,
-both correctly return a present result with an empty `last_error` — never an error. See
+both correctly return a present result with an empty `last_error` — never an error. For a hostname
+with no recorded row at all, `last_attempt_at` is left genuinely unset (nil) rather than filled
+from the store's zero `time.Time`, which would otherwise reach `api-server` as a year-1 timestamp
+and serialize as `-62135596800` instead of being omitted. See
 [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
 
 ## Configuration Keys
