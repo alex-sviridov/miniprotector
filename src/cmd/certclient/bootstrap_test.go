@@ -90,7 +90,7 @@ func TestBootstrap_WritesIdentityFiles(t *testing.T) {
 	signer := &fakeSigner{resp: fakeSignResponse(root, leaf, leaf)}
 	certsDir := t.TempDir()
 
-	err := bootstrap(tok, signer, certsDir)
+	err := bootstrap(tok, signer, certsDir, 7776000)
 	require.NoError(t, err)
 
 	for _, name := range []string{"ca.crt", "bootstrap.crt", "bootstrap.key"} {
@@ -108,7 +108,7 @@ func TestBootstrap_SignErrorPropagates(t *testing.T) {
 	signer := &fakeSigner{err: assert.AnError}
 	certsDir := t.TempDir()
 
-	err := bootstrap(tok, signer, certsDir)
+	err := bootstrap(tok, signer, certsDir, 7776000)
 	assert.Error(t, err)
 	_, statErr := os.Stat(filepath.Join(certsDir, "bootstrap.crt"))
 	assert.True(t, os.IsNotExist(statErr), "bootstrap.crt should not be written on sign failure")
@@ -116,7 +116,7 @@ func TestBootstrap_SignErrorPropagates(t *testing.T) {
 
 func TestBootstrap_InvalidTokenErrors(t *testing.T) {
 	certsDir := t.TempDir()
-	err := bootstrap("not-a-real-token", &fakeSigner{}, certsDir)
+	err := bootstrap("not-a-real-token", &fakeSigner{}, certsDir, 7776000)
 	assert.Error(t, err)
 }
 
@@ -128,7 +128,7 @@ func TestBootstrap_SetsBootstrapTierTemplateData(t *testing.T) {
 	signer := &fakeSigner{resp: fakeSignResponse(root, leaf, leaf)}
 	certsDir := t.TempDir()
 
-	err := bootstrap(tok, signer, certsDir)
+	err := bootstrap(tok, signer, certsDir, 7776000)
 	require.NoError(t, err)
 
 	require.NotNil(t, signer.gotReq)
@@ -137,4 +137,23 @@ func TestBootstrap_SetsBootstrapTierTemplateData(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(signer.gotReq.TemplateData, &got))
 	assert.Equal(t, "bootstrap", got.Tier)
+}
+
+func TestBootstrap_SetsRequestedNotAfter(t *testing.T) {
+	root := loadFixtureCert(t, "ca.crt")
+	leaf := loadFixtureCert(t, "client.crt")
+
+	tok := makeTestToken(t, "test-host", []string{"test-host"}, root)
+	signer := &fakeSigner{resp: fakeSignResponse(root, leaf, leaf)}
+	certsDir := t.TempDir()
+
+	before := time.Now()
+	err := bootstrap(tok, signer, certsDir, 3600) // 1 hour
+	after := time.Now()
+	require.NoError(t, err)
+
+	require.NotNil(t, signer.gotReq)
+	gotNotAfter := signer.gotReq.NotAfter.Time()
+	assert.True(t, !gotNotAfter.Before(before.Add(3600*time.Second)), "NotAfter must be at least ttlSec out from before start")
+	assert.True(t, !gotNotAfter.After(after.Add(3600*time.Second)), "NotAfter must be at most ttlSec out from after start")
 }

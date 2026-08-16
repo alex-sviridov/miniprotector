@@ -62,7 +62,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Bootstrap failed: %v\n", err)
 			os.Exit(1)
 		}
-		if err := bootstrap(tok, client, certsDir); err != nil {
+		if err := bootstrap(tok, client, certsDir, conf.BootstrapCertTTLSec); err != nil {
 			logger.Error("bootstrap failed", "error", err)
 			fmt.Fprintf(os.Stderr, "Bootstrap failed: %v\n", err)
 			os.Exit(1)

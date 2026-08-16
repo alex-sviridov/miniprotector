@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/ca"
@@ -24,11 +25,12 @@ type signer interface {
 
 // bootstrap exchanges an enrollment token for a signed identity via client,
 // writing ca.crt, client.crt, and client.key into certsDir.
-func bootstrap(token string, client signer, certsDir string) error {
+func bootstrap(token string, client signer, certsDir string, ttlSec int) error {
 	req, pk, err := ca.CreateSignRequest(token)
 	if err != nil {
 		return fmt.Errorf("create sign request: %w", err)
 	}
+	req.NotAfter = api.NewTimeDuration(time.Now().Add(time.Duration(ttlSec) * time.Second))
 
 	templateData, err := json.Marshal(struct {
 		Tier string `json:"tier"`

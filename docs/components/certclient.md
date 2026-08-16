@@ -36,7 +36,10 @@ certclient --debug <subcommand>
   this step). The redemption's sign request carries `TemplateData {"tier": "bootstrap"}`, which the
   CA's custom leaf template turns into a certificate with `extKeyUsage: ["clientAuth"]` only plus
   the custom `EKUIssuerCaller` marker — see
-  [Security Model](../SECURITY.md#the-two-tier-credential-model).
+  [Security Model](../SECURITY.md#the-two-tier-credential-model). The sign request now includes an
+  explicit `NotAfter` derived from `BootstrapCertTTLSec`, ensuring the issued certificate gets the
+  configured lifetime instead of step-ca's own 24-hour default — see
+  [Bootstrap Cert TTL Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
 - **`renew`**: renews the existing bootstrap credential via the CA's mTLS-authenticated renew
   endpoint — authenticated by the existing `bootstrap.crt`/`bootstrap.key`, no token needed. Reuses
   the existing private key; only `bootstrap.crt` is rewritten. Always renews when invoked; there's
