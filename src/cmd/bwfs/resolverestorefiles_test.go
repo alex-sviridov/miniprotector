@@ -386,10 +386,10 @@ func TestResolveRestoreDirectoryFilter_ExactPathFilterNeverMatchesDirectories(t 
 	// A non-prefix filter is what a host-specific FILE rule builds
 	// (buildRestoreFilters: PathIsPrefix = rule.Host == ""). This test
 	// pins that resolveRestoreDirectoryFilter itself doesn't need the
-	// caller to gate it -- an exact-path filter naturally matches nothing,
-	// since restoreChildRanges/the "path = ?" branch below only admits an
-	// exact-path filter's own literal path, never a directory row that
-	// merely starts with it.
+	// caller to gate it -- an exact-path filter is forced to match nothing,
+	// via the query's unconditional "1 = 0" branch for the non-prefix case
+	// (not a "path = ?" equality check, which would wrongly admit a
+	// directory row that happens to share the filter's own literal path).
 	store, err := wfs.New(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
