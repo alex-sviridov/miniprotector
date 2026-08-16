@@ -648,7 +648,19 @@ type Policy struct {
 	// write to.
 	Destinations []string `protobuf:"bytes,17,rep,name=destinations,proto3" json:"destinations,omitempty"`
 	// "restore" policy only.
-	Rules         []*RestoreRule `protobuf:"bytes,19,rep,name=rules,proto3" json:"rules,omitempty"`
+	Rules []*RestoreRule `protobuf:"bytes,19,rep,name=rules,proto3" json:"rules,omitempty"`
+	// "restore" policy only. "" or "verify" behaves exactly as every restore
+	// policy does today (agent runs rwfs verify, writes nothing). "restore"
+	// is the log-only-for-now execution path (rwfs restore). A restore
+	// policy JSON file written before this field existed has no "mode" key
+	// at all and is unaffected -- absent is read as "verify".
+	Mode string `protobuf:"bytes,20,opt,name=mode,proto3" json:"mode,omitempty"`
+	// "restore" policy only. Carried through and logged by rwfs restore;
+	// has no effect when mode is "verify" or unset -- the web UI already
+	// sends this checkbox unconditionally on every submit (see
+	// docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md),
+	// so it is simply inert for a verify submission.
+	Overwrite     bool `protobuf:"varint,21,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -795,6 +807,20 @@ func (x *Policy) GetRules() []*RestoreRule {
 	return nil
 }
 
+func (x *Policy) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *Policy) GetOverwrite() bool {
+	if x != nil {
+		return x.Overwrite
+	}
+	return false
+}
+
 type CreatePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -815,7 +841,11 @@ type CreatePolicyRequest struct {
 	// "backup" and "restore", both required.
 	StoragePolicyId string `protobuf:"bytes,12,opt,name=storage_policy_id,json=storagePolicyId,proto3" json:"storage_policy_id,omitempty"`
 	// "restore" policy only, required.
-	Rules         []*RestoreRule `protobuf:"bytes,14,rep,name=rules,proto3" json:"rules,omitempty"`
+	Rules []*RestoreRule `protobuf:"bytes,14,rep,name=rules,proto3" json:"rules,omitempty"`
+	// "restore" policy only. See Policy.mode above.
+	Mode string `protobuf:"bytes,15,opt,name=mode,proto3" json:"mode,omitempty"`
+	// "restore" policy only. See Policy.overwrite above.
+	Overwrite     bool `protobuf:"varint,16,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -925,6 +955,20 @@ func (x *CreatePolicyRequest) GetRules() []*RestoreRule {
 		return x.Rules
 	}
 	return nil
+}
+
+func (x *CreatePolicyRequest) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *CreatePolicyRequest) GetOverwrite() bool {
+	if x != nil {
+		return x.Overwrite
+	}
+	return false
 }
 
 type UpdatePolicyRequest struct {
@@ -1169,7 +1213,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\tdest_path\x18\x04 \x01(\tR\bdestPath\x12\x1d\n" +
 	"\n" +
 	"not_before\x18\x05 \x01(\x03R\tnotBefore\x12\x1b\n" +
-	"\tnot_after\x18\x06 \x01(\x03R\bnotAfter\"\xea\x05\n" +
+	"\tnot_after\x18\x06 \x01(\x03R\bnotAfter\"\x9c\x06\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -1190,7 +1234,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x11storage_policy_id\x18\x0f \x01(\tR\x0fstoragePolicyId\x12>\n" +
 	"\bcheckins\x18\x10 \x03(\v2\".policyserverservice.PolicyCheckinR\bcheckins\x12\"\n" +
 	"\fdestinations\x18\x11 \x03(\tR\fdestinations\x126\n" +
-	"\x05rules\x18\x13 \x03(\v2 .policyserverservice.RestoreRuleR\x05rulesJ\x04\b\a\x10\bJ\x04\b\v\x10\fJ\x04\b\x12\x10\x13R\vdestinationR\bhostnameR\fsource_store\"\x8d\x04\n" +
+	"\x05rules\x18\x13 \x03(\v2 .policyserverservice.RestoreRuleR\x05rules\x12\x12\n" +
+	"\x04mode\x18\x14 \x01(\tR\x04mode\x12\x1c\n" +
+	"\toverwrite\x18\x15 \x01(\bR\toverwriteJ\x04\b\a\x10\bJ\x04\b\v\x10\fJ\x04\b\x12\x10\x13R\vdestinationR\bhostnameR\fsource_store\"\xbf\x04\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
@@ -1204,7 +1250,9 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\vdisabled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"disabledAt\x12*\n" +
 	"\x11storage_policy_id\x18\f \x01(\tR\x0fstoragePolicyId\x126\n" +
-	"\x05rules\x18\x0e \x03(\v2 .policyserverservice.RestoreRuleR\x05rulesJ\x04\b\x06\x10\aJ\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\vdestinationR\bhostnameR\fsource_store\"\xbd\x03\n" +
+	"\x05rules\x18\x0e \x03(\v2 .policyserverservice.RestoreRuleR\x05rules\x12\x12\n" +
+	"\x04mode\x18\x0f \x01(\tR\x04mode\x12\x1c\n" +
+	"\toverwrite\x18\x10 \x01(\bR\toverwriteJ\x04\b\x06\x10\aJ\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\vdestinationR\bhostnameR\fsource_store\"\xbd\x03\n" +
 	"\x13UpdatePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12I\n" +

@@ -172,6 +172,18 @@ message Policy {
   reserved "source_store";
   // "restore" policy only.
   repeated RestoreRule rules = 19;
+  // "restore" policy only. "" or "verify" behaves exactly as every restore
+  // policy does today (agent runs rwfs verify, writes nothing). "restore"
+  // is the log-only-for-now execution path (rwfs restore). A restore
+  // policy JSON file written before this field existed has no "mode" key
+  // at all and is unaffected -- absent is read as "verify".
+  string mode = 20;
+  // "restore" policy only. Carried through and logged by rwfs restore;
+  // has no effect when mode is "verify" or unset -- the web UI already
+  // sends this checkbox unconditionally on every submit (see
+  // docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md),
+  // so it is simply inert for a verify submission.
+  bool overwrite = 21;
 }
 
 message CreatePolicyRequest {
@@ -205,6 +217,10 @@ message CreatePolicyRequest {
   reserved "source_store";
   // "restore" policy only, required.
   repeated RestoreRule rules = 14;
+  // "restore" policy only. See Policy.mode above.
+  string mode = 15;
+  // "restore" policy only. See Policy.overwrite above.
+  bool overwrite = 16;
 }
 
 message UpdatePolicyRequest {
