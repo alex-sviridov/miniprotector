@@ -107,3 +107,29 @@ func TestParseArguments_VerifyWithoutRulesStdinStillDefaultsServerNameToLocalHos
 		assert.NotEqual(t, "", args.ServerName, "existing behavior must be unchanged when the flag is absent")
 	})
 }
+
+func TestParseArguments_RestoreWithoutRulesStdinErrors(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080"}, func() {
+		_, err := parseArguments(testConfig())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "restore requires --rules-stdin")
+	})
+}
+
+func TestParseArguments_RestoreWithRulesStdinParsesOverwriteFlag(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin", "--overwrite"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, "restore", args.Action)
+		assert.True(t, args.RulesStdin)
+		assert.True(t, args.Overwrite)
+	})
+}
+
+func TestParseArguments_RestoreOverwriteDefaultsFalse(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.False(t, args.Overwrite)
+	})
+}

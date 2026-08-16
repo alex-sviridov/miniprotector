@@ -9,7 +9,7 @@ import (
 )
 
 type Arguments struct {
-	Action     string // "list" | "verify"
+	Action     string // "list" | "verify" | "restore"
 	ServerName string
 	PathFilter string
 	BwfsHost   string
@@ -21,6 +21,7 @@ type Arguments struct {
 	Streams    int  // verify only
 	Retries    int  // verify only
 	RulesStdin bool // verify only
+	Overwrite  bool // restore only
 	JobID      string
 
 	listPositional string
@@ -77,15 +78,36 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	verifyCmd.Flags().BoolVar(&args.RulesStdin, "rules-stdin", false, "Read {\"rules\":[{host,path,include}]} from stdin and verify only matching files")
 	verifyCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to bwfs as job-id metadata")
 
+	restoreCmd := &cobra.Command{
+		Use:   "restore [[server_name:]path] <bwfs_host:port>",
+		Short: "Resolve a restore policy's rules and log what a restore would do (no files written yet)",
+		Args:  cobra.RangeArgs(1, 2),
+		Run: func(cmd *cobra.Command, cliArgs []string) {
+			args.Action = "restore"
+			if len(cliArgs) == 1 {
+				args.bwfsTarget = cliArgs[0]
+			} else {
+				args.listPositional = cliArgs[0]
+				args.bwfsTarget = cliArgs[1]
+			}
+		},
+	}
+	restoreCmd.Flags().BoolVar(&args.RulesStdin, "rules-stdin", false, "Read {\"rules\":[{host,path,include,dest_path}]} from stdin (required)")
+	restoreCmd.Flags().BoolVar(&args.Overwrite, "overwrite", false, "Whether a real restore would overwrite existing destination files (logged only, not yet enforced)")
+	restoreCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
+	restoreCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Suppress per-file resolved lines (warnings and summary always shown)")
+	restoreCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to bwfs as job-id metadata")
+
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(verifyCmd)
+	rootCmd.AddCommand(restoreCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		return nil, err
 	}
 
 	if args.Action == "" {
-		return nil, fmt.Errorf("a subcommand is required: list, verify")
+		return nil, fmt.Errorf("a subcommand is required: list, verify, restore")
 	}
 
 	if args.Action == "list" {
@@ -101,6 +123,10 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		if args.Retries < 1 {
 			return nil, fmt.Errorf("--retries must be at least 1, got: %d", args.Retries)
 		}
+	}
+
+	if args.Action == "restore" && !args.RulesStdin {
+		return nil, fmt.Errorf("restore requires --rules-stdin")
 	}
 
 	serverName, path, err := common.ParseServerPath(args.listPositional)

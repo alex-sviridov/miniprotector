@@ -66,5 +66,10 @@ func main() {
 			logger.Error("Verify failed", "error", err)
 			os.Exit(1)
 		}
+	case "restore":
+		if err := runRestore(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.Overwrite, os.Stdin, arguments.Quiet, certsDir, jobID); err != nil {
+			logger.Error("Restore failed", "error", err)
+			os.Exit(1)
+		}
 	}
 }
