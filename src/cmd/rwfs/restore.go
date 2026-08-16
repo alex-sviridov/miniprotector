@@ -1,11 +1,12 @@
-// restore.go implements `rwfs restore` -- this round, a log-only preview
-// of a restore policy's resolved file list: for every row
-// ResolveRestoreFiles yields that survives restoreResolver.Feed's
-// precedence tie-break, it logs the row's source path and its computed
-// destination path (restoreDestPath's dest_path rename applied), plus the
-// run's overwrite setting once at start. No RestoreFile call, nothing
-// written to disk -- see
-// docs/superpowers/specs/2026-08-16-restore-execute-log-only-design.md.
+// restore.go implements `rwfs restore`: for every row ResolveRestoreFiles
+// yields that survives restoreResolver.Feed's precedence tie-break, it logs
+// the row's source path and its computed destination path
+// (restoreDestPath's dest_path rename applied), plus the run's overwrite
+// setting once at start. Once resolution completes with zero not-found
+// failures, phase 1 (createRestoreDirectoryStructure) actually recreates
+// every resolved directory on the destination filesystem -- file content
+// restore (phase 2, still no RestoreFile call) remains unbuilt -- see
+// docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md.
 // Reuses the exact rule-resolution pipeline `rwfs verify --rules-stdin`
 // already built (parseRulesStdin, buildRestoreFilters, newRestoreResolver,
 // the same not-found semantics) -- only the per-row action differs.
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/connection"
@@ -63,6 +65,7 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 
 	total := 0
 	warnings := 0
+	var dirs []restoreDirectory
 	for {
 		resp, err := stream.Recv()
 		if err == io.EOF {
@@ -77,9 +80,14 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 		if !dispatch {
 			continue
 		}
+		destPath := restoreDestPath(rules[ruleIndex], row.GetPath())
+
+		if row.GetType() == "d" {
+			dirs = append(dirs, restoreDirectory{DestPath: destPath})
+			continue
+		}
 
 		total++
-		destPath := restoreDestPath(rules[ruleIndex], row.GetPath())
 		if !quiet {
 			logger.Info("resolved",
 				"source", row.GetSource(),
@@ -98,5 +106,48 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 	if warnings > 0 {
 		return fmt.Errorf("%d file(s) failed resolution", warnings)
 	}
+
+	return createRestoreDirectoryStructure(logger, dirs)
+}
+
+// createRestoreDirectoryStructure is restore's phase 1: recreate every
+// resolved directory, parent before child, stopping at the first failure
+// (per docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md).
+// dirs may contain duplicate DestPaths -- two different rules resolving to
+// the same destination -- which this collapses to one create-or-reuse
+// rather than flagging as a conflict (see the design's Non-Goals).
+func createRestoreDirectoryStructure(logger *slog.Logger, dirs []restoreDirectory) error {
+	if len(dirs) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(dirs))
+	var unique []restoreDirectory
+	for _, d := range dirs {
+		if seen[d.DestPath] {
+			continue
+		}
+		seen[d.DestPath] = true
+		unique = append(unique, d)
+	}
+	sort.Slice(unique, func(i, j int) bool {
+		return len(ancestorsOrSelfRestorePath(unique[i].DestPath)) < len(ancestorsOrSelfRestorePath(unique[j].DestPath))
+	})
+
+	logger.Info("creating restored directory structure")
+	created, reused := 0, 0
+	for _, dir := range unique {
+		wasCreated, err := createRestoreDirectory(dir)
+		if err != nil {
+			logger.Error("failed to create restored directory", "path", dir.DestPath, "reason", err)
+			return fmt.Errorf("create restored directory %s: %w", dir.DestPath, err)
+		}
+		if wasCreated {
+			created++
+		} else {
+			reused++
+		}
+	}
+	logger.Info("restored directory structure created", "created", created, "reused", reused)
 	return nil
 }

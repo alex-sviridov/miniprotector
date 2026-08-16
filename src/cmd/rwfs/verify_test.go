@@ -84,6 +84,9 @@ func expectedCRC32(t *testing.T, chunks [][]byte) []byte {
 // unlike the production query it does not dedupe across multiple content
 // versions (file_ids) sharing one (source_host, path) -- no test using
 // this fixture needs that, since each seeds at most one file_id per path.
+// For a path_is_prefix filter it also emits directory rows straight off
+// file_version_records (type = "d"), LIKE-based same as the file query
+// above, mirroring the shape bwfs's real query has since Task 3.
 type testResolveServer struct {
 	pb.UnimplementedListServiceServer
 	store *wfs.Store
@@ -146,6 +149,49 @@ func (s *testResolveServer) ResolveRestoreFiles(req *pb.ResolveRestoreFilesReque
 		}()
 		if sendErr != nil {
 			return sendErr
+		}
+
+		if !filter.GetPathIsPrefix() {
+			continue
+		}
+		dirQuery := s.store.RawDB().
+			Table("file_version_records").
+			Select("source_host, path").
+			Where("type = ?", "d").
+			Group("source_host, path")
+		if filter.GetHost() != "" {
+			dirQuery = dirQuery.Where("source_host = ?", filter.GetHost())
+		}
+		dirQuery = dirQuery.Where("path = ? OR path LIKE ?", filter.GetPath(), filter.GetPath()+"/%")
+		if filter.GetNotBefore() != 0 {
+			dirQuery = dirQuery.Where("created_at >= ?", time.Unix(filter.GetNotBefore(), 0))
+		}
+		if filter.GetNotAfter() != 0 {
+			dirQuery = dirQuery.Where("created_at <= ?", time.Unix(filter.GetNotAfter(), 0))
+		}
+
+		dirRows, err := dirQuery.Rows()
+		if err != nil {
+			return err
+		}
+		dirSendErr := func() error {
+			defer dirRows.Close()
+			for dirRows.Next() {
+				var source, path string
+				if err := dirRows.Scan(&source, &path); err != nil {
+					return err
+				}
+				if err := stream.Send(&pb.ResolveRestoreFilesResponse{
+					Row:         &pb.FileRow{Source: source, Type: "d", Path: path},
+					FilterIndex: int32(filterIndex),
+				}); err != nil {
+					return err
+				}
+			}
+			return dirRows.Err()
+		}()
+		if dirSendErr != nil {
+			return dirSendErr
 		}
 	}
 	return nil

@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -121,4 +123,195 @@ func TestRunRestore_FolderLevelRuleMatchingNothingSucceeds(t *testing.T) {
 
 	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
 	assert.NoError(t, err)
+}
+
+// seedDirectory writes a file_version_records row shaped like a directory
+// bwfs actually backed up, for driving testResolveServer's new directory
+// query (Step 1 above) -- no file_data_records row, since directories
+// never get one.
+func seedDirectory(t *testing.T, store *wfs.Store, source, path, jobID string, createdAtUnix int64) {
+	t.Helper()
+	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{
+		ObjectID:   fmt.Sprintf("fs://%s:d:%s:%d", source, path, createdAtUnix),
+		JobID:      jobID,
+		SourceHost: source,
+		Path:       path,
+		Type:       "d",
+		CreatedAt:  time.Unix(createdAtUnix, 0),
+	}).Error)
+}
+
+func TestRunRestore_CreatesDirectoryStructureForFolderSelection(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &recordingRestoreServer{}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	destDir := destBase + "/nested_recovered"
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	require.NoError(t, err)
+
+	info, statErr := os.Stat(destDir)
+	require.NoError(t, statErr, "the directory must actually exist on disk now")
+	assert.True(t, info.IsDir())
+
+	out := logBuf.String()
+	assert.Contains(t, out, "creating restored directory structure")
+	assert.Contains(t, out, "restored directory structure created")
+	assert.Contains(t, out, "created=1")
+	assert.Contains(t, out, "reused=0")
+}
+
+func TestRunRestore_ReusesExistingDirectory(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &recordingRestoreServer{}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	destDir := destBase + "/already-here"
+	require.NoError(t, os.Mkdir(destDir, 0o755))
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	require.NoError(t, err)
+
+	out := logBuf.String()
+	assert.Contains(t, out, "created=0")
+	assert.Contains(t, out, "reused=1")
+}
+
+func TestRunRestore_AbortsOnDirectoryCreationFailureBeforeSummary(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &recordingRestoreServer{}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	// A plain file sits where the directory needs to go.
+	destDir := destBase + "/blocked"
+	require.NoError(t, os.WriteFile(destDir, []byte("data"), 0o644))
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "blocked")
+
+	out := logBuf.String()
+	assert.Contains(t, out, "failed to create restored directory")
+	assert.NotContains(t, out, "restored directory structure created",
+		"the summary line must never be logged when phase 1 aborts")
+}
+
+func TestRunRestore_ParentBeforeChildOrdering(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	// Three levels deep, seeded in a deliberately non-hierarchical order --
+	// if phase 1 didn't sort parent-first, os.Mkdir would fail on whichever
+	// child streams in before its parent exists.
+	seedDirectory(t, store, "hosta", "/tmp/a/b/c", "job1", 5000)
+	seedDirectory(t, store, "hosta", "/tmp/a", "job1", 5000)
+	seedDirectory(t, store, "hosta", "/tmp/a/b", "job1", 5000)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &recordingRestoreServer{}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	destRoot := destBase + "/a"
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/a","include":true,"dest_path":%q}]}`, destRoot)
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	require.NoError(t, err)
+
+	for _, p := range []string{destRoot, destRoot + "/b", destRoot + "/b/c"} {
+		info, statErr := os.Stat(p)
+		require.NoError(t, statErr, p)
+		assert.True(t, info.IsDir(), p)
+	}
+}
+
+func TestRunRestore_NotFoundAbortsBeforePhase1(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	// A directory that WOULD be creatable, but a file-level rule elsewhere
+	// in the same rule set matches nothing -- phase 1 must never run.
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &recordingRestoreServer{}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	rulesJSON := fmt.Sprintf(`{"rules":[
+		{"host":"","path":"/tmp/nested","include":true,"dest_path":%q},
+		{"host":"hosta","path":"/etc/never-backed-up.conf","include":true}
+	]}`, destBase+"/nested")
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1 file(s) failed resolution")
+
+	out := logBuf.String()
+	assert.NotContains(t, out, "creating restored directory structure",
+		"phase 1 must never start when resolution already has a not-found failure")
+	_, statErr := os.Stat(destBase + "/nested")
+	assert.True(t, os.IsNotExist(statErr), "the directory must not have been created")
 }
