@@ -233,27 +233,30 @@ mid-enrollment-trouble. One small new RPC on the existing `PolicyService`:
 ```proto
 service PolicyService {
   // ...existing RPCs unchanged...
-  rpc GetNodeCertStatus(GetNodeCertStatusRequest) returns (GetNodeCertStatusResponse);
+  rpc GetNodeCertStatus(GetNodeCertStatusRequest) returns (NodeCertStatus);
 }
 
 message GetNodeCertStatusRequest {
-  string hostname = 1; // exact match; empty = all known hosts
+  string hostname = 1; // required
 }
 
+// hostname with no reported status ever returns a NodeCertStatus with
+// empty LastError and a zero LastAttemptAt -- not an error.
 message NodeCertStatus {
-  string hostname                  = 1;
-  string last_error                = 2; // "" = healthy or never reported
+  string hostname                           = 1;
+  string last_error                         = 2; // "" = healthy or never reported
   google.protobuf.Timestamp last_attempt_at = 3;
-}
-
-message GetNodeCertStatusResponse {
-  repeated NodeCertStatus statuses = 1;
 }
 ```
 
-**`src/cmd/policy-server`** — new handler backed by a new `Store.CertStatusForHosts`/`AllCertStatuses`
-read method (mirroring `CheckinsForPolicy`'s existing shape), called once per `GetPolicies` request as
-described above — not from inside the per-policy loop.
+Narrowed from an earlier draft that had `hostname` optional ("empty = all known hosts") and a
+`repeated`-wrapping response: the only caller in this round is a single per-host detail lookup, so the
+RPC returns exactly one `NodeCertStatus` for exactly one required `hostname` — no list wrapper, no
+unused "list all hosts" mode. A bulk listing can be added later if a consumer actually needs one.
+
+**`src/cmd/policy-server`** — new handler backed by a new `Store.CertStatusForHost` read method
+(mirroring `CheckinsForPolicy`'s existing shape), called once per `GetPolicies` request as described
+above — not from inside the per-policy loop.
 
 **`src/cmd/api-server`** — one new small `GET` route proxying `GetNodeCertStatus`, following this
 codebase's existing route-registration pattern. This is a genuine new piece — correcting the earlier,
