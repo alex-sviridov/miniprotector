@@ -323,3 +323,18 @@ func TestRunFetch_RestoreRuleTimeframeSurvivesIntoCache(t *testing.T) {
 	// before this feature existed.
 	assert.NotContains(t, string(data), `"not_before": 0`)
 }
+
+func TestToCachedPolicies_RestoreRuleDestPathRoundTrips(t *testing.T) {
+	policies := []*pb.Policy{
+		{
+			Type: "restore",
+			Rules: []*pb.RestoreRule{
+				{Host: "web-01", Path: "/etc/nginx/nginx.conf", Include: true, DestPath: "/etc/nginx/nginx.conf.bak"},
+			},
+		},
+	}
+	cached := toCachedPolicies(policies)
+	require.Len(t, cached, 1)
+	require.Len(t, cached[0].Rules, 1)
+	assert.Equal(t, "/etc/nginx/nginx.conf.bak", cached[0].Rules[0].DestPath)
+}

@@ -19,6 +19,7 @@ type RestoreRule struct {
 	Host      string `json:"host"`
 	Path      string `json:"path"`
 	Include   bool   `json:"include"`
+	DestPath  string `json:"dest_path,omitempty"`
 	NotBefore int64  `json:"not_before,omitempty"`
 	NotAfter  int64  `json:"not_after,omitempty"`
 }

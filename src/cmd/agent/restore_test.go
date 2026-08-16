@@ -163,3 +163,13 @@ func TestRestoreRule_TimeframeRoundTripsThroughJSON(t *testing.T) {
 	assert.Equal(t, int64(100), decoded.NotBefore)
 	assert.Equal(t, int64(200), decoded.NotAfter)
 }
+
+func TestRestoreRule_DestPathRoundTripsThroughJSON(t *testing.T) {
+	rule := RestoreRule{Host: "h", Path: "/etc/a", Include: true, DestPath: "/etc/a.bak"}
+	data, err := json.Marshal(rule)
+	require.NoError(t, err)
+
+	var decoded RestoreRule
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, "/etc/a.bak", decoded.DestPath)
+}
