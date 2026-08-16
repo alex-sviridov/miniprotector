@@ -13,9 +13,13 @@ service PolicyService {
   rpc CreatePolicy(CreatePolicyRequest) returns (Policy);
   rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
   rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
+  rpc GetNodeCertStatus(GetNodeCertStatusRequest) returns (NodeCertStatus);
 }
 
-message GetPoliciesRequest {}
+message GetPoliciesRequest {
+  string bootstrap_refresh_last_error = 1; // Set only when this node's bootstrap-refresh task is currently failing; empty means healthy or nothing to report
+  int64  bootstrap_refresh_last_attempt_at = 2; // unix seconds; 0 = not reported
+}
 
 message GetPoliciesResponse {
   repeated Policy policies = 1;
@@ -47,6 +51,16 @@ message ObjectFilter {
 message PolicyCheckin {
   string hostname = 1;
   google.protobuf.Timestamp last_seen_at = 2;
+}
+
+message GetNodeCertStatusRequest {
+  string hostname = 1; // required
+}
+
+message NodeCertStatus {
+  string hostname = 1;
+  string last_error = 2; // "" = healthy or never reported
+  google.protobuf.Timestamp last_attempt_at = 3;
 }
 
 message RestoreRule {
@@ -139,7 +153,8 @@ certificate — the same requirement every server except `issuer`'s own listener
 
 ## Behavior
 
-- `GetPoliciesRequest` is empty — no fields to set.
+- `GetPoliciesRequest` carries optional fields: `bootstrap_refresh_last_error` (empty if healthy or nothing to report) and `bootstrap_refresh_last_attempt_at` (unix seconds; 0 = not reported). `policy-server` records whatever is sent, healthy or not, so a recovery is visible too.
+- `GetNodeCertStatus(GetNodeCertStatusRequest{hostname})` queries a node's certificate renewal status. Returns a `NodeCertStatus` with the queried `hostname`, the most recent `last_error` (empty if healthy or never reported), and `last_attempt_at` (a timestamp, or unset if never attempted). A hostname with no reported status returns a present result with empty `last_error` and zero `last_attempt_at` — never an error. See [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
 - `GetPoliciesResponse.policies` contains every policy whose `client_filters` match the caller:
   hostname glob match (or no hostname restriction) **and** every required label present — both
   conditions must hold. `client_filters` itself is never echoed back.
@@ -236,3 +251,4 @@ certificate — the same requirement every server except `issuer`'s own listener
 - [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md)
 - [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md)
 - [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md)
+- [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)

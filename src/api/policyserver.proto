@@ -17,9 +17,19 @@ service PolicyService {
   rpc CreatePolicy(CreatePolicyRequest) returns (Policy);
   rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
   rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
+  rpc GetNodeCertStatus(GetNodeCertStatusRequest) returns (NodeCertStatus);
 }
 
-message GetPoliciesRequest {}
+// Set only when this node's bootstrap-refresh task is currently failing
+// (agent-state.json's "bootstrap-refresh" entry has a non-empty
+// last_error) -- see docs/superpowers/specs/
+// 2026-08-16-bootstrap-cert-renewal-design.md. Empty means either
+// healthy or nothing to report; policy-server records whatever is sent,
+// healthy or not, so a recovery is visible too.
+message GetPoliciesRequest {
+  string bootstrap_refresh_last_error      = 1;
+  int64  bootstrap_refresh_last_attempt_at = 2; // unix seconds; 0 = not reported
+}
 
 message GetPoliciesResponse {
   repeated Policy policies = 1;
@@ -53,6 +63,22 @@ message ObjectFilter {
 message PolicyCheckin {
   string hostname = 1;
   google.protobuf.Timestamp last_seen_at = 2;
+}
+
+message GetNodeCertStatusRequest {
+  string hostname = 1; // required
+}
+
+// NodeCertStatus is a node-wide property, unlike PolicyCheckin (scoped to
+// (policy_id, hostname) pairs) -- bootstrap-refresh is agent's own
+// built-in task, never a policy fetched from policy-server, so there is
+// no policy_id to key this on. hostname with no reported status ever
+// returns a NodeCertStatus with empty LastError and a zero LastAttemptAt
+// -- not an error.
+message NodeCertStatus {
+  string hostname = 1;
+  string last_error = 2; // "" = healthy or never reported
+  google.protobuf.Timestamp last_attempt_at = 3;
 }
 
 // One restore-cart selection rule: host-agnostic (Host == "") folder rules
