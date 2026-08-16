@@ -36,6 +36,7 @@ func TestBinariesForKind(t *testing.T) {
 	assert.Equal(t, "agent", binariesForKind("bootstrap-refresh"))
 	assert.Equal(t, "agent", binariesForKind("operating-refresh"))
 	assert.Equal(t, "agent", binariesForKind("policy-update"))
+	assert.Equal(t, "agent", binariesForKind("verify"))
 	assert.Equal(t, "agent", binariesForKind("restore"))
 	assert.Equal(t, "agent|brfs|bwfs", binariesForKind(""))
 }
@@ -261,6 +262,51 @@ func TestHandleListJobs_RestoreKindUsesAgentBinaryLabel(t *testing.T) {
 	require.Len(t, data, 1)
 	job := data[0].(map[string]any)
 	assert.Equal(t, "restore", job["kind"])
+	assert.Equal(t, "success", job["state"])
+}
+
+func TestHandleListJobs_KindVerifyIsAccepted(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=verify", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestHandleListJobs_VerifyKindUsesAgentBinaryLabel(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent"} | event="start"`: {
+			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
+				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "verify:e2e-restore-verify:1752400500"}},
+			}},
+		},
+		`{binary=~"agent"} | event="finish"`: {
+			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
+				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "verify:e2e-restore-verify:1752400500", "status": "success"}},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=verify", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 1)
+	job := data[0].(map[string]any)
+	assert.Equal(t, "verify", job["kind"])
 	assert.Equal(t, "success", job["state"])
 }
 
