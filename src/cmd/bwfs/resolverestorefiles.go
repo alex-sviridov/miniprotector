@@ -153,6 +153,74 @@ func resolveRestoreFilter(store *wfs.Store, filter *pb.RestoreFileFilter, yield 
 	return rows.Err()
 }
 
+// resolveRestoreDirectoryFilter mirrors resolveRestoreFilter's shape, but
+// queries file_version_records directly (WHERE type = 'd') since a
+// directory never has a file_data_records row to join through. Reuses
+// restoreChildRanges verbatim -- same separator-aware subtree matching. A
+// directory has no content-version concept to disambiguate the way a
+// file's checksum does, so GROUP BY (source_host, path) alone fully
+// collapses to one row per directory; MAX(created_at) only needs to prove
+// at least one version exists inside [filter.NotBefore, filter.NotAfter],
+// not identify which one, since this round only checks existence -- see
+// docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md.
+//
+// Only ever called for a path_is_prefix filter -- an exact-path filter
+// naturally matches nothing here (its own literal path is a leaf a
+// directory could share, but "d" rows this query returns are folder
+// containers a caller is about to recreate, and an exact-file rule has no
+// reason to ask for that), so callers don't need to gate this themselves,
+// though ResolveRestoreFiles does anyway for clarity (see below).
+func resolveRestoreDirectoryFilter(store *wfs.Store, filter *pb.RestoreFileFilter, yield func(source, path string) bool) error {
+	query := store.RawDB().
+		Table("file_version_records").
+		Select("source_host, path, MAX(created_at) AS best_version_at").
+		Where("type = ?", "d").
+		Group("source_host, path").
+		Order("source_host ASC, path ASC")
+
+	if filter.GetHost() != "" {
+		query = query.Where("source_host = ?", filter.GetHost())
+	}
+	if filter.GetPathIsPrefix() {
+		r := restoreChildRanges(filter.GetPath())
+		query = query.Where("path = ? OR (path >= ? AND path < ?) OR (path >= ? AND path < ?)",
+			filter.GetPath(), r.Unix.Lower, r.Unix.Upper, r.Windows.Lower, r.Windows.Upper)
+	} else {
+		// An exact-path (file-level) filter never targets a directory row,
+		// even if its literal path happens to collide with some directory's
+		// path -- "d" rows this query returns are folder containers a
+		// caller is about to recreate, and an exact-file rule has no reason
+		// to ask for that. Force no match here (rather than a literal
+		// "path = ?" equality check) so an accidental path collision with
+		// an unrelated file target never surfaces a directory.
+		query = query.Where("1 = 0")
+	}
+	if filter.GetNotBefore() != 0 {
+		query = query.Where("created_at >= ?", time.Unix(filter.GetNotBefore(), 0))
+	}
+	if filter.GetNotAfter() != 0 {
+		query = query.Where("created_at <= ?", time.Unix(filter.GetNotAfter(), 0))
+	}
+
+	rows, err := query.Rows()
+	if err != nil {
+		return fmt.Errorf("resolve restore directory filter query: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var source, path string
+		var bestVersionAt any
+		if err := rows.Scan(&source, &path, &bestVersionAt); err != nil {
+			return fmt.Errorf("scan resolved directory: %w", err)
+		}
+		if !yield(source, path) {
+			return rows.Err()
+		}
+	}
+	return rows.Err()
+}
+
 func (s *listServer) ResolveRestoreFiles(req *pb.ResolveRestoreFilesRequest, stream pb.ListService_ResolveRestoreFilesServer) error {
 	for filterIndex, filter := range req.GetFilters() {
 		var sendErr error
@@ -179,6 +247,28 @@ func (s *listServer) ResolveRestoreFiles(req *pb.ResolveRestoreFilesRequest, str
 		}
 		if err != nil {
 			s.logger.Error("ResolveRestoreFiles query failed", "filter_index", filterIndex, "error", err)
+			return err
+		}
+
+		if !filter.GetPathIsPrefix() {
+			continue
+		}
+		err = resolveRestoreDirectoryFilter(s.store, filter, func(source, path string) bool {
+			err := stream.Send(&pb.ResolveRestoreFilesResponse{
+				Row:         &pb.FileRow{Source: source, Type: "d", Path: path},
+				FilterIndex: int32(filterIndex),
+			})
+			if err != nil {
+				sendErr = err
+				return false
+			}
+			return true
+		})
+		if sendErr != nil {
+			return sendErr
+		}
+		if err != nil {
+			s.logger.Error("ResolveRestoreFiles directory query failed", "filter_index", filterIndex, "error", err)
 			return err
 		}
 	}

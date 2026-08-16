@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -325,4 +326,141 @@ func TestResolveRestoreFiles_SendErrorIsReturned(t *testing.T) {
 	// The handler should return the send error, not nil or the query error
 	require.Error(t, err)
 	assert.Equal(t, io.EOF, err, "should return the stream.Send error, not query error or nil")
+}
+
+// seedDirectory writes a file_version_records row shaped like a directory
+// bwfs actually backed up -- no file_data_records row (directories never
+// get one), real source_host/path/type columns (Task 1), no checksum
+// concept. Mirrors seedFile's shape for the parts that apply.
+func seedDirectory(t *testing.T, store *wfs.Store, source, path, jobID string, createdAtUnix int64) {
+	t.Helper()
+	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{
+		ObjectID:   fmt.Sprintf("fs://%s:d:%s:%d", source, path, createdAtUnix),
+		JobID:      jobID,
+		SourceHost: source,
+		Path:       path,
+		Type:       "d",
+		CreatedAt:  unixTime(createdAtUnix),
+	}).Error)
+}
+
+func collectResolvedDirectories(t *testing.T, store *wfs.Store, filter *pb.RestoreFileFilter) [][2]string {
+	t.Helper()
+	var got [][2]string
+	err := resolveRestoreDirectoryFilter(store, filter, func(source, path string) bool {
+		got = append(got, [2]string{source, path})
+		return true
+	})
+	require.NoError(t, err)
+	return got
+}
+
+func TestResolveRestoreDirectoryFilter_HostSpecificMatch(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+	seedDirectory(t, store, "hostb", "/tmp/nested", "job1", 5000)
+
+	got := collectResolvedDirectories(t, store, &pb.RestoreFileFilter{Host: "hosta", Path: "/tmp", PathIsPrefix: true})
+	require.Len(t, got, 1)
+	assert.Equal(t, [2]string{"hosta", "/tmp/nested"}, got[0])
+}
+
+func TestResolveRestoreDirectoryFilter_HostAgnosticMatchesEveryHost(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+	seedDirectory(t, store, "hostb", "/tmp/nested/sub", "job1", 5000)
+	seedDirectory(t, store, "hosta", "/tmp2/other", "job1", 5000)
+
+	got := collectResolvedDirectories(t, store, &pb.RestoreFileFilter{Path: "/tmp", PathIsPrefix: true})
+	require.Len(t, got, 2)
+	assert.ElementsMatch(t, [][2]string{{"hosta", "/tmp/nested"}, {"hostb", "/tmp/nested/sub"}}, got)
+}
+
+func TestResolveRestoreDirectoryFilter_ExactPathFilterNeverMatchesDirectories(t *testing.T) {
+	// A non-prefix filter is what a host-specific FILE rule builds
+	// (buildRestoreFilters: PathIsPrefix = rule.Host == ""). This test
+	// pins that resolveRestoreDirectoryFilter itself doesn't need the
+	// caller to gate it -- an exact-path filter naturally matches nothing,
+	// since restoreChildRanges/the "path = ?" branch below only admits an
+	// exact-path filter's own literal path, never a directory row that
+	// merely starts with it.
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+
+	got := collectResolvedDirectories(t, store, &pb.RestoreFileFilter{Host: "hosta", Path: "/tmp/nested", PathIsPrefix: false})
+	assert.Empty(t, got)
+}
+
+func TestResolveRestoreDirectoryFilter_TimeframeWindowing(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 1000)
+
+	inWindow := collectResolvedDirectories(t, store, &pb.RestoreFileFilter{Path: "/tmp", PathIsPrefix: true, NotBefore: 500, NotAfter: 1500})
+	assert.Len(t, inWindow, 1)
+
+	outOfWindow := collectResolvedDirectories(t, store, &pb.RestoreFileFilter{Path: "/tmp", PathIsPrefix: true, NotBefore: 5000, NotAfter: 6000})
+	assert.Empty(t, outOfWindow)
+}
+
+func TestResolveRestoreFiles_GRPCRoundTrip_IncludesDirectoryRows(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedFile(t, store, "fs://hosta:f:/tmp/nested/a.txt:1000", 10, []byte{1}, "job1", 5000)
+	seedDirectory(t, store, "hosta", "/tmp/nested", "job1", 5000)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewListServer(store, logger)
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, srv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient(
+		"passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := pb.NewListServiceClient(conn)
+	stream, err := client.ResolveRestoreFiles(context.Background(), &pb.ResolveRestoreFilesRequest{
+		Filters: []*pb.RestoreFileFilter{{Path: "/tmp/nested", PathIsPrefix: true}},
+	})
+	require.NoError(t, err)
+
+	var gotFile, gotDir bool
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		switch resp.GetRow().GetType() {
+		case "f":
+			gotFile = true
+			assert.Equal(t, "/tmp/nested/a.txt", resp.GetRow().GetPath())
+		case "d":
+			gotDir = true
+			assert.Equal(t, "/tmp/nested", resp.GetRow().GetPath())
+			assert.Empty(t, resp.GetRow().GetFileUuid(), "a directory row must never carry a file_uuid")
+		}
+	}
+	assert.True(t, gotFile, "the file row must still be streamed")
+	assert.True(t, gotDir, "the directory row must now also be streamed")
 }
