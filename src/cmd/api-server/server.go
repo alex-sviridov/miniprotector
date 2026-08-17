@@ -60,6 +60,7 @@ type server struct {
 	catalog            catalogQueryClient
 	policy             policyServiceClient
 	loki               lokiQuerier
+	wsTickets          *wsTicketStore
 	logger             *slog.Logger
 	adhocPolicyTimeout time.Duration
 }
@@ -101,6 +102,7 @@ func (s *server) registerRoutes(mux *http.ServeMux, token string) {
 	mux.Handle("POST /api/v1/storage-policies", bearer(s.handleCreateStoragePolicy))
 	mux.Handle("PUT /api/v1/storage-policies/{id}", bearer(s.handleUpdateStoragePolicy))
 	mux.Handle("POST /api/v1/restore", bearer(s.handleCreateRestore))
+	mux.Handle("POST /api/v1/ws-tickets", bearer(s.handleIssueWSTicket))
 	mux.Handle("GET /api/v1/jobs", bearer(s.handleListJobs))
 	mux.Handle("GET /api/v1/jobs/{job_id}/logs", bearer(s.handleGetJobLogs))
 }
