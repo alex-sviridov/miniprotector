@@ -18,7 +18,7 @@ type Arguments struct {
 	Filter     string
 	Debug      bool
 	Quiet      bool
-	Streams    int  // verify only
+	Streams    int  // verify, restore
 	Retries    int  // verify only
 	RulesStdin bool // verify only
 	Overwrite  bool // restore only
@@ -93,7 +93,8 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		},
 	}
 	restoreCmd.Flags().BoolVar(&args.RulesStdin, "rules-stdin", false, "Read {\"rules\":[{host,path,include,dest_path}]} from stdin (required)")
-	restoreCmd.Flags().BoolVar(&args.Overwrite, "overwrite", false, "Whether a real restore would overwrite existing destination files (logged only, not yet enforced)")
+	restoreCmd.Flags().BoolVar(&args.Overwrite, "overwrite", false, "Whether to overwrite existing destination files")
+	restoreCmd.Flags().IntVar(&args.Streams, "streams", 4, "Number of concurrent file restore workers")
 	restoreCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
 	restoreCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Suppress per-file resolved lines (warnings and summary always shown)")
 	restoreCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to bwfs as job-id metadata")
@@ -122,6 +123,12 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		}
 		if args.Retries < 1 {
 			return nil, fmt.Errorf("--retries must be at least 1, got: %d", args.Retries)
+		}
+	}
+
+	if args.Action == "restore" {
+		if err := common.ValidateStreamsCount(args.Streams); err != nil {
+			return nil, fmt.Errorf("--streams: %w", err)
 		}
 	}
 

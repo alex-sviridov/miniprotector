@@ -133,3 +133,18 @@ func TestParseArguments_RestoreOverwriteDefaultsFalse(t *testing.T) {
 		assert.False(t, args.Overwrite)
 	})
 }
+
+func TestParseArguments_RestoreStreamsFlag_DefaultsToFour(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, 4, args.Streams)
+	})
+}
+
+func TestParseArguments_RestoreInvalidStreamsErrors(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin", "--streams", "0"}, func() {
+		_, err := parseArguments(testConfig())
+		assert.Error(t, err)
+	})
+}
