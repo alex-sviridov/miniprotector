@@ -18,7 +18,7 @@ service RestoreService {
 }
 
 message RestoreRequest {
-  string file_uuid = 1;  // FileDataRecord.UUID from ListResponse
+  string file_uuid = 1;  // FileDataRecord.UUID from a ListFiles / ResolveRestoreFiles FileRow
 }
 
 message RestoreEvent {

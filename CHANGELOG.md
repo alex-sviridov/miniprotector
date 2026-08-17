@@ -12,7 +12,10 @@ carry an idle-timeout watchdog so a stalled `bwfs` can no longer hang a run fore
 retry loop backs off between attempts instead of retrying immediately. Internally, `verify` and
 `restore` no longer each hand-roll their own stream-consumption loop — both now share one
 resolved-row source, and verify's worker pool is a generic, reusable piece rather than
-hand-rolled channel plumbing. No CLI-visible behavior change.
+hand-rolled channel plumbing. No CLI-visible behavior change. One upgrade note: because
+`ListFiles` changed from unary to server-streaming on the wire, `bwfs` and `rwfs` must be upgraded
+together — an old `rwfs` talking to a new `bwfs` (or the reverse) fails the call outright, a
+version-skew constraint that did not exist before this round.
 
 ## 2026-08-16 — restore execution: directory structure phase
 

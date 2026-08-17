@@ -11,6 +11,12 @@ import (
 // every worker has drained in -- callers range over it to know when all
 // work is done. streams must be >= 1.
 //
+// ctx is passed through to work and is not otherwise consulted: cancelling it
+// does not stop the pool from draining in, it only lets each in-flight work
+// call bail out early. Closing in is what ends the pool, so a caller that
+// wants cancellation to actually stop the work must have whatever produces in
+// react to ctx as well.
+//
 // Replaces verify.go's previous hand-rolled channel/sync.WaitGroup
 // plumbing (which mirrored brfs's filesstream.go almost exactly), made
 // generic so a future phase-2 file-content restore can reuse it with a

@@ -2,7 +2,7 @@
 
 ## Core Concept
 
-A simple unary gRPC RPC that returns all finalized file records from a `bwfs` storage, with optional filtering by source hostname, path prefix, and free-text substring. Both `bwfs list` (local SQLite read) and `rwfs list` (remote gRPC call) produce identical output for identical data, sharing the same query logic and rendering code (`common/listformat`).
+A server-streaming gRPC RPC that emits every finalized file record from a `bwfs` storage, one `FileRow` per message, with optional filtering by source hostname, path prefix, and free-text substring. Both `bwfs list` (local SQLite read) and `rwfs list` (remote gRPC call) produce identical output for identical data, sharing the same query logic and rendering code (`common/listformat`).
 
 ## Protocol Definition
 
@@ -42,7 +42,9 @@ sequenceDiagram
 
     Client->>Server: ListFiles(ListRequest)
     Note right of Server: Query SQLite for latest finalized<br/>FileDataRecord per file_id<br/>Apply server_name / path / filter
-    Server-->>Client: ListResponse{rows: [...]}
+    loop For Each Matching Row
+        Server-->>Client: FileRow{file_uuid, source, type, path, ...}
+    end
     Note left of Client: Render as table or JSON<br/>(same output as bwfs list)
 ```
 
