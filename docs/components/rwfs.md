@@ -158,8 +158,8 @@ Phase](../superpowers/specs/2026-08-17-restore-file-content-design.md) and [Desi
 Structure Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md).
 
 ```bash
-# Resolve a restore policy's rules, create the resolved directory structure
-# on disk, and log what a real file restore would do
+# Resolve a restore policy's rules, create the resolved directory
+# structure on disk, and write the resolved file content
 echo '{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":"/data/photos_recovered"}]}' \
   | rwfs restore localhost:8080 --rules-stdin
 ```
@@ -167,7 +167,7 @@ echo '{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":"/da
 For each resolved file, logs `source`, `path` (original), and `dest_path` (the `dest_path` rename
 rule applied -- see [restore protocol](../protocols/restore.md)). Logs the run's `overwrite`
 setting once at start; `overwrite` has no effect on phase 1 -- an existing directory is always
-reused regardless of it; it will govern file content once phase 2 exists.
+reused regardless of it; it governs phase 2 (file content), as described above.
 
 ### Flags
 

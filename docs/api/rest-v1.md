@@ -425,9 +425,9 @@ never set it are unaffected). `mode: "verify"` creates the policy exactly as bef
 it up and runs `rwfs verify` against it, writing nothing. `mode: "restore"` creates the policy
 exactly like `mode: "verify"` (`201` with the created policy), but `agent` runs `rwfs restore`
 against it instead of `rwfs verify` -- `rwfs restore` resolves the policy's rules against the live
-store, logs each file's source path and computed destination path, and actually creates the
-resolved directory structure at each destination (parent-before-child, stopping at the first
-failure); file content restore itself remains log-only, writing nothing. `overwrite` (bool, default
+store, creates the resolved directory structure at each destination (parent-before-child, stopping
+at the first failure), then fetches and writes every resolved file's content, verifying per-chunk
+BLAKE3 and the whole-file CRC32 as it writes. `overwrite` (bool, default
 `false`) is accepted in both modes; under `mode: "verify"` it has no effect, since `rwfs verify`
 doesn't read it. `201` with the created policy on success, for either mode.
 

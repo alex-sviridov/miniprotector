@@ -99,7 +99,8 @@ message Policy {
   repeated RestoreRule rules = 19;
   // "restore" policy only. "" or "verify" behaves exactly as every restore
   // policy does today (agent runs rwfs verify, writes nothing). "restore"
-  // is the log-only-for-now execution path (rwfs restore). A restore
+  // dispatches rwfs restore, which creates the resolved directory
+  // structure and writes the resolved file content. A restore
   // policy JSON file written before this field existed has no "mode" key
   // at all and is unaffected -- absent is read as "verify".
   string mode = 20;
@@ -207,9 +208,9 @@ certificate — the same requirement every server except `issuer`'s own listener
   fields it sets -- a restore is a point-in-time instruction, so changing one after the fact is a
   new policy, not an edit (which is also why `UpdatePolicyRequest` has no `rules` field). `mode`
   (`"verify"`, the default, or `"restore"`) selects which action `agent` performs -- `rwfs verify`
-  (unchanged) or `rwfs restore` (resolves and logs the file list, and actually creates the resolved
-  directory structure on disk; file content restore itself remains log-only). `overwrite` is
-  carried through and logged by `rwfs restore`; it has no effect under `mode: "verify"`.
+  (unchanged) or `rwfs restore` (resolves the file list, creates the resolved directory structure on
+  disk, and writes the resolved file content). `overwrite` is carried through by `rwfs restore` and
+  now enforced: an existing destination file is skipped when false, overwritten when true.
 - `disabled_at` is generic across every policy type -- unset (zero/nil) means never disabled. Once it
   passes, `GetPolicies` stops returning that policy to any node, checked live against the current
   time on every call (not cached at load/reload time) -- no `.changed`-touch or restart needed for a

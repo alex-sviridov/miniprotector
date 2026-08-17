@@ -131,7 +131,7 @@ The path is embedded inside the composite `file_id` string (`fs://host:type:path
 
 ## ResolveRestoreFiles
 
-The `ResolveRestoreFiles` RPC resolves a batch of restore-rule-shaped filters directly, scoped by host, path, and timeframe, instead of the unbounded dump `ListFiles` would require for the same job. This is used by `rwfs verify --rules-stdin` and its `restore` sibling to efficiently find the exact backed-up versions matching each restore rule -- `restore`'s file-content resolution is still log-only (it resolves and logs the would-be file restore, but does not yet write file content), but as of this round it also actually creates the resolved directory structure on disk (see [rwfs](../components/rwfs.md#restore)).
+The `ResolveRestoreFiles` RPC resolves a batch of restore-rule-shaped filters directly, scoped by host, path, and timeframe, instead of the unbounded dump `ListFiles` would require for the same job. This is used by `rwfs verify --rules-stdin` and its `restore` sibling to efficiently find the exact backed-up versions matching each restore rule -- `restore` creates the resolved directory structure on disk and writes the resolved file content (see [rwfs](../components/rwfs.md#restore)).
 
 ### Protocol Definition
 
@@ -185,6 +185,6 @@ file-level) filter never returns a directory row.
 
 ### Usage
 
-This RPC is used only by `rwfs verify --rules-stdin` and `rwfs restore --rules-stdin` (the latter's
-directory rows are acted on -- see [rwfs](../components/rwfs.md#restore) -- its file rows are still
-log-only). Plain `bwfs list` and `rwfs list` continue to use `ListFiles` unchanged.
+This RPC is used only by `rwfs verify --rules-stdin` and `rwfs restore --rules-stdin` (the latter
+acts on both its directory and file rows -- see [rwfs](../components/rwfs.md#restore)). Plain
+`bwfs list` and `rwfs list` continue to use `ListFiles` unchanged.
