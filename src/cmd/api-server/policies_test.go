@@ -72,9 +72,10 @@ func TestHandleListPolicies_ReturnsDataEnvelope(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -90,9 +91,10 @@ func TestHandleListPolicies_BackendErrorTranslated(t *testing.T) {
 	fake := &fakePolicyServiceClient{listErr: status.Error(codes.Unavailable, "down")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -103,9 +105,10 @@ func TestHandleListPolicies_PassesTypeQueryParamThrough(t *testing.T) {
 	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies?type=storage", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -118,9 +121,10 @@ func TestHandleListPolicies_NoTypeParamSendsEmptyType(t *testing.T) {
 	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -138,9 +142,10 @@ func TestHandleGetPolicy_ReturnsMatchingPolicy(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies/p2", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -154,9 +159,10 @@ func TestHandleGetPolicy_UnknownIDReturns404(t *testing.T) {
 	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies/ghost", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -210,10 +216,11 @@ func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
 	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1", Name: "nightly", Destinations: []string{"bwfs:8080"}}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -228,7 +235,7 @@ func TestHandleCreatePolicy_PassesClientAndObjectFiltersThrough(t *testing.T) {
 	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web",
@@ -236,6 +243,7 @@ func TestHandleCreatePolicy_PassesClientAndObjectFiltersThrough(t *testing.T) {
 		"object_filters": [{"path": "/var/www", "include": ["*.html"]}]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -250,9 +258,10 @@ func TestHandleCreatePolicy_MalformedJSONReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", strings.NewReader("not json"))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -264,9 +273,10 @@ func TestHandleCreatePolicy_BackendValidationErrorReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "metadata.name is required")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -277,10 +287,11 @@ func TestHandleUpdatePolicy_ReturnsUpdatedPolicy(t *testing.T) {
 	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1", Name: "nightly-renamed"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{"name": "nightly-renamed", "storage_policy_id": "sp-2"}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -295,9 +306,10 @@ func TestHandleUpdatePolicy_MalformedJSONReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", strings.NewReader("not json"))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -309,9 +321,10 @@ func TestHandleUpdatePolicy_UnknownIDReturns404(t *testing.T) {
 	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.NotFound, "policy \"ghost\" not found")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/ghost", strings.NewReader(`{"name": "x"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -322,9 +335,10 @@ func TestHandleDeletePolicy_ReturnsNoContent(t *testing.T) {
 	fake := &fakePolicyServiceClient{deleteResp: &pb.DeletePolicyResponse{}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/policies/p1", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -337,9 +351,10 @@ func TestHandleDeletePolicy_UnknownIDReturns404(t *testing.T) {
 	fake := &fakePolicyServiceClient{deleteErr: status.Error(codes.NotFound, "policy \"p1\" not found")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/policies/p1", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -354,7 +369,7 @@ func TestHandleCreateStoragePolicy_ReturnsCreatedPolicy(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "east-1-storage",
@@ -363,6 +378,7 @@ func TestHandleCreateStoragePolicy_ReturnsCreatedPolicy(t *testing.T) {
 		"config": "{\"backend\": \"filesystem\"}"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -383,9 +399,10 @@ func TestHandleCreateStoragePolicy_MalformedJSONReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", strings.NewReader("not json"))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -397,9 +414,10 @@ func TestHandleCreateStoragePolicy_BackendValidationErrorReturns400(t *testing.T
 	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "port must be between 1 and 65535, got 0")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-policies", strings.NewReader(`{"name": "x"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -414,7 +432,7 @@ func TestHandleUpdateStoragePolicy_ReturnsUpdatedPolicy(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "east-1-storage-renamed",
@@ -423,6 +441,7 @@ func TestHandleUpdateStoragePolicy_ReturnsUpdatedPolicy(t *testing.T) {
 		"config": "{\"backend\": \"filesystem\"}"
 	}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/s1", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -437,9 +456,10 @@ func TestHandleUpdateStoragePolicy_UnknownIDReturns404(t *testing.T) {
 	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.NotFound, "policy \"ghost\" not found")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/ghost", strings.NewReader(`{"name": "x", "port": 1, "config": "{}"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -473,10 +493,11 @@ func TestHandleCreatePolicy_SetsDisabledAtWhenProvided(t *testing.T) {
 	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1", "disabled_at": 1754000000}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -490,10 +511,11 @@ func TestHandleCreatePolicy_OmittedDisabledAtLeavesItUnset(t *testing.T) {
 	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -506,10 +528,11 @@ func TestHandleUpdatePolicy_EchoesDisabledAtBack(t *testing.T) {
 	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1", "disabled_at": 1754000000}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -523,10 +546,11 @@ func TestHandleUpdatePolicy_OmittedDisabledAtClearsIt(t *testing.T) {
 	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "p1"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{"name": "nightly", "storage_policy_id": "sp-1"}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/p1", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -539,7 +563,7 @@ func TestHandleUpdateStoragePolicy_EchoesDisabledAtBack(t *testing.T) {
 	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "s1", Type: "storage"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "east-1-storage",
@@ -549,6 +573,7 @@ func TestHandleUpdateStoragePolicy_EchoesDisabledAtBack(t *testing.T) {
 		"disabled_at": 1754000000
 	}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/storage-policies/s1", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -563,7 +588,7 @@ func TestHandleCreateAdhocPolicy_ComposesFieldsAndPrefixesName(t *testing.T) {
 	srv := newServer(nil, nil, fake, testLogger())
 	srv.adhocPolicyTimeout = time.Hour
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	before := time.Now()
 	body := strings.NewReader(`{
@@ -573,6 +598,7 @@ func TestHandleCreateAdhocPolicy_ComposesFieldsAndPrefixesName(t *testing.T) {
 		"storage_policy_id": "sp-1"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -595,7 +621,7 @@ func TestHandleCreateAdhocPolicy_IgnoresCallerSuppliedScheduleFields(t *testing.
 	srv := newServer(nil, nil, fake, testLogger())
 	srv.adhocPolicyTimeout = time.Hour
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web-emergency",
@@ -605,6 +631,7 @@ func TestHandleCreateAdhocPolicy_IgnoresCallerSuppliedScheduleFields(t *testing.
 		"disabled_at": 1
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -623,9 +650,10 @@ func TestHandleCreateAdhocPolicy_ReturnsPolicyDTOWithDisabledAt(t *testing.T) {
 	srv := newServer(nil, nil, fake, testLogger())
 	srv.adhocPolicyTimeout = time.Hour
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader(`{"name": "web-emergency", "storage_policy_id": "sp-1"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -640,9 +668,10 @@ func TestHandleCreateAdhocPolicy_MalformedJSONReturns400(t *testing.T) {
 	srv := newServer(nil, nil, fake, testLogger())
 	srv.adhocPolicyTimeout = time.Hour
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader("not json"))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -655,9 +684,10 @@ func TestHandleCreateAdhocPolicy_BackendValidationErrorReturns400(t *testing.T) 
 	srv := newServer(nil, nil, fake, testLogger())
 	srv.adhocPolicyTimeout = time.Hour
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/adhoc", strings.NewReader(`{"name": "x"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -719,7 +749,7 @@ func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
@@ -728,6 +758,7 @@ func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
 		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -749,9 +780,10 @@ func TestHandleCreateRestore_MalformedJSONReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader("not json"))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -763,9 +795,10 @@ func TestHandleCreateRestore_BackendValidationErrorReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{createErr: status.Error(codes.InvalidArgument, "storage_policy_id not found")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", strings.NewReader(`{"name": "x", "storage_policy_id": "missing"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -776,9 +809,10 @@ func TestHandleUpdatePolicy_RestoreTypeRejectedReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.InvalidArgument, "restore policies cannot be updated")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies/r1", strings.NewReader(`{"name": "renamed"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -810,7 +844,7 @@ func TestHandleCreateRestore_PassesDestPathThrough(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
@@ -818,6 +852,7 @@ func TestHandleCreateRestore_PassesDestPathThrough(t *testing.T) {
 		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true, "dest_path": "/var/www/index.html.bak"}]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -853,7 +888,7 @@ func TestHandleCreateRestore_PassesThroughTimeframe(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
@@ -861,6 +896,7 @@ func TestHandleCreateRestore_PassesThroughTimeframe(t *testing.T) {
 		"rules": [{"host": "h", "path": "/etc", "include": true, "not_before": 100, "not_after": 200}]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -879,7 +915,7 @@ func TestHandleCreateRestore_ExplicitVerifyModeForwardsToBackend(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
@@ -889,6 +925,7 @@ func TestHandleCreateRestore_ExplicitVerifyModeForwardsToBackend(t *testing.T) {
 		"overwrite": false
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -906,7 +943,7 @@ func TestHandleCreateRestore_RestoreModeForwardsToBackend(t *testing.T) {
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
@@ -916,6 +953,7 @@ func TestHandleCreateRestore_RestoreModeForwardsToBackend(t *testing.T) {
 		"overwrite": true
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -939,7 +977,7 @@ func TestHandleCreateRestore_VerifyModeStillForwardsModeExplicitly(t *testing.T)
 	}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
@@ -947,6 +985,7 @@ func TestHandleCreateRestore_VerifyModeStillForwardsModeExplicitly(t *testing.T)
 		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -961,9 +1000,10 @@ func TestHandleGetClientCertStatus_ReturnsStatus(t *testing.T) {
 
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/host-a/cert-status", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -989,9 +1029,10 @@ func TestHandleGetClientCertStatus_NeverReportedOmitsFieldsAndReturns200(t *test
 	fake := &fakePolicyServiceClient{certStatusResp: &pb.NodeCertStatus{Hostname: "host-b"}}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/host-b/cert-status", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -1007,9 +1048,10 @@ func TestHandleGetClientCertStatus_BackendErrorTranslated(t *testing.T) {
 	fake := &fakePolicyServiceClient{certStatusErr: status.Error(codes.Unavailable, "down")}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/host-a/cert-status", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -1020,7 +1062,7 @@ func TestHandleCreateRestore_InvalidModeReturns400(t *testing.T) {
 	fake := &fakePolicyServiceClient{}
 	srv := newServer(nil, nil, fake, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	body := strings.NewReader(`{
 		"name": "web01-emergency",
@@ -1029,6 +1071,7 @@ func TestHandleCreateRestore_InvalidModeReturns400(t *testing.T) {
 		"mode": "bogus"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

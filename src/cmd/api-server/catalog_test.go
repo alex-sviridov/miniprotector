@@ -64,9 +64,10 @@ func TestHandleListCatalog_ReturnsDataAndHasMore(t *testing.T) {
 	}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -86,9 +87,10 @@ func TestHandleListCatalog_PassesFilterQueryParamsThrough(t *testing.T) {
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?source_host=database&store_host=bwfs-a&pattern=/var/log&limit=10&starting_after=42", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -105,9 +107,10 @@ func TestHandleListCatalog_InvalidLimitReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?limit=not-a-number", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -118,9 +121,10 @@ func TestHandleListCatalog_LimitOutOfRangeReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?limit=501", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -131,9 +135,10 @@ func TestHandleListCatalog_PassesNewFilterQueryParamsThrough(t *testing.T) {
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?received_after=1000&received_before=2000&source_hosts=database,webserver&job_names=nightly-db,weekly-full", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -149,9 +154,10 @@ func TestHandleListCatalog_CommaParamsTrimWhitespace(t *testing.T) {
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?source_hosts=database,%20webserver", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -164,9 +170,10 @@ func TestHandleListCatalog_OmittedNewFiltersLeaveFieldsZero(t *testing.T) {
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -180,9 +187,10 @@ func TestHandleListCatalog_InvalidReceivedAfterReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?received_after=not-a-number", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -193,9 +201,10 @@ func TestHandleListCatalog_NegativeReceivedBeforeReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?received_before=-5", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -208,9 +217,10 @@ func TestHandleListCatalogClients_ReturnsFacetData(t *testing.T) {
 	}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/clients", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -229,9 +239,10 @@ func TestHandleListCatalogClients_PassesFilterQueryParamsThrough(t *testing.T) {
 	fake := &fakeCatalogQueryClient{facetsResp: &pb.ListFacetsResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/clients?received_after=1000&received_before=2000&pattern=/var&job_names=nightly-db", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -249,9 +260,10 @@ func TestHandleListCatalogJobs_ReturnsFacetData(t *testing.T) {
 	}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/jobs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -269,9 +281,10 @@ func TestHandleListCatalogJobs_PassesFilterQueryParamsThrough(t *testing.T) {
 	fake := &fakeCatalogQueryClient{facetsResp: &pb.ListFacetsResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/jobs?received_after=1000&source_hosts=database,webserver", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -285,9 +298,10 @@ func TestHandleListCatalogJobs_InvalidReceivedBeforeReturns400(t *testing.T) {
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/jobs?received_before=-5", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -300,9 +314,10 @@ func TestHandleListCatalog_ReturnsParentDirectoryAndShortFilename(t *testing.T) 
 	}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -320,9 +335,10 @@ func TestHandleListCatalog_PassesParentDirectoriesQueryParamThrough(t *testing.T
 	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?parent_directories=/var/lib/dbdata,/var/www", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -335,9 +351,10 @@ func TestHandleListCatalogClients_PassesParentDirectoriesQueryParamThrough(t *te
 	fake := &fakeCatalogQueryClient{facetsResp: &pb.ListFacetsResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/clients?parent_directories=/var/lib/dbdata", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -350,9 +367,10 @@ func TestHandleListCatalogJobs_PassesParentDirectoriesQueryParamThrough(t *testi
 	fake := &fakeCatalogQueryClient{facetsResp: &pb.ListFacetsResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/jobs?parent_directories=/var/lib/dbdata", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -367,9 +385,10 @@ func TestHandleListCatalogDirectories_ReturnsFacetData(t *testing.T) {
 	}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -387,9 +406,10 @@ func TestHandleListCatalogDirectories_PassesFilterQueryParamsThrough(t *testing.
 	fake := &fakeCatalogQueryClient{facetsResp: &pb.ListFacetsResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories?received_after=1000&source_hosts=database&job_names=nightly-db", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -404,9 +424,10 @@ func TestHandleListCatalogDirectories_IgnoresParentDirectoriesQueryParam(t *test
 	fake := &fakeCatalogQueryClient{facetsResp: &pb.ListFacetsResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories?parent_directories=/var/lib/dbdata", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -419,9 +440,10 @@ func TestHandleListCatalogDirectories_InvalidReceivedAfterReturns400(t *testing.
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories?received_after=not-a-number", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -434,9 +456,10 @@ func TestHandleListCatalogDirectoryChildren_ReturnsData(t *testing.T) {
 	}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children?parent_path=/var", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -456,9 +479,10 @@ func TestHandleListCatalogDirectoryChildren_PassesParentPathAndFilterQueryParams
 	fake := &fakeCatalogQueryClient{childrenResp: &pb.ListDirectoryChildrenResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children?parent_path=/var/lib&received_after=1000&source_hosts=database&job_names=nightly-db", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -474,9 +498,10 @@ func TestHandleListCatalogDirectoryChildren_OmittedParentPathMeansRoot(t *testin
 	fake := &fakeCatalogQueryClient{childrenResp: &pb.ListDirectoryChildrenResponse{}}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -489,9 +514,10 @@ func TestHandleListCatalogDirectoryChildren_InvalidReceivedAfterReturns400(t *te
 	fake := &fakeCatalogQueryClient{}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/directories/children?received_after=not-a-number", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -561,9 +587,10 @@ func TestHandleListCatalogStores_ReturnsFacets(t *testing.T) {
 	}
 	srv := newServer(nil, fake, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/stores?pattern=/var/www", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

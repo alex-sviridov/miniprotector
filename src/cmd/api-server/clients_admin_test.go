@@ -91,9 +91,10 @@ func TestHandleAddClient_ReturnsTokenAnd201(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{addResp: &pb.AddClientResponse{Token: "tok-abc"}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients", strings.NewReader(`{"hostname":"node-1","sans":["alias.internal"]}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -109,9 +110,10 @@ func TestHandleAddClient_ReturnsTokenAnd201(t *testing.T) {
 func TestHandleAddClient_MissingHostnameReturns400(t *testing.T) {
 	srv := newServerWithAdmin(&fakeClientManagerAdminClient{})
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -121,9 +123,10 @@ func TestHandleAddClient_MissingHostnameReturns400(t *testing.T) {
 func TestHandleAddClient_MalformedJSONReturns400(t *testing.T) {
 	srv := newServerWithAdmin(&fakeClientManagerAdminClient{})
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients", strings.NewReader(`{not json`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -134,9 +137,10 @@ func TestHandleAddClient_DuplicateHostnameReturns409(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{addErr: status.Error(codes.AlreadyExists, "client node-1 already enrolled")}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients", strings.NewReader(`{"hostname":"node-1"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -147,9 +151,10 @@ func TestHandleReEnrollClient_ReturnsToken(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{reEnrollResp: &pb.ReEnrollClientResponse{Token: "tok-fresh"}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/node-1/reenroll", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -164,9 +169,10 @@ func TestHandleReEnrollClient_NoBodyIsAccepted(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{reEnrollResp: &pb.ReEnrollClientResponse{Token: "tok-fresh"}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/node-1/reenroll", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -177,9 +183,10 @@ func TestHandleReEnrollClient_UnknownHostnameReturns404(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{reEnrollErr: status.Error(codes.NotFound, "client ghost not found")}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/ghost/reenroll", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -190,9 +197,10 @@ func TestHandleRevokeClient_ReturnsUpdatedClient(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{revokeResp: &pb.Client{Hostname: "node-1", Revoked: true}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/node-1/revoke", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -206,9 +214,10 @@ func TestHandleRevokeClient_UnknownHostnameReturns404(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{revokeErr: status.Error(codes.NotFound, "client ghost not found")}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/ghost/revoke", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -219,9 +228,10 @@ func TestHandleUnrevokeClient_ReturnsUpdatedClient(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{unrevokeResp: &pb.Client{Hostname: "node-1", Revoked: false}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clients/node-1/unrevoke", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -235,9 +245,10 @@ func TestHandleUpdateDescription_SendsSetAndUnset(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{updateDescResp: &pb.Client{Hostname: "node-1", Descriptions: map[string]string{"owner": "alice"}}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/description", strings.NewReader(`{"set":{"owner":"alice"},"unset":["old"]}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -249,9 +260,10 @@ func TestHandleUpdateDescription_SendsSetAndUnset(t *testing.T) {
 func TestHandleUpdateDescription_MalformedJSONReturns400(t *testing.T) {
 	srv := newServerWithAdmin(&fakeClientManagerAdminClient{})
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/description", strings.NewReader(`{bad`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -262,9 +274,10 @@ func TestHandleUpdateDescription_UnknownHostnameReturns404(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{updateDescErr: status.Error(codes.NotFound, "client ghost not found")}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/ghost/description", strings.NewReader(`{"set":{"k":"v"}}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -275,9 +288,10 @@ func TestHandleUpdateAttributes_SendsSetAndUnset(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{updateAttrResp: &pb.Client{Hostname: "node-1", Attributes: map[string]string{"role": "db"}}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/attributes", strings.NewReader(`{"set":{"role":"db"}}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -289,9 +303,10 @@ func TestHandleUpdateSANs_SendsAddAndRemove(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{updateSANsResp: &pb.Client{Hostname: "node-1", Sans: []string{"new.internal"}}}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/sans", strings.NewReader(`{"add":["new.internal"],"remove":["old.internal"]}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -303,9 +318,10 @@ func TestHandleUpdateSANs_SendsAddAndRemove(t *testing.T) {
 func TestHandleUpdateSANs_MalformedJSONReturns400(t *testing.T) {
 	srv := newServerWithAdmin(&fakeClientManagerAdminClient{})
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/node-1/sans", strings.NewReader(`{bad`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -316,9 +332,10 @@ func TestHandleUpdateSANs_UnknownHostnameReturns404(t *testing.T) {
 	fake := &fakeClientManagerAdminClient{updateSANsErr: status.Error(codes.NotFound, "client ghost not found")}
 	srv := newServerWithAdmin(fake)
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clients/ghost/sans", strings.NewReader(`{"add":["x.internal"]}`))
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

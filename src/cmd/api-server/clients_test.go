@@ -43,9 +43,10 @@ func TestHandleListClients_ReturnsDataEnvelope(t *testing.T) {
 	}}
 	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -61,9 +62,10 @@ func TestHandleListClients_BackendErrorTranslated(t *testing.T) {
 	fake := &fakeClientManagerClient{listErr: status.Error(codes.Unavailable, "down")}
 	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -74,9 +76,10 @@ func TestHandleGetClient_UnknownHostnameReturns404(t *testing.T) {
 	fake := &fakeClientManagerClient{getErr: status.Error(codes.NotFound, "client ghost not found")}
 	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/ghost", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -87,9 +90,10 @@ func TestHandleGetClient_ReturnsClientObject(t *testing.T) {
 	fake := &fakeClientManagerClient{getResp: &pb.Client{Hostname: "node-1", Revoked: true}}
 	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clients/node-1", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

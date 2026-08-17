@@ -68,36 +68,39 @@ func newServer(cm clientManagerClient, catalog catalogQueryClient, policy policy
 	return &server{clientManager: cm, catalog: catalog, policy: policy, logger: logger}
 }
 
-// registerRoutes wires up every REST endpoint. handleListClients,
-// handleGetClient (Task 9), and handleListCatalog (Task 10) are defined
-// in their own files; declaring the routes here means this file compiles
-// once those methods exist, without needing placeholder stubs.
-func (s *server) registerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/clients", s.handleListClients)
-	mux.HandleFunc("GET /api/v1/clients/{hostname}", s.handleGetClient)
-	mux.HandleFunc("POST /api/v1/clients", s.handleAddClient)
-	mux.HandleFunc("POST /api/v1/clients/{hostname}/reenroll", s.handleReEnrollClient)
-	mux.HandleFunc("POST /api/v1/clients/{hostname}/revoke", s.handleRevokeClient)
-	mux.HandleFunc("POST /api/v1/clients/{hostname}/unrevoke", s.handleUnrevokeClient)
-	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/description", s.handleUpdateDescription)
-	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/attributes", s.handleUpdateAttributes)
-	mux.HandleFunc("PATCH /api/v1/clients/{hostname}/sans", s.handleUpdateSANs)
-	mux.HandleFunc("GET /api/v1/clients/{hostname}/cert-status", s.handleGetClientCertStatus)
-	mux.HandleFunc("GET /api/v1/catalog", s.handleListCatalog)
-	mux.HandleFunc("GET /api/v1/catalog/clients", s.handleListCatalogClients)
-	mux.HandleFunc("GET /api/v1/catalog/jobs", s.handleListCatalogJobs)
-	mux.HandleFunc("GET /api/v1/catalog/directories", s.handleListCatalogDirectories)
-	mux.HandleFunc("GET /api/v1/catalog/stores", s.handleListCatalogStores)
-	mux.HandleFunc("GET /api/v1/catalog/directories/children", s.handleListCatalogDirectoryChildren)
-	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
-	mux.HandleFunc("GET /api/v1/policies/{id}", s.handleGetPolicy)
-	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
-	mux.HandleFunc("POST /api/v1/policies/adhoc", s.handleCreateAdhocPolicy)
-	mux.HandleFunc("PUT /api/v1/policies/{id}", s.handleUpdatePolicy)
-	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicy)
-	mux.HandleFunc("POST /api/v1/storage-policies", s.handleCreateStoragePolicy)
-	mux.HandleFunc("PUT /api/v1/storage-policies/{id}", s.handleUpdateStoragePolicy)
-	mux.HandleFunc("POST /api/v1/restore", s.handleCreateRestore)
-	mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
-	mux.HandleFunc("GET /api/v1/jobs/{job_id}/logs", s.handleGetJobLogs)
+// registerRoutes wires up every REST endpoint, each individually wrapped
+// in requireBearerToken -- unlike main.go's previous single blanket wrap
+// around the whole mux, this lets a route opt out (see requireWSTicket,
+// ws_tickets.go, used by the WS routes Tasks 6/10 register on this same
+// mux) without needing a second top-level handler/mux to compose.
+func (s *server) registerRoutes(mux *http.ServeMux, token string) {
+	bearer := func(h http.HandlerFunc) http.Handler { return requireBearerToken(token, h) }
+
+	mux.Handle("GET /api/v1/clients", bearer(s.handleListClients))
+	mux.Handle("GET /api/v1/clients/{hostname}", bearer(s.handleGetClient))
+	mux.Handle("POST /api/v1/clients", bearer(s.handleAddClient))
+	mux.Handle("POST /api/v1/clients/{hostname}/reenroll", bearer(s.handleReEnrollClient))
+	mux.Handle("POST /api/v1/clients/{hostname}/revoke", bearer(s.handleRevokeClient))
+	mux.Handle("POST /api/v1/clients/{hostname}/unrevoke", bearer(s.handleUnrevokeClient))
+	mux.Handle("PATCH /api/v1/clients/{hostname}/description", bearer(s.handleUpdateDescription))
+	mux.Handle("PATCH /api/v1/clients/{hostname}/attributes", bearer(s.handleUpdateAttributes))
+	mux.Handle("PATCH /api/v1/clients/{hostname}/sans", bearer(s.handleUpdateSANs))
+	mux.Handle("GET /api/v1/clients/{hostname}/cert-status", bearer(s.handleGetClientCertStatus))
+	mux.Handle("GET /api/v1/catalog", bearer(s.handleListCatalog))
+	mux.Handle("GET /api/v1/catalog/clients", bearer(s.handleListCatalogClients))
+	mux.Handle("GET /api/v1/catalog/jobs", bearer(s.handleListCatalogJobs))
+	mux.Handle("GET /api/v1/catalog/directories", bearer(s.handleListCatalogDirectories))
+	mux.Handle("GET /api/v1/catalog/stores", bearer(s.handleListCatalogStores))
+	mux.Handle("GET /api/v1/catalog/directories/children", bearer(s.handleListCatalogDirectoryChildren))
+	mux.Handle("GET /api/v1/policies", bearer(s.handleListPolicies))
+	mux.Handle("GET /api/v1/policies/{id}", bearer(s.handleGetPolicy))
+	mux.Handle("POST /api/v1/policies", bearer(s.handleCreatePolicy))
+	mux.Handle("POST /api/v1/policies/adhoc", bearer(s.handleCreateAdhocPolicy))
+	mux.Handle("PUT /api/v1/policies/{id}", bearer(s.handleUpdatePolicy))
+	mux.Handle("DELETE /api/v1/policies/{id}", bearer(s.handleDeletePolicy))
+	mux.Handle("POST /api/v1/storage-policies", bearer(s.handleCreateStoragePolicy))
+	mux.Handle("PUT /api/v1/storage-policies/{id}", bearer(s.handleUpdateStoragePolicy))
+	mux.Handle("POST /api/v1/restore", bearer(s.handleCreateRestore))
+	mux.Handle("GET /api/v1/jobs", bearer(s.handleListJobs))
+	mux.Handle("GET /api/v1/jobs/{job_id}/logs", bearer(s.handleGetJobLogs))
 }

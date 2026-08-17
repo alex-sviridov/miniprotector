@@ -98,8 +98,8 @@ func main() {
 	srv.adhocPolicyTimeout = time.Duration(conf.AdhocPolicyTimeoutSec) * time.Second
 
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
-	handler := requireBearerToken(arguments.Token, mux)
+	srv.registerRoutes(mux, arguments.Token)
+	handler := mux
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()

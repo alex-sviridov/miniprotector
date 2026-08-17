@@ -57,9 +57,10 @@ func TestHandleListJobs_PairsStartAndFinishByJobID(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -104,9 +105,10 @@ func TestHandleListJobs_ReadsJobIDFromStreamLevelStructuredMetadata(t *testing.T
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -132,9 +134,10 @@ func TestHandleListJobs_NoFinishLineMeansInProgress(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -161,9 +164,10 @@ func TestHandleListJobs_BackupJobUsesFinishLineHostAsStoreHost(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=backup", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -191,9 +195,10 @@ func TestHandleListJobs_SourceHostFilterDoesNotExcludeBackupFinishLine(t *testin
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=backup&source_host=database", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -211,9 +216,10 @@ func TestHandleListJobs_InvalidKindReturns400(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=not-a-real-kind", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -224,9 +230,10 @@ func TestHandleListJobs_KindRestoreIsAccepted(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=restore", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -249,9 +256,10 @@ func TestHandleListJobs_RestoreKindUsesAgentBinaryLabel(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=restore", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -269,9 +277,10 @@ func TestHandleListJobs_KindVerifyIsAccepted(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=verify", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -294,9 +303,10 @@ func TestHandleListJobs_VerifyKindUsesAgentBinaryLabel(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind=verify", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -314,11 +324,12 @@ func TestHandleListJobs_WindowExceeding168hReturns400(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	now := time.Now()
 	since := now.Add(-200 * time.Hour).Unix()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?since="+itoa(since), nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -329,9 +340,10 @@ func TestHandleListJobs_LokiErrorReturns502(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{err: assert.AnError}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -354,9 +366,10 @@ func TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -375,9 +388,10 @@ func TestHandleGetJobLogs_InvalidJobIDCharacterReturns400(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/not%20valid;job/logs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -395,9 +409,10 @@ func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200/logs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -415,9 +430,10 @@ func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/backup:nightly:var-www:abcd1234:1752400000/logs?source_host=database&store_host=bwfs-east", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -438,9 +454,10 @@ func TestHandleGetJobLogs_IncludesRwfsBinaryLines(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:e2e-restore-verify:1755094200/logs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -456,9 +473,10 @@ func TestHandleListJobs_InvalidSourceHostCharacterReturns400(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, `/api/v1/jobs?source_host=x%22%7D+%7C+line_format`, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -469,9 +487,10 @@ func TestHandleGetJobLogs_InvalidSourceHostCharacterReturns400(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, `/api/v1/jobs/operating-refresh:1752400500/logs?source_host=x%22%7D+%7C+line_format`, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -482,9 +501,10 @@ func TestHandleGetJobLogs_InvalidStoreHostCharacterReturns400(t *testing.T) {
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = &fakeLokiClient{}
 	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
+	srv.registerRoutes(mux, "test-token")
 
 	req := httptest.NewRequest(http.MethodGet, `/api/v1/jobs/operating-refresh:1752400500/logs?store_host=x%22%7D+%7C+line_format`, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
