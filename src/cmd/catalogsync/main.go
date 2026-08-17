@@ -58,7 +58,11 @@ func main() {
 		logger.Error("certs directory resolution failed", "error", err)
 		os.Exit(1)
 	}
-	sender := selectSender(conf, logger, certsDir)
+	sender, err := selectSender(conf, logger, certsDir)
+	if err != nil {
+		logger.Error("failed to set up catalog sender", "error", err)
+		os.Exit(1)
+	}
 	if closer, ok := sender.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}

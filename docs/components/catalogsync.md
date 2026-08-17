@@ -1,12 +1,20 @@
 # catalogsync
 
 Replicates a `bwfs` node's `file_versions` records to a central backup catalog, asynchronously
-and independently of the `bwfs` server's own availability. `catalogsync` selects its `Sender` at startup based on configuration: if `catalog_host` is set in
-`local.conf`, it uses `GrpcSender`, a real mTLS gRPC client against the [catalog](./catalog.md)
-service. If `catalog_host` is unset, or the catalog is unreachable at startup, it falls back to
-`LoggingSender`, which logs each batch and always succeeds — this keeps `catalogsync` runnable
-without a `catalog` deployment, and never blocks it from starting just because the catalog is
-temporarily down.
+and independently of the `bwfs` server's own availability. `catalogsync` selects its `Sender` at
+startup based on configuration: if `catalog_host` is unset in `local.conf`, it uses
+`LoggingSender`, which logs each batch and always succeeds — an intentional no-op for deployments
+without a `catalog` service. If `catalog_host` is set, it uses `GrpcSender`, a real mTLS gRPC
+client against the [catalog](./catalog.md) service, even if the catalog isn't reachable yet: the
+underlying gRPC connection is non-blocking and keeps retrying/reconnecting on its own, so a
+catalog that's mid-restart (or comes up after `catalogsync` does) recovers automatically, without
+needing `catalogsync` itself to restart. A `Send` failure is retried with backoff by the sync loop
+and never advances the on-disk cursor, so no batch is ever marked delivered until the catalog
+actually acknowledges it — `LoggingSender` is used only for the intentional "no catalog
+configured" case, never as an error fallback, since a sender that fakes success would silently
+drop that batch for good. `catalogsync` only fails to start over `catalog_host` if the mTLS
+credentials in `certs_dir` can't be loaded (missing/corrupt files) — a real misconfiguration that
+a restart won't fix either.
 
 In any deployment using "storage"-typed policies (see [agent](./agent.md#storage-policy-supervision)),
 `catalogsync` is started and supervised by `agent` alongside its paired `bwfs server` — one

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-17 — catalogsync: fix silent data loss on catalog restart races
+
+`catalogsync` no longer falls back to `LoggingSender` (which always reports success) when
+`catalog_host` is configured but unreachable at startup — that fallback was silently dropping
+batches for good, since the sync loop advances and persists its cursor on any "successful" send.
+It now always uses a real `GrpcSender` when `catalog_host` is set; the underlying gRPC connection
+dials lazily and keeps retrying/reconnecting on its own, so a catalog that's mid-restart recovers
+automatically without `catalogsync` itself needing to restart, while `Send` failures flow through
+the existing retry/backoff loop and never advance the cursor. `LoggingSender` is now used only for
+its one intentional case — `catalog_host` unset entirely. `catalogsync` fails fast at startup only
+if the mTLS credentials in `certs_dir` can't be loaded, since that's a real misconfiguration a
+restart won't fix.
+
 ## 2026-08-17 — restore execution: file content phase
 
 `rwfs restore` now writes real file content to the destination filesystem -- the last unbuilt piece

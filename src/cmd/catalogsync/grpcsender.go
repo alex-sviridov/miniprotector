@@ -19,10 +19,16 @@ type GrpcSender struct {
 	timeoutSec int
 }
 
-// NewGrpcSender dials host:port with mTLS credentials loaded from certsDir.
-// The connection is held open and reused for every subsequent Send call.
+// NewGrpcSender loads mTLS credentials from certsDir and builds a ClientConn
+// for host:port. It does not wait for the catalog to be reachable -- the
+// connection is established lazily on the first Send, and gRPC keeps
+// retrying/reconnecting for the life of the conn, so a catalog that isn't up
+// yet (or restarts independently of catalogsync) never needs catalogsync to
+// restart to recover. Errors here mean the mTLS credentials themselves
+// couldn't be loaded (missing/corrupt certsDir), not that the catalog is
+// unreachable.
 func NewGrpcSender(host string, port, timeoutSec int, certsDir string) (*GrpcSender, error) {
-	conn, err := connection.Connect(host, port, timeoutSec, certsDir)
+	conn, err := connection.DialNonBlocking(host, port, certsDir)
 	if err != nil {
 		return nil, fmt.Errorf("connect to catalog: %w", err)
 	}

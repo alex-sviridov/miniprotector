@@ -24,13 +24,20 @@ func TestSelectSender_NoCatalogHostReturnsLoggingSender(t *testing.T) {
 	conf := &config.Config{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	sender := selectSender(conf, logger, "unused")
+	sender, err := selectSender(conf, logger, "unused")
 
+	require.NoError(t, err)
 	_, ok := sender.(*LoggingSender)
 	assert.True(t, ok)
 }
 
-func TestSelectSender_UnreachableCatalogFallsBackToLoggingSender(t *testing.T) {
+// An unreachable catalog at startup must not fall back to LoggingSender:
+// LoggingSender.Send always reports success, and run() persists its cursor
+// on success, so any batch "sent" that way is silently dropped for good.
+// selectSender instead returns a real GrpcSender immediately -- gRPC dials
+// lazily and keeps retrying, so the first Send just fails and retries via
+// run()'s existing backoff until the catalog is reachable.
+func TestSelectSender_UnreachableCatalogAtStartupReturnsGrpcSender(t *testing.T) {
 	conf := &config.Config{
 		CatalogHost:          "127.0.0.1",
 		CatalogPort:          freeTCPPort(t), // nothing listening
@@ -38,8 +45,22 @@ func TestSelectSender_UnreachableCatalogFallsBackToLoggingSender(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	sender := selectSender(conf, logger, "../../common/testdata/certs")
+	sender, err := selectSender(conf, logger, "../../common/testdata/certs")
 
-	_, ok := sender.(*LoggingSender)
+	require.NoError(t, err)
+	_, ok := sender.(*GrpcSender)
 	assert.True(t, ok)
+}
+
+func TestSelectSender_BadCertsDirReturnsError(t *testing.T) {
+	conf := &config.Config{
+		CatalogHost:          "127.0.0.1",
+		CatalogPort:          freeTCPPort(t),
+		ConnectionTimeOutSec: 1,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	_, err := selectSender(conf, logger, "/nonexistent/certs/dir")
+
+	assert.Error(t, err)
 }

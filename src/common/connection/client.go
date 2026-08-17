@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-func dialWithCredentials(creds credentials.TransportCredentials, host string, port, timeout int) (*grpc.ClientConn, error) {
+func dial(creds credentials.TransportCredentials, host string, port int) (*grpc.ClientConn, error) {
 	// Configure keepalive for connection health monitoring
 	keepaliveParams := keepalive.ClientParameters{
 		Time:                10 * time.Second, // Send ping every 10 seconds
@@ -23,7 +23,11 @@ func dialWithCredentials(creds credentials.TransportCredentials, host string, po
 		PermitWithoutStream: true,             // Send pings even when no active streams
 	}
 
-	// Connect to server with keepalive
+	// grpc.NewClient itself never blocks or dials -- it just builds the
+	// channel. Connection attempts happen lazily on first RPC (or via an
+	// explicit conn.Connect()) and are retried forever using gRPC's own
+	// backoff, independent of whatever timeout the caller applies to any
+	// single RPC.
 	conn, err := grpc.NewClient(
 		fmt.Sprintf("%s:%d", host, port),
 		grpc.WithTransportCredentials(creds),
@@ -31,6 +35,14 @@ func dialWithCredentials(creds credentials.TransportCredentials, host string, po
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
+	}
+	return conn, nil
+}
+
+func dialWithCredentials(creds credentials.TransportCredentials, host string, port, timeout int) (*grpc.ClientConn, error) {
+	conn, err := dial(creds, host, port)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := checkConnection(conn, timeout); err != nil {
@@ -61,6 +73,24 @@ func ConnectWithIdentity(host string, port, timeout int, certsDir, certFile, key
 		return nil, fmt.Errorf("failed to load client credentials: %w", err)
 	}
 	return dialWithCredentials(creds, host, port, timeout)
+}
+
+// DialNonBlocking dials host:port, presenting certsDir/client.crt and
+// certsDir/client.key as this node's mTLS identity, and returns the
+// ClientConn immediately without waiting for connectivity. Use this instead
+// of Connect for long-running processes where the peer may not be up yet
+// (or may restart independently) and every call already has its own
+// retry/backoff -- gRPC keeps attempting to connect/reconnect for the life
+// of the returned ClientConn, so a peer that starts later, or comes back
+// after an outage, recovers on its own with no action from the caller.
+// Connect remains the right choice for short-lived commands that need to
+// fail fast when the peer is unreachable.
+func DialNonBlocking(host string, port int, certsDir string) (*grpc.ClientConn, error) {
+	creds, err := mtls.LoadClientCredentials(certsDir, host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client credentials: %w", err)
+	}
+	return dial(creds, host, port)
 }
 
 func checkConnection(conn *grpc.ClientConn, timeoutSec int) error {
