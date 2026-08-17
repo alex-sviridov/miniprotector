@@ -354,6 +354,63 @@ func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
+func TestJobEventAccumulator_StartThenFinishProducesCompleteJob(t *testing.T) {
+	acc := newJobEventAccumulator()
+	acc.ApplyStart(jobEventLine{JobID: "operating-refresh:1", Hostname: "webserver", Timestamp: 100})
+	got := acc.ApplyFinish(jobEventLine{JobID: "operating-refresh:1", Hostname: "webserver", Timestamp: 101, Status: "success"})
+
+	assert.Equal(t, "operating-refresh:1", got.JobID)
+	assert.Equal(t, "operating-refresh", got.Kind)
+	assert.Equal(t, "webserver", got.SourceHost)
+	assert.Nil(t, got.StoreHost)
+	require.NotNil(t, got.StartedAt)
+	assert.Equal(t, int64(100), *got.StartedAt)
+	require.NotNil(t, got.FinishedAt)
+	assert.Equal(t, int64(101), *got.FinishedAt)
+	assert.Equal(t, "success", got.State)
+}
+
+func TestJobEventAccumulator_FinishOnlySetsBackupStoreHost(t *testing.T) {
+	acc := newJobEventAccumulator()
+	acc.ApplyStart(jobEventLine{JobID: "backup:nightly:1", Hostname: "source-host", Timestamp: 100})
+	got := acc.ApplyFinish(jobEventLine{JobID: "backup:nightly:1", Hostname: "store-host", Timestamp: 101, Status: "success"})
+
+	require.NotNil(t, got.StoreHost)
+	assert.Equal(t, "store-host", *got.StoreHost)
+	assert.Equal(t, "source-host", got.SourceHost)
+}
+
+func TestJobEventAccumulator_StartOnlyIsInProgress(t *testing.T) {
+	acc := newJobEventAccumulator()
+	got := acc.ApplyStart(jobEventLine{JobID: "policy-update:1", Hostname: "webserver", Timestamp: 100})
+
+	assert.Equal(t, "in_progress", got.State)
+	assert.Nil(t, got.FinishedAt)
+}
+
+func TestJobEventAccumulatorSeeded_AppliesOnTopOfExistingJob(t *testing.T) {
+	existing := jobDTO{JobID: "restore:x:1", Kind: "restore", SourceHost: "webserver", State: "in_progress"}
+	startedAt := int64(100)
+	existing.StartedAt = &startedAt
+
+	acc := newJobEventAccumulatorSeeded("restore:x:1", existing)
+	got := acc.ApplyFinish(jobEventLine{JobID: "restore:x:1", Hostname: "webserver", Timestamp: 105, Status: "failure"})
+
+	require.NotNil(t, got.StartedAt)
+	assert.Equal(t, int64(100), *got.StartedAt, "seeding must preserve the job's prior state, not discard it")
+	assert.Equal(t, "failure", got.State)
+}
+
+func TestPairJobEvents_StillMatchesPriorBehaviorViaAccumulator(t *testing.T) {
+	starts := []jobEventLine{{JobID: "a", Hostname: "h1", Timestamp: 1}}
+	finishes := []jobEventLine{{JobID: "a", Hostname: "h1", Timestamp: 2, Status: "success"}}
+
+	got := pairJobEvents(starts, finishes)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "success", got[0].State)
+}
+
 func TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
 		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {

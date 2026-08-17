@@ -78,13 +78,13 @@ type jobEventLine struct {
 }
 
 // queryEvent runs one Loki query scoped to labelSelector and the given
-// event value, returning every matching (job_id, hostname, timestamp,
-// status) line and whether the query hit its own line cap (in which case
-// the window should be narrowed -- see the truncated flag on
-// handleListJobs' response).
-func (s *server) queryEvent(ctx context.Context, labelSelector, event string, since, until time.Time) ([]jobEventLine, bool, error) {
+// event value against loki, returning every matching (job_id, hostname,
+// timestamp, status) line and whether the query hit its own line cap. A
+// free function (not a *server method) so jobAggregator (Task 9) can call
+// it against its own loki field too, not just handleListJobs.
+func queryEvent(ctx context.Context, loki lokiQuerier, labelSelector, event string, since, until time.Time) ([]jobEventLine, bool, error) {
 	query := fmt.Sprintf(`%s | event="%s"`, labelSelector, event)
-	streams, err := s.loki.QueryRange(ctx, query, since, until, jobsQueryLineLimit)
+	streams, err := loki.QueryRange(ctx, query, since, until, jobsQueryLineLimit)
 	if err != nil {
 		return nil, false, err
 	}
@@ -126,49 +126,88 @@ func (s *server) queryEvent(ctx context.Context, labelSelector, event string, si
 	return lines, count >= jobsQueryLineLimit, nil
 }
 
+// jobEventAccumulator incrementally builds jobDTOs from start/finish event
+// lines -- the same logic pairJobEvents runs once per query (batch, below)
+// and jobAggregator (Task 9) runs one line at a time as they arrive from
+// Loki's live tail. Kept as one implementation so the two call sites can't
+// drift apart.
+type jobEventAccumulator struct {
+	byJobID map[string]*jobDTO
+	order   []string
+}
+
+func newJobEventAccumulator() *jobEventAccumulator {
+	return &jobEventAccumulator{byJobID: make(map[string]*jobDTO)}
+}
+
+// newJobEventAccumulatorSeeded starts from an already-known job summary
+// (the aggregator's in-memory state for jobID) instead of from scratch --
+// used when folding in one more live event for a job the aggregator has
+// already seen.
+func newJobEventAccumulatorSeeded(jobID string, dto jobDTO) *jobEventAccumulator {
+	acc := newJobEventAccumulator()
+	acc.byJobID[jobID] = &dto
+	acc.order = []string{jobID}
+	return acc
+}
+
+func (a *jobEventAccumulator) get(jobID string) *jobDTO {
+	j, ok := a.byJobID[jobID]
+	if !ok {
+		j = &jobDTO{JobID: jobID, Kind: kindFromJobID(jobID), State: "in_progress"}
+		a.byJobID[jobID] = j
+		a.order = append(a.order, jobID)
+	}
+	return j
+}
+
+// ApplyStart folds one event=start line in, returning the affected job's
+// current (possibly still-incomplete) summary.
+func (a *jobEventAccumulator) ApplyStart(e jobEventLine) jobDTO {
+	j := a.get(e.JobID)
+	ts := e.Timestamp
+	j.SourceHost = e.Hostname
+	j.StartedAt = &ts
+	return *j
+}
+
+// ApplyFinish folds one event=finish line in, returning the affected job's
+// current summary. For kind=backup, StoreHost comes from the finish
+// line's hostname (bwfs, the destination) -- every other kind leaves it
+// nil, same rule pairJobEvents always applied.
+func (a *jobEventAccumulator) ApplyFinish(e jobEventLine) jobDTO {
+	j := a.get(e.JobID)
+	ts := e.Timestamp
+	j.FinishedAt = &ts
+	j.State = e.Status
+	if j.Kind == "backup" {
+		host := e.Hostname
+		j.StoreHost = &host
+	}
+	return *j
+}
+
+func (a *jobEventAccumulator) All() []jobDTO {
+	out := make([]jobDTO, 0, len(a.order))
+	for _, id := range a.order {
+		out = append(out, *a.byJobID[id])
+	}
+	return out
+}
+
 // pairJobEvents groups start/finish lines by job_id into one jobDTO each.
 // A job_id with only a start line is in_progress; one with only a finish
 // line (its start fell outside the queried window) gets a nil StartedAt --
-// never guessed. For kind=backup, StoreHost comes from the finish line's
-// hostname (bwfs, the destination) while SourceHost comes from the start
-// line's hostname (brfs, the real source) -- every other kind has a single
-// SourceHost and a nil StoreHost.
+// never guessed.
 func pairJobEvents(starts, finishes []jobEventLine) []jobDTO {
-	byJobID := make(map[string]*jobDTO)
-	var order []string
-
-	get := func(jobID string) *jobDTO {
-		j, ok := byJobID[jobID]
-		if !ok {
-			j = &jobDTO{JobID: jobID, Kind: kindFromJobID(jobID), State: "in_progress"}
-			byJobID[jobID] = j
-			order = append(order, jobID)
-		}
-		return j
-	}
-
+	acc := newJobEventAccumulator()
 	for _, e := range starts {
-		j := get(e.JobID)
-		ts := e.Timestamp
-		j.SourceHost = e.Hostname
-		j.StartedAt = &ts
+		acc.ApplyStart(e)
 	}
 	for _, e := range finishes {
-		j := get(e.JobID)
-		ts := e.Timestamp
-		j.FinishedAt = &ts
-		j.State = e.Status
-		if j.Kind == "backup" {
-			host := e.Hostname
-			j.StoreHost = &host
-		}
+		acc.ApplyFinish(e)
 	}
-
-	out := make([]jobDTO, 0, len(order))
-	for _, id := range order {
-		out = append(out, *byJobID[id])
-	}
-	return out
+	return acc.All()
 }
 
 func sortKey(j jobDTO) int64 {
@@ -249,13 +288,13 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	// correctness, so it only applies where it can't cause data loss.
 	finishLabelSelector := fmt.Sprintf(`{binary=~"%s"}`, binarySelector)
 
-	starts, startsTruncated, err := s.queryEvent(r.Context(), startLabelSelector, "start", since, until)
+	starts, startsTruncated, err := queryEvent(r.Context(), s.loki, startLabelSelector, "start", since, until)
 	if err != nil {
 		s.logger.Error("handleListJobs: query start events failed", "error", err)
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
 		return
 	}
-	finishes, finishesTruncated, err := s.queryEvent(r.Context(), finishLabelSelector, "finish", since, until)
+	finishes, finishesTruncated, err := queryEvent(r.Context(), s.loki, finishLabelSelector, "finish", since, until)
 	if err != nil {
 		s.logger.Error("handleListJobs: query finish events failed", "error", err)
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
