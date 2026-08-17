@@ -100,3 +100,34 @@ async function waitForCatalogFiles(page, dirPath, files, timeoutMs = 60_000) {
     await page.waitForTimeout(3000)
   }
 }
+
+// waitForCatalogFolderRow polls (reload loop, same shape as
+// waitForCatalogFiles -- catalog replication is server-side, no
+// client-side event to await) until dirPath's own folder row is visible
+// under its parent, then leaves the page drilled down to that parent so a
+// caller can act on the row immediately (e.g. click its checkbox) without
+// navigating again. parentSegments is dirPath's parent's real path
+// segments (not including the synthetic "/" root, which this function
+// prepends itself). Unlike waitForCatalogFiles, this checks for the
+// folder row itself rather than specific leaf filenames -- a freshly
+// generated tree's filenames aren't known ahead of time the way
+// waitForCatalogFiles' fixed sample-data filenames are.
+export async function waitForCatalogFolderRow(page, parentSegments, dirPath, timeoutMs = 60_000) {
+  const segments = ['/', ...parentSegments]
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    await page.goto('/catalog')
+    let reachedParent = true
+    for (const segment of segments) {
+      try {
+        await page.getByText(`${segment}/`, { exact: true }).click({ timeout: 5000 })
+      } catch {
+        reachedParent = false
+        break
+      }
+    }
+    if (reachedParent && (await page.getByTestId(`folder-checkbox-${dirPath}`).count()) > 0) return
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for catalog folder ${dirPath} to appear`)
+    await page.waitForTimeout(3000)
+  }
+}
