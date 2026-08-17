@@ -8,17 +8,14 @@ A simple unary gRPC RPC that returns all finalized file records from a `bwfs` st
 
 ```proto
 service ListService {
-  rpc ListFiles(ListRequest) returns (ListResponse);
+  rpc ListFiles(ListRequest) returns (stream FileRow);
+  rpc ResolveRestoreFiles(ResolveRestoreFilesRequest) returns (stream ResolveRestoreFilesResponse);
 }
 
 message ListRequest {
   string server_name = 1; // exact hostname filter; empty = all sources
   string path        = 2; // prefix filter on file path; empty = no filter
   string filter      = 3; // free-text substring filter; empty = no filter
-}
-
-message ListResponse {
-  repeated FileRow rows = 1;
 }
 
 message FileRow {
@@ -49,7 +46,7 @@ sequenceDiagram
     Note left of Client: Render as table or JSON<br/>(same output as bwfs list)
 ```
 
-The RPC is unary (not streaming): the server collects all matching rows from SQLite and returns them in a single response. This is appropriate because backup catalogs are expected to contain thousands of entries per host, not millions — streaming adds complexity with no meaningful latency benefit at this scale.
+The RPC streams one `FileRow` per matching row rather than returning a single batched response, removing any hard cap on how many rows a listing can contain on the wire.
 
 ## Filter Semantics
 
@@ -111,8 +108,15 @@ workstation  f     /var/log/syslog      1782605538  1 MB    2       3
 
 ## Key Design Decisions
 
-**Why unary RPC instead of server streaming?**  
-Backup catalogs at this scale (thousands of files per host) fit comfortably in a single response. A streaming approach would complicate client-side rendering and error handling without meaningful benefit.
+**Why did ListFiles move from unary to server streaming?**
+The original unary response was capped by gRPC's default ~4MB `MaxRecvMsgSize` — a host with a
+large listing could hit that ceiling outright, and a caller had to wait for the whole response
+before processing anything. `bwfs` still runs one `queryFileRows` query per request and
+materializes the full filtered result server-side before streaming it out row by row — this
+change removes the wire-transfer ceiling, not server-side memory scale for a store with millions
+of rows, which remains the same "thousands of entries per host, not millions" tradeoff the
+original design accepted, just narrowed to where it actually still applies. See
+[rwfs's reliability/performance design](../superpowers/specs/2026-08-16-rwfs-reliability-performance-design.md).
 
 **Why register on the same port as BackupService?**  
 Avoids a second listener, simplifies firewall rules, and keeps `bwfs server` as a single process with a single port. gRPC multiplexes services over the same HTTP/2 connection automatically.

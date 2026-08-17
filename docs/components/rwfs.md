@@ -88,6 +88,16 @@ passes an explicit `--job-id` for its restore-verification tasks (see
 [agent](./agent.md#policy-driven-restore-verification)); a human running `rwfs` by hand gets a
 generated UUID.
 
+`ResolveRestoreFiles` (used by `--rules-stdin`) and each per-file `RestoreFile` stream are protected
+by an idle-timeout watchdog (60s, fixed): a stream that's actively producing data is never
+penalized for running long, but one that goes idle that long is cancelled rather than hanging
+forever. `verifyFileWithRetry` also waits between retry attempts (capped, doubling backoff starting
+at 500ms) instead of retrying immediately, so a struggling `bwfs` isn't hammered. Internally, `list`,
+`verify`, and `restore` share a generic worker pool and a common resolved-row source for
+`ResolveRestoreFiles` consumption — none of this is CLI-visible, but it's the reusable shape a future
+file-content restore phase is expected to build on. See
+[Design: rwfs Reliability, Performance, and Reuse](../superpowers/specs/2026-08-16-rwfs-reliability-performance-design.md).
+
 ### Restore rule verification (`--rules-stdin`)
 
 ```bash

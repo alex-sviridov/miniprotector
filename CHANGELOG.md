@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-16 — rwfs: streaming ListFiles, stall protection, and shared internals
+
+`bwfs`'s `ListFiles` RPC is now server-streaming instead of unary, removing the implicit ~4MB
+gRPC message-size ceiling a large per-host listing could hit, and letting `rwfs verify`'s plain
+path start verifying as rows arrive instead of waiting for the whole listing. `rwfs`'s two
+previously-unbounded streaming calls (`ResolveRestoreFiles` and each per-file `RestoreFile`) now
+carry an idle-timeout watchdog so a stalled `bwfs` can no longer hang a run forever, and verify's
+retry loop backs off between attempts instead of retrying immediately. Internally, `verify` and
+`restore` no longer each hand-roll their own stream-consumption loop — both now share one
+resolved-row source, and verify's worker pool is a generic, reusable piece rather than
+hand-rolled channel plumbing. No CLI-visible behavior change.
+
 ## 2026-08-16 — restore execution: directory structure phase
 
 `rwfs restore` now actually creates the resolved directory structure on the destination filesystem
