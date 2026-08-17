@@ -1,8 +1,16 @@
 package main
 
 import (
-	pb "github.com/alex-sviridov/miniprotector/api"
+	"context"
+	"net"
 	"testing"
+	"time"
+
+	pb "github.com/alex-sviridov/miniprotector/api"
+	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 func TestBuildRestoreFilters_OnlyIncludedRulesBecomeFilters(t *testing.T) {
@@ -180,5 +188,115 @@ func TestRestoreResolver_NotFound_FolderLevelFilterWithNoKeptRowIsNotAFailure(t 
 	notFound := resolver.NotFound()
 	if len(notFound) != 0 {
 		t.Fatalf("a folder rule matching nothing is a legitimate empty result, got %v", notFound)
+	}
+}
+
+// TestStreamResolvedRows_DispatchesMatchingRowsAndReportsNotFound drives
+// streamResolvedRows over a real bufconn gRPC round trip against
+// testResolveServer (defined in verify_test.go, same package) -- one rule
+// matches a real row, the other matches nothing and must surface via
+// resolver.NotFound() once rows is drained.
+func TestStreamResolvedRows_DispatchesMatchingRowsAndReportsNotFound(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.CreateFileData("fs://hosta:f:/etc/a.conf:1000", 4); err != nil {
+		t.Fatalf("create file data: %v", err)
+	}
+	if err := store.FinalizeFileData("fs://hosta:f:/etc/a.conf:1000", expectedCRC32(t, [][]byte{{1, 2, 3, 4}})); err != nil {
+		t.Fatalf("finalize file data: %v", err)
+	}
+	if err := store.RawDB().Create(&wfs.FileVersionRecord{ObjectID: "fs://hosta:f:/etc/a.conf:1000", JobID: "job1", CreatedAt: time.Unix(5000, 0)}).Error; err != nil {
+		t.Fatalf("create file version record: %v", err)
+	}
+
+	listSrv := &testResolveServer{store: store}
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	rules := []RestoreRule{
+		{Host: "hosta", Path: "/etc/a.conf", Include: true},
+		{Host: "hosta", Path: "/etc/missing.conf", Include: true},
+	}
+	client := pb.NewListServiceClient(conn)
+	rowsCh, resolver, errCh := streamResolvedRows(context.Background(), client, rules)
+
+	var got []dispatchedRow
+	for r := range rowsCh {
+		got = append(got, r)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 dispatched row, got %d: %+v", len(got), got)
+	}
+	if got[0].Row.GetPath() != "/etc/a.conf" || got[0].RuleIndex != 0 {
+		t.Fatalf("unexpected dispatched row: %+v", got[0])
+	}
+
+	notFound := resolver.NotFound()
+	if len(notFound) != 1 || notFound[0].Path != "/etc/missing.conf" {
+		t.Fatalf("expected one not-found entry for /etc/missing.conf, got %+v", notFound)
+	}
+}
+
+// stallingResolveServer sends nothing and blocks until its context is
+// cancelled -- proves streamResolvedRows's watchdog actually fires on a
+// genuinely stalled ResolveRestoreFiles stream, not just a fast one.
+type stallingResolveServer struct {
+	pb.UnimplementedListServiceServer
+}
+
+func (s *stallingResolveServer) ResolveRestoreFiles(_ *pb.ResolveRestoreFilesRequest, stream pb.ListService_ResolveRestoreFilesServer) error {
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+func TestStreamResolvedRows_WatchdogCancelsAStalledStream(t *testing.T) {
+	original := streamIdleTimeout
+	streamIdleTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { streamIdleTimeout = original })
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, &stallingResolveServer{})
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	rules := []RestoreRule{{Host: "hosta", Path: "/etc/a.conf", Include: true}}
+	client := pb.NewListServiceClient(conn)
+	rowsCh, _, errCh := streamResolvedRows(context.Background(), client, rules)
+
+	for range rowsCh {
+	}
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected the stalled stream to surface an error once the watchdog fires")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("streamResolvedRows never returned after the watchdog should have fired")
 	}
 }

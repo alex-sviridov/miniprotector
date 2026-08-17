@@ -8,6 +8,10 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"io"
+
 	pb "github.com/alex-sviridov/miniprotector/api"
 )
 
@@ -133,4 +137,62 @@ func (r *restoreResolver) NotFound() []notFoundRule {
 		out = append(out, notFoundRule{Host: rule.Host, Path: rule.Path, Reason: reason})
 	}
 	return out
+}
+
+// dispatchedRow is one row streamResolvedRows has already run through
+// restoreResolver.Feed's precedence/type gating and confirmed should be
+// acted on. RuleIndex is the winning rule's index into the rules slice
+// streamResolvedRows was called with -- restore.go needs it for
+// dest_path attribution; verify.go ignores it.
+type dispatchedRow struct {
+	Row       *pb.FileRow
+	RuleIndex int
+}
+
+// streamResolvedRows wraps a stall-watchdog-protected ResolveRestoreFiles
+// call and resolver.Feed's existing precedence/type gating in one
+// reusable stream, used identically by verify --rules-stdin and restore --
+// previously each drove this loop independently, in two different shapes.
+// The returned resolver's NotFound must only be called once rows is fully
+// drained (closed). errCh receives exactly one value (nil on a clean
+// end-of-stream, non-nil otherwise), sent as the producer goroutine's
+// final act before it closes rows -- so a caller that fully drains rows
+// first is guaranteed errCh already has its value ready to read.
+func streamResolvedRows(ctx context.Context, client pb.ListServiceClient, rules []RestoreRule) (rows <-chan dispatchedRow, resolver *restoreResolver, errCh <-chan error) {
+	filters, filterToRuleIndex := buildRestoreFilters(rules)
+	resolver = newRestoreResolver(rules, filterToRuleIndex)
+
+	out := make(chan dispatchedRow)
+	errs := make(chan error, 1)
+
+	watchdogCtx, touch, stop := withStallWatchdog(ctx, streamIdleTimeout)
+
+	stream, err := client.ResolveRestoreFiles(watchdogCtx, &pb.ResolveRestoreFilesRequest{Filters: filters})
+	if err != nil {
+		stop()
+		close(out)
+		errs <- fmt.Errorf("resolve restore files: %w", err)
+		return out, resolver, errs
+	}
+
+	go func() {
+		defer stop()
+		defer close(out)
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				errs <- nil
+				return
+			}
+			if err != nil {
+				errs <- fmt.Errorf("resolve restore files: %w", err)
+				return
+			}
+			touch()
+			if dispatch, ruleIndex := resolver.Feed(resp.GetRow(), resp.GetFilterIndex()); dispatch {
+				out <- dispatchedRow{Row: resp.GetRow(), RuleIndex: ruleIndex}
+			}
+		}
+	}()
+	return out, resolver, errs
 }
