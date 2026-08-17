@@ -20,6 +20,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
+	"github.com/gorilla/websocket"
 )
 
 func main() {
@@ -97,12 +98,22 @@ func main() {
 	srv.loki = newCachingLokiClient(newHTTPLokiClient(lokiBaseURL, lokiHTTPClient), 10*time.Second)
 	srv.adhocPolicyTimeout = time.Duration(conf.AdhocPolicyTimeoutSec) * time.Second
 
+	srv.wsTickets = newWSTicketStore()
+
+	lokiTailDialer := &websocket.Dialer{TLSClientConfig: lokiTLSConfig}
+	lokiTailBaseURL := fmt.Sprintf("wss://%s:%d", conf.LogGatewayHost, conf.LogGatewayPort)
+	srv.lokiTail = newHTTPLokiTailer(lokiTailBaseURL, lokiTailDialer)
+
+	srv.aggregator = newJobAggregator(srv.loki, srv.lokiTail, logger)
+
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux, arguments.Token)
 	handler := mux
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	go srv.aggregator.Start(signalCtx)
 
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", arguments.Port), Handler: handler}
 	go func() {
