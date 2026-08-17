@@ -9,7 +9,6 @@ import (
 	"hash/crc32"
 	"io"
 	"log/slog"
-	"sync"
 	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -18,6 +17,11 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"google.golang.org/grpc"
 	"lukechampine.com/blake3"
+)
+
+const (
+	retryBackoffInitial = 500 * time.Millisecond
+	retryBackoffCap     = 5 * time.Second
 )
 
 type verifyResult struct {
@@ -104,96 +108,74 @@ func runVerify(logger *slog.Logger, host string, port int, serverName, pathFilte
 // conn -- split out purely so tests can exercise it over a bufconn dial
 // without duplicating anything past the transport-level connect (runVerify
 // itself is the only production caller). See verify_test.go's
-// runVerifyWithDialer.
+// runVerifyWithDialer / runVerifyPlainWithDialer.
 func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, pathFilter, filter string, rulesStdin bool, rules []RestoreRule, streams, retries int, quiet bool, jobID string) error {
-	// callCtx carries the job-id metadata every RPC below inherits.
 	callCtx := jobid.Outgoing(context.Background(), jobID)
 
 	restoreClient := pb.NewRestoreServiceClient(conn)
 	workCh := make(chan *pb.FileRow, streams)
-	var notFound []notFoundRule
+
 	var resolver *restoreResolver
-	streamErrCh := make(chan error, 1)
+	var streamErrCh <-chan error
 
 	if rulesStdin {
-		// ResolveRestoreFiles is scoped by the rules themselves (host/path/
-		// timeframe), so unlike the plain-verify path below, it never
-		// fetches more than the rules could ever select -- see
-		// docs/components/rwfs.md.
-		filters, filterToRuleIndex := buildRestoreFilters(rules)
-		resolver = newRestoreResolver(rules, filterToRuleIndex)
-
 		listClient := pb.NewListServiceClient(conn)
-		resolveCtx, resolveCancel := context.WithCancel(callCtx)
-		defer resolveCancel()
-		stream, err := listClient.ResolveRestoreFiles(resolveCtx, &pb.ResolveRestoreFilesRequest{Filters: filters})
-		if err != nil {
-			return fmt.Errorf("resolve restore files: %w", err)
-		}
+		var rowsCh <-chan dispatchedRow
+		rowsCh, resolver, streamErrCh = streamResolvedRows(callCtx, listClient, rules)
 
 		go func() {
 			defer close(workCh)
-			for {
-				resp, err := stream.Recv()
-				if err == io.EOF {
-					streamErrCh <- nil
-					return
-				}
-				if err != nil {
-					streamErrCh <- fmt.Errorf("resolve restore files: %w", err)
-					return
-				}
-				// resolver.Feed also dispatches directory rows (Type == "d")
-				// for restore.go's benefit -- verify has no use for those
-				// (a directory's FileUuid is always empty, and RestoreFile
-				// answers an empty/unknown file_uuid with NotFound), so
-				// gate on row type here too: only a real file ever reaches
-				// the worker pool.
-				if dispatch, _ := resolver.Feed(resp.GetRow(), resp.GetFilterIndex()); dispatch && resp.GetRow().GetType() == "f" {
-					workCh <- resp.GetRow()
+			for r := range rowsCh {
+				// resolver.Feed also dispatches directory rows (Type ==
+				// "d") for restore.go's benefit -- verify has no use for
+				// those (a directory's FileUuid is always empty, and
+				// RestoreFile answers an empty/unknown file_uuid with
+				// NotFound), so gate on row type here too.
+				if r.Row.GetType() == "f" {
+					workCh <- r.Row
 				}
 			}
 		}()
 	} else {
 		listClient := pb.NewListServiceClient(conn)
-		ctx, cancel := context.WithTimeout(callCtx, 30*time.Second)
-		resp, err := listClient.ListFiles(ctx, &pb.ListRequest{
+		errCh := make(chan error, 1)
+		streamErrCh = errCh
+
+		watchdogCtx, touch, stop := withStallWatchdog(callCtx, streamIdleTimeout)
+		stream, err := listClient.ListFiles(watchdogCtx, &pb.ListRequest{
 			ServerName: serverName,
 			Path:       pathFilter,
 			Filter:     filter,
 		})
-		cancel()
 		if err != nil {
+			stop()
 			return fmt.Errorf("list files: %w", err)
 		}
+
 		go func() {
+			defer stop()
 			defer close(workCh)
-			for _, r := range resp.Rows {
-				if r.Type == "f" && r.Size > 0 {
-					workCh <- r
+			for {
+				row, err := stream.Recv()
+				if err == io.EOF {
+					errCh <- nil
+					return
+				}
+				if err != nil {
+					errCh <- fmt.Errorf("list files: %w", err)
+					return
+				}
+				touch()
+				if row.Type == "f" && row.Size > 0 {
+					workCh <- row
 				}
 			}
 		}()
-		streamErrCh <- nil
 	}
 
-	resultCh := make(chan verifyResult, streams)
-
-	var wg sync.WaitGroup
-	for i := 0; i < streams; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for row := range workCh {
-				resultCh <- verifyFileWithRetry(callCtx, logger, restoreClient, row, retries)
-			}
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
+	resultCh := runWorkerPool(callCtx, streams, workCh, func(ctx context.Context, row *pb.FileRow) verifyResult {
+		return verifyFileWithRetry(ctx, logger, restoreClient, row, retries)
+	})
 
 	total := 0
 	warnings := 0
@@ -227,10 +209,11 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 	if streamErr := <-streamErrCh; streamErr != nil {
 		return streamErr
 	}
+
+	var notFound []notFoundRule
 	if rulesStdin {
 		notFound = resolver.NotFound()
 	}
-
 	for _, nf := range notFound {
 		warnings++
 		logger.Warn("verification failed", "source", nf.Host, "path", nf.Path, "reason", nf.Reason)
@@ -244,6 +227,7 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 }
 
 func verifyFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, row *pb.FileRow, maxRetries int) verifyResult {
+	backoff := retryBackoffInitial
 	var result verifyResult
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		result = verifyFile(ctx, client, row)
@@ -257,6 +241,12 @@ func verifyFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.Res
 				"attempt", attempt,
 				"reason", result.reason,
 			)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return result
+			}
+			backoff = min(backoff*2, retryBackoffCap)
 		}
 	}
 	return result
@@ -269,8 +259,8 @@ func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.
 		path:     row.Path,
 	}
 
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
+	ctx, touch, stop := withStallWatchdog(parent, streamIdleTimeout)
+	defer stop()
 
 	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileUuid: row.FileUuid})
 	if err != nil {
@@ -283,6 +273,7 @@ func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.
 		base.reason = fmt.Sprintf("stream error: %v", err)
 		return base
 	}
+	touch()
 	meta := firstEvent.GetMeta()
 	if meta == nil {
 		base.reason = "stream error: expected RestoreFileMeta as first event"
@@ -299,6 +290,7 @@ func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.
 			base.reason = fmt.Sprintf("stream error: %v", err)
 			return base
 		}
+		touch()
 		chunk := event.GetChunk()
 		if chunk == nil {
 			base.reason = "stream error: expected RestoreChunk"

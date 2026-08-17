@@ -576,3 +576,163 @@ func TestRunVerify_RulesStdin_HostAgnosticFolderRuleSkipsDirectoryRows(t *testin
 	assert.Equal(t, []string{fileUUID}, restoreSrv.Requested(),
 		"only the file's uuid must ever reach RestoreFile -- the directory row must never be dispatched to the worker pool")
 }
+
+// runVerifyPlainWithDialer is runVerifyWithDialer's counterpart for the
+// plain, non-rules-stdin path: dials a bufconn listener the same way, then
+// calls runVerifyWithConn with rulesStdin=false and no rules.
+func runVerifyPlainWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, serverName, pathFilter, filter string, quiet bool) error {
+	t.Helper()
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+	return runVerifyWithConn(logger, conn, serverName, pathFilter, filter, false, nil, 4, 1, quiet, "test-job")
+}
+
+// TestRunVerify_PlainPath_StreamsAndVerifiesAllFiles proves the plain
+// (non-rules-stdin) path -- previously an atomic unary ListFiles call --
+// now streams rows straight into the worker pool and every real file
+// still gets verified.
+func TestRunVerify_PlainPath_StreamsAndVerifiesAllFiles(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	uuidA := seedRestorableFile(t, store, "hosta", "/data/a.txt", "job1", 1000, []byte{1, 2, 3, 4})
+	uuidB := seedRestorableFile(t, store, "hosta", "/data/b.txt", "job1", 1000, []byte{5, 6, 7, 8})
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", true)
+	require.NoError(t, err, "plain verify must succeed for two genuinely valid files: %s", logBuf.String())
+	assert.ElementsMatch(t, []string{uuidA, uuidB}, restoreSrv.Requested())
+}
+
+// TestRunVerify_PlainPath_MidStreamErrorReportedAlongsideSummary proves
+// the new mid-stream failure mode (impossible under the old atomic unary
+// call): a row received before the failure was legitimately verified and
+// counts, and the run still fails overall.
+func TestRunVerify_PlainPath_MidStreamErrorReportedAlongsideSummary(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	uuidA := seedRestorableFile(t, store, "hosta", "/data/a.txt", "job1", 1000, []byte{1, 2, 3, 4})
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &failingAfterFirstRowListServer{
+		Row: &pb.FileRow{FileUuid: uuidA, Source: "hosta", Path: "/data/a.txt", Type: "f", Size: 4},
+	}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", true)
+	require.Error(t, err)
+	assert.Equal(t, []string{uuidA}, restoreSrv.Requested(),
+		"the row received before the mid-stream failure must still have been dispatched and verified")
+}
+
+// TestVerifyFileWithRetry_BacksOffBetweenAttempts proves real backoff
+// happens between attempts (not mocked time) -- recordingRestoreServer
+// always fails RestoreFile with a plain stream error (never a checksum
+// mismatch), so every attempt short of the last one waits.
+func TestVerifyFileWithRetry_BacksOffBetweenAttempts(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	restoreSrv := &recordingRestoreServer{}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := pb.NewRestoreServiceClient(conn)
+	row := &pb.FileRow{FileUuid: "does-not-exist", Source: "hosta", Path: "/x"}
+
+	start := time.Now()
+	verifyFileWithRetry(context.Background(), logger, client, row, 3)
+	elapsed := time.Since(start)
+
+	// 3 attempts -> 2 waits; backoff starts at 500ms and doubles, so the
+	// floor is 500ms + 1s = 1.5s (well under the 5s cap). Assert a
+	// slightly relaxed floor to absorb scheduler jitter.
+	if elapsed < 1300*time.Millisecond {
+		t.Fatalf("expected at least ~1.5s of backoff across 2 waits, took %v", elapsed)
+	}
+}
+
+// stallingRestoreServer sends nothing and blocks until its context is
+// cancelled -- proves verifyFile's watchdog actually fires on a
+// genuinely stalled RestoreFile stream.
+type stallingRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+}
+
+func (s *stallingRestoreServer) RestoreFile(_ *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+func TestVerifyFile_WatchdogCancelsAStalledRestoreFileStream(t *testing.T) {
+	original := streamIdleTimeout
+	streamIdleTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { streamIdleTimeout = original })
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterRestoreServiceServer(grpcSrv, &stallingRestoreServer{})
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := pb.NewRestoreServiceClient(conn)
+	row := &pb.FileRow{FileUuid: "x", Source: "hosta", Path: "/x"}
+
+	done := make(chan verifyResult, 1)
+	go func() { done <- verifyFile(context.Background(), client, row) }()
+
+	select {
+	case result := <-done:
+		require.False(t, result.ok)
+		assert.Contains(t, result.reason, "stream error")
+	case <-time.After(2 * time.Second):
+		t.Fatal("verifyFile never returned after the watchdog should have fired")
+	}
+}
