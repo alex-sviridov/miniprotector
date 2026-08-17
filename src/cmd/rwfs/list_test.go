@@ -25,9 +25,11 @@ func captureStdout(t *testing.T, fn func()) string {
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = old
+	})
 	fn()
 	require.NoError(t, w.Close())
-	os.Stdout = old
 	data, err := io.ReadAll(r)
 	require.NoError(t, err)
 	return string(data)
