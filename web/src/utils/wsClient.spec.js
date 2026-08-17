@@ -8,10 +8,14 @@ class FakeWebSocket {
   constructor(url) {
     this.url = url
     this.sent = []
+    this.closed = false
     FakeWebSocket.instances.push(this)
   }
   send(data) { this.sent.push(data) }
-  close() { this.onclose && this.onclose({}) }
+  close() {
+    this.closed = true
+    this.onclose && this.onclose({})
+  }
   triggerOpen() { this.onopen && this.onopen({}) }
   triggerMessage(data) { this.onmessage && this.onmessage({ data: JSON.stringify(data) }) }
   triggerClose() { this.onclose && this.onclose({}) }
@@ -107,5 +111,33 @@ describe('wsClient', () => {
     await vi.advanceTimersByTimeAsync(20000)
 
     expect(FakeWebSocket.instances.length).toBe(countBeforeClose)
+  })
+
+  it('close() called synchronously before the in-flight connect resolves closes the socket without going live', async () => {
+    apiFetch.mockResolvedValue({ ticket: 'abc123' })
+    const onMessage = vi.fn()
+    const onStatus = vi.fn()
+
+    const stream = wsClient.createLiveStream('/jobs/stream', { onMessage, onStatus, onFallback: vi.fn() })
+    // no await here -- close() runs while the ticket fetch / WebSocket
+    // constructor is still in flight, before `socket` is ever assigned
+    stream.close()
+
+    // let the pending openTicketedSocket() promise chain settle
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(FakeWebSocket.instances.length).toBe(1)
+    const socket = FakeWebSocket.instances[0]
+    expect(socket.closed).toBe(true)
+    expect(onStatus).not.toHaveBeenCalledWith('live')
+    expect(onMessage).not.toHaveBeenCalled()
+
+    // no handlers should have been attached to the stale socket at all
+    socket.triggerOpen()
+    socket.triggerMessage({ type: 'snapshot', jobs: [] })
+    expect(onStatus).not.toHaveBeenCalledWith('live')
+    expect(onMessage).not.toHaveBeenCalled()
   })
 })

@@ -41,12 +41,21 @@ export function createLiveStream(path, { onMessage, onStatus, onFallback }) {
 
   async function connect() {
     if (closedByCaller) return
+    let newSocket
     try {
-      socket = await openTicketedSocket(path)
+      newSocket = await openTicketedSocket(path)
     } catch {
       scheduleReconnect()
       return
     }
+    if (closedByCaller) {
+      // close() ran while the ticket fetch / WS constructor was in flight --
+      // don't attach handlers to (or leave live) a socket the caller already
+      // tore down.
+      newSocket.close()
+      return
+    }
+    socket = newSocket
     socket.onopen = () => {
       attempt = 0
       onStatus('live')
