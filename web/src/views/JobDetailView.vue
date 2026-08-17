@@ -1,9 +1,10 @@
 <script setup>
-import { onMounted, computed } from 'vue'
+import { onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useJobsStore } from '../stores/jobs'
 import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
+import ConnectionStatus from '../components/ui/ConnectionStatus.vue'
 import LogLine from '../components/LogLine.vue'
 
 const route = useRoute()
@@ -11,13 +12,21 @@ const jobs = useJobsStore()
 const jobId = computed(() => route.params.job_id)
 
 onMounted(async () => {
-  await jobs.fetchLogs(jobId.value)
+  await jobs.connectLogsStream(jobId.value)
+})
+
+onUnmounted(() => {
+  jobs.disconnectLogsStream()
 })
 </script>
 
 <template>
   <div>
-    <PageHeader :title="jobId" :crumbs="[{ label: 'Jobs', to: { name: 'jobs' } }, { label: jobId }]" />
+    <PageHeader :title="jobId" :crumbs="[{ label: 'Jobs', to: { name: 'jobs' } }, { label: jobId }]">
+      <template #actions>
+        <ConnectionStatus :status="jobs.logsStatus" />
+      </template>
+    </PageHeader>
     <StatusMessage
       :loading="jobs.logsLoading"
       :error="jobs.logsError"

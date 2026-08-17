@@ -2,9 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useJobsStore } from './jobs'
 import { apiFetch } from '../api/client'
+import { createLiveStream } from '../utils/wsClient'
 
 vi.mock('../api/client', () => ({
   apiFetch: vi.fn(),
+}))
+
+vi.mock('../utils/wsClient', () => ({
+  createLiveStream: vi.fn(),
 }))
 
 describe('jobs store', () => {
@@ -69,5 +74,78 @@ describe('jobs store', () => {
 
     expect(jobs.logsError).toBe('boom')
     expect(jobs.logs).toEqual([])
+  })
+
+  describe('connectLogsStream', () => {
+    let liveStreamHandlers
+
+    beforeEach(() => {
+      createLiveStream.mockReset()
+      createLiveStream.mockImplementation((path, handlers) => {
+        liveStreamHandlers = handlers
+        return { close: vi.fn() }
+      })
+    })
+
+    it('fetches history first, then opens a live stream from a cursor near "now"', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+
+      await jobs.connectLogsStream('restore:x:1')
+
+      expect(apiFetch).toHaveBeenCalledWith('/jobs/restore%3Ax%3A1/logs')
+      expect(createLiveStream).toHaveBeenCalledWith(
+        expect.stringMatching(/^\/jobs\/restore%3Ax%3A1\/logs\/stream\?start=\d+$/),
+        expect.objectContaining({ onMessage: expect.any(Function), onStatus: expect.any(Function), onFallback: expect.any(Function) })
+      )
+    })
+
+    it('merges a new line delivered over the stream, deduping by timestamp/hostname/binary', async () => {
+      apiFetch.mockResolvedValue({
+        data: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+      })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+
+      liveStreamHandlers.onMessage({ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }) // duplicate of history
+      liveStreamHandlers.onMessage({ timestamp: 200, hostname: 'h', binary: 'brfs', line: '{"msg":"new"}' })
+
+      expect(jobs.logs).toHaveLength(2)
+      expect(jobs.logs.map((l) => l.timestamp)).toEqual([100, 200])
+    })
+
+    it('flips status to "finished" and closes the stream on an event=finish line', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+
+      liveStreamHandlers.onMessage({ timestamp: 100, hostname: 'h', binary: 'agent', line: '{"event":"finish","status":"success"}' })
+
+      expect(jobs.logsStatus).toBe('finished')
+    })
+
+    it('onStatus updates logsStatus, except once finished it stays finished', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+
+      liveStreamHandlers.onStatus('live')
+      expect(jobs.logsStatus).toBe('live')
+
+      jobs.logsStatus = 'finished'
+      liveStreamHandlers.onStatus('reconnecting')
+      expect(jobs.logsStatus).toBe('finished')
+    })
+
+    it('disconnectLogsStream closes the stream and clears reconciliation timers', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+      const closeSpy = createLiveStream.mock.results[0].value.close
+
+      jobs.disconnectLogsStream()
+
+      expect(closeSpy).toHaveBeenCalled()
+    })
   })
 })

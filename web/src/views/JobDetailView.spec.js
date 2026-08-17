@@ -15,9 +15,9 @@ function mountView(state) {
 }
 
 describe('JobDetailView', () => {
-  it('calls fetchLogs with the route job_id on mount', () => {
+  it('calls connectLogsStream with the route job_id on mount', () => {
     const { jobs } = mountView({ logs: [], logsLoading: false, logsError: null })
-    expect(jobs.fetchLogs).toHaveBeenCalledWith('backup:nightly:1752400000')
+    expect(jobs.connectLogsStream).toHaveBeenCalledWith('backup:nightly:1752400000')
   })
 
   it('renders the job id as the heading', () => {
