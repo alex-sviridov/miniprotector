@@ -64,6 +64,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/loki/api/v1/push", srv.ServeHTTP)
 	mux.HandleFunc("/loki/api/v1/query_range", srv.ServeQuery)
+	mux.HandleFunc("/loki/api/v1/tail", srv.ServeTail)
 	httpServer := &http.Server{Handler: mux, TLSConfig: tlsConfig}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", conf.LogGatewayPort))

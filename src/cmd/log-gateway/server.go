@@ -17,9 +17,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/mtls"
+	"github.com/gorilla/websocket"
 )
 
 // maxPushBodyBytes bounds how much of an inbound push body log-gateway will
@@ -54,6 +56,33 @@ const lokiForwardTimeout = 10 * time.Second
 // fail to decode a body it never actually altered.
 var passthroughHeaders = []string{"Content-Type", "Content-Encoding"}
 
+// tailUpgrader is shared across every caller's WS upgrade -- default
+// buffer sizes are fine at this scale, mirroring the reasoning behind
+// maxPushBodyBytes/maxQueryResponseBytes on the REST routes. CheckOrigin
+// always returns true: the mTLS peer certificate check below is this
+// route's real auth boundary, not browser origin -- log-gateway is never
+// called directly from a browser (api-server proxies for browsers; see
+// docs/SECURITY.md).
+var tailUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin:     func(r *http.Request) bool { return true },
+}
+
+// httpToWS rewrites an http(s):// base URL to its ws(s):// equivalent --
+// Loki's tail endpoint is a WebSocket upgrade on the same host/port as its
+// plain HTTP push/query_range endpoints.
+func httpToWS(base string) string {
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		return "wss://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		return "ws://" + strings.TrimPrefix(base, "http://")
+	default:
+		return base
+	}
+}
+
 // logGatewayServer implements the sole HTTP handler an already-bootstrapped
 // node's log shipper calls to push its logs toward Loki. Every caller must
 // present a verified, non-revoked operating-tier mTLS certificate; nothing
@@ -61,6 +90,7 @@ var passthroughHeaders = []string{"Content-Type", "Content-Encoding"}
 type logGatewayServer struct {
 	lokiPushURL  string
 	lokiQueryURL string
+	lokiTailURL  string
 	httpClient   *http.Client
 	logger       *slog.Logger
 }
@@ -69,6 +99,7 @@ func newLogGatewayServer(lokiBaseURL string, logger *slog.Logger) *logGatewaySer
 	return &logGatewayServer{
 		lokiPushURL:  lokiBaseURL + "/loki/api/v1/push",
 		lokiQueryURL: lokiBaseURL + "/loki/api/v1/query_range",
+		lokiTailURL:  httpToWS(lokiBaseURL) + "/loki/api/v1/tail",
 		httpClient:   &http.Client{},
 		logger:       logger,
 	}
@@ -172,4 +203,76 @@ func (s *logGatewayServer) ServeQuery(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
+}
+
+// ServeTail proxies a caller's WebSocket tail connection to Loki's real
+// tail endpoint -- the read-path live counterpart to ServeQuery's
+// query_range proxying, gated by the same operating-tier mTLS check.
+// Query parameters (query, start, delay_for, limit) are forwarded
+// unmodified, same unexamined-passthrough philosophy as every other route
+// here. Reachable by any operating-tier mesh node, same convention already
+// accepted for the push/query routes.
+func (s *logGatewayServer) ServeTail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if _, err := mtls.PeerHostnameFromConnState(r.TLS); err != nil {
+		http.Error(w, "determine caller identity: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	lokiConn, _, err := websocket.DefaultDialer.DialContext(r.Context(), s.lokiTailURL+"?"+r.URL.RawQuery, nil)
+	if err != nil {
+		http.Error(w, "dial loki tail: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer lokiConn.Close()
+
+	clientConn, err := tailUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.logger.Error("serveTail: client upgrade failed", "error", err)
+		return
+	}
+	defer clientConn.Close()
+
+	relayTail(clientConn, lokiConn)
+}
+
+// relayTail pumps every message from loki to client until either side
+// closes or errors. A second goroutine drains client's own incoming
+// frames (a tail client sends nothing but control frames -- pings, a
+// close) purely to detect a client-initiated disconnect promptly and tear
+// down the upstream Loki connection with it, since ReadMessage is the only
+// way gorilla/websocket surfaces a close.
+func relayTail(client, loki *websocket.Conn) {
+	clientClosed := make(chan struct{})
+	go func() {
+		defer close(clientClosed)
+		for {
+			if _, _, err := client.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	lokiDone := make(chan struct{})
+	go func() {
+		defer close(lokiDone)
+		for {
+			msgType, msg, err := loki.ReadMessage()
+			if err != nil {
+				return
+			}
+			if err := client.WriteMessage(msgType, msg); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-clientClosed:
+	case <-lokiDone:
+	}
 }

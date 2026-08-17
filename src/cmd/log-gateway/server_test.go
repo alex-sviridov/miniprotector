@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -240,6 +241,109 @@ func TestHandleQuery_LokiUnreachablePropagatesBadGateway(t *testing.T) {
 	srv.ServeQuery(w, req)
 
 	assert.Equal(t, http.StatusBadGateway, w.Result().StatusCode)
+}
+
+func TestServeTail_NoPeerCertificateRejected(t *testing.T) {
+	srv := newLogGatewayServer("http://unused.invalid", testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/loki/api/v1/tail", nil)
+	w := httptest.NewRecorder()
+
+	srv.ServeTail(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
+}
+
+func TestServeTail_NonGetMethodRejected(t *testing.T) {
+	srv := newLogGatewayServer("http://unused.invalid", testLogger())
+
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/tail", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "api-server-1")}}
+	w := httptest.NewRecorder()
+
+	srv.ServeTail(w, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Result().StatusCode)
+}
+
+// TestServeTail_RelaysMessagesFromLokiToClient proves the full relay: a
+// caller with a verified peer cert connects, log-gateway dials Loki's own
+// tail endpoint and pumps every message straight through unmodified.
+// ServeTail needs a real WS upgrade (an http.Hijacker), which
+// httptest.NewRecorder can't provide, so this test runs log-gateway behind
+// a real httptest.NewServer with r.TLS forced by a thin middleware --
+// ServeTail itself only ever reads r.TLS, never the transport's real TLS
+// state, so this faithfully exercises the same code path the mTLS
+// listener would in production (see main.go).
+func TestServeTail_RelaysMessagesFromLokiToClient(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	var gotQuery string
+	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+		require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte(`{"streams":[]}`)))
+	}))
+	defer lokiStub.Close()
+
+	srv := newLogGatewayServer(lokiStub.URL, testLogger())
+
+	gatewayStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "api-server-1")}}
+		srv.ServeTail(w, r)
+	}))
+	defer gatewayStub.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(gatewayStub.URL, "http") + "/loki/api/v1/tail?query=%7B%7D&start=1"
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer clientConn.Close()
+
+	_, msg, err := clientConn.ReadMessage()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"streams":[]}`, string(msg))
+	assert.Contains(t, gotQuery, "query=%7B%7D")
+	assert.Contains(t, gotQuery, "start=1")
+}
+
+// TestServeTail_ClientDisconnectClosesUpstream proves the client side of
+// the relay is watched too -- not just the Loki->client direction -- so a
+// browser closing its tab doesn't leak the upstream Loki connection.
+func TestServeTail_ClientDisconnectClosesUpstream(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	upstreamClosed := make(chan struct{})
+	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				close(upstreamClosed)
+				return
+			}
+		}
+	}))
+	defer lokiStub.Close()
+
+	srv := newLogGatewayServer(lokiStub.URL, testLogger())
+
+	gatewayStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "api-server-1")}}
+		srv.ServeTail(w, r)
+	}))
+	defer gatewayStub.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(gatewayStub.URL, "http") + "/loki/api/v1/tail?query=%7B%7D"
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	require.NoError(t, clientConn.Close())
+
+	select {
+	case <-upstreamClosed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream loki connection was never closed after the client disconnected")
+	}
 }
 
 func TestHandleQuery_OversizedResponseRejected(t *testing.T) {

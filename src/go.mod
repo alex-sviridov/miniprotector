@@ -6,6 +6,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.12.1
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/smallstep/certificates v0.30.2
 	github.com/smallstep/cli-utils v0.12.2
@@ -64,7 +65,6 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/googleapis/gax-go/v2 v2.18.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
