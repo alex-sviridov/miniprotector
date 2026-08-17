@@ -200,6 +200,68 @@ func (s *testResolveServer) ResolveRestoreFiles(req *pb.ResolveRestoreFilesReque
 	return nil
 }
 
+// ListFiles is a minimal reimplementation of bwfs's real ListFiles
+// handler (cmd/bwfs/listserver.go + cmd/bwfs/list.go's queryFileRows),
+// streaming FileRow directly instead of returning one ListResponse --
+// enough to drive a real gRPC/bufconn round trip against the streaming
+// shape from Task 1. Duplicated, not imported: cmd/bwfs is a different
+// "package main" and cannot be imported from here.
+func (s *testResolveServer) ListFiles(req *pb.ListRequest, stream pb.ListService_ListFilesServer) error {
+	query := s.store.RawDB().
+		Table("file_data_records fd").
+		Select("fd.uuid AS uuid, fd.source_host AS source_host, fd.path AS path, fd.size AS size, fd.chunk_count AS chunk_count").
+		Where("fd.checksum IS NOT NULL").
+		Order("fd.source_host ASC, fd.path ASC")
+	if req.GetServerName() != "" {
+		query = query.Where("fd.source_host = ?", req.GetServerName())
+	}
+	if req.GetPath() != "" {
+		query = query.Where("fd.path LIKE ?", req.GetPath()+"%")
+	}
+
+	rows, err := query.Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uuid, source, path string
+		var size int64
+		var chunkCount int
+		if err := rows.Scan(&uuid, &source, &path, &size, &chunkCount); err != nil {
+			return err
+		}
+		if err := stream.Send(&pb.FileRow{
+			FileUuid: uuid,
+			Source:   source,
+			Type:     "f",
+			Path:     path,
+			Size:     size,
+			Chunks:   int32(chunkCount),
+		}); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// failingAfterFirstRowListServer sends exactly one FileRow then returns an
+// error -- used by list_test.go (whose consumer never calls RestoreFile,
+// so any row content works) and by verify_test.go's plain-path mid-stream
+// test (Task 6), which needs Row to carry a real file_uuid a running
+// RestoreServiceServer can actually serve.
+type failingAfterFirstRowListServer struct {
+	pb.UnimplementedListServiceServer
+	Row *pb.FileRow
+}
+
+func (s *failingAfterFirstRowListServer) ListFiles(_ *pb.ListRequest, stream pb.ListService_ListFilesServer) error {
+	if err := stream.Send(s.Row); err != nil {
+		return err
+	}
+	return fmt.Errorf("simulated mid-stream failure")
+}
+
 // recordingRestoreServer is a minimal RestoreServiceServer that records
 // which file_uuids it was asked to restore, then declines to actually serve
 // chunks -- it exists solely to prove that runVerifyWithConn's producer
