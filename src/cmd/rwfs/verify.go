@@ -225,9 +225,20 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 	// mid-stream failure must never suppress the counts for rows that were
 	// legitimately verified before it happened, especially under --quiet,
 	// where the per-file lines are the only other place those counts could
-	// have shown up.
+	// have shown up. (restore.go deliberately does the opposite -- it returns
+	// the stream error before logging its own summary. Each preserves the
+	// behavior its own command already had; the asymmetry is intentional.)
+	streamErr := <-streamErrCh
+
+	// resolver.NotFound is only meaningful once the stream was fully AND
+	// successfully drained: it reports "every rule that never saw a matching
+	// row", which on a failed stream is really "every rule we never finished
+	// asking about". Reporting those as "not found on this store" would
+	// assert something false about files that may well exist, and inflate the
+	// summary's warning count with it. The stream error below is the honest
+	// reason the run failed.
 	var notFound []notFoundRule
-	if rulesStdin {
+	if rulesStdin && streamErr == nil {
 		notFound = resolver.NotFound()
 	}
 	for _, nf := range notFound {
@@ -237,7 +248,7 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 
 	logger.Info("summary", "verified", total, "warnings", warnings)
 
-	if streamErr := <-streamErrCh; streamErr != nil {
+	if streamErr != nil {
 		return streamErr
 	}
 	if warnings > 0 {

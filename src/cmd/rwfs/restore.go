@@ -76,6 +76,12 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 			)
 		}
 	}
+	// Return a stream failure before anything else: resolver.NotFound below
+	// is only meaningful on a fully and successfully drained stream (rules
+	// that never resolved would otherwise be misreported as missing).
+	// verify.go deliberately logs its summary before returning the stream
+	// error instead; each command preserves the behavior it already had, and
+	// the asymmetry is intentional.
 	if err := <-errCh; err != nil {
 		return err
 	}

@@ -606,6 +606,69 @@ func TestRunVerify_RulesStdin_HostAgnosticFolderRuleSkipsDirectoryRows(t *testin
 		"only the file's uuid must ever reach RestoreFile -- the directory row must never be dispatched to the worker pool")
 }
 
+// failingResolveServer sends rows (possibly none) and then always fails --
+// a ResolveRestoreFiles stream that dies partway through, which is exactly
+// when restoreResolver.NotFound stops meaning anything: a rule that hasn't
+// resolved yet hasn't been shown to be missing, we just never finished
+// asking.
+type failingResolveServer struct {
+	pb.UnimplementedListServiceServer
+	rows []*pb.ResolveRestoreFilesResponse
+}
+
+func (s *failingResolveServer) ResolveRestoreFiles(_ *pb.ResolveRestoreFilesRequest, stream pb.ListService_ResolveRestoreFilesServer) error {
+	for _, r := range s.rows {
+		if err := stream.Send(r); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("simulated mid-stream failure")
+}
+
+// TestRunVerify_RulesStdin_StreamFailureSuppressesFabricatedNotFound is the
+// regression test for the second finding of this review round: NotFound was
+// consulted before the stream error was, so a ResolveRestoreFiles stream that
+// died partway through made every not-yet-resolved rule log "not found on
+// this store" / "no version in timeframe" -- an assertion the run has no
+// evidence for (those files may well exist), which also inflated the summary's
+// warning count. The exit code was never wrong; the log was.
+func TestRunVerify_RulesStdin_StreamFailureSuppressesFabricatedNotFound(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	// One row for rule 0 (zero-byte: found, nothing to dispatch), then the
+	// stream dies -- rules 1 and 2 never get a chance to resolve, and are the
+	// ones that used to be misreported.
+	listSrv := &failingResolveServer{rows: []*pb.ResolveRestoreFilesResponse{
+		{Row: &pb.FileRow{Source: "hosta", Type: "f", Path: "/etc/a.conf", Size: 0}, FilterIndex: 0},
+	}}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	rulesJSON := `{"rules":[
+		{"host":"hosta","path":"/etc/a.conf","include":true},
+		{"host":"hosta","path":"/etc/b.conf","include":true,"not_before":1000,"not_after":9999},
+		{"host":"hosta","path":"/etc/c.conf","include":true}
+	]}`
+
+	err := runVerifyWithDialer(t, logger, lis, rulesJSON)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "simulated mid-stream failure",
+		"the stream failure itself must be the error returned, not a fabricated verification-failure count")
+
+	logged := logBuf.String()
+	assert.NotContains(t, logged, "not found on this store",
+		"a rule that never got a chance to resolve must not be reported as missing from the store")
+	assert.NotContains(t, logged, "no version in timeframe",
+		"a rule that never got a chance to resolve must not be reported as out of timeframe")
+	assert.Contains(t, logged, "warnings=0",
+		"the summary must not count not-found warnings the failed stream never actually established")
+}
+
 // runVerifyPlainWithDialer is runVerifyWithDialer's counterpart for the
 // plain, non-rules-stdin path: dials a bufconn listener the same way, then
 // calls runVerifyWithConn with rulesStdin=false and no rules. streams is
