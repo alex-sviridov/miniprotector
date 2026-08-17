@@ -167,7 +167,15 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 				}
 				touch()
 				if row.Type == "f" && row.Size > 0 {
+					// workCh <- row can block for as long as the worker pool
+					// takes to drain (a large file, or several verify
+					// retries with backoff, both easily exceed
+					// streamIdleTimeout) -- touch again once the send
+					// completes so the watchdog only ever measures genuine
+					// ListFiles stream inactivity, never worker-pool
+					// backpressure.
 					workCh <- row
+					touch()
 				}
 			}
 		}()
@@ -206,10 +214,16 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 		}
 	}
 
-	if streamErr := <-streamErrCh; streamErr != nil {
-		return streamErr
-	}
-
+	// resultCh has fully drained here, which means workCh is closed, which
+	// (for both the rulesStdin and plain producers above) only happens
+	// after the underlying row stream itself has ended -- so streamErrCh
+	// is already guaranteed to have its value ready (see streamResolvedRows'
+	// doc comment in resolve.go) and resolver.NotFound is safe to call.
+	// Log the summary before consuming/returning any stream error: a
+	// mid-stream failure must never suppress the counts for rows that were
+	// legitimately verified before it happened, especially under --quiet,
+	// where the per-file lines are the only other place those counts could
+	// have shown up.
 	var notFound []notFoundRule
 	if rulesStdin {
 		notFound = resolver.NotFound()
@@ -220,6 +234,10 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 	}
 
 	logger.Info("summary", "verified", total, "warnings", warnings)
+
+	if streamErr := <-streamErrCh; streamErr != nil {
+		return streamErr
+	}
 	if warnings > 0 {
 		return fmt.Errorf("%d file(s) failed verification", warnings)
 	}

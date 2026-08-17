@@ -650,6 +650,8 @@ func TestRunVerify_PlainPath_MidStreamErrorReportedAlongsideSummary(t *testing.T
 	require.Error(t, err)
 	assert.Equal(t, []string{uuidA}, restoreSrv.Requested(),
 		"the row received before the mid-stream failure must still have been dispatched and verified")
+	assert.Contains(t, logBuf.String(), "summary",
+		"the summary line must still be logged even when the stream fails mid-run, not suppressed by the stream error")
 }
 
 // TestVerifyFileWithRetry_BacksOffBetweenAttempts proves real backoff
