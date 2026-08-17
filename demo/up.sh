@@ -99,6 +99,47 @@ enroll database
 enroll webserver "role=web"
 enroll store
 
+# Seeds a fixed, 100-file/~100-150MB dataset on database, backed up once by
+# the seeded demo/policy-server/policies/backup/e2e-fixture.json policy --
+# web/e2e/restore-content.spec.js restores it (with a folder rename) on
+# every run rather than generating and backing up a fresh dataset per run,
+# so repeated test runs don't each add ~120MB to the shared store with no
+# way to reclaim it. Idempotent: skips regeneration if the fixture already
+# has exactly 100 files (e.g. a re-run of this script against an
+# already-seeded volume).
+echo "Seeding e2e restore-content fixture data on database..."
+docker compose exec -T database bash -c '
+fixture=/data/e2e-restore-content-fixture
+if [ "$(find "$fixture" -type f 2>/dev/null | wc -l)" = "100" ]; then
+  echo "fixture already present, skipping"
+  exit 0
+fi
+set -eu
+rm -rf "$fixture"
+for d in 0 1 2 3 4; do
+  for s in 0 1 2 3; do
+    mkdir -p "$fixture/d$d/s$s"
+  done
+done
+i=0
+while [ "$i" -lt 100 ]; do
+  d=$(( i / 20 ))
+  s=$(( (i / 5) % 4 ))
+  size=$(shuf -i 102400-2097152 -n 1)
+  path=$(printf "$fixture/d%d/s%d/file_%03d.bin" "$d" "$s" "$i")
+  head -c "$size" /dev/urandom > "$path"
+  i=$((i + 1))
+done
+'
+
+# policy-server hot-reloads only on a write to policies/.changed
+# (src/cmd/policy-server/watch.go) -- its initial ReadDir at container
+# startup already picks up e2e-fixture.json on a genuinely fresh stack, but
+# touching the sentinel here also covers re-running this script against an
+# already-running policy-server (e.g. after a `git pull` that only added
+# new policy files, with no code change to trigger a container recreate).
+touch policy-server/policies/.changed
+
 echo "Starting web..."
 docker compose up -d --no-deps web
 
