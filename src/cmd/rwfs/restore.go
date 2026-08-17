@@ -1,15 +1,15 @@
-// restore.go implements `rwfs restore`: for every row ResolveRestoreFiles
-// yields that survives restoreResolver.Feed's precedence tie-break, it logs
-// the row's source path and its computed destination path
-// (restoreDestPath's dest_path rename applied), plus the run's overwrite
-// setting once at start. Once resolution completes with zero not-found
-// failures, phase 1 (createRestoreDirectoryStructure) actually recreates
-// every resolved directory on the destination filesystem -- file content
-// restore (phase 2, still no RestoreFile call) remains unbuilt -- see
-// docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md.
-// Reuses the exact rule-resolution pipeline `rwfs verify --rules-stdin`
-// already built (parseRulesStdin, buildRestoreFilters, newRestoreResolver,
-// the same not-found semantics) -- only the per-row action differs.
+// restore.go implements `rwfs restore`: for every row streamResolvedRows
+// yields (already run through restoreResolver.Feed's precedence
+// tie-break), it logs the row's source path and its computed destination
+// path (restoreDestPath's dest_path rename applied), plus the run's
+// overwrite setting once at start. Once resolution completes with zero
+// not-found failures, phase 1 (createRestoreDirectoryStructure) actually
+// recreates every resolved directory on the destination filesystem -- file
+// content restore (phase 2, still no RestoreFile call) remains unbuilt --
+// see docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md.
+// Reuses streamResolvedRows, the exact same resolved-row source
+// `rwfs verify --rules-stdin` uses (resolve.go) -- only the per-row
+// action differs.
 package main
 
 import (
@@ -52,37 +52,17 @@ func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdi
 func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bool, rules []RestoreRule, quiet bool, jobID string) error {
 	callCtx := jobid.Outgoing(context.Background(), jobID)
 
-	filters, filterToRuleIndex := buildRestoreFilters(rules)
-	resolver := newRestoreResolver(rules, filterToRuleIndex)
-
 	logger.Info("restore starting", "overwrite", overwrite, "rules", len(rules))
 
 	listClient := pb.NewListServiceClient(conn)
-	stream, err := listClient.ResolveRestoreFiles(callCtx, &pb.ResolveRestoreFilesRequest{Filters: filters})
-	if err != nil {
-		return fmt.Errorf("resolve restore files: %w", err)
-	}
+	rowsCh, resolver, errCh := streamResolvedRows(callCtx, listClient, rules)
 
 	total := 0
-	warnings := 0
 	var dirs []restoreDirectory
-	for {
-		resp, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("resolve restore files: %w", err)
-		}
+	for r := range rowsCh {
+		destPath := restoreDestPath(rules[r.RuleIndex], r.Row.GetPath())
 
-		row := resp.GetRow()
-		dispatch, ruleIndex := resolver.Feed(row, resp.GetFilterIndex())
-		if !dispatch {
-			continue
-		}
-		destPath := restoreDestPath(rules[ruleIndex], row.GetPath())
-
-		if row.GetType() == "d" {
+		if r.Row.GetType() == "d" {
 			dirs = append(dirs, restoreDirectory{DestPath: destPath})
 			continue
 		}
@@ -90,13 +70,17 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 		total++
 		if !quiet {
 			logger.Info("resolved",
-				"source", row.GetSource(),
-				"path", row.GetPath(),
+				"source", r.Row.GetSource(),
+				"path", r.Row.GetPath(),
 				"dest_path", destPath,
 			)
 		}
 	}
+	if err := <-errCh; err != nil {
+		return err
+	}
 
+	warnings := 0
 	for _, nf := range resolver.NotFound() {
 		warnings++
 		logger.Warn("resolution failed", "source", nf.Host, "path", nf.Path, "reason", nf.Reason)
