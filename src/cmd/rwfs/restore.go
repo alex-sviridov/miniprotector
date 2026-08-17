@@ -3,10 +3,12 @@
 // tie-break), it logs the row's source path and its computed destination
 // path (restoreDestPath's dest_path rename applied), plus the run's
 // overwrite setting once at start. Once resolution completes with zero
-// not-found failures, phase 1 (createRestoreDirectoryStructure) actually
-// recreates every resolved directory on the destination filesystem -- file
-// content restore (phase 2, still no RestoreFile call) remains unbuilt --
-// see docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md.
+// not-found failures, phase 1 (createRestoreDirectoryStructure) recreates
+// every resolved directory on the destination filesystem, then phase 2
+// (restoreFileContent) fetches and writes every resolved file's content
+// (writeRestoreFile, restorefile.go), verifying per-chunk BLAKE3 and the
+// whole-file CRC32 as it writes -- see
+// docs/superpowers/specs/2026-08-17-restore-file-content-design.md.
 // Reuses streamResolvedRows, the exact same resolved-row source
 // `rwfs verify --rules-stdin` uses (resolve.go) -- only the per-row
 // action differs.
@@ -25,11 +27,12 @@ import (
 	"google.golang.org/grpc"
 )
 
-// runRestore resolves --rules-stdin against a remote bwfs store and logs
-// what a real restore of this policy would do. jobID rides the
-// ResolveRestoreFiles call as outgoing job-id metadata, the same
-// convention runVerify uses.
-func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdin io.Reader, quiet bool, certsDir, jobID string) error {
+// runRestore resolves --rules-stdin against a remote bwfs store and
+// restores it: creates the resolved directory structure (phase 1), then
+// fetches and writes every resolved file's content (phase 2). jobID rides
+// every RPC call as outgoing job-id metadata, the same convention
+// runVerify uses.
+func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdin io.Reader, quiet bool, streams int, certsDir, jobID string) error {
 	rules, err := parseRulesStdin(stdin)
 	if err != nil {
 		return err
@@ -41,7 +44,7 @@ func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdi
 	}
 	defer conn.Close()
 
-	return runRestoreWithConn(logger, conn, overwrite, rules, quiet, jobID)
+	return runRestoreWithConn(logger, conn, overwrite, rules, quiet, streams, jobID)
 }
 
 // runRestoreWithConn is runRestore's body, parameterized on an
@@ -49,16 +52,18 @@ func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdi
 // bufconn dial without duplicating anything past the transport-level
 // connect (runRestore itself is the only production caller). See
 // restore_test.go's runRestoreWithDialer.
-func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bool, rules []RestoreRule, quiet bool, jobID string) error {
+func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bool, rules []RestoreRule, quiet bool, streams int, jobID string) error {
 	callCtx := jobid.Outgoing(context.Background(), jobID)
 
 	logger.Info("restore starting", "overwrite", overwrite, "rules", len(rules))
 
 	listClient := pb.NewListServiceClient(conn)
+	restoreClient := pb.NewRestoreServiceClient(conn)
 	rowsCh, resolver, errCh := streamResolvedRows(callCtx, listClient, rules)
 
 	total := 0
 	var dirs []restoreDirectory
+	var files []restoreFile
 	for r := range rowsCh {
 		destPath := restoreDestPath(rules[r.RuleIndex], r.Row.GetPath())
 
@@ -66,6 +71,13 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 			dirs = append(dirs, restoreDirectory{DestPath: destPath})
 			continue
 		}
+
+		files = append(files, restoreFile{
+			FileUUID: r.Row.GetFileUuid(),
+			Source:   r.Row.GetSource(),
+			Path:     r.Row.GetPath(),
+			DestPath: destPath,
+		})
 
 		total++
 		if !quiet {
@@ -97,7 +109,11 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 		return fmt.Errorf("%d file(s) failed resolution", warnings)
 	}
 
-	return createRestoreDirectoryStructure(logger, dirs)
+	if err := createRestoreDirectoryStructure(logger, dirs); err != nil {
+		return err
+	}
+
+	return restoreFileContent(callCtx, logger, restoreClient, files, overwrite, streams)
 }
 
 // createRestoreDirectoryStructure is restore's phase 1: recreate every
@@ -159,5 +175,76 @@ func createRestoreDirectoryStructure(logger *slog.Logger, dirs []restoreDirector
 		}
 	}
 	logger.Info("restored directory structure created", "created", created, "reused", reused)
+	return nil
+}
+
+// restoreFileContent is restore's phase 2: fetch and write every resolved
+// file's content, verifying per-chunk BLAKE3 and the whole-file CRC32 as
+// it writes (writeRestoreFile, restorefile.go), stopping at the first
+// failure and cancelling every other in-flight transfer immediately (per
+// docs/superpowers/specs/2026-08-17-restore-file-content-design.md). Runs
+// only once phase 1 has fully succeeded -- a file's destination directory
+// must already exist. On failure, no summary line is logged, mirroring
+// createRestoreDirectoryStructure's existing convention; the triggering
+// file's own logged error carries the diagnostic.
+func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, files []restoreFile, overwrite bool, streams int) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	logger.Info("restoring file content")
+
+	writeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	workCh := make(chan restoreFile)
+	go func() {
+		defer close(workCh)
+		for _, f := range files {
+			select {
+			case workCh <- f:
+			case <-writeCtx.Done():
+				return
+			}
+		}
+	}()
+
+	resultCh := runWorkerPool(writeCtx, streams, workCh, func(ctx context.Context, f restoreFile) restoreFileResult {
+		return writeRestoreFile(ctx, client, f, overwrite)
+	})
+
+	var firstErr error
+	filesWritten, skipped := 0, 0
+	var bytesWritten int64
+	for result := range resultCh {
+		switch {
+		case result.Err != nil && firstErr == nil:
+			firstErr = fmt.Errorf("restore file %s: %w", result.DestPath, result.Err)
+			logger.Error("failed to restore file",
+				"source", result.Source,
+				"path", result.Path,
+				"dest_path", result.DestPath,
+				"reason", result.Err,
+			)
+			cancel()
+		case result.Err != nil:
+			// Expected fallout of cancel() above -- not a new independent
+			// failure, so it's not logged individually.
+		case result.Skipped:
+			skipped++
+			logger.Debug("file skipped, already exists",
+				"source", result.Source, "path", result.Path, "dest_path", result.DestPath)
+		default:
+			filesWritten++
+			bytesWritten += result.Bytes
+			logger.Debug("file written",
+				"source", result.Source, "path", result.Path, "dest_path", result.DestPath, "bytes", result.Bytes)
+		}
+	}
+
+	if firstErr != nil {
+		return firstErr
+	}
+	logger.Info("restore complete", "files_written", filesWritten, "bytes_written", bytesWritten, "skipped", skipped)
 	return nil
 }

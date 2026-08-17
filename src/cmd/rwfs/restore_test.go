@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -16,7 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -26,7 +29,7 @@ import (
 // dial step against lis, then calls runRestoreWithConn, the exact same
 // package-level resolution/dispatch logic runRestore itself calls after
 // dialing.
-func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, rulesJSON string, overwrite bool) error {
+func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, rulesJSON string, overwrite bool, streams int) error {
 	t.Helper()
 
 	rules, err := parseRulesStdin(strings.NewReader(rulesJSON))
@@ -41,21 +44,27 @@ func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listen
 	require.NoError(t, err)
 	defer conn.Close()
 
-	return runRestoreWithConn(logger, conn, overwrite, rules, false, "test-job")
+	return runRestoreWithConn(logger, conn, overwrite, rules, false, streams, "test-job")
 }
 
 func TestRunRestore_LogsResolvedFileWithRenamedDestPath(t *testing.T) {
 	store, err := wfs.New(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
-	require.NoError(t, store.CreateFileData("fs://hosta:f:/data/photos/vacation.jpg:1000", 4))
-	require.NoError(t, store.FinalizeFileData("fs://hosta:f:/data/photos/vacation.jpg:1000", expectedCRC32(t, [][]byte{{1, 2, 3, 4}})))
-	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{ObjectID: "fs://hosta:f:/data/photos/vacation.jpg:1000", JobID: "job1", CreatedAt: time.Unix(5000, 0)}).Error)
+	// Phase 2 (this task) means restore now actually writes file content, so
+	// this needs a directory row (for phase 1 to create the renamed
+	// destination directory) and a genuinely restorable file (real chunk
+	// data realRestoreServer can serve back), not just a bare
+	// file_version_records row -- unlike before phase 2 existed, when
+	// restore only resolved and logged and this fixture never had to
+	// survive an actual write.
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/photos/vacation.jpg", "job1", 5000, []byte("vacation photo bytes"))
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
 	listSrv := &testResolveServer{store: store}
-	restoreSrv := &recordingRestoreServer{}
+	restoreSrv := &realRestoreServer{store: store}
 
 	lis := bufconn.Listen(1 << 20)
 	grpcSrv := grpc.NewServer()
@@ -64,18 +73,21 @@ func TestRunRestore_LogsResolvedFileWithRenamedDestPath(t *testing.T) {
 	go grpcSrv.Serve(lis)
 	defer grpcSrv.GracefulStop()
 
-	rulesJSON := `{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":"/data/photos_recovered"}]}`
+	destDir := t.TempDir() + "/photos_recovered"
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4)
 	require.NoError(t, err)
 
 	out := logBuf.String()
 	assert.Contains(t, out, `source=hosta`)
 	assert.Contains(t, out, `path=/data/photos/vacation.jpg`)
-	assert.Contains(t, out, `dest_path=/data/photos_recovered/vacation.jpg`)
+	assert.Contains(t, out, fmt.Sprintf("dest_path=%s", destDir+"/vacation.jpg"))
 	assert.Contains(t, out, `overwrite=true`)
-	assert.Empty(t, restoreSrv.Requested(),
-		"rwfs restore must never call RestoreFile in this round -- it only resolves and logs")
+
+	got, readErr := os.ReadFile(destDir + "/vacation.jpg")
+	require.NoError(t, readErr)
+	assert.Equal(t, "vacation photo bytes", string(got))
 }
 
 func TestRunRestore_FileLevelRuleMatchingNothingFails(t *testing.T) {
@@ -97,7 +109,7 @@ func TestRunRestore_FileLevelRuleMatchingNothingFails(t *testing.T) {
 
 	rulesJSON := `{"rules":[{"host":"hosta","path":"/etc/never-backed-up.conf","include":true}]}`
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 file(s) failed resolution")
 	assert.Contains(t, logBuf.String(), `reason="not found on this store"`)
@@ -121,7 +133,7 @@ func TestRunRestore_FolderLevelRuleMatchingNothingSucceeds(t *testing.T) {
 
 	rulesJSON := `{"rules":[{"host":"","path":"/empty","include":true}]}`
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
 	assert.NoError(t, err)
 }
 
@@ -163,7 +175,7 @@ func TestRunRestore_CreatesDirectoryStructureForFolderSelection(t *testing.T) {
 	destDir := destBase + "/nested_recovered"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
 	require.NoError(t, err)
 
 	info, statErr := os.Stat(destDir)
@@ -200,7 +212,7 @@ func TestRunRestore_ReusesExistingDirectory(t *testing.T) {
 	require.NoError(t, os.Mkdir(destDir, 0o755))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
 	require.NoError(t, err)
 
 	out := logBuf.String()
@@ -232,7 +244,7 @@ func TestRunRestore_AbortsOnDirectoryCreationFailureBeforeSummary(t *testing.T) 
 	require.NoError(t, os.WriteFile(destDir, []byte("data"), 0o644))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "blocked")
 
@@ -269,7 +281,7 @@ func TestRunRestore_ParentBeforeChildOrdering(t *testing.T) {
 	destRoot := destBase + "/a"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/a","include":true,"dest_path":%q}]}`, destRoot)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
 	require.NoError(t, err)
 
 	for _, p := range []string{destRoot, destRoot + "/b", destRoot + "/b/c"} {
@@ -305,7 +317,7 @@ func TestRunRestore_NotFoundAbortsBeforePhase1(t *testing.T) {
 		{"host":"hosta","path":"/etc/never-backed-up.conf","include":true}
 	]}`, destBase+"/nested")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 file(s) failed resolution")
 
@@ -314,4 +326,253 @@ func TestRunRestore_NotFoundAbortsBeforePhase1(t *testing.T) {
 		"phase 1 must never start when resolution already has a not-found failure")
 	_, statErr := os.Stat(destBase + "/nested")
 	assert.True(t, os.IsNotExist(statErr), "the directory must not have been created")
+}
+
+func TestRunRestore_WritesFileContent(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/photos/vacation.jpg", "job1", 5000, []byte("vacation photo bytes"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	require.NoError(t, err)
+
+	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
+	require.NoError(t, readErr)
+	assert.Equal(t, "vacation photo bytes", string(got))
+
+	out := logBuf.String()
+	assert.Contains(t, out, "restoring file content")
+	assert.Contains(t, out, "restore complete")
+	assert.Contains(t, out, "files_written=1")
+	assert.NotContains(t, out, "file written",
+		"the per-file success line must not appear at the default (Info) log level")
+}
+
+// TestRunRestore_DebugLogsPerFileSuccessLine is
+// TestRunRestore_WritesFileContent's counterpart at Debug level -- proves
+// the per-file "file written" line exists and is gated purely by the
+// logger's level (slog.LevelDebug), not by a separate --quiet-style flag.
+func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/photos/vacation.jpg", "job1", 5000, []byte("vacation photo bytes"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	require.NoError(t, err)
+
+	assert.Contains(t, logBuf.String(), "file written")
+}
+
+func TestRunRestore_OverwriteFalseSkipsExistingFile(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/photos/vacation.jpg", "job1", 5000, []byte("new content from bwfs"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	require.NoError(t, os.Mkdir(destBase+"/recovered", 0o755))
+	require.NoError(t, os.WriteFile(destBase+"/recovered/vacation.jpg", []byte("original content on disk"), 0o644))
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	require.NoError(t, err)
+
+	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
+	require.NoError(t, readErr)
+	assert.Equal(t, "original content on disk", string(got), "overwrite=false must leave the existing file untouched")
+
+	out := logBuf.String()
+	assert.Contains(t, out, "files_written=0")
+	assert.Contains(t, out, "skipped=1")
+}
+
+func TestRunRestore_OverwriteTrueReplacesExistingFile(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/photos/vacation.jpg", "job1", 5000, []byte("new content from bwfs"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	require.NoError(t, os.Mkdir(destBase+"/recovered", 0o755))
+	require.NoError(t, os.WriteFile(destBase+"/recovered/vacation.jpg", []byte("stale content on disk"), 0o644))
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4)
+	require.NoError(t, err)
+
+	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
+	require.NoError(t, readErr)
+	assert.Equal(t, "new content from bwfs", string(got))
+
+	out := logBuf.String()
+	assert.Contains(t, out, "files_written=1")
+	assert.Contains(t, out, "skipped=0")
+}
+
+func TestRunRestore_FileWriteFailureAbortsWithoutSummary(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedRestorableFile(t, store, "hosta", "/data/a.txt", "job1", 5000, []byte("content"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	// A file-level rule has no accompanying folder rule, so phase 1 never
+	// creates any directory -- dest_path's parent is never created, so
+	// phase 2's write must fail with the parent missing.
+	destBase := t.TempDir()
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"hosta","path":"/data/a.txt","include":true,"dest_path":%q}]}`, destBase+"/missing-parent/a.txt")
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	require.Error(t, err)
+
+	out := logBuf.String()
+	assert.Contains(t, out, "restoring file content")
+	assert.Contains(t, out, "failed to restore file")
+	assert.NotContains(t, out, "restore complete",
+		"the summary line must never be logged when phase 2 aborts")
+}
+
+// cancelDetectingRestoreServer serves file_uuid "slow" by sending Meta
+// then blocking until its stream context is cancelled (recording that on
+// cancelled) or a generous safety timeout elapses -- proving
+// restoreFileContent's cancel-on-first-failure contract deterministically,
+// without a wall-clock race. Any other file_uuid ("fail") blocks until
+// "slow" has actually reached that blocked-and-listening state (via
+// slowBlocked) before failing -- without this gate, "fail" racing ahead
+// of "slow" establishing its stream would let restoreFileContent's cancel
+// land before "slow"'s handler ever starts listening for it, so the
+// server would sit in its 5s fallback instead of ever observing the
+// cancellation, flaking this test under scheduling pressure (observed
+// empirically on a 4-core sandbox: roughly 1 run in 10).
+type cancelDetectingRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	cancelled   chan struct{}
+	slowBlocked chan struct{}
+}
+
+func (s *cancelDetectingRestoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	if req.GetFileUuid() != "slow" {
+		<-s.slowBlocked
+		return status.Error(codes.Internal, "simulated failure")
+	}
+	if err := stream.Send(&pb.RestoreEvent{
+		Payload: &pb.RestoreEvent_Meta{Meta: &pb.RestoreFileMeta{Size: 4, ChunkCount: 1, ExpectedChecksum: []byte{0, 0, 0, 0}}},
+	}); err != nil {
+		return err
+	}
+	close(s.slowBlocked)
+	select {
+	case <-stream.Context().Done():
+		close(s.cancelled)
+		return stream.Context().Err()
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("test timeout: stream was never cancelled")
+	}
+}
+
+func TestRestoreFileContent_FirstFailureCancelsOtherInFlightTransfers(t *testing.T) {
+	srv := &cancelDetectingRestoreServer{cancelled: make(chan struct{}), slowBlocked: make(chan struct{})}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterRestoreServiceServer(grpcSrv, srv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+	client := pb.NewRestoreServiceClient(conn)
+
+	destBase := t.TempDir()
+	files := []restoreFile{
+		{FileUUID: "slow", Source: "hosta", Path: "/data/slow.bin", DestPath: destBase + "/slow.bin"},
+		{FileUUID: "fail", Source: "hosta", Path: "/data/fail.bin", DestPath: destBase + "/fail.bin"},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	err = restoreFileContent(context.Background(), logger, client, files, false, 2)
+	require.Error(t, err)
+
+	select {
+	case <-srv.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal(`the in-flight "slow" transfer was never cancelled after "fail" failed`)
+	}
 }
