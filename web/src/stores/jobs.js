@@ -27,6 +27,9 @@ export const useJobsStore = defineStore('jobs', {
     _logsStream: null,
     _logsSeen: new Set(),
     _logsReconcileTimer: null,
+    listStatus: 'connecting',
+    _listStream: null,
+    _listReconcileTimer: null,
   }),
   actions: {
     async fetchAll() {
@@ -93,6 +96,44 @@ export const useJobsStore = defineStore('jobs', {
       if (this._logsReconcileTimer) {
         clearInterval(this._logsReconcileTimer)
         this._logsReconcileTimer = null
+      }
+    },
+
+    _mergeJobsSnapshot(jobs) {
+      this.list = jobs
+    },
+
+    _mergeJobUpsert(job) {
+      const idx = this.list.findIndex((j) => j.job_id === job.job_id)
+      if (idx === -1) this.list.push(job)
+      else this.list[idx] = job
+    },
+
+    connectJobsStream() {
+      this._listStream = createLiveStream('/jobs/stream', {
+        onMessage: (msg) => {
+          if (msg.type === 'snapshot') this._mergeJobsSnapshot(msg.jobs ?? [])
+          else if (msg.type === 'upsert' && msg.job) this._mergeJobUpsert(msg.job)
+        },
+        onStatus: (status) => {
+          this.listStatus = status
+        },
+        onFallback: (intervalMs) => {
+          if (this._listReconcileTimer) clearInterval(this._listReconcileTimer)
+          this._listReconcileTimer = setInterval(() => this.fetchAll(), intervalMs)
+        },
+      })
+      this._listReconcileTimer = setInterval(() => this.fetchAll(), RECONCILE_INTERVAL_MS)
+    },
+
+    disconnectJobsStream() {
+      if (this._listStream) {
+        this._listStream.close()
+        this._listStream = null
+      }
+      if (this._listReconcileTimer) {
+        clearInterval(this._listReconcileTimer)
+        this._listReconcileTimer = null
       }
     },
   },

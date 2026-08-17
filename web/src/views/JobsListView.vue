@@ -1,16 +1,21 @@
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import { useJobsStore } from '../stores/jobs'
 import { formatTimestamp } from '../utils/format'
 import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
 import Badge from '../components/ui/Badge.vue'
+import ConnectionStatus from '../components/ui/ConnectionStatus.vue'
 
 const jobs = useJobsStore()
 
 onMounted(() => {
-  jobs.fetchAll()
+  jobs.connectJobsStream()
+})
+
+onUnmounted(() => {
+  jobs.disconnectJobsStream()
 })
 
 function stateVariant(state) {
@@ -32,7 +37,11 @@ const columns = [
 
 <template>
   <div>
-    <PageHeader title="Jobs" :crumbs="[{ label: 'Jobs' }]" />
+    <PageHeader title="Jobs" :crumbs="[{ label: 'Jobs' }]">
+      <template #actions>
+        <ConnectionStatus :status="jobs.listStatus" />
+      </template>
+    </PageHeader>
     <StatusMessage
       :loading="jobs.loading"
       :error="jobs.error"

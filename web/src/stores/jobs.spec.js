@@ -148,4 +148,58 @@ describe('jobs store', () => {
       expect(closeSpy).toHaveBeenCalled()
     })
   })
+
+  describe('connectJobsStream', () => {
+    let liveStreamHandlers
+
+    beforeEach(() => {
+      createLiveStream.mockReset()
+      createLiveStream.mockImplementation((path, handlers) => {
+        liveStreamHandlers = handlers
+        return { close: vi.fn() }
+      })
+    })
+
+    it('opens a stream at /jobs/stream', () => {
+      const jobs = useJobsStore()
+      jobs.connectJobsStream()
+      expect(createLiveStream).toHaveBeenCalledWith(
+        '/jobs/stream',
+        expect.objectContaining({ onMessage: expect.any(Function), onStatus: expect.any(Function), onFallback: expect.any(Function) })
+      )
+    })
+
+    it('a "snapshot" message replaces the whole list', () => {
+      const jobs = useJobsStore()
+      jobs.connectJobsStream()
+      liveStreamHandlers.onMessage({ type: 'snapshot', jobs: [{ job_id: 'a' }, { job_id: 'b' }] })
+      expect(jobs.list).toEqual([{ job_id: 'a' }, { job_id: 'b' }])
+    })
+
+    it('an "upsert" message updates an existing job in place', () => {
+      const jobs = useJobsStore()
+      jobs.list = [{ job_id: 'a', state: 'in_progress' }]
+      jobs.connectJobsStream()
+      liveStreamHandlers.onMessage({ type: 'upsert', job: { job_id: 'a', state: 'success' } })
+      expect(jobs.list).toEqual([{ job_id: 'a', state: 'success' }])
+    })
+
+    it('an "upsert" message for an unseen job_id appends it', () => {
+      const jobs = useJobsStore()
+      jobs.list = [{ job_id: 'a' }]
+      jobs.connectJobsStream()
+      liveStreamHandlers.onMessage({ type: 'upsert', job: { job_id: 'b' } })
+      expect(jobs.list).toEqual([{ job_id: 'a' }, { job_id: 'b' }])
+    })
+
+    it('disconnectJobsStream closes the stream and clears the reconciliation timer', () => {
+      const jobs = useJobsStore()
+      jobs.connectJobsStream()
+      const closeSpy = createLiveStream.mock.results[0].value.close
+
+      jobs.disconnectJobsStream()
+
+      expect(closeSpy).toHaveBeenCalled()
+    })
+  })
 })

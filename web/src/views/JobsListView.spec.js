@@ -13,9 +13,9 @@ function mountView(state) {
 }
 
 describe('JobsListView', () => {
-  it('calls fetchAll on mount', () => {
+  it('calls connectJobsStream on mount', () => {
     const { jobs } = mountView({ list: [], loading: false, error: null })
-    expect(jobs.fetchAll).toHaveBeenCalledTimes(1)
+    expect(jobs.connectJobsStream).toHaveBeenCalledTimes(1)
   })
 
   it('renders each job with a link to its detail page', () => {
