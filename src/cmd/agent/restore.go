@@ -28,8 +28,9 @@ type RestoreRule struct {
 // agent-state.json -- one task per policy (not per host, unlike backup's
 // per-object-filter-path tasks -- a restore policy's rules aren't cleanly
 // partitionable by host, since a folder rule can be host-agnostic).
-// mode == "restore" gets the restore: prefix (rwfs restore, log-only for
-// now); every other mode (unset or "verify") gets the verify: prefix
+// mode == "restore" gets the restore: prefix (rwfs restore, which creates
+// directory structure and writes file content); every other mode (unset
+// or "verify") gets the verify: prefix
 // (rwfs verify, unchanged behavior, renamed from this ID's original
 // restore: prefix now that a second kind of restore-policy task exists).
 func restoreTaskID(policyName, mode string) string {
@@ -85,9 +86,9 @@ type rulesStdinPayload struct {
 // Each skip is logged with the policy name. A disabled policy is skipped
 // the same way backup/storage policies already are.
 //
-// p.Mode == "restore" dispatches `rwfs restore` (this round: resolves and
-// logs the file list, writes nothing -- see
-// docs/superpowers/specs/2026-08-16-restore-execute-log-only-design.md),
+// p.Mode == "restore" dispatches `rwfs restore` (creates the resolved
+// directory structure and writes the resolved file content -- see
+// docs/superpowers/specs/2026-08-17-restore-file-content-design.md),
 // with --overwrite appended iff p.Overwrite. Every other mode (unset or
 // "verify") dispatches `rwfs verify`, byte-for-byte what this policy type
 // has always run.

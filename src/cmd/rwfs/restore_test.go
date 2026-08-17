@@ -576,3 +576,34 @@ func TestRestoreFileContent_FirstFailureCancelsOtherInFlightTransfers(t *testing
 		t.Fatal(`the in-flight "slow" transfer was never cancelled after "fail" failed`)
 	}
 }
+
+func TestRunRestore_DuplicateDestinationAcrossHostsIsHardError(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/data", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/a.txt", "job1", 5000, []byte("from hosta"))
+	seedRestorableFile(t, store, "hostb", "/data/a.txt", "job1", 5000, []byte("from hostb"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &realRestoreServer{store: store}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destBase := t.TempDir()
+	// Host-agnostic folder rule -- resolves across BOTH hosts, so both
+	// /data/a.txt copies land at the same dest_path.
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data","include":true,"dest_path":%q}]}`, destBase+"/recovered")
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), destBase+"/recovered/a.txt")
+	assert.Empty(t, restoreSrv.Requested(), "no file should be fetched once a destination collision is detected")
+}

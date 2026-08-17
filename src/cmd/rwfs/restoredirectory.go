@@ -1,6 +1,6 @@
 // restoredirectory.go implements phase 1 of `rwfs restore`: recreating a
 // resolved selection's directory structure on the destination filesystem,
-// before any file content restore (still unbuilt -- see
+// before any file content is written (phase 2 -- see restorefile.go and
 // docs/superpowers/specs/2026-08-16-restore-directory-structure-design.md).
 package main
 

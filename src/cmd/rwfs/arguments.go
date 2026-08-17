@@ -80,7 +80,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 
 	restoreCmd := &cobra.Command{
 		Use:   "restore [[server_name:]path] <bwfs_host:port>",
-		Short: "Resolve a restore policy's rules and log what a restore would do (no files written yet)",
+		Short: "Restore a policy's rules: create the resolved directory structure and write file content",
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, cliArgs []string) {
 			args.Action = "restore"
@@ -130,10 +130,9 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		if err := common.ValidateStreamsCount(args.Streams); err != nil {
 			return nil, fmt.Errorf("--streams: %w", err)
 		}
-	}
-
-	if args.Action == "restore" && !args.RulesStdin {
-		return nil, fmt.Errorf("restore requires --rules-stdin")
+		if !args.RulesStdin {
+			return nil, fmt.Errorf("restore requires --rules-stdin")
+		}
 	}
 
 	serverName, path, err := common.ParseServerPath(args.listPositional)

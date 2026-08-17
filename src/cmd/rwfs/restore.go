@@ -192,6 +192,11 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 		return nil
 	}
 
+	if dup := findDuplicateDestPath(files); dup != nil {
+		return fmt.Errorf("multiple resolved files share destination %s (%s:%s and %s:%s) -- refusing to restore, concurrent writers would corrupt it",
+			dup.destPath, dup.firstSource, dup.firstPath, dup.secondSource, dup.secondPath)
+	}
+
 	logger.Info("restoring file content")
 
 	writeCtx, cancel := context.WithCancel(ctx)
@@ -246,5 +251,38 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 		return firstErr
 	}
 	logger.Info("restore complete", "files_written", filesWritten, "bytes_written", bytesWritten, "skipped", skipped)
+	return nil
+}
+
+// duplicateDestPath describes two resolved files that would collide at
+// the same destination path -- e.g. a host-agnostic folder rule matching
+// the same relative path under two different source hosts. Concurrent
+// workers writing to a shared DestPath can interleave and corrupt the
+// file while each side's own integrity check still passes, so this is a
+// hard error rather than the silent last-writer-wins collapse phase 1
+// uses for directories (an empty folder merge is harmless; corrupting
+// file content is not).
+type duplicateDestPath struct {
+	destPath                 string
+	firstSource, firstPath   string
+	secondSource, secondPath string
+}
+
+// findDuplicateDestPath returns the first collision found in files (in
+// slice order), or nil if every DestPath is unique.
+func findDuplicateDestPath(files []restoreFile) *duplicateDestPath {
+	seen := make(map[string]restoreFile, len(files))
+	for _, f := range files {
+		if prior, ok := seen[f.DestPath]; ok {
+			return &duplicateDestPath{
+				destPath:     f.DestPath,
+				firstSource:  prior.Source,
+				firstPath:    prior.Path,
+				secondSource: f.Source,
+				secondPath:   f.Path,
+			}
+		}
+		seen[f.DestPath] = f
+	}
 	return nil
 }

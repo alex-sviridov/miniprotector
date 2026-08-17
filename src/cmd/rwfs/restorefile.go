@@ -104,8 +104,11 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		return base
 	}
 	success := false
+	closed := false
 	defer func() {
-		out.Close() // Windows disallows removing a file that's still open -- close before remove.
+		if !closed {
+			out.Close() // Windows disallows removing a file that's still open -- close before remove.
+		}
 		if !success {
 			os.Remove(f.DestPath)
 		}
@@ -118,6 +121,7 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 
 	bufw := bufio.NewWriterSize(out, restoreWriteBufferSize)
 	hasher := crc32.NewIEEE()
+	var written int64
 
 	for {
 		event, err := stream.Recv()
@@ -138,10 +142,12 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 			return base
 		}
 
-		if _, err := bufw.Write(chunk.Data); err != nil {
+		n, err := bufw.Write(chunk.Data)
+		if err != nil {
 			base.Err = fmt.Errorf("write error: %w", err)
 			return base
 		}
+		written += int64(n)
 		checksum.FeedChunk(hasher, crc32.ChecksumIEEE(chunk.Data))
 
 		if chunk.Eof {
@@ -161,7 +167,14 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		return base
 	}
 
+	closeErr := out.Close()
+	closed = true
+	if closeErr != nil {
+		base.Err = fmt.Errorf("write error: close: %w", closeErr)
+		return base
+	}
+
 	success = true
-	base.Bytes = meta.Size
+	base.Bytes = written
 	return base
 }
