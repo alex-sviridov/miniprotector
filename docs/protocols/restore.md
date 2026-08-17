@@ -99,9 +99,11 @@ one correlation ID across `agent`'s log and `rwfs`'s. `bwfs`'s `ListFiles`/`Rest
 not require or read this metadata (unlike `BackupService`, which rejects a call without it), so
 sending it is purely additive; a client that omits it entirely still works.
 
-`rwfs restore --rules-stdin` calls only `ListService.ResolveRestoreFiles` -- unlike `rwfs verify
---rules-stdin`, it never calls `RestoreFile`, since this round only resolves and logs the file
-list without reading any chunk data.
+`rwfs restore --rules-stdin` calls `ListService.ResolveRestoreFiles` to resolve the selection, then,
+once its directory-structure phase has fully succeeded, calls `RestoreFile` for each resolved file's
+`file_uuid` -- the same RPC `rwfs verify --rules-stdin` calls, but to actually write the chunks to
+disk (verifying per-chunk BLAKE3 and the whole-file CRC32 as it writes) rather than merely checking
+them. Concurrency is controlled by `restore`'s own `--streams` flag, independent of `verify`'s.
 
 ## Key Design Decisions
 

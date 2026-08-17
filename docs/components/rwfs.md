@@ -147,14 +147,15 @@ positional filter in that usage.
 
 ## restore
 
-Resolves a restore policy's rules against a remote `bwfs` server's file listing. **File content
-restore is still log-only** -- it resolves and logs what a real file restore would do, writing
-nothing. **Directory structure restore is real**: for every resolved directory (see [list
-protocol](../protocols/list.md#directory-rows)), `rwfs restore` actually creates it on the
-destination filesystem -- phase 1 of two, in parent-before-child order, before any file content
-would be written (phase 2, still unbuilt). Requires `--rules-stdin` (the only way to select
-anything; there is no plain-listing restore mode). See [Design: Restore Directory Structure
-Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md).
+Resolves a restore policy's rules against a remote `bwfs` server's file listing, then restores it:
+both phases are real, disk-mutating operations. Phase 1 creates every resolved directory (see [list
+protocol](../protocols/list.md#directory-rows)) on the destination filesystem, parent before child.
+Phase 2, once phase 1 has fully succeeded, fetches every resolved file's chunks via the [restore
+protocol](../protocols/restore.md) and writes them to disk, verifying per-chunk BLAKE3 and the
+whole-file CRC32 exactly as `rwfs verify` does. Requires `--rules-stdin` (the only way to select
+anything; there is no plain-listing restore mode). See [Design: Restore File Content
+Phase](../superpowers/specs/2026-08-17-restore-file-content-design.md) and [Design: Restore Directory
+Structure Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md).
 
 ```bash
 # Resolve a restore policy's rules, create the resolved directory structure
@@ -173,7 +174,8 @@ reused regardless of it; it will govern file content once phase 2 exists.
 | Flag | Default | Description |
 |------|---------|--------------|
 | `--rules-stdin` | | **Required.** Read `{"rules":[...]}` from stdin -- same shape `verify --rules-stdin` uses. |
-| `--overwrite` | false | Logged only; not yet enforced. |
+| `--overwrite` | false | A pre-existing destination file is skipped when false, overwritten when true. Has no effect on directories (always reused) or on a non-file occupying a destination path (always a hard error). |
+| `--streams` | 4 | Concurrent file restore workers (phase 2 only; phase 1's directory creation is sequential) |
 | `--quiet` | false | Suppress per-file resolved lines (warnings and summary always shown) |
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
 
@@ -190,6 +192,20 @@ is always a hard error. Directories are created with `os.Mkdir`, not a recursive
 the shallowest directory in any resolved set -- a folder rule's own `dest_path`, verbatim -- fails
 immediately if its parent doesn't already exist on the destination host; that parent must be
 created ahead of time.
+
+Phase 2 (file content) runs only once phase 1 has fully succeeded. It logs `restoring file content`
+once at start, fetches each resolved file's chunks via `RestoreFile` (concurrently, `--streams`
+workers wide), and writes them to its `dest_path`-renamed destination -- verifying every chunk's
+BLAKE3 hash and the whole-file CRC32 exactly as `rwfs verify` does, aborting on a mismatch the same
+way a stream or disk-write error would. On the first failure, every other in-flight file transfer is
+cancelled immediately, the failing (partial) file is removed from disk, a `failed to restore file`
+error is logged for it, and no summary line is logged -- the same abort convention phase 1 already
+uses. On full success, a `restore complete` line reports `files_written`, `bytes_written`, and
+`skipped` (files left untouched because they already existed and `--overwrite` was false). Per-file
+success (`file written` / `file skipped, already exists`) is logged at `Debug` level only -- pass
+`--debug` to see it; it is not controlled by `--quiet`. Every created or overwritten file uses a
+fixed default permission (`0o644`, directories use `0o755`) -- real captured-permission restore is
+still unbuilt, for both files and directories.
 
 ## Transport Security
 

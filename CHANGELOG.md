@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-17 — restore execution: file content phase
+
+`rwfs restore` now writes real file content to the destination filesystem -- the last unbuilt piece
+of the restore-execution line. For every resolved file, once the directory-structure phase (phase 1)
+has fully succeeded, `rwfs restore` fetches its chunks via `RestoreFile` (the same RPC `rwfs verify`
+already used to check files) and writes them to disk, verifying per-chunk BLAKE3 and the whole-file
+CRC32 exactly as `verify` does. Multiple files transfer concurrently via a new `--streams` flag
+(default 4); on the first failure, every other in-flight transfer is cancelled immediately, the
+partial file is removed, and the whole restore aborts. `--overwrite` is now enforced: an existing
+destination file is skipped when false, replaced when true; a non-file occupying a file's
+destination is always a hard error. Per-file success is now logged at `Debug` level only, keeping
+the default log output from being flooded on large restores.
+
 ## 2026-08-16 — rwfs: streaming ListFiles, stall protection, and shared internals
 
 `bwfs`'s `ListFiles` RPC is now server-streaming instead of unary, removing the implicit ~4MB
