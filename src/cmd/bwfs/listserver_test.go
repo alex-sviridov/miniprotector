@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -27,12 +29,42 @@ func newTestListServer(t *testing.T) (*listServer, *wfs.Store) {
 	return NewListServer(store, logger), store
 }
 
+// collectingStream is a grpc.ServerStreamingServer[pb.FileRow] test double
+// that records every row Send is called with, letting a unit test call
+// listServer.ListFiles directly without a real network round trip.
+type collectingStream struct {
+	grpc.ServerStream
+	rows []*pb.FileRow
+}
+
+func (s *collectingStream) Send(row *pb.FileRow) error {
+	s.rows = append(s.rows, row)
+	return nil
+}
+
+// erroringStream is a grpc.ServerStreamingServer[pb.FileRow] test double
+// that fails every Send call after the first, proving ListFiles surfaces
+// a mid-stream send error from the handler rather than swallowing it.
+type erroringStream struct {
+	grpc.ServerStream
+	sent int
+}
+
+func (s *erroringStream) Send(row *pb.FileRow) error {
+	s.sent++
+	if s.sent > 1 {
+		return fmt.Errorf("simulated send failure")
+	}
+	return nil
+}
+
 func TestListFiles_EmptyStoreReturnsEmptyRows(t *testing.T) {
 	srv, _ := newTestListServer(t)
 
-	resp, err := srv.ListFiles(context.Background(), &pb.ListRequest{})
+	stream := &collectingStream{}
+	err := srv.ListFiles(&pb.ListRequest{}, stream)
 	require.NoError(t, err)
-	assert.Empty(t, resp.Rows)
+	assert.Empty(t, stream.rows)
 }
 
 func TestListFiles_FiltersByServerName(t *testing.T) {
@@ -43,11 +75,12 @@ func TestListFiles_FiltersByServerName(t *testing.T) {
 	require.NoError(t, store.CreateFileData("fs://hostb:f:/data/b.txt:1000", 10))
 	require.NoError(t, store.FinalizeFileData("fs://hostb:f:/data/b.txt:1000", []byte{5, 6, 7, 8}))
 
-	resp, err := srv.ListFiles(context.Background(), &pb.ListRequest{ServerName: "hosta"})
+	stream := &collectingStream{}
+	err := srv.ListFiles(&pb.ListRequest{ServerName: "hosta"}, stream)
 	require.NoError(t, err)
-	require.Len(t, resp.Rows, 1)
-	assert.Equal(t, "hosta", resp.Rows[0].Source)
-	assert.Equal(t, "/data/a.txt", resp.Rows[0].Path)
+	require.Len(t, stream.rows, 1)
+	assert.Equal(t, "hosta", stream.rows[0].Source)
+	assert.Equal(t, "/data/a.txt", stream.rows[0].Path)
 }
 
 func TestListFiles_FiltersByPathPrefix(t *testing.T) {
@@ -58,10 +91,24 @@ func TestListFiles_FiltersByPathPrefix(t *testing.T) {
 	require.NoError(t, store.CreateFileData("fs://hosta:f:/other/c.txt:1000", 10))
 	require.NoError(t, store.FinalizeFileData("fs://hosta:f:/other/c.txt:1000", []byte{5, 6, 7, 8}))
 
-	resp, err := srv.ListFiles(context.Background(), &pb.ListRequest{Path: "/data"})
+	stream := &collectingStream{}
+	err := srv.ListFiles(&pb.ListRequest{Path: "/data"}, stream)
 	require.NoError(t, err)
-	require.Len(t, resp.Rows, 1)
-	assert.Equal(t, "/data/a.txt", resp.Rows[0].Path)
+	require.Len(t, stream.rows, 1)
+	assert.Equal(t, "/data/a.txt", stream.rows[0].Path)
+}
+
+func TestListFiles_MidStreamSendErrorSurfaces(t *testing.T) {
+	srv, store := newTestListServer(t)
+	require.NoError(t, store.CreateFileData("fs://hosta:f:/data/a.txt:1000", 4))
+	require.NoError(t, store.FinalizeFileData("fs://hosta:f:/data/a.txt:1000", []byte{1, 2, 3, 4}))
+	require.NoError(t, store.CreateFileData("fs://hosta:f:/data/b.txt:1000", 4))
+	require.NoError(t, store.FinalizeFileData("fs://hosta:f:/data/b.txt:1000", []byte{5, 6, 7, 8}))
+
+	stream := &erroringStream{}
+	err := srv.ListFiles(&pb.ListRequest{}, stream)
+	require.Error(t, err, "the handler must propagate Send's error instead of swallowing it")
+	assert.Equal(t, 2, stream.sent, "the second Send call is where erroringStream fails")
 }
 
 func TestListFiles_GRPCRoundTrip(t *testing.T) {
@@ -86,8 +133,18 @@ func TestListFiles_GRPCRoundTrip(t *testing.T) {
 	defer conn.Close()
 
 	client := pb.NewListServiceClient(conn)
-	resp, err := client.ListFiles(context.Background(), &pb.ListRequest{ServerName: "hosta"})
+	stream, err := client.ListFiles(context.Background(), &pb.ListRequest{ServerName: "hosta"})
 	require.NoError(t, err)
-	require.Len(t, resp.Rows, 1)
-	assert.Equal(t, "/data/a.txt", resp.Rows[0].Path)
+
+	var rows []*pb.FileRow
+	for {
+		row, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		rows = append(rows, row)
+	}
+	require.Len(t, rows, 1)
+	assert.Equal(t, "/data/a.txt", rows[0].Path)
 }

@@ -81,50 +81,6 @@ func (x *ListRequest) GetFilter() string {
 	return ""
 }
 
-type ListResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Rows          []*FileRow             `protobuf:"bytes,1,rep,name=rows,proto3" json:"rows,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ListResponse) Reset() {
-	*x = ListResponse{}
-	mi := &file_api_list_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ListResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ListResponse) ProtoMessage() {}
-
-func (x *ListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_list_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
-func (*ListResponse) Descriptor() ([]byte, []int) {
-	return file_api_list_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *ListResponse) GetRows() []*FileRow {
-	if x != nil {
-		return x.Rows
-	}
-	return nil
-}
-
 type FileRow struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FileUuid      string                 `protobuf:"bytes,1,opt,name=file_uuid,json=fileUuid,proto3" json:"file_uuid,omitempty"`
@@ -142,7 +98,7 @@ type FileRow struct {
 
 func (x *FileRow) Reset() {
 	*x = FileRow{}
-	mi := &file_api_list_proto_msgTypes[2]
+	mi := &file_api_list_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -154,7 +110,7 @@ func (x *FileRow) String() string {
 func (*FileRow) ProtoMessage() {}
 
 func (x *FileRow) ProtoReflect() protoreflect.Message {
-	mi := &file_api_list_proto_msgTypes[2]
+	mi := &file_api_list_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -167,7 +123,7 @@ func (x *FileRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileRow.ProtoReflect.Descriptor instead.
 func (*FileRow) Descriptor() ([]byte, []int) {
-	return file_api_list_proto_rawDescGZIP(), []int{2}
+	return file_api_list_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *FileRow) GetFileUuid() string {
@@ -249,7 +205,7 @@ type RestoreFileFilter struct {
 
 func (x *RestoreFileFilter) Reset() {
 	*x = RestoreFileFilter{}
-	mi := &file_api_list_proto_msgTypes[3]
+	mi := &file_api_list_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -261,7 +217,7 @@ func (x *RestoreFileFilter) String() string {
 func (*RestoreFileFilter) ProtoMessage() {}
 
 func (x *RestoreFileFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_api_list_proto_msgTypes[3]
+	mi := &file_api_list_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -274,7 +230,7 @@ func (x *RestoreFileFilter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreFileFilter.ProtoReflect.Descriptor instead.
 func (*RestoreFileFilter) Descriptor() ([]byte, []int) {
-	return file_api_list_proto_rawDescGZIP(), []int{3}
+	return file_api_list_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RestoreFileFilter) GetHost() string {
@@ -321,7 +277,7 @@ type ResolveRestoreFilesRequest struct {
 
 func (x *ResolveRestoreFilesRequest) Reset() {
 	*x = ResolveRestoreFilesRequest{}
-	mi := &file_api_list_proto_msgTypes[4]
+	mi := &file_api_list_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -333,7 +289,7 @@ func (x *ResolveRestoreFilesRequest) String() string {
 func (*ResolveRestoreFilesRequest) ProtoMessage() {}
 
 func (x *ResolveRestoreFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_list_proto_msgTypes[4]
+	mi := &file_api_list_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -346,7 +302,7 @@ func (x *ResolveRestoreFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveRestoreFilesRequest.ProtoReflect.Descriptor instead.
 func (*ResolveRestoreFilesRequest) Descriptor() ([]byte, []int) {
-	return file_api_list_proto_rawDescGZIP(), []int{4}
+	return file_api_list_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ResolveRestoreFilesRequest) GetFilters() []*RestoreFileFilter {
@@ -366,7 +322,7 @@ type ResolveRestoreFilesResponse struct {
 
 func (x *ResolveRestoreFilesResponse) Reset() {
 	*x = ResolveRestoreFilesResponse{}
-	mi := &file_api_list_proto_msgTypes[5]
+	mi := &file_api_list_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -378,7 +334,7 @@ func (x *ResolveRestoreFilesResponse) String() string {
 func (*ResolveRestoreFilesResponse) ProtoMessage() {}
 
 func (x *ResolveRestoreFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_list_proto_msgTypes[5]
+	mi := &file_api_list_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -391,7 +347,7 @@ func (x *ResolveRestoreFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveRestoreFilesResponse.ProtoReflect.Descriptor instead.
 func (*ResolveRestoreFilesResponse) Descriptor() ([]byte, []int) {
-	return file_api_list_proto_rawDescGZIP(), []int{5}
+	return file_api_list_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ResolveRestoreFilesResponse) GetRow() *FileRow {
@@ -417,9 +373,7 @@ const file_api_list_proto_rawDesc = "" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x16\n" +
-	"\x06filter\x18\x03 \x01(\tR\x06filter\"8\n" +
-	"\fListResponse\x12(\n" +
-	"\x04rows\x18\x01 \x03(\v2\x14.listservice.FileRowR\x04rows\"\xeb\x01\n" +
+	"\x06filter\x18\x03 \x01(\tR\x06filter\"\xeb\x01\n" +
 	"\aFileRow\x12\x1b\n" +
 	"\tfile_uuid\x18\x01 \x01(\tR\bfileUuid\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x12\n" +
@@ -442,9 +396,9 @@ const file_api_list_proto_rawDesc = "" +
 	"\afilters\x18\x01 \x03(\v2\x1e.listservice.RestoreFileFilterR\afilters\"h\n" +
 	"\x1bResolveRestoreFilesResponse\x12&\n" +
 	"\x03row\x18\x01 \x01(\v2\x14.listservice.FileRowR\x03row\x12!\n" +
-	"\ffilter_index\x18\x02 \x01(\x05R\vfilterIndex2\xbb\x01\n" +
-	"\vListService\x12@\n" +
-	"\tListFiles\x12\x18.listservice.ListRequest\x1a\x19.listservice.ListResponse\x12j\n" +
+	"\ffilter_index\x18\x02 \x01(\x05R\vfilterIndex2\xb8\x01\n" +
+	"\vListService\x12=\n" +
+	"\tListFiles\x12\x18.listservice.ListRequest\x1a\x14.listservice.FileRow0\x01\x12j\n" +
 	"\x13ResolveRestoreFiles\x12'.listservice.ResolveRestoreFilesRequest\x1a(.listservice.ResolveRestoreFilesResponse0\x01B\tZ\a./protob\x06proto3"
 
 var (
@@ -459,28 +413,26 @@ func file_api_list_proto_rawDescGZIP() []byte {
 	return file_api_list_proto_rawDescData
 }
 
-var file_api_list_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_api_list_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_api_list_proto_goTypes = []any{
 	(*ListRequest)(nil),                 // 0: listservice.ListRequest
-	(*ListResponse)(nil),                // 1: listservice.ListResponse
-	(*FileRow)(nil),                     // 2: listservice.FileRow
-	(*RestoreFileFilter)(nil),           // 3: listservice.RestoreFileFilter
-	(*ResolveRestoreFilesRequest)(nil),  // 4: listservice.ResolveRestoreFilesRequest
-	(*ResolveRestoreFilesResponse)(nil), // 5: listservice.ResolveRestoreFilesResponse
+	(*FileRow)(nil),                     // 1: listservice.FileRow
+	(*RestoreFileFilter)(nil),           // 2: listservice.RestoreFileFilter
+	(*ResolveRestoreFilesRequest)(nil),  // 3: listservice.ResolveRestoreFilesRequest
+	(*ResolveRestoreFilesResponse)(nil), // 4: listservice.ResolveRestoreFilesResponse
 }
 var file_api_list_proto_depIdxs = []int32{
-	2, // 0: listservice.ListResponse.rows:type_name -> listservice.FileRow
-	3, // 1: listservice.ResolveRestoreFilesRequest.filters:type_name -> listservice.RestoreFileFilter
-	2, // 2: listservice.ResolveRestoreFilesResponse.row:type_name -> listservice.FileRow
-	0, // 3: listservice.ListService.ListFiles:input_type -> listservice.ListRequest
-	4, // 4: listservice.ListService.ResolveRestoreFiles:input_type -> listservice.ResolveRestoreFilesRequest
-	1, // 5: listservice.ListService.ListFiles:output_type -> listservice.ListResponse
-	5, // 6: listservice.ListService.ResolveRestoreFiles:output_type -> listservice.ResolveRestoreFilesResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	2, // 0: listservice.ResolveRestoreFilesRequest.filters:type_name -> listservice.RestoreFileFilter
+	1, // 1: listservice.ResolveRestoreFilesResponse.row:type_name -> listservice.FileRow
+	0, // 2: listservice.ListService.ListFiles:input_type -> listservice.ListRequest
+	3, // 3: listservice.ListService.ResolveRestoreFiles:input_type -> listservice.ResolveRestoreFilesRequest
+	1, // 4: listservice.ListService.ListFiles:output_type -> listservice.FileRow
+	4, // 5: listservice.ListService.ResolveRestoreFiles:output_type -> listservice.ResolveRestoreFilesResponse
+	4, // [4:6] is the sub-list for method output_type
+	2, // [2:4] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_api_list_proto_init() }
@@ -494,7 +446,7 @@ func file_api_list_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_list_proto_rawDesc), len(file_api_list_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

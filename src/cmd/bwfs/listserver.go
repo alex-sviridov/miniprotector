@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log/slog"
 	"time"
 
@@ -19,16 +18,15 @@ func NewListServer(store *wfs.Store, logger *slog.Logger) *listServer {
 	return &listServer{store: store, logger: logger}
 }
 
-func (s *listServer) ListFiles(ctx context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
+func (s *listServer) ListFiles(req *pb.ListRequest, stream pb.ListService_ListFilesServer) error {
 	rows, err := queryFileRows(s.store, req.GetServerName(), req.GetPath(), req.GetFilter())
 	if err != nil {
 		s.logger.Error("ListFiles query failed", "error", err)
-		return nil, err
+		return err
 	}
 
-	pbRows := make([]*pb.FileRow, len(rows))
-	for i, r := range rows {
-		pbRows[i] = &pb.FileRow{
+	for _, r := range rows {
+		row := &pb.FileRow{
 			FileUuid:  r.FileUUID,
 			Source:    r.Source,
 			Type:      r.Type,
@@ -39,7 +37,9 @@ func (s *listServer) ListFiles(ctx context.Context, req *pb.ListRequest) (*pb.Li
 			Versions:  r.Versions,
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		}
+		if err := stream.Send(row); err != nil {
+			return err
+		}
 	}
-	return &pb.ListResponse{Rows: pbRows}, nil
+	return nil
 }
-

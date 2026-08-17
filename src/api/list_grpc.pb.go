@@ -27,7 +27,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ListServiceClient interface {
-	ListFiles(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
+	ListFiles(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileRow], error)
 	// ResolveRestoreFiles resolves a batch of restore-rule-shaped filters
 	// directly, scoped by host/path/timeframe, instead of the unbounded dump
 	// ListFiles would require for the same job. Server-streaming: one
@@ -45,19 +45,28 @@ func NewListServiceClient(cc grpc.ClientConnInterface) ListServiceClient {
 	return &listServiceClient{cc}
 }
 
-func (c *listServiceClient) ListFiles(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error) {
+func (c *listServiceClient) ListFiles(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileRow], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListResponse)
-	err := c.cc.Invoke(ctx, ListService_ListFiles_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &ListService_ServiceDesc.Streams[0], ListService_ListFiles_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ListRequest, FileRow]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ListService_ListFilesClient = grpc.ServerStreamingClient[FileRow]
 
 func (c *listServiceClient) ResolveRestoreFiles(ctx context.Context, in *ResolveRestoreFilesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ResolveRestoreFilesResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &ListService_ServiceDesc.Streams[0], ListService_ResolveRestoreFiles_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &ListService_ServiceDesc.Streams[1], ListService_ResolveRestoreFiles_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +87,7 @@ type ListService_ResolveRestoreFilesClient = grpc.ServerStreamingClient[ResolveR
 // All implementations must embed UnimplementedListServiceServer
 // for forward compatibility.
 type ListServiceServer interface {
-	ListFiles(context.Context, *ListRequest) (*ListResponse, error)
+	ListFiles(*ListRequest, grpc.ServerStreamingServer[FileRow]) error
 	// ResolveRestoreFiles resolves a batch of restore-rule-shaped filters
 	// directly, scoped by host/path/timeframe, instead of the unbounded dump
 	// ListFiles would require for the same job. Server-streaming: one
@@ -96,8 +105,8 @@ type ListServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedListServiceServer struct{}
 
-func (UnimplementedListServiceServer) ListFiles(context.Context, *ListRequest) (*ListResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
+func (UnimplementedListServiceServer) ListFiles(*ListRequest, grpc.ServerStreamingServer[FileRow]) error {
+	return status.Error(codes.Unimplemented, "method ListFiles not implemented")
 }
 func (UnimplementedListServiceServer) ResolveRestoreFiles(*ResolveRestoreFilesRequest, grpc.ServerStreamingServer[ResolveRestoreFilesResponse]) error {
 	return status.Error(codes.Unimplemented, "method ResolveRestoreFiles not implemented")
@@ -123,23 +132,16 @@ func RegisterListServiceServer(s grpc.ServiceRegistrar, srv ListServiceServer) {
 	s.RegisterService(&ListService_ServiceDesc, srv)
 }
 
-func _ListService_ListFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _ListService_ListFiles_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ListRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(ListServiceServer).ListFiles(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ListService_ListFiles_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ListServiceServer).ListFiles(ctx, req.(*ListRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(ListServiceServer).ListFiles(m, &grpc.GenericServerStream[ListRequest, FileRow]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ListService_ListFilesServer = grpc.ServerStreamingServer[FileRow]
 
 func _ListService_ResolveRestoreFiles_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ResolveRestoreFilesRequest)
@@ -158,13 +160,13 @@ type ListService_ResolveRestoreFilesServer = grpc.ServerStreamingServer[ResolveR
 var ListService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "listservice.ListService",
 	HandlerType: (*ListServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "ListFiles",
-			Handler:    _ListService_ListFiles_Handler,
-		},
-	},
+	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ListFiles",
+			Handler:       _ListService_ListFiles_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "ResolveRestoreFiles",
 			Handler:       _ListService_ResolveRestoreFiles_Handler,
