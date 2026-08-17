@@ -113,13 +113,13 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 	callCtx := jobid.Outgoing(context.Background(), jobID)
 
 	restoreClient := pb.NewRestoreServiceClient(conn)
+	listClient := pb.NewListServiceClient(conn)
 	workCh := make(chan *pb.FileRow, streams)
 
 	var resolver *restoreResolver
 	var streamErrCh <-chan error
 
 	if rulesStdin {
-		listClient := pb.NewListServiceClient(conn)
 		var rowsCh <-chan dispatchedRow
 		rowsCh, resolver, streamErrCh = streamResolvedRows(callCtx, listClient, rules)
 
@@ -137,11 +137,10 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 			}
 		}()
 	} else {
-		listClient := pb.NewListServiceClient(conn)
 		errCh := make(chan error, 1)
 		streamErrCh = errCh
 
-		watchdogCtx, touch, stop := withStallWatchdog(callCtx, streamIdleTimeout)
+		watchdogCtx, touch, pause, resume, stop := withStallWatchdog(callCtx, streamIdleTimeout)
 		stream, err := listClient.ListFiles(watchdogCtx, &pb.ListRequest{
 			ServerName: serverName,
 			Path:       pathFilter,
@@ -168,14 +167,17 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 				touch()
 				if row.Type == "f" && row.Size > 0 {
 					// workCh <- row can block for as long as the worker pool
-					// takes to drain (a large file, or several verify
+					// takes to free a slot (a large file, or several verify
 					// retries with backoff, both easily exceed
-					// streamIdleTimeout) -- touch again once the send
-					// completes so the watchdog only ever measures genuine
+					// streamIdleTimeout) -- suspend the idle timer across the
+					// send so the watchdog only ever measures genuine
 					// ListFiles stream inactivity, never worker-pool
-					// backpressure.
+					// backpressure. Touching after the send instead would be
+					// too late: the timer would already have fired, and
+					// cancelled, mid-send.
+					pause()
 					workCh <- row
-					touch()
+					resume()
 				}
 			}
 		}()
@@ -277,7 +279,9 @@ func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.
 		path:     row.Path,
 	}
 
-	ctx, touch, stop := withStallWatchdog(parent, streamIdleTimeout)
+	// No pause/resume here: every Recv below is followed by pure in-process
+	// hashing, never a blocking hand-off to another goroutine.
+	ctx, touch, _, _, stop := withStallWatchdog(parent, streamIdleTimeout)
 	defer stop()
 
 	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileUuid: row.FileUuid})

@@ -1,9 +1,13 @@
-// resolve.go is the streaming counterpart to applyRulesStdin (verify.go):
-// instead of resolving rules against one big, already-fetched slice of
-// rows, restoreResolver.Feed is called once per row as bwfs's
-// ResolveRestoreFiles response streams in, so memory stays bounded by rule
-// count, never by store size. Task 10 rewires runVerify to use this
-// instead of applyRulesStdin, and removes applyRulesStdin. See
+// resolve.go turns a set of restore rules into a stream of rows to act on.
+// buildRestoreFilters maps the rules onto bwfs's ResolveRestoreFilesRequest
+// filters; restoreResolver.Feed is then called once per row as the response
+// streams in, applying the same longest-ancestor-wins precedence the rules
+// themselves define, so memory stays bounded by rule count and never by store
+// size; restoreResolver.NotFound reports, once the stream ends, every
+// file-level rule that never matched anything. streamResolvedRows wraps all
+// of that plus a stall watchdog into the single resolved-row source both
+// `rwfs verify --rules-stdin` (verify.go) and `rwfs restore` (restore.go)
+// consume. See
 // docs/superpowers/specs/2026-08-15-restore-file-version-resolution-design.md.
 package main
 
@@ -157,7 +161,11 @@ type dispatchedRow struct {
 // drained (closed). errCh receives exactly one value (nil on a clean
 // end-of-stream, non-nil otherwise), sent as the producer goroutine's
 // final act before it closes rows -- so a caller that fully drains rows
-// first is guaranteed errCh already has its value ready to read.
+// first is guaranteed errCh already has its value ready to read. Draining
+// rows to completion is the caller's obligation either way: the watchdog is
+// deliberately suspended while a row is being handed over (see below), so a
+// caller that walks away mid-stream strands the producer rather than having
+// it time out.
 func streamResolvedRows(ctx context.Context, client pb.ListServiceClient, rules []RestoreRule) (rows <-chan dispatchedRow, resolver *restoreResolver, errCh <-chan error) {
 	filters, filterToRuleIndex := buildRestoreFilters(rules)
 	resolver = newRestoreResolver(rules, filterToRuleIndex)
@@ -165,7 +173,7 @@ func streamResolvedRows(ctx context.Context, client pb.ListServiceClient, rules 
 	out := make(chan dispatchedRow)
 	errs := make(chan error, 1)
 
-	watchdogCtx, touch, stop := withStallWatchdog(ctx, streamIdleTimeout)
+	watchdogCtx, touch, pause, resume, stop := withStallWatchdog(ctx, streamIdleTimeout)
 
 	stream, err := client.ResolveRestoreFiles(watchdogCtx, &pb.ResolveRestoreFilesRequest{Filters: filters})
 	if err != nil {
@@ -190,7 +198,15 @@ func streamResolvedRows(ctx context.Context, client pb.ListServiceClient, rules 
 			}
 			touch()
 			if dispatch, ruleIndex := resolver.Feed(resp.GetRow(), resp.GetFilterIndex()); dispatch {
+				// out is unbuffered, so this send blocks for however long
+				// the consumer takes to accept the row -- verifying a large
+				// file, or a retry-with-backoff cycle, easily outlasts
+				// streamIdleTimeout. That's consumer backpressure, not a
+				// stalled server, so the idle timer is suspended across it:
+				// it only ever measures time spent waiting on Recv.
+				pause()
 				out <- dispatchedRow{Row: resp.GetRow(), RuleIndex: ruleIndex}
+				resume()
 			}
 		}
 	}()

@@ -303,15 +303,35 @@ func (s *recordingRestoreServer) Requested() []string {
 // row testResolveServer can list. Returns the finalized file's UUID.
 func seedRestorableFile(t *testing.T, store *wfs.Store, source, path, jobID string, createdAtUnix int64, data []byte) string {
 	t.Helper()
+	return seedRestorableFileChunks(t, store, source, path, jobID, createdAtUnix, [][]byte{data})
+}
+
+// seedRestorableFileChunks is seedRestorableFile's multi-chunk form: each
+// element of chunks becomes one linked chunk, indexed by its byte offset the
+// same way brfs's real backup path indexes them, so realRestoreServer serves
+// several RestoreEvents for the file instead of exactly one. The
+// backpressure regression test below needs that -- a multi-event file is how
+// it makes one verification take genuinely long without any single inter-event
+// gap approaching the (shrunk) idle window.
+func seedRestorableFileChunks(t *testing.T, store *wfs.Store, source, path, jobID string, createdAtUnix int64, chunks [][]byte) string {
+	t.Helper()
 	fileID := fmt.Sprintf("fs://%s:f:%s:%d", source, path, createdAtUnix)
 
-	require.NoError(t, store.CreateFileData(fileID, int64(len(data))))
+	size := 0
+	for _, c := range chunks {
+		size += len(c)
+	}
+	require.NoError(t, store.CreateFileData(fileID, int64(size)))
 
-	hash := blake3.Sum256(data)
-	require.NoError(t, store.StoreChunk(hash[:], data))
-	require.NoError(t, store.LinkChunkToFileData(hash[:], fileID, 0))
+	offset := int64(0)
+	for _, c := range chunks {
+		hash := blake3.Sum256(c)
+		require.NoError(t, store.StoreChunk(hash[:], c))
+		require.NoError(t, store.LinkChunkToFileData(hash[:], fileID, offset))
+		offset += int64(len(c))
+	}
 
-	require.NoError(t, store.FinalizeFileData(fileID, expectedCRC32(t, [][]byte{data})))
+	require.NoError(t, store.FinalizeFileData(fileID, expectedCRC32(t, chunks)))
 	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{
 		ObjectID:   fileID,
 		JobID:      jobID,
@@ -337,9 +357,15 @@ func seedRestorableFile(t *testing.T, store *wfs.Store, source, path, jobID stri
 // different "package main" and cannot be imported from here.
 type realRestoreServer struct {
 	pb.UnimplementedRestoreServiceServer
-	store     *wfs.Store
-	mu        sync.Mutex
-	requested []string
+	store *wfs.Store
+	// chunkDelay, when non-zero, waits that long before each chunk event --
+	// a slow but perfectly healthy restore. Callers keep it comfortably under
+	// streamIdleTimeout so verifyFile's own watchdog never fires; what it
+	// makes long is the *total* per-file verification, which is what puts
+	// backpressure on the row producer feeding the worker pool.
+	chunkDelay time.Duration
+	mu         sync.Mutex
+	requested  []string
 }
 
 // Requested returns every file_uuid RestoreFile was ever asked for, in
@@ -388,6 +414,9 @@ func (s *realRestoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.Restor
 	}
 
 	for i, link := range links {
+		if s.chunkDelay > 0 {
+			time.Sleep(s.chunkDelay)
+		}
 		hash, err := hex.DecodeString(link.ChunkHash)
 		if err != nil {
 			return status.Errorf(codes.Internal, "decode chunk hash: %v", err)
@@ -579,8 +608,11 @@ func TestRunVerify_RulesStdin_HostAgnosticFolderRuleSkipsDirectoryRows(t *testin
 
 // runVerifyPlainWithDialer is runVerifyWithDialer's counterpart for the
 // plain, non-rules-stdin path: dials a bufconn listener the same way, then
-// calls runVerifyWithConn with rulesStdin=false and no rules.
-func runVerifyPlainWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, serverName, pathFilter, filter string, quiet bool) error {
+// calls runVerifyWithConn with rulesStdin=false and no rules. streams is
+// explicit because it sets both the worker count and workCh's depth, which
+// together decide how long a row hand-off blocks -- the backpressure
+// regression test below pins it at 1 to make that block deterministic.
+func runVerifyPlainWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, serverName, pathFilter, filter string, streams int, quiet bool) error {
 	t.Helper()
 	conn, err := grpc.NewClient("passthrough://bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
@@ -590,7 +622,7 @@ func runVerifyPlainWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Li
 	)
 	require.NoError(t, err)
 	defer conn.Close()
-	return runVerifyWithConn(logger, conn, serverName, pathFilter, filter, false, nil, 4, 1, quiet, "test-job")
+	return runVerifyWithConn(logger, conn, serverName, pathFilter, filter, false, nil, streams, 1, quiet, "test-job")
 }
 
 // TestRunVerify_PlainPath_StreamsAndVerifiesAllFiles proves the plain
@@ -617,7 +649,7 @@ func TestRunVerify_PlainPath_StreamsAndVerifiesAllFiles(t *testing.T) {
 	go grpcSrv.Serve(lis)
 	defer grpcSrv.GracefulStop()
 
-	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", true)
+	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", 4, true)
 	require.NoError(t, err, "plain verify must succeed for two genuinely valid files: %s", logBuf.String())
 	assert.ElementsMatch(t, []string{uuidA, uuidB}, restoreSrv.Requested())
 }
@@ -646,12 +678,102 @@ func TestRunVerify_PlainPath_MidStreamErrorReportedAlongsideSummary(t *testing.T
 	go grpcSrv.Serve(lis)
 	defer grpcSrv.GracefulStop()
 
-	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", true)
+	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", 4, true)
 	require.Error(t, err)
 	assert.Equal(t, []string{uuidA}, restoreSrv.Requested(),
 		"the row received before the mid-stream failure must still have been dispatched and verified")
 	assert.Contains(t, logBuf.String(), "summary",
 		"the summary line must still be logged even when the stream fails mid-run, not suppressed by the stream error")
+}
+
+// paddedListServer streams a caller-supplied row set verbatim -- unlike
+// testResolveServer it queries nothing, so a test can pad each row (via
+// CreatedAt, a field verify's plain path never reads) until the listing is
+// far too large for HTTP/2 flow control to hand the client up front. Without
+// that, the whole listing is pre-buffered client-side, Recv never actually
+// waits, and a backpressure test proves nothing.
+type paddedListServer struct {
+	pb.UnimplementedListServiceServer
+	rows []*pb.FileRow
+}
+
+func (s *paddedListServer) ListFiles(_ *pb.ListRequest, stream pb.ListService_ListFilesServer) error {
+	for _, row := range s.rows {
+		if err := stream.Send(row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestRunVerify_PlainPath_SlowWorkerPoolDoesNotTripTheWatchdog is the
+// plain-path half of the watchdog false-positive regression (its sibling is
+// resolve_test.go's TestStreamResolvedRows_SlowConsumerDoesNotTripTheWatchdog):
+// `workCh <- row` blocks until the worker pool frees a slot, and that wait --
+// verifying a large file, or a retry-with-backoff cycle -- is not ListFiles
+// stream inactivity. It used to be measured as if it were, so a big listing
+// combined with slow-but-healthy per-file work aborted the run with a bare
+// "context canceled". Touching after the send (the earlier, insufficient fix)
+// does not help: the timer has already fired mid-send by then.
+//
+// The shape here makes that deterministic: one worker (so a hand-off waits a
+// whole file's verification, not a fraction of one), a restore server that is
+// slow but never idle longer than the idle window itself (so verifyFile's own
+// watchdog stays out of it), and a listing padded past any client-side
+// prebuffer.
+func TestRunVerify_PlainPath_SlowWorkerPoolDoesNotTripTheWatchdog(t *testing.T) {
+	const (
+		realRows   = 6
+		paddingRow = 34
+		padBytes   = 256 << 10 // ~10MB of listing across all rows
+		chunkDelay = 100 * time.Millisecond
+	)
+	original := streamIdleTimeout
+	streamIdleTimeout = 150 * time.Millisecond // > chunkDelay, < a whole file's verification
+	t.Cleanup(func() { streamIdleTimeout = original })
+
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	// Two chunks at chunkDelay each: ~200ms per verification, every
+	// individual stream gap still a comfortable 100ms under the 150ms window.
+	fileUUID := seedRestorableFileChunks(t, store, "hosta", "/data/slow.bin", "job1", 1000,
+		[][]byte{{1, 2, 3, 4}, {5, 6, 7, 8}})
+
+	pad := strings.Repeat("x", padBytes)
+	rows := make([]*pb.FileRow, 0, realRows+paddingRow)
+	for i := 0; i < realRows; i++ {
+		rows = append(rows, &pb.FileRow{
+			FileUuid: fileUUID, Source: "hosta", Type: "f",
+			Path: "/data/slow.bin", Size: 8, CreatedAt: pad,
+		})
+	}
+	// Zero-byte rows: skipped by the producer's own gate, they exist purely
+	// to keep the stream long enough that the client is genuinely waiting on
+	// Recv when a spurious cancellation would land.
+	for i := 0; i < paddingRow; i++ {
+		rows = append(rows, &pb.FileRow{
+			Source: "hosta", Type: "f",
+			Path: fmt.Sprintf("/data/empty-%d", i), Size: 0, CreatedAt: pad,
+		})
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	restoreSrv := &realRestoreServer{store: store, chunkDelay: chunkDelay}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, &paddedListServer{rows: rows})
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", 1, true)
+	require.NoError(t, err, "a slow but healthy worker pool must never cancel the ListFiles stream: %s", logBuf.String())
+	assert.Len(t, restoreSrv.Requested(), realRows,
+		"every real row must reach the worker pool -- a short count means the listing was cut off mid-stream")
 }
 
 // TestVerifyFileWithRetry_BacksOffBetweenAttempts proves real backoff

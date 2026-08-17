@@ -38,7 +38,9 @@ func runList(host string, port int, serverName, pathFilter, filter, output, cert
 func runListWithConn(conn *grpc.ClientConn, serverName, pathFilter, filter, output, jobID string) error {
 	client := pb.NewListServiceClient(conn)
 
-	watchdogCtx, touch, stop := withStallWatchdog(jobid.Outgoing(context.Background(), jobID), streamIdleTimeout)
+	// No pause/resume here: this consumer only appends to a slice, so there
+	// is no blocking hand-off that could be mistaken for a stalled stream.
+	watchdogCtx, touch, _, _, stop := withStallWatchdog(jobid.Outgoing(context.Background(), jobID), streamIdleTimeout)
 	defer stop()
 
 	stream, err := client.ListFiles(watchdogCtx, &pb.ListRequest{

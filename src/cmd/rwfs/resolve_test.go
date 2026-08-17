@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -251,6 +253,100 @@ func TestStreamResolvedRows_DispatchesMatchingRowsAndReportsNotFound(t *testing.
 	notFound := resolver.NotFound()
 	if len(notFound) != 1 || notFound[0].Path != "/etc/missing.conf" {
 		t.Fatalf("expected one not-found entry for /etc/missing.conf, got %+v", notFound)
+	}
+}
+
+// paddedResolveServer streams rowCount identical, dispatchable rows, each
+// padded to ~padBytes via CreatedAt -- a field restoreResolver.Feed never
+// looks at, so the padding changes nothing about resolution but makes the
+// listing far too large for HTTP/2 flow control to hand the client up front.
+// That matters: with a small payload the whole stream is pre-buffered
+// client-side, Recv never actually waits, and a backpressure test passes
+// vacuously whether the watchdog is fixed or not.
+type paddedResolveServer struct {
+	pb.UnimplementedListServiceServer
+	rowCount int
+	padBytes int
+}
+
+func (s *paddedResolveServer) ResolveRestoreFiles(_ *pb.ResolveRestoreFilesRequest, stream pb.ListService_ResolveRestoreFilesServer) error {
+	pad := strings.Repeat("x", s.padBytes)
+	for i := 0; i < s.rowCount; i++ {
+		if err := stream.Send(&pb.ResolveRestoreFilesResponse{
+			Row: &pb.FileRow{
+				FileUuid:  fmt.Sprintf("uuid-%d", i),
+				Source:    "hosta",
+				Type:      "f",
+				Path:      "/etc/a.conf",
+				Size:      4,
+				CreatedAt: pad,
+			},
+			FilterIndex: 0,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestStreamResolvedRows_SlowConsumerDoesNotTripTheWatchdog is the
+// regression test for the false-positive this final review round found: the
+// idle window is meant to measure stream inactivity only, but a single
+// blocking `out <- dispatchedRow{...}` hand-off used to be measured too, so
+// a consumer that legitimately took longer than streamIdleTimeout to accept
+// one row (verifying a large file, or a retry-with-backoff cycle) got its
+// perfectly healthy stream cancelled with a bare "context canceled".
+//
+// The consumer here is slow in both of the ways that matter: steadily (25ms
+// per row, so the whole run outlasts the idle window many times over) and,
+// once, in a single burst longer than the idle window itself -- the latter is
+// what actually reproduces the bug, since a steady drip still touch()es often
+// enough to keep the old code alive. Before the pause/resume fix this fails
+// with a context-canceled stream error and a short row count; after it, all
+// rows arrive and the stream ends cleanly.
+func TestStreamResolvedRows_SlowConsumerDoesNotTripTheWatchdog(t *testing.T) {
+	const (
+		rowCount   = 40
+		padBytes   = 256 << 10 // ~10MB total: far past any client-side prebuffer
+		perRow     = 25 * time.Millisecond
+		burstStall = 400 * time.Millisecond
+		burstAtRow = 5
+	)
+	original := streamIdleTimeout
+	streamIdleTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { streamIdleTimeout = original })
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, &paddedResolveServer{rowCount: rowCount, padBytes: padBytes})
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	rules := []RestoreRule{{Host: "hosta", Path: "/etc/a.conf", Include: true}}
+	rowsCh, _, errCh := streamResolvedRows(context.Background(), pb.NewListServiceClient(conn), rules)
+
+	got := 0
+	for range rowsCh {
+		got++
+		if got == burstAtRow {
+			time.Sleep(burstStall) // one hand-off longer than the whole idle window
+			continue
+		}
+		time.Sleep(perRow)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("a slow but healthy consumer must never cancel the stream, got %v after %d rows", err, got)
+	}
+	if got != rowCount {
+		t.Fatalf("expected all %d rows to be delivered to a slow consumer, got %d", rowCount, got)
 	}
 }
 
