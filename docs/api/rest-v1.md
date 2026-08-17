@@ -506,7 +506,63 @@ underlying Loki queries hit its own line cap and the result may be incomplete; n
 
 A client polling with an advancing `since` cursor gets a near-real-time tail.
 
+## `POST /api/v1/ws-tickets`
+
+Issues a short-lived, single-use ticket that authenticates one WebSocket upgrade on one of the two
+streaming endpoints below — a WS handshake can't carry an `Authorization` header the way every
+other endpoint on this page requires, so a ticket stands in for the bearer token there instead. No
+body.
+
+```json
+{"ticket": "3f9a1c2e7b4d..."}
+```
+
+`200` with the ticket (a 32-byte value, hex-encoded). The ticket expires after 30s if unused, and is
+invalidated the instant a connection using it is accepted — each connection attempt needs its own
+fresh ticket via a fresh call to this endpoint. See
+[Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
+
+## WebSocket Endpoints
+
+Unlike every endpoint above, these two upgrade to a WebSocket rather than returning a single JSON
+response, and are authenticated by a `?ticket=<value>` query parameter (from `POST
+/api/v1/ws-tickets` above) instead of a bearer token. Both exist to push live updates on top of —
+not instead of — their REST counterparts above; see
+[Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md) for
+the reconnect/fallback behavior the web UI layers on top of them.
+
+### `GET /api/v1/jobs/{job_id}/logs/stream`
+
+Live-tails one job's log lines. Query parameters: `start` (unix seconds, where to begin tailing
+from — omit for "now"). Each WS text frame is one `logLineDTO`, the same shape `GET
+/api/v1/jobs/{job_id}/logs` returns one entry of:
+
+```json
+{"timestamp": 1752400000123456789, "hostname": "database", "binary": "brfs", "line": "{...raw json log line...}"}
+```
+
+### `GET /api/v1/jobs/stream`
+
+Pushes fleet-wide job-state updates from `api-server`'s shared in-memory job aggregator — every
+connected browser reads the same aggregator rather than each opening its own fleet-wide Loki tail.
+No query parameters. Each WS text frame is a `jobsStreamMsg`:
+
+```json
+{"type": "snapshot", "jobs": [{"job_id": "...", "kind": "backup", "source_host": "...", "store_host": "...", "started_at": 1752400000, "finished_at": 1752400010, "state": "success"}]}
+```
+
+```json
+{"type": "upsert", "job": {"job_id": "...", "kind": "backup", "source_host": "...", "store_host": null, "started_at": 1752400000, "finished_at": null, "state": "in_progress"}}
+```
+
+`"snapshot"` (`jobs`, a full list — same shape as `GET /api/v1/jobs`'s `data`) is sent once
+immediately after connecting, and again on every periodic reconcile (every 60s, and once before
+every aggregator tail reconnect). `"upsert"` (`job`, one entry) is sent for every individual job
+whose summary changes between snapshots. A client should apply `"upsert"`s against its
+last-received `"snapshot"` by `job_id`, replacing snapshots wholesale as newer ones arrive.
+
 ## See Also
 
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
+- [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)
 - [Catalog Sync Protocol](../protocols/catalog-sync.md) — the internal gRPC protocol `ListEntries` (this API's `/catalog` backend) is part of

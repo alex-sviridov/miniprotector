@@ -41,6 +41,13 @@ operating-tier mTLS check, forwarding query parameters unmodified. See
 [log-gateway Protocol](../protocols/log-gateway.md) and
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
+`log-gateway` also proxies Loki's live path: `GET /loki/api/v1/tail`, a WebSocket upgrade rather
+than a plain request, gated by the same operating-tier mTLS check. `log-gateway` dials Loki's own
+tail endpoint with the caller's query parameters forwarded unmodified and relays frames
+byte-for-byte in both directions until either side disconnects — it never parses a tail frame, same
+as every other route here. See [log-gateway Protocol](../protocols/log-gateway.md) and
+[Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
+
 ## Building
 
 ```bash
@@ -51,5 +58,6 @@ make log-gateway
 
 - [Fleet Log Aggregation Protocol: log-gateway](../protocols/log-gateway.md)
 - [Design: Fleet Log Aggregation](../superpowers/specs/2026-07-11-fleet-log-aggregation-design.md)
+- [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)
 - [Security Model](../SECURITY.md)
 - [Architecture](../ARCHITECTURE.md)

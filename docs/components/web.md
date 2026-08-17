@@ -117,11 +117,23 @@ no data — there's no read-only "guest" mode.
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
-- `/jobs/:job_id` — one job's log lines from the last 24h, fetched once on page load (no
-  live-tail/polling); each line is parsed from its underlying JSON via `LogLine.vue` into a
-  level-colored `[LEVEL] time binary@hostname: message` summary, with the remaining fields
-  (`job_id`, `event`, `status`, etc.) collapsed behind a click — a line that isn't valid JSON
-  falls back to plain text
+- `/jobs/:job_id` — one job's log lines from the last 24h; each line is parsed from its underlying
+  JSON via `LogLine.vue` into a level-colored `[LEVEL] time binary@hostname: message` summary, with
+  the remaining fields (`job_id`, `event`, `status`, etc.) collapsed behind a click — a line that
+  isn't valid JSON falls back to plain text
+
+  Both `/jobs` and `/jobs/:job_id` now update live: each connects over WebSocket (via a ticketed
+  `wsClient.createLiveStream`, `web/src/utils/wsClient.js`) to `api-server`'s `GET
+  /api/v1/jobs/stream` / `GET /api/v1/jobs/{job_id}/logs/stream`, laid on top of the same REST fetch
+  as before rather than replacing it — the initial page load still comes from `GET /api/v1/jobs` /
+  `GET /api/v1/jobs/{job_id}/logs`, and a 60s periodic re-fetch of the same REST endpoint keeps
+  running underneath the WS stream regardless of its health, as a correctness backstop. A
+  `ConnectionStatus` indicator in the page header shows the stream's state — `live`,
+  `reconnecting`, `polling`, or (on `/jobs/:job_id`, once a job's finish line has been seen)
+  `finished`. After 5 failed reconnect attempts (jittered exponential backoff, capped at 8s) a page
+  gives up on the socket and falls back to plain 10s REST polling instead — a stalled page is never
+  left looking up to date. See
+  [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
 
 Every list and detail page's header now shows a breadcrumb trail (e.g. "Policies / nightly-db-backup") above the
 title via `PageHeader`'s `crumbs` prop, and the sidebar (`Sidebar.vue`) carries a small brand mark
@@ -182,4 +194,5 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/web":/app -w /app node:20-
 - [Design: restore cart](../superpowers/specs/2026-08-09-restore-cart-design.md)
 - [Design: restore cart submission](../superpowers/specs/2026-08-10-restore-cart-submission-design.md)
 - [Design: Restore Verify/Execute Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md)
+- [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)
 - [Architecture](../ARCHITECTURE.md)

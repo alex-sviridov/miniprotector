@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-17 — Live job & log updates
+
+`/jobs` and `/jobs/:job_id` in the web UI now update live instead of only on page load: a
+WebSocket, proxied through `log-gateway` to Loki's native tail endpoint, pushes new log lines and
+job-state transitions as they happen, with the existing REST endpoints kept as both the initial
+fetch and a periodic correctness backstop. A connection-status indicator always shows whether a page
+is live, reconnecting, or has fallen back to plain polling, so a stalled page never looks
+up to date. See `docs/superpowers/specs/2026-08-17-live-job-updates-design.md`.
+
 ## 2026-08-17 — catalogsync: fix silent data loss on catalog restart races
 
 `catalogsync` no longer falls back to `LoggingSender` (which always reports success) when

@@ -52,7 +52,40 @@ certificate was presented. `405 Method Not Allowed` for anything other than `GET
 `api-server`'s `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}/logs` — see
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
+## `GET /loki/api/v1/tail`
+
+Same mTLS operating-tier gate as the push and `query_range` paths, but a WebSocket upgrade rather
+than a plain request/response — Loki's own tail endpoint is itself a WS route. Query parameters
+(`query`, `start`, `delay_for`, `limit`) are forwarded unmodified in the upgrade request's query
+string when `log-gateway` dials Loki's real tail endpoint. Once both sides are connected,
+`log-gateway` relays WS frames byte-for-byte in both directions (`relayTail`, `server.go`) until
+either side closes or errors — same unexamined-passthrough philosophy as the other two routes, it
+never parses a relayed frame.
+
+Frames from Loki are JSON, shaped like `lokiTailMessage` (mirrored client-side in
+`src/cmd/api-server/loki_tail.go`):
+
+```json
+{
+  "streams": [
+    {
+      "stream": { "<label>": "<value>", ... },
+      "values": [["<unix-nano-timestamp-string>", "<line>", {"<optional-metadata-key>": "<value>"}], ...]
+    }
+  ]
+}
+```
+
+The third `values` element (structured metadata) is present only for streams that carry it — same
+as `query_range`'s response shape.
+
+`401 Unauthorized` if no verified peer certificate was presented. `502 Bad Gateway` if dialing
+Loki's own tail endpoint fails. `405 Method Not Allowed` for anything other than `GET`. Added for
+`api-server`'s `GET /api/v1/jobs/stream` and `GET /api/v1/jobs/{job_id}/logs/stream` — see
+[Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
+
 ## See Also
 
 - [log-gateway](../components/log-gateway.md)
 - [Design: Fleet Log Aggregation](../superpowers/specs/2026-07-11-fleet-log-aggregation-design.md)
+- [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)

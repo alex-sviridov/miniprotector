@@ -33,6 +33,35 @@ Loki (through `log-gateway`'s read-proxy route) and aggregate the result — the
 exception to that rule, documented in
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
+### WebSocket Endpoints
+
+Three endpoints support live job/log updates in the web UI, in addition to the REST endpoints above
+— see [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
+
+`POST /api/v1/ws-tickets` is bearer-authenticated like every REST endpoint, and issues a 30s
+single-use ticket (`wsTicketStore`, `ws_tickets.go`) — a WS handshake can't carry an
+`Authorization` header, so a ticket, passed as a `?ticket=` query parameter, stands in for the
+bearer token on the two WS routes below. A ticket authenticates exactly one connection attempt: it
+is consumed (invalidated) the moment a connection using it is accepted, and expires unused after
+30s.
+
+`GET /api/v1/jobs/{job_id}/logs/stream` is ticket-gated (`requireWSTicket`) and, once upgraded,
+live-tails one job's log lines — a stateless per-connection proxy that dials its own
+`job_id`-filtered Loki tail (through `lokiTail`/`log-gateway`'s new tail-proxy route) for the
+lifetime of the connection, writing each line in the same `logLineDTO` shape `GET
+/api/v1/jobs/{job_id}/logs` already returns.
+
+`GET /api/v1/jobs/stream` is also ticket-gated, and pushes fleet-wide job-state updates from a
+single shared, in-memory `jobAggregator` — every connected browser subscribes to the same
+aggregator rather than each opening its own fleet-wide Loki tail. On connect it sends the
+aggregator's current state as one `"snapshot"` message, then relays `"upsert"` messages (one job
+whose summary just changed) and further periodic `"snapshot"` messages (a 60s reconcile, and one
+before every tail reconnect) until the client disconnects — see [REST API v1](../api/rest-v1.md)
+for the message shape. This is a *second* documented exception to the one-RPC-per-call rule above:
+unlike `GET /api/v1/jobs`, which translates one REST call into one Loki query, the aggregator holds
+state across calls — one shared Loki tail feeds every subscriber, and a subscriber joining late
+still gets the current state via the snapshot rather than replaying history.
+
 ### Catalog Facet Endpoints
 
 - `GET /api/v1/catalog/clients` — distinct client (source host) facets
@@ -122,7 +151,7 @@ convention, not a new gap.
 - `catalog_host` / `catalog_port` — where to dial `catalog`
 - `policy_server_host` / `policy_server_port` — where to dial `policy-server` *(default port:
   9300)*
-- `log_gateway_host` / `log_gateway_port` — where to dial `log-gateway`'s Loki query-proxy route for `GET /api/v1/jobs*` *(default port: 9400)*
+- `log_gateway_host` / `log_gateway_port` — where to dial `log-gateway`'s Loki query-proxy route for `GET /api/v1/jobs*`, and its tail-proxy route for the two WS streaming endpoints *(default port: 9400)*
 - `AdhocPolicyTimeoutSec` — how long a `POST /policies/adhoc`-created policy stays active (its `rpo`
   and how far past `now` its `disabled_at` is set) before disabling itself *(default: 3600)*. Set it
   comfortably larger than `PolicyFetchIntervalSec` (mesh nodes' policy poll interval, default `900`)
@@ -153,4 +182,5 @@ make api-server
 - [REST API v1](../api/rest-v1.md)
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
 - [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
+- [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)
 - [Architecture](../ARCHITECTURE.md)
