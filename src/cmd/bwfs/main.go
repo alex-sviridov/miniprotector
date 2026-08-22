@@ -119,7 +119,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, nil, func(s *grpc.Server) {
+		if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
 			pb.RegisterBackupServiceServer(s, backupServer)
 			pb.RegisterListServiceServer(s, listSrv)
 			pb.RegisterRestoreServiceServer(s, restoreSrv)
