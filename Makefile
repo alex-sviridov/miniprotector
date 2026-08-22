@@ -192,5 +192,6 @@ control-plane-up: ## Initialize (if needed) and start the control-plane stack (c
 demo-up: ## Bring up the self-contained demo lab (ca + issuer + catalog + policy-server + database + webserver + store)
 	@./demo/up.sh
 
-demo-down: ## Tear down the demo lab and wipe all its volumes
+demo-down: ## Tear down the demo lab, wipe all its volumes, and clear ad-hoc policies
 	@cd demo && docker compose down -v
+	@rm -f demo/policy-server/policies/backup/adhoc-*.json

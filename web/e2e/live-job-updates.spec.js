@@ -95,7 +95,9 @@ test('job detail page flips to Finished live, with no manual reload', async ({ p
   // here regardless of timeout. bwfs/brfs's own finish line is what
   // logsStatus actually keys off (isFinishLine), so it's what's guaranteed
   // to render.
-  await expect(page.locator('[data-test="log-line-summary"]', { hasText: /finished|committed/i })).toBeVisible({
+  await expect(
+    page.locator('[data-test="log-line-summary"]', { hasText: /finished|committed/i }).first()
+  ).toBeVisible({
     timeout: 15000,
   })
 })
