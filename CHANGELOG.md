@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-22 — Fix live job-log tail connection leak
+
+`GET /api/v1/jobs/{job_id}/logs/stream` leaked its upstream Loki tail connection every time a
+browser navigated away from a job detail page whose tail had nothing left to send (the common
+case, since most jobs finish almost instantly) -- `r.Context()` never becomes `Done` for a hijacked
+WebSocket connection, and this handler had no independent way to notice the browser had
+disconnected. Over a session's worth of browsing, leaked connections accumulated until Loki's
+`max_concurrent_tail_requests` limit (10) was hit, after which every new live tail was rejected
+immediately and the whole live job/log-updates feature degraded into an endless
+Connecting/Reconnecting loop. Fixed by adding the same client-disconnect-detection read loop
+already used by the fleet-wide jobs list stream and `log-gateway`'s tail relay. Also fixed a related
+test race in `live-job-updates.spec.js` that assumed a demo backup job stays observably
+"in-progress" long enough to see a transient connecting state before it finishes.
+
 ## 2026-08-22 — Logging flow hardening
 
 Three fixes found by auditing the client-push and server-delivery logging paths end to end. Vector's
