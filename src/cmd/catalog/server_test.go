@@ -20,9 +20,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -226,6 +228,58 @@ func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 	count, err := store.Count(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
+}
+
+// TestSyncFileVersions_RealMTLSRoundTrip_NonStoreRoleDenied proves role
+// enforcement over the same real mTLS + gRPC round trip
+// TestSyncFileVersions_RealMTLSRoundTrip uses, but with roleRequirements()
+// wired in (production behavior) instead of nil.
+func TestSyncFileVersions_RealMTLSRoundTrip_NonStoreRoleDenied(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- connection.StartServer(ctx, logger, port, fixtureCertsDir, roleRequirements(), func(s *grpc.Server) {
+			pb.RegisterCatalogServiceServer(s, srv)
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-errCh
+	})
+
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		conn.Close()
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "server did not start listening")
+
+	// fixtureCertsDir's client.crt carries no authz-role attribute --
+	// must be denied "store"-only SyncFileVersions.
+	conn, err := connection.Connect("localhost", port, 5, fixtureCertsDir)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := pb.NewCatalogServiceClient(conn)
+	_, err = client.SyncFileVersions(context.Background(), &pb.SyncRequest{
+		Entries: []*pb.FileVersionEntry{{JobId: "job-1", ObjectId: "obj-1"}},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	count, err := store.Count(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count, "the denied SyncFileVersions must not have written anything")
 }
 
 func TestListEntries_ReturnsPersistedEntriesNewestFirst(t *testing.T) {
