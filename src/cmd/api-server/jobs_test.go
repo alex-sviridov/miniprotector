@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -16,9 +17,18 @@ import (
 type fakeLokiClient struct {
 	byQuery map[string][]lokiStream
 	err     error
+
+	calls     int
+	lastStart time.Time
+	lastEnd   time.Time
+	lastLimit int
 }
 
 func (f *fakeLokiClient) QueryRange(ctx context.Context, query string, start, end time.Time, limit int) ([]lokiStream, error) {
+	f.calls++
+	f.lastStart = start
+	f.lastEnd = end
+	f.lastLimit = limit
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -566,4 +576,142 @@ func TestHandleGetJobLogs_InvalidStoreHostCharacterReturns400(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetJobLogs_DefaultLimitPassedToLoki(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 500, fake.lastLimit)
+}
+
+func TestHandleGetJobLogs_LimitOutsideRangeReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	for _, raw := range []string{"0", "501", "not-a-number"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?limit="+raw, nil)
+		req.Header.Set("Authorization", "Bearer test-token")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "limit=%s should be rejected", raw)
+	}
+}
+
+func TestHandleGetJobLogs_HasMoreTrueWhenPageIsFull(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
+			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
+				{Timestamp: 100, Line: "a"},
+				{Timestamp: 200, Line: "b"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?limit=2", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, true, body["has_more"])
+}
+
+func TestHandleGetJobLogs_HasMoreFalseWhenPageIsPartial(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
+			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
+				{Timestamp: 100, Line: "a"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?limit=5", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, false, body["has_more"])
+}
+
+func TestHandleGetJobLogs_EndingBeforeNarrowsEndExclusive(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?ending_before=1752400500000000000", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, int64(1752400499999999999), fake.lastEnd.UnixNano())
+}
+
+func TestHandleGetJobLogs_EndingBeforeInvalidReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?ending_before=not-a-number", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetJobLogs_EndingBeforeAtWindowFloorReturnsEmptyWithoutQueryingLoki(t *testing.T) {
+	fake := &fakeLokiClient{}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	since := time.Now().Add(-1 * time.Hour).Unix()
+	endingBefore := time.Now().Add(-2 * time.Hour).UnixNano() // before the since floor
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/v1/jobs/operating-refresh:1752400500/logs?since=%d&ending_before=%d", since, endingBefore), nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, []any{}, body["data"])
+	assert.Equal(t, false, body["has_more"])
+	assert.Equal(t, 0, fake.calls, "must not query Loki with an inverted/empty range")
 }

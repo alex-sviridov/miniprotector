@@ -18,6 +18,9 @@ const (
 	defaultJobsLimit   = 100
 	maxJobsLimit       = 500
 	jobsQueryLineLimit = 5000
+
+	defaultJobLogsLimit = 500
+	maxJobLogsLimit     = 500
 )
 
 var validJobKinds = map[string]bool{
@@ -345,6 +348,7 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	until := time.Now()
 	since := until.Add(-defaultJobsWindow)
+	sinceExplicit := false
 	if raw := q.Get("since"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
@@ -352,6 +356,36 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		since = time.Unix(parsed, 0)
+		sinceExplicit = true
+	}
+
+	limit := defaultJobLogsLimit
+	if raw := q.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > maxJobLogsLimit {
+			writeJSONError(w, http.StatusBadRequest, "limit must be an integer between 1 and 500")
+			return
+		}
+		limit = parsed
+	}
+
+	if raw := q.Get("ending_before"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "ending_before must be a unix-nanosecond integer")
+			return
+		}
+		// ending_before is the timestamp of the oldest line already loaded on
+		// the client -- exclusive, so the next page stops strictly before it
+		// instead of re-returning that same line.
+		until = time.Unix(0, 0).Add(time.Duration(parsed - 1))
+	}
+
+	if sinceExplicit && !until.After(since) {
+		// Paged back past the window floor -- not an error, just nothing
+		// left to return.
+		writeJSON(w, http.StatusOK, map[string]any{"data": []logLineDTO{}, "has_more": false})
+		return
 	}
 
 	sourceHost := q.Get("source_host")
@@ -380,7 +414,7 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := fmt.Sprintf(`%s | job_id="%s"`, labelSelector, jobID)
-	streams, err := s.loki.QueryRange(r.Context(), query, since, until, jobsQueryLineLimit)
+	streams, err := s.loki.QueryRange(r.Context(), query, since, until, limit)
 	if err != nil {
 		s.logger.Error("handleGetJobLogs: query failed", "error", err)
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
@@ -400,5 +434,5 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(lines, func(i, k int) bool { return lines[i].Timestamp < lines[k].Timestamp })
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": lines})
+	writeJSON(w, http.StatusOK, map[string]any{"data": lines, "has_more": len(lines) >= limit})
 }
