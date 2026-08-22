@@ -73,7 +73,7 @@ func main() {
 
 	logger.Info("clientmanager-api started", "port", arguments.Port)
 
-	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
+	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, nil, func(s *grpc.Server) {
 		pb.RegisterClientManagerServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("Server failed", "error", err)

@@ -38,7 +38,7 @@ func TestStartServerConnect_RoundTripSucceeds(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- StartServer(ctx, testLogger(), port, fixtureCertsDir, func(s *grpc.Server) {})
+		errCh <- StartServer(ctx, testLogger(), port, fixtureCertsDir, nil, func(s *grpc.Server) {})
 	}()
 	time.Sleep(100 * time.Millisecond)
 
@@ -62,7 +62,7 @@ func TestStartServerConnect_UntrustedClientCertRejected(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- StartServer(ctx, testLogger(), port, fixtureCertsDir, func(s *grpc.Server) {})
+		errCh <- StartServer(ctx, testLogger(), port, fixtureCertsDir, nil, func(s *grpc.Server) {})
 	}()
 	time.Sleep(100 * time.Millisecond)
 
@@ -78,7 +78,7 @@ func TestStartServer_MissingCertsDirFailsFast(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := StartServer(ctx, testLogger(), port, "does-not-exist", func(s *grpc.Server) {})
+	err := StartServer(ctx, testLogger(), port, "does-not-exist", nil, func(s *grpc.Server) {})
 	assert.Error(t, err)
 }
 
@@ -94,7 +94,7 @@ func TestConnectWithIdentity_RoundTripSucceeds(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- StartServer(ctx, testLogger(), port, fixtureCertsDir, func(s *grpc.Server) {})
+		errCh <- StartServer(ctx, testLogger(), port, fixtureCertsDir, nil, func(s *grpc.Server) {})
 	}()
 	time.Sleep(100 * time.Millisecond)
 
@@ -121,7 +121,7 @@ func TestStartServerWithCredentials_RoundTripSucceeds(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- StartServerWithCredentials(ctx, testLogger(), port, creds, func(s *grpc.Server) {})
+		errCh <- StartServerWithCredentials(ctx, testLogger(), port, creds, nil, func(s *grpc.Server) {})
 	}()
 	time.Sleep(100 * time.Millisecond)
 

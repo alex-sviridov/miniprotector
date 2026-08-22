@@ -65,7 +65,7 @@ func main() {
 
 	logger.Info("catalog started", "storage_path", arguments.StoragePath, "port", arguments.Port)
 
-	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
+	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, nil, func(s *grpc.Server) {
 		pb.RegisterCatalogServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("Server failed", "error", err)

@@ -195,7 +195,7 @@ func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- connection.StartServer(ctx, logger, port, fixtureCertsDir, func(s *grpc.Server) {
+		errCh <- connection.StartServer(ctx, logger, port, fixtureCertsDir, nil, func(s *grpc.Server) {
 			pb.RegisterCatalogServiceServer(s, srv)
 		})
 	}()

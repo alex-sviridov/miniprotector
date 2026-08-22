@@ -125,7 +125,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := connection.StartServerWithCredentials(signalCtx, logger, conf.IssuerPort, creds, func(s *grpc.Server) {
+	if err := connection.StartServerWithCredentials(signalCtx, logger, conf.IssuerPort, creds, nil, func(s *grpc.Server) {
 		pb.RegisterIssuerServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("serve failed", "error", err)
