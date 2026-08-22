@@ -105,6 +105,14 @@ func (a *jobAggregator) reconcileIfSubscribed(ctx context.Context) error {
 // ticker skips work while unsubscribed (reconcileIfSubscribed, above), so
 // without this the first browser to connect after an idle stretch could
 // see a snapshot arbitrarily stale.
+//
+// The subscriberCount() check and the later a.subs[ch] registration are
+// not atomic (they take a.mu separately), so this is not a strict 0->1
+// edge trigger: if two Subscribe calls arrive at genuinely the same
+// instant while a.subs is empty, both can observe zero subscribers and
+// each run their own reconcile before either registers. That's extra,
+// redundant Loki load in that rare window, never a correctness problem --
+// reconcile()'s own state swap is independently protected by a.mu.
 func (a *jobAggregator) Subscribe(ctx context.Context) (snapshot []jobDTO, ch chan jobsStreamMsg, unsubscribe func()) {
 	if a.subscriberCount() == 0 {
 		if err := a.reconcile(ctx); err != nil {

@@ -208,7 +208,7 @@ func TestJobAggregator_SubscribeTriggersReconcileOnFirstSubscriber(t *testing.T)
 	assert.Equal(t, "operating-refresh:1", snapshot[0].JobID)
 }
 
-func TestJobAggregator_SecondSubscriberDoesNotTriggerExtraReconcile(t *testing.T) {
+func TestJobAggregator_SecondSequentialSubscriberDoesNotTriggerExtraReconcile(t *testing.T) {
 	counting := &countingReconcileLokiClient{fakeLokiClient: fakeLokiClient{byQuery: map[string][]lokiStream{
 		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
 		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
@@ -225,7 +225,12 @@ func TestJobAggregator_SecondSubscriberDoesNotTriggerExtraReconcile(t *testing.T
 	_, _, unsubscribe2 := agg.Subscribe(context.Background())
 	defer unsubscribe2()
 
-	assert.EqualValues(t, 2, counting.calls.Load(), "a second concurrent subscriber must not trigger another reconcile")
+	// This second Subscribe call is sequential (issued only after the
+	// first has already returned and registered its channel), not
+	// concurrent -- it exercises the already-subscribed (subscriberCount()
+	// > 0) path, not the 0->1 race. See Subscribe's doc comment for the
+	// separate, genuinely-concurrent case this test does not cover.
+	assert.EqualValues(t, 2, counting.calls.Load(), "a second sequential subscriber must not trigger another reconcile")
 }
 
 // blockingTailer's Tail call fails errCount times, then succeeds
