@@ -124,6 +124,22 @@ describe('jobs store', () => {
       expect(jobs.logsStatus).toBe('finished')
     })
 
+    it('flips status to "finished" from history alone, when the finish line was already fetched before the stream opened', async () => {
+      // A job that already finished before its detail page loaded is the
+      // common case, not an edge case (see jobs.js's fetchLogs comment) --
+      // the finish line arrives in this initial history fetch, not as a
+      // fresh onMessage over the live stream, so logsStatus must be derived
+      // from history too, not only from _mergeLogLine's onMessage path.
+      apiFetch.mockResolvedValue({
+        data: [{ timestamp: 100, hostname: 'h', binary: 'agent', line: '{"event":"finish","status":"success"}' }],
+      })
+      const jobs = useJobsStore()
+
+      await jobs.connectLogsStream('restore:x:1')
+
+      expect(jobs.logsStatus).toBe('finished')
+    })
+
     it('onStatus updates logsStatus, except once finished it stays finished', async () => {
       apiFetch.mockResolvedValue({ data: [] })
       const jobs = useJobsStore()

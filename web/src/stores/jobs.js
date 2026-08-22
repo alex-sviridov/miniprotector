@@ -50,6 +50,14 @@ export const useJobsStore = defineStore('jobs', {
           const body = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/logs`)
           this.logs = body.data ?? []
           this._logsSeen = new Set(this.logs.map(logKey))
+          // A job that already finished before this page loaded is the
+          // common case, not an edge case -- its finish line arrives here,
+          // in history, not as a fresh onMessage over the live stream
+          // below, so _mergeLogLine's own isFinishLine check (which only
+          // runs for lines not already in _logsSeen) would never see it.
+          if (this.logs.some(isFinishLine)) {
+            this.logsStatus = 'finished'
+          }
         },
         { rethrow: false, loadingKey: 'logsLoading', errorKey: 'logsError' }
       )
