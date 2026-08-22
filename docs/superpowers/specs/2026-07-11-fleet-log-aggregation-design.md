@@ -280,7 +280,7 @@ left false) tails <log_dir>
   -> batches lines, pushes to log-gateway over mTLS using client.crt/client.key
      (buffered to its own disk buffer at <var_dir>/vector-buffer if log-gateway/Loki is
       unreachable; the file source pauses (not drops) once the buffer's configured bound is exceeded,
-      resuming once space frees up.)
+      resuming once space frees up)
   -> agent restarts it right after every successful operating-refresh (fresh cert available),
      and independently on any unexpected exit (crash-restart with the same backoff as a
      failing policy) -- never left running on a cert past its useful reload point

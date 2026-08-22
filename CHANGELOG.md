@@ -9,7 +9,8 @@ disk buffer now blocks (pausing local log shipping) instead of dropping the newe
 its old `drop_newest` setting meant a prolonged `log-gateway`/Loki outage discarded exactly the
 freshest, most operationally relevant log lines while stale ones sat queued. `api-server`'s
 `jobAggregator` no longer runs its periodic 24h, fleet-wide Loki reconcile query while no browser has
-`/api/v1/jobs/stream` open, cutting steady-state Loki load to zero when nobody's watching; the first
+`/api/v1/jobs/stream` open, cutting the periodic fleet-wide query load to zero when nobody's watching
+(the shared tail connection and its own reattach-triggered reconcile are unaffected); the first
 browser to reconnect after an idle stretch now triggers one synchronous reconcile so it never sees
 stale data. `log-gateway`'s push route now streams request bodies straight through to Loki instead of
 fully buffering them in memory first, cutting per-push latency and peak memory on the one process

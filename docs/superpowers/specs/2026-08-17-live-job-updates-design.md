@@ -114,9 +114,13 @@ Unlike the per-job tail, one shared upstream tail serves every connected browser
   (pruned to the 24h window), then an `upsert` per job whose summary changes afterward — never a
   full re-send per tick.
 - **Reconciliation backstop**: independent of tail health, the aggregator re-runs the `query_range`
-  priming query every 60s and reconciles the in-memory map against it (replace-by-`job_id`) — a
-  correctness net against Loki tail's own documented best-effort guarantee, not just a
-  disconnect-recovery mechanism.
+  priming query every 60s *while at least one browser is subscribed* and reconciles the in-memory
+  map against it (replace-by-`job_id`) — a correctness net against Loki tail's own documented
+  best-effort guarantee, not just a disconnect-recovery mechanism. With zero subscribers this
+  periodic reconcile is skipped entirely (the shared tail and its own reattach-triggered reconcile
+  are unaffected); the first browser to (re)subscribe after an idle stretch triggers one synchronous
+  reconcile so it never sees stale data. See
+  `docs/superpowers/specs/2026-08-22-logging-flow-hardening-design.md`.
 
 ## Frontend
 
