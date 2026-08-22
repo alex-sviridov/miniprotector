@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import JobDetailView from './JobDetailView.vue'
@@ -7,6 +8,25 @@ import { useJobsStore } from '../stores/jobs'
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { job_id: 'backup:nightly:1752400000' } }),
 }))
+
+// JobDetailView always wires useAutoFollow, which observes a sentinel via
+// IntersectionObserver as soon as it mounts -- jsdom doesn't implement it,
+// so every test that mounts the view (not just the follow/jump-to-latest
+// ones) needs a stub in place, or the composable's watcher throws.
+let observedCallback
+
+class MockIntersectionObserver {
+  constructor(cb) {
+    observedCallback = cb
+  }
+  observe() {}
+  disconnect() {}
+}
+
+beforeEach(() => {
+  observedCallback = null
+  vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+})
 
 function mountView(state) {
   const pinia = createTestingPinia({ stubActions: true, initialState: { jobs: state } })
@@ -60,5 +80,68 @@ describe('JobDetailView', () => {
     const crumb = wrapper.find('[data-test="breadcrumb"]')
     expect(crumb.text()).toBe('Jobs / backup:nightly:1752400000')
     expect(crumb.findComponent(RouterLinkStub).props('to')).toEqual({ name: 'jobs' })
+  })
+
+  it('shows a "Load older" button when hasOlderLogs is true, and calls loadOlder on click', async () => {
+    const { wrapper, jobs } = mountView({ logs: [], logsLoading: false, logsError: null, hasOlderLogs: true })
+    const button = wrapper.find('[data-test="load-older"]')
+    expect(button.exists()).toBe(true)
+
+    await button.trigger('click')
+
+    expect(jobs.loadOlder).toHaveBeenCalledWith('backup:nightly:1752400000')
+  })
+
+  it('hides the "Load older" button when hasOlderLogs is false', () => {
+    const { wrapper } = mountView({ logs: [], logsLoading: false, logsError: null, hasOlderLogs: false })
+    expect(wrapper.find('[data-test="load-older"]').exists()).toBe(false)
+  })
+
+  it("keeps each LogLine's expanded state attached to its own line, not its array position, when older lines are prepended", async () => {
+    const { wrapper, jobs } = mountView({
+      logs: [
+        { timestamp: 200, hostname: 'h', binary: 'brfs', line: JSON.stringify({ level: 'INFO', msg: 'second', extra: 'x' }) },
+      ],
+      logsLoading: false,
+      logsError: null,
+    })
+
+    await wrapper.find('[data-test="log-line-summary"]').trigger('click')
+
+    jobs.logs.unshift({
+      timestamp: 100,
+      hostname: 'h',
+      binary: 'brfs',
+      line: JSON.stringify({ level: 'INFO', msg: 'first', extra: 'y' }),
+    })
+    await nextTick()
+
+    const items = wrapper.findAll('li')
+    expect(items[0].text()).toContain('first')
+    expect(items[0].find('[data-test="log-line-fields"]').exists()).toBe(false)
+    expect(items[1].text()).toContain('second')
+    expect(items[1].find('[data-test="log-line-fields"]').exists()).toBe(true)
+  })
+
+  describe('follow / jump-to-latest wiring', () => {
+    it('calls setFollowing on the store when the sentinel leaves view, and shows a jump-to-latest button with a new-line count', async () => {
+      const { wrapper, jobs } = mountView({
+        logs: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        logsLoading: false,
+        logsError: null,
+      })
+      await nextTick()
+
+      observedCallback([{ isIntersecting: false }])
+      await nextTick()
+      expect(jobs.setFollowing).toHaveBeenCalledWith(false)
+
+      jobs.logs.push({ timestamp: 200, hostname: 'h', binary: 'brfs', line: '{}' })
+      await nextTick()
+
+      const jumpButton = wrapper.find('[data-test="jump-to-latest"]')
+      expect(jumpButton.exists()).toBe(true)
+      expect(jumpButton.text()).toContain('1 new line')
+    })
   })
 })
