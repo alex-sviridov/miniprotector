@@ -14,6 +14,18 @@ const (
 	jobsAggregatorReconcileEvery = 60 * time.Second
 )
 
+// jobsAggregatorSubscribeReconcileTimeout bounds the synchronous reconcile
+// Subscribe runs on the 0->1 subscriber transition. Without this, a
+// log-gateway/Loki that's reachable but hung (not erroring, just never
+// responding) would leave the WebSocket handshake in handleJobsStream
+// blocked forever -- r.Context() has no deadline of its own here, and once
+// the connection is hijacked for the WS upgrade the server's own
+// disconnect-driven cancellation of r.Context() stops working too. Chosen
+// longer than log-gateway's own lokiForwardTimeout (10s, cmd/log-gateway/
+// server.go) so that boundary fires first and produces a real 502/error
+// through the normal path, rather than being pre-empted by this timeout.
+const jobsAggregatorSubscribeReconcileTimeout = 15 * time.Second
+
 // jobsAggregatorSubscriberBuffer bounds how many pending messages one
 // connected browser can be behind before broadcast starts dropping
 // updates for it -- a slow/stuck subscriber must never block delivery to
@@ -115,7 +127,10 @@ func (a *jobAggregator) reconcileIfSubscribed(ctx context.Context) error {
 // reconcile()'s own state swap is independently protected by a.mu.
 func (a *jobAggregator) Subscribe(ctx context.Context) (snapshot []jobDTO, ch chan jobsStreamMsg, unsubscribe func()) {
 	if a.subscriberCount() == 0 {
-		if err := a.reconcile(ctx); err != nil {
+		rctx, cancel := context.WithTimeout(ctx, jobsAggregatorSubscribeReconcileTimeout)
+		err := a.reconcile(rctx)
+		cancel()
+		if err != nil {
 			a.logger.Error("jobAggregator: reconcile on first subscriber failed", "error", err)
 		}
 	}
