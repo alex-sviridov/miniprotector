@@ -492,19 +492,29 @@ underlying Loki queries hit its own line cap and the result may be incomplete; n
 | Param | Type | Description |
 |-------|------|--------------|
 | `since` | unix seconds | Only lines after this timestamp. Default: 24h before now |
+| `limit` | int | Page size. Default and max: 500. `400` if outside `[1, 500]` |
+| `ending_before` | unix nanoseconds | Opaque cursor — the timestamp of the oldest line already loaded. Returns the `limit` lines immediately before it (exclusive). Omit for the most recent page |
 | `source_host` / `store_host` | string | Optional — narrows the query to the hosts involved, if already known from a prior `/jobs` response. Each must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
 
 `job_id` must match `^[a-zA-Z0-9:._-]+$` — `400` otherwise.
+
+Without `ending_before`, returns the most recent `limit` lines in the `since`-to-now window. With
+`ending_before`, returns the `limit` lines immediately before that cursor, still floored at `since` —
+paging can't run past the window. An `ending_before` at or before the window floor returns an empty
+page (`has_more: false`), not an error.
 
 ```json
 {
   "data": [
     {"timestamp": 1752400000123456789, "hostname": "database", "binary": "brfs", "line": "{...raw json log line...}"}
-  ]
+  ],
+  "has_more": true
 }
 ```
 
-A client polling with an advancing `since` cursor gets a near-real-time tail.
+A client polling with an advancing `since` cursor gets a near-real-time tail; a client paging
+backward with `ending_before` gets progressively older history. See
+[Design: Job Log Pagination & Bounded Retention](../superpowers/specs/2026-08-22-job-log-pagination-design.md).
 
 ## `POST /api/v1/ws-tickets`
 

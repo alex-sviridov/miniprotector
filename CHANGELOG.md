@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-22 — Bound job log viewer memory and DOM growth
+
+`web`'s job log viewer (`/jobs/:job_id`) had no cap on retained log lines and re-sorted its entire
+in-memory log array on every single incoming WebSocket line — for a long-running or verbose job,
+both memory and per-line merge cost grew without bound. `GET /api/v1/jobs/{job_id}/logs` now
+supports `limit`/`ending_before` cursor pagination (closing a related silent-truncation gap: the
+endpoint previously returned up to a fixed 5000-line Loki cap with no indication when more existed).
+The frontend caps resident log lines at 2000 while following the live tail, evicting from the oldest
+end only while the user is actually watching the bottom of the log — history a user has scrolled
+back to view is never evicted out from under them — and a new "Load older lines" affordance pages
+further history in on demand. See
+[Design: Job Log Pagination & Bounded Retention](docs/superpowers/specs/2026-08-22-job-log-pagination-design.md).
+
 ## 2026-08-22 — Fix live job-log tail connection leak
 
 `GET /api/v1/jobs/{job_id}/logs/stream` leaked its upstream Loki tail connection every time a

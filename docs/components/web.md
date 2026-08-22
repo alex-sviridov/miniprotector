@@ -135,6 +135,15 @@ no data — there's no read-only "guest" mode.
   left looking up to date. See
   [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
 
+  `/jobs/:job_id`'s log view now caps itself at 2000 resident lines while the user is following the
+  live tail (auto-scrolled to the bottom); scrolling away from the bottom pauses that cap so
+  history being read isn't evicted out from under the reader, and returning to the bottom resumes
+  it. A "Load older lines" button (visible whenever the backend reports more history exists) pages
+  further history in via `GET /jobs/{job_id}/logs`'s new `ending_before` cursor; a "N new lines —
+  jump to latest" button appears instead of auto-scrolling once the user has scrolled away from the
+  bottom. See
+  [Design: Job Log Pagination & Bounded Retention](../superpowers/specs/2026-08-22-job-log-pagination-design.md).
+
 Every list and detail page's header now shows a breadcrumb trail (e.g. "Policies / nightly-db-backup") above the
 title via `PageHeader`'s `crumbs` prop, and the sidebar (`Sidebar.vue`) carries a small brand mark
 plus one icon per section (`components/icons/`, hand-authored inline SVG — no icon package
@@ -195,4 +204,5 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/web":/app -w /app node:20-
 - [Design: restore cart submission](../superpowers/specs/2026-08-10-restore-cart-submission-design.md)
 - [Design: Restore Verify/Execute Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md)
 - [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)
+- [Design: Job Log Pagination & Bounded Retention](../superpowers/specs/2026-08-22-job-log-pagination-design.md)
 - [Architecture](../ARCHITECTURE.md)
