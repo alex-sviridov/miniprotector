@@ -86,9 +86,18 @@ test('job detail page flips to Finished live, with no manual reload', async ({ p
   await expect(page.getByTestId('connection-status')).toHaveText('Finished', { timeout: 30000 })
 
   // The finish log line itself must be visible in the rendered list too,
-  // not just the status badge -- agent/reconcile.go logs "policy execution
-  // completed" with event=finish.
-  await expect(page.locator('[data-test="log-line-summary"]', { hasText: /completed/i })).toBeVisible()
+  // not just the status badge. Not agent's own "policy execution completed"
+  // wrapper line: _mergeLogLine disconnects the stream the instant it sees
+  // a finish-marking line, and real timestamps show bwfs's own commit line
+  // (event=finish) consistently lands a few ms *before* agent's trailing
+  // wrapper line -- the stream closes right as bwfs's line arrives, before
+  // agent's line would even be ingested, so it's structurally unreachable
+  // here regardless of timeout. bwfs/brfs's own finish line is what
+  // logsStatus actually keys off (isFinishLine), so it's what's guaranteed
+  // to render.
+  await expect(page.locator('[data-test="log-line-summary"]', { hasText: /finished|committed/i })).toBeVisible({
+    timeout: 15000,
+  })
 })
 
 test('jobs list page shows a new job appear and transition to success live', async ({ page, context }) => {
