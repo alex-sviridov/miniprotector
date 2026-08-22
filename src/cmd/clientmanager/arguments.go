@@ -16,6 +16,7 @@ type Arguments struct {
 	                 // "san-add" | "san-remove"
 	Hostname string
 	SANs     []string // Additional SAN aliases for add/re-enroll
+	Role     string   // Authorization role for add/re-enroll: control-plane, store, or client
 	KVPairs  []string // "key=value" strings, for description/attribute set
 	Key      string   // for description/attribute unset
 	SanAlias string   // for san add/remove
@@ -48,6 +49,7 @@ func parseArguments() (*Arguments, error) {
 		},
 	}
 	addCmd.Flags().StringArrayVar(&args.SANs, "san", nil, "Additional SAN alias for the token (repeatable)")
+	addCmd.Flags().StringVar(&args.Role, "role", "", "Authorization role for this node: control-plane, store, or client (default: client)")
 	addCmd.Flags().StringVar(&caURLFlag, "ca-url", "", "CA URL, e.g. https://localhost:9000 (default: read from --defaults-file)")
 	addCmd.Flags().StringVar(&defaultsFile, "defaults-file", "deploy/control-plane/ca/data/config/defaults.json", "Path to step-ca's defaults.json, used to default --ca-url")
 	addCmd.Flags().StringVar(&args.RootFile, "root", "deploy/control-plane/ca/data/certs/root_ca.crt", "Path to the CA's root certificate")
@@ -65,6 +67,7 @@ func parseArguments() (*Arguments, error) {
 		},
 	}
 	reEnrollCmd.Flags().StringArrayVar(&args.SANs, "san", nil, "Additional SAN alias for the fresh token (repeatable; overrides the stored SANs from add-time if given)")
+	reEnrollCmd.Flags().StringVar(&args.Role, "role", "", "Authorization role for this node: control-plane, store, or client (empty keeps the currently stored role)")
 	reEnrollCmd.Flags().StringVar(&caURLFlag, "ca-url", "", "CA URL, e.g. https://localhost:9000 (default: read from --defaults-file)")
 	reEnrollCmd.Flags().StringVar(&defaultsFile, "defaults-file", "deploy/control-plane/ca/data/config/defaults.json", "Path to step-ca's defaults.json, used to default --ca-url")
 	reEnrollCmd.Flags().StringVar(&args.RootFile, "root", "deploy/control-plane/ca/data/certs/root_ca.crt", "Path to the CA's root certificate")

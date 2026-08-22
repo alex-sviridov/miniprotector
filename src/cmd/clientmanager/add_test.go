@@ -143,3 +143,99 @@ func TestRunReEnroll_WithSANOverride_UsesOverrideNotStoredSANs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, overrideSANs, gotSANs)
 }
+
+func TestRunAdd_NoRoleFlag_DefaultsToClient(t *testing.T) {
+	store := newTestManagerStore(t)
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
+		return "tok-abc", nil
+	}
+
+	args := &Arguments{Action: "add", Hostname: "node-1"}
+	err := runAdd(t.Context(), certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "client", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestRunAdd_WithRoleFlag_StoresGivenRole(t *testing.T) {
+	store := newTestManagerStore(t)
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
+		return "tok-abc", nil
+	}
+
+	args := &Arguments{Action: "add", Hostname: "node-1", Role: "control-plane"}
+	err := runAdd(t.Context(), certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "control-plane", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestRunAdd_InvalidRole_ErrorsBeforeMinting(t *testing.T) {
+	store := newTestManagerStore(t)
+	called := false
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
+		called = true
+		return "tok-abc", nil
+	}
+
+	args := &Arguments{Action: "add", Hostname: "node-1", Role: "web"}
+	err := runAdd(t.Context(), certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
+	assert.Error(t, err)
+	assert.False(t, called, "mint must not be called for an invalid role")
+
+	_, err = store.GetClient(t.Context(), "node-1")
+	assert.ErrorIs(t, err, clientmanagerstore.ErrClientNotFound)
+}
+
+func TestRunReEnroll_NoRoleFlag_LeavesExistingRoleUnchanged(t *testing.T) {
+	store := newTestManagerStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, "store"))
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
+		return "tok-fresh", nil
+	}
+
+	args := &Arguments{Action: "re-enroll", Hostname: "node-1"}
+	err := runReEnroll(t.Context(), certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "store", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestRunReEnroll_WithRoleFlag_OverwritesStoredRole(t *testing.T) {
+	store := newTestManagerStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, "client"))
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
+		return "tok-fresh", nil
+	}
+
+	args := &Arguments{Action: "re-enroll", Hostname: "node-1", Role: "control-plane"}
+	err := runReEnroll(t.Context(), certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "control-plane", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestRunReEnroll_InvalidRole_ErrorsBeforeMinting(t *testing.T) {
+	store := newTestManagerStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	called := false
+	stubMint := func(hostname string, sans []string, opts certmint.Options) (string, error) {
+		called = true
+		return "tok-fresh", nil
+	}
+
+	args := &Arguments{Action: "re-enroll", Hostname: "node-1", Role: "web"}
+	err := runReEnroll(t.Context(), certmint.Options{}, store, args, stubMint, &bytes.Buffer{})
+	assert.Error(t, err)
+	assert.False(t, called, "mint must not be called for an invalid role")
+}

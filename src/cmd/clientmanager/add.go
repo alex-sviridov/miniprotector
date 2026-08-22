@@ -12,6 +12,14 @@ import (
 )
 
 func runAdd(ctx context.Context, mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
+	role := args.Role
+	if role == "" {
+		role = clientmanagerstore.DefaultRole
+	}
+	if err := clientmanagerstore.ValidateRole(role); err != nil {
+		return fmt.Errorf("add %s: %w", args.Hostname, err)
+	}
+
 	if _, err := store.GetClient(ctx, args.Hostname); err == nil {
 		return fmt.Errorf("client %q already exists; use re-enroll or description/attribute set instead", args.Hostname)
 	} else if !errors.Is(err, clientmanagerstore.ErrClientNotFound) {
@@ -26,12 +34,21 @@ func runAdd(ctx context.Context, mintOpts certmint.Options, store *clientmanager
 	if err := store.AddClient(ctx, args.Hostname, args.SANs, time.Now()); err != nil {
 		return fmt.Errorf("record client %s: %w", args.Hostname, err)
 	}
+	if err := store.SetKV(ctx, args.Hostname, clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, role); err != nil {
+		return fmt.Errorf("set role for %s: %w", args.Hostname, err)
+	}
 
 	fmt.Fprintln(out, token)
 	return nil
 }
 
 func runReEnroll(ctx context.Context, mintOpts certmint.Options, store *clientmanagerstore.Store, args *Arguments, mint minter, out io.Writer) error {
+	if args.Role != "" {
+		if err := clientmanagerstore.ValidateRole(args.Role); err != nil {
+			return fmt.Errorf("re-enroll %s: %w", args.Hostname, err)
+		}
+	}
+
 	client, err := store.GetClient(ctx, args.Hostname)
 	if err != nil {
 		return fmt.Errorf("re-enroll %s: %w", args.Hostname, err)
@@ -45,6 +62,12 @@ func runReEnroll(ctx context.Context, mintOpts certmint.Options, store *clientma
 	token, err := mint(args.Hostname, sans, mintOpts)
 	if err != nil {
 		return fmt.Errorf("re-enroll %s: %w", args.Hostname, err)
+	}
+
+	if args.Role != "" {
+		if err := store.SetKV(ctx, args.Hostname, clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, args.Role); err != nil {
+			return fmt.Errorf("set role for %s: %w", args.Hostname, err)
+		}
 	}
 
 	fmt.Fprintln(out, token)
