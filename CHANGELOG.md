@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-22 — Logging flow hardening
+
+Three fixes found by auditing the client-push and server-delivery logging paths end to end. Vector's
+disk buffer now blocks (pausing local log shipping) instead of dropping the newest lines once full --
+its old `drop_newest` setting meant a prolonged `log-gateway`/Loki outage discarded exactly the
+freshest, most operationally relevant log lines while stale ones sat queued. `api-server`'s
+`jobAggregator` no longer runs its periodic 24h, fleet-wide Loki reconcile query while no browser has
+`/api/v1/jobs/stream` open, cutting steady-state Loki load to zero when nobody's watching; the first
+browser to reconnect after an idle stretch now triggers one synchronous reconcile so it never sees
+stale data. `log-gateway`'s push route now streams request bodies straight through to Loki instead of
+fully buffering them in memory first, cutting per-push latency and peak memory on the one process
+every node's logs pass through. See
+`docs/superpowers/specs/2026-08-22-logging-flow-hardening-design.md`.
+
 ## 2026-08-17 — Live job & log updates
 
 `/jobs` and `/jobs/:job_id` in the web UI now update live instead of only on page load: a
