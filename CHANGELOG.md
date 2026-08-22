@@ -11,7 +11,10 @@ tokens, revoke arbitrary nodes). Every node is now assigned one of three closed 
 (`control-plane`, `store`, `client`) at enrollment, carried in its operating certificate via the
 existing `attribute` extension and enforced per RPC by a new gRPC interceptor across
 `clientmanager-api`, `clientmanager-admin-api`, `catalog`, `policy-server`, and `bwfs`. See
-`docs/SECURITY.md#role-based-rpc-authorization`.
+`docs/SECURITY.md#role-based-rpc-authorization`. There is no backward-compatibility path: an
+existing demo deployment provisioned before this change must be torn down (`make demo-down`) and
+re-provisioned from scratch, since already-enrolled nodes carry no `authz-role` attribute and will
+be denied by every role-gated RPC.
 
 ## 2026-08-22 — Fix demo reset instructions leaving stale ad-hoc policies behind
 

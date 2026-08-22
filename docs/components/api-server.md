@@ -136,11 +136,13 @@ RBAC, no per-user identity, including for the policy write endpoints (see
 and for the client write endpoints, whose stakes are notably higher — a leaked token can mint
 enrollment tokens or revoke arbitrary nodes, not just edit backup policies (see
 [Design: clientmanager-admin-api](../superpowers/specs/2026-07-19-clientmanager-admin-api-design.md)).
-Any node holding a valid mesh operating credential can still call
-`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`'s RPCs directly, bypassing
-this token — an accepted continuation of this project's existing "any operating-tier cert may call
-any RPC it can reach"
-convention, not a new gap.
+`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`'s RPCs are reachable by any
+node holding a valid mesh operating credential, bypassing this token entirely — but those RPCs are
+now role-gated to `control-plane` callers, a role `api-server` itself is enrolled with (see
+Certificates below). This bearer token and the per-RPC role check are two independent layers: the
+token gates REST access to `api-server`, the role check gates gRPC access to the backends it calls,
+and neither depends on the other holding. See
+[Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## Configuration Keys
 
@@ -162,6 +164,11 @@ convention, not a new gap.
 Enrolls like any other mesh node (bootstrap credential → `certclient` → `issuer` operating cert) for
 its *outbound* gRPC calls to `clientmanager-api`/`catalog`. The REST listener itself is plain
 HTTP, guarded only by the bearer token above — it is not part of the mTLS mesh.
+
+`api-server` is enrolled with `authz-role=control-plane` — required for its outbound calls to
+`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server` to succeed at all, since
+those RPCs now reject any other role. See
+[Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## Deployment
 
