@@ -97,6 +97,31 @@ describe('JobDetailView', () => {
     expect(wrapper.find('[data-test="load-older"]').exists()).toBe(false)
   })
 
+  it('disables the "Load older" button while a page is in flight', () => {
+    const { wrapper } = mountView({
+      logs: [],
+      logsLoading: false,
+      logsError: null,
+      hasOlderLogs: true,
+      logsOlderLoading: true,
+    })
+    const button = wrapper.find('[data-test="load-older"]')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.text()).toContain('Loading')
+  })
+
+  it('renders a "load older" failure inline, without replacing the log list', () => {
+    const { wrapper } = mountView({
+      logs: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{"msg":"still here"}' }],
+      logsLoading: false,
+      logsError: null,
+      hasOlderLogs: true,
+      logsOlderError: 'upstream 502',
+    })
+    expect(wrapper.find('[data-test="load-older-error"]').text()).toBe('upstream 502')
+    expect(wrapper.text()).toContain('still here')
+  })
+
   it("keeps each LogLine's expanded state attached to its own line, not its array position, when older lines are prepended", async () => {
     const { wrapper, jobs } = mountView({
       logs: [
@@ -136,12 +161,80 @@ describe('JobDetailView', () => {
       await nextTick()
       expect(jobs.setFollowing).toHaveBeenCalledWith(false)
 
+      // A live line arriving is a tailSeq bump, which is what the counter
+      // keys off (see the tailSeq test below).
       jobs.logs.push({ timestamp: 200, hostname: 'h', binary: 'brfs', line: '{}' })
+      jobs.tailSeq++
       await nextTick()
 
       const jumpButton = wrapper.find('[data-test="jump-to-latest"]')
       expect(jumpButton.exists()).toBe(true)
       expect(jumpButton.text()).toContain('1 new line')
+    })
+
+    it('does not count paged-in history as new lines', async () => {
+      // loadOlder unshifts older lines without touching tailSeq, so a
+      // reader who scrolled up to page history in must not be offered a
+      // button that scrolls them back down.
+      const { wrapper, jobs } = mountView({
+        logs: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        logsLoading: false,
+        logsError: null,
+      })
+      await nextTick()
+
+      observedCallback([{ isIntersecting: false }])
+      await nextTick()
+
+      jobs.logs.unshift(
+        { timestamp: 10, hostname: 'h', binary: 'brfs', line: '{}' },
+        { timestamp: 20, hostname: 'h', binary: 'brfs', line: '{}' }
+      )
+      await nextTick()
+
+      expect(wrapper.find('[data-test="jump-to-latest"]').exists()).toBe(false)
+    })
+
+    it('auto-scrolls the sentinel back into view when a live line arrives while following', async () => {
+      // Every appended line pushes the zero-height sentinel below the
+      // fold; without this the view would drop out of follow mode almost
+      // immediately and the store's eviction cap would stop engaging.
+      const { wrapper, jobs } = mountView({
+        logs: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        logsLoading: false,
+        logsError: null,
+      })
+      await nextTick()
+
+      const scrollIntoView = vi.fn()
+      wrapper.find('[data-test="scroll-sentinel"]').element.scrollIntoView = scrollIntoView
+
+      jobs.logs.push({ timestamp: 200, hostname: 'h', binary: 'brfs', line: '{}' })
+      jobs.tailSeq++
+      await nextTick()
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' })
+    })
+
+    it('does not auto-scroll when the reader has scrolled away from the tail', async () => {
+      const { wrapper, jobs } = mountView({
+        logs: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        logsLoading: false,
+        logsError: null,
+      })
+      await nextTick()
+
+      const scrollIntoView = vi.fn()
+      wrapper.find('[data-test="scroll-sentinel"]').element.scrollIntoView = scrollIntoView
+
+      observedCallback([{ isIntersecting: false }])
+      await nextTick()
+
+      jobs.logs.push({ timestamp: 200, hostname: 'h', binary: 'brfs', line: '{}' })
+      jobs.tailSeq++
+      await nextTick()
+
+      expect(scrollIntoView).not.toHaveBeenCalled()
     })
   })
 })

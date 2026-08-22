@@ -45,7 +45,14 @@ export const useJobsStore = defineStore('jobs', {
     logsError: null,
     logsStatus: 'connecting',
     hasOlderLogs: false,
+    logsOlderLoading: false,
+    logsOlderError: null,
     isFollowing: true,
+    // Monotonic count of lines merged via the live/tail path only. The
+    // view's useAutoFollow watches this rather than logs.length so that
+    // paging older history in (loadOlder unshifts up to a page of lines)
+    // is never mistaken for new tail activity.
+    tailSeq: 0,
     _logsStream: null,
     _logsSeen: new Set(),
     _logsReconcileTimer: null,
@@ -74,6 +81,11 @@ export const useJobsStore = defineStore('jobs', {
           this._logsSeen = new Set(this.logs.map(logKey))
           this.hasOlderLogs = body.has_more ?? false
           this.isFollowing = true
+          // Singleton store: without this reset a previous job's tail
+          // activity would carry over and the view would open showing a
+          // spurious "N new lines" affordance.
+          this.tailSeq = 0
+          this.logsOlderError = null
           // A job that already finished before this page loaded is the
           // common case, not an edge case -- its finish line arrives here,
           // in history, not as a fresh onMessage over the live stream
@@ -89,18 +101,36 @@ export const useJobsStore = defineStore('jobs', {
 
     // Pages one older page in, using the oldest resident line's timestamp
     // as the backend's exclusive `ending_before` cursor. A no-op when
-    // there's nothing older to fetch (hasOlderLogs false) or nothing
-    // resident yet to derive a cursor from.
+    // there's nothing older to fetch (hasOlderLogs false), nothing
+    // resident yet to derive a cursor from, or a page is already in
+    // flight (a double-click would otherwise issue two requests from the
+    // same cursor and race their prepends and hasOlderLogs writes).
+    //
+    // Failures land in logsOlderLoading/logsOlderError, deliberately
+    // separate from logsLoading/logsError: those drive StatusMessage over
+    // the whole log list, so reusing them would replace logs the user can
+    // already read with a spinner or an error screen. A "load older"
+    // failure belongs inline next to its button instead.
+    //
+    // Deliberately does NOT touch tailSeq -- prepended history is not new
+    // tail activity, and counting it would make the view offer to scroll
+    // the user away from the history they just asked for.
     async loadOlder(jobId) {
-      if (!this.hasOlderLogs || this.logs.length === 0) return
+      if (!this.hasOlderLogs || this.logs.length === 0 || this.logsOlderLoading) return
       const oldest = this.logs[0]
-      const body = await apiFetch(
-        `/jobs/${encodeURIComponent(jobId)}/logs?limit=${JOB_LOGS_PAGE_SIZE}&ending_before=${oldest.timestamp}`
+      await withRequest(
+        this,
+        async () => {
+          const body = await apiFetch(
+            `/jobs/${encodeURIComponent(jobId)}/logs?limit=${JOB_LOGS_PAGE_SIZE}&ending_before=${oldest.timestamp}`
+          )
+          const older = (body.data ?? []).filter((line) => !this._logsSeen.has(logKey(line)))
+          older.forEach((line) => this._logsSeen.add(logKey(line)))
+          this.logs.unshift(...older)
+          this.hasOlderLogs = body.has_more ?? false
+        },
+        { rethrow: false, loadingKey: 'logsOlderLoading', errorKey: 'logsOlderError' }
       )
-      const older = (body.data ?? []).filter((line) => !this._logsSeen.has(logKey(line)))
-      older.forEach((line) => this._logsSeen.add(logKey(line)))
-      this.logs.unshift(...older)
-      this.hasOlderLogs = body.has_more ?? false
     },
 
     // Drives the live-follow eviction gate (see _trimLiveCap): the view's
@@ -125,6 +155,7 @@ export const useJobsStore = defineStore('jobs', {
       if (this._logsSeen.has(key)) return
       this._logsSeen.add(key)
       insertSorted(this.logs, line)
+      this.tailSeq++
       if (this.isFollowing) this._trimLiveCap()
       if (isFinishLine(line)) {
         this.logsStatus = 'finished'

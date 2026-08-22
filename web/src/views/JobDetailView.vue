@@ -14,10 +14,21 @@ const route = useRoute()
 const jobs = useJobsStore()
 const jobId = computed(() => route.params.job_id)
 
-const logsCount = computed(() => jobs.logs.length)
-const { sentinel, isFollowing, newLineCount, scrollToBottom } = useAutoFollow(logsCount)
+// Tail activity, not logs.length: loadOlder also grows the array, and
+// counting its prepended history as "new lines" would offer to scroll the
+// reader away from the history they just paged in.
+const tailSeq = computed(() => jobs.tailSeq)
+const { sentinel, isFollowing, newLineCount, scrollToBottom } = useAutoFollow(tailSeq)
 
 watch(isFollowing, (value) => jobs.setFollowing(value), { immediate: true })
+
+// Keep the sentinel in view while following, so appended lines don't push
+// it below the fold and knock the view out of follow mode. flush: 'post'
+// so the scroll happens after the new line has actually been rendered,
+// not against the pre-update layout.
+watch(tailSeq, () => {
+  if (isFollowing.value) scrollToBottom()
+}, { flush: 'post' })
 
 onMounted(async () => {
   await jobs.connectLogsStream(jobId.value)
@@ -39,9 +50,14 @@ function loadOlder() {
         <ConnectionStatus :status="jobs.logsStatus" />
       </template>
     </PageHeader>
-    <BaseButton v-if="jobs.hasOlderLogs" data-test="load-older" class="mb-2" @click="loadOlder">
-      Load older lines
-    </BaseButton>
+    <div v-if="jobs.hasOlderLogs" class="mb-2">
+      <BaseButton data-test="load-older" :disabled="jobs.logsOlderLoading" @click="loadOlder">
+        {{ jobs.logsOlderLoading ? 'Loading…' : 'Load older lines' }}
+      </BaseButton>
+      <p v-if="jobs.logsOlderError" data-test="load-older-error" class="text-red-600 text-sm mt-1">
+        {{ jobs.logsOlderError }}
+      </p>
+    </div>
     <StatusMessage
       :loading="jobs.logsLoading"
       :error="jobs.logsError"
