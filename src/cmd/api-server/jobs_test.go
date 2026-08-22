@@ -670,13 +670,14 @@ func TestHandleGetJobLogs_EndingBeforeNarrowsEndExclusive(t *testing.T) {
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux, "test-token")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?ending_before=1752400500000000000", nil)
+	endingBefore := time.Now().Add(-30 * time.Minute).UnixNano()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/jobs/operating-refresh:1752400500/logs?ending_before=%d", endingBefore), nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, int64(1752400499999999999), fake.lastEnd.UnixNano())
+	assert.Equal(t, endingBefore-1, fake.lastEnd.UnixNano())
 }
 
 func TestHandleGetJobLogs_EndingBeforeInvalidReturns400(t *testing.T) {

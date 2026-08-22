@@ -348,7 +348,6 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	until := time.Now()
 	since := until.Add(-defaultJobsWindow)
-	sinceExplicit := false
 	if raw := q.Get("since"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
@@ -356,7 +355,6 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		since = time.Unix(parsed, 0)
-		sinceExplicit = true
 	}
 
 	limit := defaultJobLogsLimit
@@ -381,7 +379,7 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 		until = time.Unix(0, 0).Add(time.Duration(parsed - 1))
 	}
 
-	if sinceExplicit && !until.After(since) {
+	if !until.After(since) {
 		// Paged back past the window floor -- not an error, just nothing
 		// left to return.
 		writeJSON(w, http.StatusOK, map[string]any{"data": []logLineDTO{}, "has_more": false})
