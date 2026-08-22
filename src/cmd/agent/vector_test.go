@@ -152,6 +152,19 @@ func TestHostnameFromBootstrapCert_MissingCredentialErrors(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestRenderVectorConfig_BufferBlocksInsteadOfDroppingFreshLogs(t *testing.T) {
+	// Vector's disk buffer only supports "block" or "drop_newest" -- there
+	// is no "drop oldest" mode. drop_newest would discard the freshest,
+	// most operationally relevant lines once the buffer fills during an
+	// outage; block instead pauses the file source until the buffer
+	// drains, so nothing is lost (see docs/superpowers/specs/
+	// 2026-08-22-logging-flow-hardening-design.md).
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
+	require.NoError(t, err)
+	assert.Contains(t, got, "when_full: block")
+	assert.NotContains(t, got, "when_full: drop_newest")
+}
+
 func TestVectorSupervisor_StartsAndStopsCleanlyOnContextCancel(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-vector.sh")

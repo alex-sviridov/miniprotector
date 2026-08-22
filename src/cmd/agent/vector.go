@@ -90,7 +90,7 @@ sinks:
     buffer:
       type: disk
       max_size: 268435488
-      when_full: drop_newest
+      when_full: block
 `
 
 type vectorConfigData struct {
