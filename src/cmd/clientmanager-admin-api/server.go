@@ -37,6 +37,13 @@ func (s *clientManagerAdminServer) AddClient(ctx context.Context, req *pb.AddCli
 	if hostname == "" {
 		return nil, status.Error(codes.InvalidArgument, "hostname is required")
 	}
+	role := req.GetRole()
+	if role == "" {
+		role = clientmanagerstore.DefaultRole
+	}
+	if err := clientmanagerstore.ValidateRole(role); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid role: %v", err)
+	}
 
 	if _, err := s.store.GetClient(ctx, hostname); err == nil {
 		return nil, status.Errorf(codes.AlreadyExists, "client %s already enrolled", hostname)
@@ -55,12 +62,22 @@ func (s *clientManagerAdminServer) AddClient(ctx context.Context, req *pb.AddCli
 		s.logger.Error("AddClient: record failed", "hostname", hostname, "error", err)
 		return nil, status.Errorf(codes.Internal, "record client: %v", err)
 	}
+	if err := s.store.SetKV(ctx, hostname, clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, role); err != nil {
+		s.logger.Error("AddClient: set role failed", "hostname", hostname, "error", err)
+		return nil, status.Errorf(codes.Internal, "set role: %v", err)
+	}
 
 	return &pb.AddClientResponse{Token: token}, nil
 }
 
 func (s *clientManagerAdminServer) ReEnrollClient(ctx context.Context, req *pb.ReEnrollClientRequest) (*pb.ReEnrollClientResponse, error) {
 	hostname := req.GetHostname()
+	if role := req.GetRole(); role != "" {
+		if err := clientmanagerstore.ValidateRole(role); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid role: %v", err)
+		}
+	}
+
 	rec, err := s.store.GetClient(ctx, hostname)
 	if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 		return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
@@ -79,6 +96,13 @@ func (s *clientManagerAdminServer) ReEnrollClient(ctx context.Context, req *pb.R
 	if err != nil {
 		s.logger.Error("ReEnrollClient: mint failed", "hostname", hostname, "error", err)
 		return nil, status.Errorf(codes.Internal, "mint token: %v", err)
+	}
+
+	if role := req.GetRole(); role != "" {
+		if err := s.store.SetKV(ctx, hostname, clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, role); err != nil {
+			s.logger.Error("ReEnrollClient: set role failed", "hostname", hostname, "error", err)
+			return nil, status.Errorf(codes.Internal, "set role: %v", err)
+		}
 	}
 
 	return &pb.ReEnrollClientResponse{Token: token}, nil
