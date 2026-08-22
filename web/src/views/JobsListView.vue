@@ -48,7 +48,11 @@ const columns = [
       :empty="jobs.list.length === 0"
       empty-text="No jobs in the last 24h."
     >
-      <DataTable :columns="columns" :rows="jobs.list">
+      <DataTable
+        :columns="columns"
+        :rows="jobs.list"
+        :default-sort="{ field: 'started_at', type: 'desc' }"
+      >
         <template #table-row="{ column, row, formattedRow }">
           <router-link
             v-if="column.field === 'job_id'"

@@ -20,6 +20,29 @@ describe('DataTable', () => {
     expect(trs[0].text()).toContain('10 B')
   })
 
+  it('renders in input order (no default sort) when defaultSort is not set', () => {
+    const wrapper = mount(DataTable, { props: { columns, rows } })
+    const trs = wrapper.findAll('tbody tr')
+    expect(trs[0].text()).toContain('a')
+    expect(trs[1].text()).toContain('b')
+  })
+
+  it('renders sorted by defaultSort even though the input rows are unsorted', async () => {
+    // Regression: a live-upserted row appended to the end of an otherwise
+    // unsorted rows array (e.g. the jobs list) must still land where the
+    // configured default sort would put it, not wherever it happened to
+    // be pushed -- see JobsListView.vue's started_at desc usage.
+    const wrapper = mount(DataTable, {
+      props: { columns, rows, defaultSort: { field: 'size', type: 'desc' } },
+    })
+    // vue-good-table-next applies initialSortBy in its own mounted() hook,
+    // via a child ref -- the reactive re-render lands one tick later.
+    await wrapper.vm.$nextTick()
+    const trs = wrapper.findAll('tbody tr')
+    expect(trs[0].text()).toContain('b')
+    expect(trs[1].text()).toContain('a')
+  })
+
   it('shows a search box by default', () => {
     const wrapper = mount(DataTable, { props: { columns, rows } })
     expect(wrapper.find('input.vgt-input').exists()).toBe(true)

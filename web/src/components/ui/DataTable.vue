@@ -10,12 +10,25 @@ const props = defineProps({
   searchEnabled: { type: Boolean, default: true },
   perPage: { type: Number, default: 25 },
   selectable: { type: Boolean, default: false },
+  // { field, type: 'asc' | 'desc' } -- without this, vue-good-table-next
+  // renders rows in whatever order the `rows` prop happens to be in (here,
+  // aggregator map-iteration order for a snapshot, insertion order for a
+  // live upsert), so a newly live-upserted row can land on any page of a
+  // long, paginated table instead of being visible where a user is
+  // actually looking. Optional: only pages backed by unordered/live data
+  // need it.
+  defaultSort: { type: Object, default: null },
 })
 const emit = defineEmits(['row-click', 'selection-change'])
 
 const selectOptions = computed(() => ({
   enabled: props.selectable,
   selectOnCheckboxOnly: true,
+}))
+
+const sortOptions = computed(() => ({
+  enabled: true,
+  ...(props.defaultSort ? { initialSortBy: props.defaultSort } : {}),
 }))
 
 function handleRowClick({ row }) {
@@ -33,6 +46,7 @@ function handleSelectionChange({ selectedRows }) {
     :rows="rows"
     :search-options="{ enabled: searchEnabled, placeholder: 'Search...' }"
     :pagination-options="{ enabled: true, perPage }"
+    :sort-options="sortOptions"
     :select-options="selectOptions"
     @row-click="handleRowClick"
     @selected-rows-change="handleSelectionChange"
