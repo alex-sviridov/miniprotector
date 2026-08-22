@@ -91,13 +91,13 @@ echo "Starting loki..."
 docker compose up -d loki
 
 enroll log-gateway
-enroll clientmanager-api
-enroll catalog
-enroll api-server
-enroll policy-server
+enroll clientmanager-api "authz-role=control-plane"
+enroll catalog "authz-role=control-plane"
+enroll api-server "authz-role=control-plane"
+enroll policy-server "authz-role=control-plane"
 enroll database
 enroll webserver "role=web"
-enroll store
+enroll store "authz-role=store"
 
 # Seeds a fixed, 100-file/~100-150MB dataset on database, backed up once by
 # the seeded demo/policy-server/policies/backup/e2e-fixture.json policy --

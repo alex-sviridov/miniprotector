@@ -88,6 +88,34 @@ job is authenticating the node to `issuer` when asking for a fresh operating cer
 [Issuer Protocol: why `DescribeSANs` exists](protocols/issuer.md#why-describesans-exists) for the
 exact-match validation constraint that makes this call necessary rather than optional.
 
+## Role-based RPC authorization
+
+The two-tier credential model above governs *which stage* of a node's lifecycle a certificate is
+valid for (bootstrap vs. operating); it says nothing about *which RPCs* an operating certificate
+may call. Historically, every operating-tier certificate was interchangeable: any enrolled node —
+including the least-privileged thing in the fleet, an ordinary `bwfs`/`brfs`/`rwfs` backup-agent
+host — could call any RPC on any control-plane service it could reach, including
+`clientmanager-admin-api`'s CA-admin-equivalent writes (mint enrollment tokens, revoke arbitrary
+nodes, rewrite SAN/attribute data).
+
+Every node is now additionally assigned one of three closed roles at enrollment —
+`control-plane`, `store`, or `client` — stored as the reserved `authz-role` attribute
+(`client-manager attribute set <hostname> authz-role=...`, or the `--role` flag on
+`add`/`re-enroll`) and carried in every issued operating certificate via the existing `attribute`
+X.509 extension described above. Every gRPC server (`clientmanager-api`,
+`clientmanager-admin-api`, `catalog`, `policy-server`, `bwfs`) enforces a per-RPC allowed-role
+list via a `common/mtls.RequireRoles` gRPC interceptor, reading the caller's role off its
+already-verified peer certificate — never a request field. A caller whose role isn't in an RPC's
+allow-list is rejected with `codes.PermissionDenied` before any handler logic runs. `issuer`'s own
+listener is untouched — it's already gated by the orthogonal EKU bootstrap/operating tier check
+above.
+
+No backward-compatibility path exists for this: a node without a matching `authz-role` attribute
+is denied every role-gated RPC (though `GetPolicies` stays open to every role, so its own
+certificate lifecycle keeps functioning) until it's backfilled or re-enrolled. See
+[Design: Role-Based gRPC Authorization](superpowers/specs/2026-08-22-role-based-grpc-authz-design.md)
+for the full per-RPC matrix.
+
 ## Revocation and its trust-model costs
 
 `client-manager revoke <hostname>` sets a flag in `client-manager`'s own SQLite database.

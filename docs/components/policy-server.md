@@ -15,6 +15,11 @@ piece of local state: a SQLite database recording check-ins (see
 already embeds a hostname's current `attribute` key/value pairs as a custom X.509 extension on
 every operating certificate it mints.
 
+## Authorization
+
+`GetPolicies` is open to every role. `ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy`
+require the `control-plane` role. See [Security Model](../SECURITY.md#role-based-rpc-authorization).
+
 ## Usage
 
 ```bash

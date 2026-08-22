@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-22 — Role-based gRPC authorization
+
+Any node holding a valid operating certificate — including the least-privileged thing in the
+fleet, an ordinary backup-agent host — could previously call any RPC on any control-plane service
+it could reach, including `clientmanager-admin-api`'s CA-admin-equivalent writes (mint enrollment
+tokens, revoke arbitrary nodes). Every node is now assigned one of three closed roles
+(`control-plane`, `store`, `client`) at enrollment, carried in its operating certificate via the
+existing `attribute` extension and enforced per RPC by a new gRPC interceptor across
+`clientmanager-api`, `clientmanager-admin-api`, `catalog`, `policy-server`, and `bwfs`. See
+`docs/SECURITY.md#role-based-rpc-authorization`.
+
 ## 2026-08-22 — Fix demo reset instructions leaving stale ad-hoc policies behind
 
 `demo/up.sh`'s own "Reset with:" banner told users to run a bare `docker compose down -v`,

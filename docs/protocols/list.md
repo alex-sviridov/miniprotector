@@ -50,6 +50,12 @@ sequenceDiagram
 
 The RPC streams one `FileRow` per matching row rather than returning a single batched response, removing any hard cap on how many rows a listing can contain on the wire.
 
+## Authorization
+
+`ListFiles` and `ResolveRestoreFiles` require the caller's operating certificate to carry the
+`client` role — `rwfs` is the only legitimate caller. See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
+
 ## Filter Semantics
 
 All three filters are optional and compose with AND:

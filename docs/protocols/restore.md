@@ -57,6 +57,12 @@ sequenceDiagram
     Note left of Client: Verify BLAKE3(data)==hash per chunk<br/>Accumulate CRC32 via FeedChunk<br/>Compare final CRC32 with expected_checksum
 ```
 
+## Authorization
+
+`RestoreFile` requires the caller's operating certificate to carry the `client` role — `rwfs` is
+the only legitimate caller. See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
+
 ## Error Handling
 
 | Condition | bwfs behaviour |

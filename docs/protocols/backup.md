@@ -8,6 +8,12 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 2. **Chunk-based transfer**: Split files into 512KB chunks, send hash batches, receive selective requests  
 3. **Dual integrity verification**: BLAKE3 per-chunk + CRC32 whole-file validation
 
+## Authorization
+
+`ProcessBackupStream` and `BackupCommit` require the caller's operating certificate to carry the
+`client` role — `brfs` is the only legitimate caller. See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
+
 ## **Key Design Decisions**
 
 **Why 512KB chunks?**

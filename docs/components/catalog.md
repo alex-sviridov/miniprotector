@@ -10,6 +10,11 @@ name, or parent directory, backing the web catalog view's filter panels), and
 `ListDirectoryChildren` (the web catalog view's directory browsing: what's directly under a given
 path) — see [api-server](./api-server.md), the only intended caller today.
 
+## Authorization
+
+`SyncFileVersions` requires the `store` role; the six read-only query RPCs require
+`control-plane`. See [Security Model](../SECURITY.md#role-based-rpc-authorization).
+
 ## Usage
 
 ```

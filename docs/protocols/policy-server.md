@@ -168,6 +168,12 @@ extension `issuer` bakes into every operating certificate it mints). Neither is 
 `GetPoliciesRequest`. `policy-server`'s listener requires the default operating-tier peer
 certificate — the same requirement every server except `issuer`'s own listener enforces.
 
+Beyond peer identity, every RPC except `GetPolicies` now also requires the caller's operating
+certificate to carry the `control-plane` role — `GetPolicies` deliberately stays open to every
+role, since every enrolled node (`client`, `store`, and `control-plane` alike) calls it on a
+schedule to fetch its own policies. See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
+
 ## Behavior
 
 - `GetPoliciesRequest` carries optional fields: `bootstrap_refresh_last_error` (empty if healthy or nothing to report) and `bootstrap_refresh_last_attempt_at` (unix seconds; 0 = not reported). `policy-server` records whatever is sent, healthy or not, so a recovery is visible too.

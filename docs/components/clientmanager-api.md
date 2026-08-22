@@ -27,6 +27,12 @@ clientmanager-api --port 9500
 `storage/clientmanager` store `client-manager`'s CLI and `issuer` use — no caching, no independent
 state. `GetClient` returns `NotFound` for an unknown hostname.
 
+## Authorization
+
+Both RPCs require the caller to hold the `control-plane` role, enforced the same way as
+[clientmanager-admin-api](./clientmanager-admin-api.md). See
+[Security Model](../SECURITY.md#role-based-rpc-authorization).
+
 ## Configuration Keys
 
 - `clientmanager_api_port` — port to listen on *(default: 9500)*

@@ -68,6 +68,14 @@ but a path may have been recorded by a Windows-origin `bwfs` node. A root-level 
 undecoded/failed entry, consistent with `source_host`'s existing convention. A metadata decode
 failure leaves both fields empty for that entry rather than failing the whole batch.
 
+## Authorization
+
+`SyncFileVersions` requires the caller's operating certificate to carry the `store` role —
+`catalogsync` always runs on the same host as the `bwfs` node it replicates from, enrolled with
+`authz-role=store`. `ListEntries`/`ListClientFacets`/`ListJobFacets`/`ListDirectoryFacets`/
+`ListStoreFacets`/`ListDirectoryChildren` require `control-plane` (`api-server`'s role). See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
+
 ## ListEntries
 
 A read-only query RPC over the same store `SyncFileVersions` writes to — added for

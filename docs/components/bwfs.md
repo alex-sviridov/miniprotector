@@ -2,6 +2,11 @@
 
 Backup storage server — receives files from a backup reader and stores them on disk with deduplication.
 
+## Authorization
+
+Every RPC across `BackupService`, `ListService`, and `RestoreService` requires the `client` role.
+See [Security Model](../SECURITY.md#role-based-rpc-authorization).
+
 ## Usage
 
 ```
