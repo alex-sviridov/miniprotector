@@ -157,6 +157,11 @@ func (s *Store) KV(ctx context.Context, hostname string, kind KVKind) ([]ClientK
 // SetKV upserts one key/value pair for hostname. Returns ErrClientNotFound
 // if hostname isn't tracked.
 func (s *Store) SetKV(ctx context.Context, hostname string, kind KVKind, key, value string) error {
+	if kind == KindAttribute && key == RoleAttributeKey {
+		if err := ValidateRole(value); err != nil {
+			return err
+		}
+	}
 	if _, err := s.GetClient(ctx, hostname); err != nil {
 		return err
 	}
