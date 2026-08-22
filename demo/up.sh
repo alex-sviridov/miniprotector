@@ -158,5 +158,7 @@ after enrollment -- if the brfs command below fails immediately, wait a bit and 
   docker compose -f demo/docker-compose.yml exec webserver ./agent list-policies
   docker compose -f demo/docker-compose.yml exec store ./agent list-policies
 
-Reset with: docker compose -f demo/docker-compose.yml down -v
+Reset with: make demo-down   (plain `docker compose down -v` also wipes the stack but
+  leaves ad-hoc e2e policy files behind in policy-server/policies/backup/ -- demo-down
+  removes those too)
 MSG

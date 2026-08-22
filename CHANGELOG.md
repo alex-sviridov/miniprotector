@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-22 — Fix demo reset instructions leaving stale ad-hoc policies behind
+
+`demo/up.sh`'s own "Reset with:" banner told users to run a bare `docker compose down -v`,
+which skips the `rm -f demo/policy-server/policies/backup/adhoc-*.json` cleanup that
+`make demo-down` performs. Since the e2e specs create real, disk-persisted `adhoc_*` backup
+policies through the UI and rely entirely on teardown to remove them, following the script's
+own advice left them accumulating indefinitely — surfacing later as a growing pile of
+unrelated-looking policies in the web UI's Policies page. The banner now points at
+`make demo-down` instead.
+
 ## 2026-08-22 — Bound job log viewer memory and DOM growth
 
 `web`'s job log viewer (`/jobs/:job_id`) had no cap on retained log lines and re-sorted its entire
