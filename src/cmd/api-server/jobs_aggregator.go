@@ -245,7 +245,18 @@ func (a *jobAggregator) tailLoop(ctx context.Context) {
 	failures := 0
 	for ctx.Err() == nil {
 		attemptCtx, cancelAttempt := context.WithCancel(ctx)
-		err := a.tailer.Tail(attemptCtx, `{binary=~"agent|brfs|bwfs"}`, time.Now(), func(msg lokiTailMessage) error {
+		// The trailing `| job_id=~".+"` filter doesn't narrow which lines
+		// match (every agent/brfs/bwfs line already carries a non-empty
+		// job_id) -- it's there so Loki actually attaches job_id/event/status
+		// structured metadata to the response at all. Confirmed against a
+		// live Loki 3.7.3 instance: a bare label selector with no
+		// structured-metadata reference in the query returns values with no
+		// per-line metadata and no job_id/event/status hoisted to the stream
+		// object either, so ingestTailMessage's jobID/event extraction below
+		// silently sees everything as empty and drops every line -- exactly
+		// mirroring queryEvent's own `| event="%s"` filter (jobs.go), which
+		// works today only because it always references a metadata field.
+		err := a.tailer.Tail(attemptCtx, `{binary=~"agent|brfs|bwfs"} | job_id=~".+"`, time.Now(), func(msg lokiTailMessage) error {
 			a.ingestTailMessage(msg)
 			return nil
 		})
