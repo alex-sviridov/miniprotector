@@ -102,7 +102,7 @@ func main() {
 
 	logger.Info("policy-server started", "port", arguments.Port, "policies_dir", policiesDir)
 
-	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, nil, func(s *grpc.Server) {
+	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
 		pb.RegisterPolicyServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("Server failed", "error", err)
