@@ -15,6 +15,14 @@ back to view is never evicted out from under them — and a new "Load older line
 further history in on demand. See
 [Design: Job Log Pagination & Bounded Retention](docs/superpowers/specs/2026-08-22-job-log-pagination-design.md).
 
+Follow-up fixes from the branch review: the "N new lines — jump to latest" count now tracks a
+tail-only sequence counter rather than the log array's length, so paging older history in no longer
+offers to scroll the reader away from the history they just asked for; the bottom sentinel is
+observed with 200px of slack and the view auto-scrolls while following, so appending a line no
+longer knocks the viewer out of follow mode (which had been disabling the 2000-line cap in exactly
+the live-tail case it exists for); and "Load older lines" now guards against concurrent requests and
+surfaces a failed page as an inline error instead of an unhandled rejection.
+
 ## 2026-08-22 — Fix live job-log tail connection leak
 
 `GET /api/v1/jobs/{job_id}/logs/stream` leaked its upstream Loki tail connection every time a

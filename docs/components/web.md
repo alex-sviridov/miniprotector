@@ -139,9 +139,12 @@ no data — there's no read-only "guest" mode.
   live tail (auto-scrolled to the bottom); scrolling away from the bottom pauses that cap so
   history being read isn't evicted out from under the reader, and returning to the bottom resumes
   it. A "Load older lines" button (visible whenever the backend reports more history exists) pages
-  further history in via `GET /jobs/{job_id}/logs`'s new `ending_before` cursor; a "N new lines —
+  further history in via `GET /jobs/{job_id}/logs`'s new `ending_before` cursor — it disables itself
+  while a page is in flight (so a double-click can't race two prepends) and shows any failure as an
+  inline notice beside the button, leaving the already-visible lines on screen. A "N new lines —
   jump to latest" button appears instead of auto-scrolling once the user has scrolled away from the
-  bottom. See
+  bottom; its count tracks live tail lines only, so paging older history in never registers as new
+  activity. See
   [Design: Job Log Pagination & Bounded Retention](../superpowers/specs/2026-08-22-job-log-pagination-design.md).
 
 Every list and detail page's header now shows a breadcrumb trail (e.g. "Policies / nightly-db-backup") above the
