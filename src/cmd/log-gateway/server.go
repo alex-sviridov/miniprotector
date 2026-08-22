@@ -11,9 +11,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -117,25 +115,34 @@ func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxPushBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			http.Error(w, "read request body: "+err.Error(), http.StatusRequestEntityTooLarge)
-			return
-		}
-		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
+	// Fast, cheap rejection for the common case (Vector's loki sink always
+	// sets Content-Length for a single batched POST) -- no read, no dial to
+	// Loki. MaxBytesReader below remains the hard safety net for a caller
+	// that omits or understates Content-Length.
+	if r.ContentLength > maxPushBodyBytes {
+		http.Error(w, "request body exceeds size cap", http.StatusRequestEntityTooLarge)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPushBodyBytes)
 
 	ctx, cancel := context.WithTimeout(r.Context(), lokiForwardTimeout)
 	defer cancel()
 
-	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.lokiPushURL, bytes.NewReader(body))
+	// Streams r.Body straight through to Loki instead of buffering the
+	// whole request in memory first -- see docs/superpowers/specs/
+	// 2026-08-22-logging-flow-hardening-design.md. If MaxBytesReader trips
+	// mid-stream (a caller that lied about or omitted Content-Length), the
+	// read error surfaces as a failed Do() below, i.e. 502, not the clean
+	// 413 a pre-buffered read would give -- accepted for this internal,
+	// mTLS-authenticated route, where the cap is an OOM guard, not a
+	// caller-facing validation contract.
+	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.lokiPushURL, r.Body)
 	if err != nil {
 		http.Error(w, "build loki request: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if r.ContentLength > 0 {
+		lokiReq.ContentLength = r.ContentLength
 	}
 	for _, h := range passthroughHeaders {
 		if v := r.Header.Get(h); v != "" {
