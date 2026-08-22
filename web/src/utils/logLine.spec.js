@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseLogLine } from './logLine'
+import { parseLogLine, logKey } from './logLine'
 
 describe('parseLogLine', () => {
   it('splits a full slog line into level, message, and fields', () => {
@@ -104,5 +104,17 @@ describe('parseLogLine', () => {
     const result = parseLogLine(raw)
 
     expect(result).toEqual({ ok: false, level: null, message: raw, fields: {}, raw })
+  })
+})
+
+describe('logKey', () => {
+  it('joins timestamp, hostname, and binary into one identity string', () => {
+    expect(logKey({ timestamp: 100, hostname: 'h', binary: 'brfs' })).toBe('100|h|brfs')
+  })
+
+  it('differs when only the binary differs, so a rwfs and brfs line at the same timestamp/host never collide', () => {
+    const a = logKey({ timestamp: 100, hostname: 'h', binary: 'brfs' })
+    const b = logKey({ timestamp: 100, hostname: 'h', binary: 'rwfs' })
+    expect(a).not.toBe(b)
   })
 })

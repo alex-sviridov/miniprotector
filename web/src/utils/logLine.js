@@ -1,3 +1,12 @@
+// logKey identifies one log line for dedup/eviction purposes -- shared by
+// stores/jobs.js (dedup on merge, eviction bookkeeping) and
+// views/JobDetailView.vue (the list's Vue :key), so both use exactly the
+// same identity instead of two copies of the same format string drifting
+// apart.
+export function logKey(line) {
+  return `${line.timestamp}|${line.hostname}|${line.binary}`
+}
+
 // Parses one raw log line -- JSON emitted by Go's slog JSONHandler
 // (common/logging) -- into level/message/fields. Field-name-agnostic
 // beyond level/msg, so it needs no update as binaries add new attrs.

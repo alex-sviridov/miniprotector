@@ -2,14 +2,10 @@ import { defineStore } from 'pinia'
 import { apiFetch } from '../api/client'
 import { withRequest } from './helpers'
 import { createLiveStream } from '../utils/wsClient'
-import { parseLogLine } from '../utils/logLine'
+import { parseLogLine, logKey } from '../utils/logLine'
 
 const OVERLAP_MARGIN_SEC = 2
 const RECONCILE_INTERVAL_MS = 60000
-
-function logKey(line) {
-  return `${line.timestamp}|${line.hostname}|${line.binary}`
-}
 
 function isFinishLine(line) {
   return parseLogLine(line.line).fields.event === 'finish'
