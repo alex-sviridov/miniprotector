@@ -59,10 +59,14 @@ func TestHandlePush_BodyForwardedUnmodifiedToLoki(t *testing.T) {
 	// "must present a valid, non-revoked operating certificate," not
 	// body inspection.
 	var capturedBody []byte
+	var gotContentLength int64
+	var gotTransferEncoding []string
 	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		capturedBody, err = io.ReadAll(r.Body)
 		require.NoError(t, err)
+		gotContentLength = r.ContentLength
+		gotTransferEncoding = r.TransferEncoding
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer lokiStub.Close()
@@ -78,6 +82,11 @@ func TestHandlePush_BodyForwardedUnmodifiedToLoki(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, w.Result().StatusCode)
 	assert.Equal(t, reqBody, string(capturedBody), "body must reach Loki byte-for-byte unmodified")
+	// Pins the lokiReq.ContentLength = r.ContentLength propagation in
+	// ServeHTTP: a within-cap push must reach Loki with a declared
+	// Content-Length (not chunked transfer encoding).
+	assert.Equal(t, int64(len(reqBody)), gotContentLength, "loki must see a declared Content-Length matching the request body's length")
+	assert.Empty(t, gotTransferEncoding, "loki must not see the push forwarded chunked")
 }
 
 func TestHandlePush_ContentTypeAndEncodingHeadersForwarded(t *testing.T) {
@@ -108,13 +117,6 @@ func TestHandlePush_ContentTypeAndEncodingHeadersForwarded(t *testing.T) {
 	assert.Equal(t, "snappy", gotContentEncoding)
 }
 
-// contentLengthlessReader hides strings.Reader's Len() method so
-// httptest.NewRequest can't infer a Content-Length from it -- simulates a
-// push whose declared Content-Length doesn't reflect its actual size
-// (absent or understated), the case the fast Content-Length check can't
-// catch and MaxBytesReader must still guard mid-stream.
-type contentLengthlessReader struct{ io.Reader }
-
 func TestHandlePush_OversizedBodyWithNoContentLengthSurfacesAsBadGateway(t *testing.T) {
 	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -124,8 +126,7 @@ func TestHandlePush_OversizedBodyWithNoContentLengthSurfacesAsBadGateway(t *test
 
 	srv := newLogGatewayServer(lokiStub.URL, testLogger())
 
-	oversized := contentLengthlessReader{strings.NewReader(strings.Repeat("a", maxPushBodyBytes+1))}
-	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", oversized)
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", strings.NewReader(strings.Repeat("a", maxPushBodyBytes+1)))
 	req.ContentLength = -1 // simulates an inbound request with no declared Content-Length
 	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakePeerCert(t, "node-1")}}
 	w := httptest.NewRecorder()

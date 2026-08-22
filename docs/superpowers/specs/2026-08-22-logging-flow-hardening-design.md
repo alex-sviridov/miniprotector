@@ -125,6 +125,13 @@ describe the corrected `block` behavior instead.
   — not the clean `413` a pre-buffered read would give. Accepted: this path only exists for a
   malformed or oversized caller on an internal, mTLS-authenticated route where the cap is an OOM
   guard, not a caller-facing validation contract to preserve at all costs.
+- Second consequence of streaming: passing an `io.Reader` over `r.Body` into
+  `http.NewRequestWithContext` leaves the outbound request's `GetBody` unset, so the `net/http`
+  transport can no longer invisibly retry a request that races a pooled connection Loki just closed
+  (checkout-vs-close race). That race now surfaces as an outright `502` instead of being silently
+  retried. Bounded: Vector's own `loki` sink retries independently, so no data is lost, and the
+  window only opens when Loki closes an idle connection (a Loki restart, or a quiet period past its
+  own idle-timeout).
 - `passthroughHeaders` forwarding, the `lokiForwardTimeout` context, and the response-copy tail
   (`io.Copy(w, resp.Body)`) are unchanged.
 
