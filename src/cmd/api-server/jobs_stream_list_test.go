@@ -13,8 +13,23 @@ import (
 )
 
 func TestHandleJobsStream_SendsSnapshotThenUpsert(t *testing.T) {
-	agg := newJobAggregator(&fakeLokiClient{}, &fakeLokiTailer{}, testLogger())
-	agg.jobs["a"] = jobDTO{JobID: "a", Kind: "backup", State: "success"}
+	// jobAggregator.Subscribe now runs a synchronous reconcile on the 0->1
+	// subscriber transition (Task 2), so the fake Loki client must be
+	// seeded to return job "a" rather than relying on agg.jobs being
+	// manually pre-populated and left untouched -- see
+	// TestJobAggregator_SubscribeReturnsCurrentSnapshot in
+	// jobs_aggregator_test.go for the same fix.
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "start"},
+				Values: []lokiValue{{Timestamp: 1752400500000000000}}},
+		},
+		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "finish", "status": "success"},
+				Values: []lokiValue{{Timestamp: 1752400501000000000}}},
+		},
+	}}
+	agg := newJobAggregator(fake, &fakeLokiTailer{}, testLogger())
 
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.wsTickets = newWSTicketStore()

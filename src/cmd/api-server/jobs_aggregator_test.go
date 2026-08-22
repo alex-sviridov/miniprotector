@@ -12,10 +12,19 @@ import (
 )
 
 func TestJobAggregator_SubscribeReturnsCurrentSnapshot(t *testing.T) {
-	agg := newJobAggregator(&fakeLokiClient{}, &fakeLokiTailer{}, testLogger())
-	agg.jobs["a"] = jobDTO{JobID: "a", Kind: "backup", State: "success"}
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "start"},
+				Values: []lokiValue{{Timestamp: 1752400500000000000}}},
+		},
+		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "finish", "status": "success"},
+				Values: []lokiValue{{Timestamp: 1752400501000000000}}},
+		},
+	}}
+	agg := newJobAggregator(fake, &fakeLokiTailer{}, testLogger())
 
-	snapshot, _, unsubscribe := agg.Subscribe()
+	snapshot, _, unsubscribe := agg.Subscribe(context.Background())
 	defer unsubscribe()
 
 	require.Len(t, snapshot, 1)
@@ -24,7 +33,7 @@ func TestJobAggregator_SubscribeReturnsCurrentSnapshot(t *testing.T) {
 
 func TestJobAggregator_IngestTailMessageUpsertsAndBroadcasts(t *testing.T) {
 	agg := newJobAggregator(&fakeLokiClient{}, &fakeLokiTailer{}, testLogger())
-	_, ch, unsubscribe := agg.Subscribe()
+	_, ch, unsubscribe := agg.Subscribe(context.Background())
 	defer unsubscribe()
 
 	agg.ingestTailMessage(lokiTailMessage{Streams: []lokiStream{{
@@ -51,7 +60,7 @@ func TestJobAggregator_IngestTailMessageUpsertsAndBroadcasts(t *testing.T) {
 
 func TestJobAggregator_IngestTailMessageAppliesFinishOnTopOfStart(t *testing.T) {
 	agg := newJobAggregator(&fakeLokiClient{}, &fakeLokiTailer{}, testLogger())
-	_, ch, unsubscribe := agg.Subscribe()
+	_, ch, unsubscribe := agg.Subscribe(context.Background())
 	defer unsubscribe()
 
 	agg.ingestTailMessage(lokiTailMessage{Streams: []lokiStream{{
@@ -77,7 +86,7 @@ func TestJobAggregator_IngestTailMessageAppliesFinishOnTopOfStart(t *testing.T) 
 
 func TestJobAggregator_SlowSubscriberDoesNotBlockBroadcast(t *testing.T) {
 	agg := newJobAggregator(&fakeLokiClient{}, &fakeLokiTailer{}, testLogger())
-	_, _, unsubscribe := agg.Subscribe() // never read from -- simulates a slow/stuck browser
+	_, _, unsubscribe := agg.Subscribe(context.Background()) // never read from -- simulates a slow/stuck browser
 	defer unsubscribe()
 
 	done := make(chan struct{})
@@ -126,7 +135,7 @@ func TestJobAggregator_ReconcileBroadcastsSnapshot(t *testing.T) {
 		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
 	}}
 	agg := newJobAggregator(fakeLoki, &fakeLokiTailer{}, testLogger())
-	_, ch, unsubscribe := agg.Subscribe()
+	_, ch, unsubscribe := agg.Subscribe(context.Background())
 	defer unsubscribe()
 
 	require.NoError(t, agg.reconcile(context.Background()))
@@ -137,6 +146,86 @@ func TestJobAggregator_ReconcileBroadcastsSnapshot(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("reconcile must broadcast a snapshot even when nothing changed")
 	}
+}
+
+// countingReconcileLokiClient wraps a fakeLokiClient and counts QueryRange calls --
+// lets these tests assert whether Loki was queried at all, not just what
+// it returned.
+type countingReconcileLokiClient struct {
+	fakeLokiClient
+	calls atomic.Int32
+}
+
+func (c *countingReconcileLokiClient) QueryRange(ctx context.Context, query string, start, end time.Time, limit int) ([]lokiStream, error) {
+	c.calls.Add(1)
+	return c.fakeLokiClient.QueryRange(ctx, query, start, end, limit)
+}
+
+func TestJobAggregator_ReconcileIfSubscribedSkipsWhenNoSubscribers(t *testing.T) {
+	counting := &countingReconcileLokiClient{fakeLokiClient: fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+	}}}
+	agg := newJobAggregator(counting, &fakeLokiTailer{}, testLogger())
+
+	require.NoError(t, agg.reconcileIfSubscribed(context.Background()))
+
+	assert.EqualValues(t, 0, counting.calls.Load(), "must not query Loki when no subscriber is connected")
+}
+
+func TestJobAggregator_ReconcileIfSubscribedRunsWithSubscriber(t *testing.T) {
+	counting := &countingReconcileLokiClient{fakeLokiClient: fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+	}}}
+	agg := newJobAggregator(counting, &fakeLokiTailer{}, testLogger())
+	_, _, unsubscribe := agg.Subscribe(context.Background())
+	defer unsubscribe()
+	counting.calls.Store(0) // reset: Subscribe's own first-subscriber reconcile already ran once
+
+	require.NoError(t, agg.reconcileIfSubscribed(context.Background()))
+
+	// reconcile issues two QueryRange calls per run (one for event="start",
+	// one for event="finish" -- see queryEvent/jobs.go), so one reconcile
+	// here means calls == 2, not 1.
+	assert.EqualValues(t, 2, counting.calls.Load(), "must query Loki when at least one subscriber is connected")
+}
+
+func TestJobAggregator_SubscribeTriggersReconcileOnFirstSubscriber(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+			{Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1", "event": "start"},
+				Values: []lokiValue{{Timestamp: 1752400500000000000}}},
+		},
+		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+	}}
+	agg := newJobAggregator(fake, &fakeLokiTailer{}, testLogger())
+
+	snapshot, _, unsubscribe := agg.Subscribe(context.Background())
+	defer unsubscribe()
+
+	require.Len(t, snapshot, 1, "the first subscriber must see freshly reconciled state")
+	assert.Equal(t, "operating-refresh:1", snapshot[0].JobID)
+}
+
+func TestJobAggregator_SecondSubscriberDoesNotTriggerExtraReconcile(t *testing.T) {
+	counting := &countingReconcileLokiClient{fakeLokiClient: fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+	}}}
+	agg := newJobAggregator(counting, &fakeLokiTailer{}, testLogger())
+
+	_, _, unsubscribe1 := agg.Subscribe(context.Background())
+	defer unsubscribe1()
+	// reconcile issues two QueryRange calls per run (event="start" and
+	// event="finish" -- see queryEvent/jobs.go), so one reconcile here means
+	// calls == 2, not 1.
+	require.EqualValues(t, 2, counting.calls.Load())
+
+	_, _, unsubscribe2 := agg.Subscribe(context.Background())
+	defer unsubscribe2()
+
+	assert.EqualValues(t, 2, counting.calls.Load(), "a second concurrent subscriber must not trigger another reconcile")
 }
 
 // blockingTailer's Tail call fails errCount times, then succeeds

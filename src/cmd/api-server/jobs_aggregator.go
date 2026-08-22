@@ -77,11 +77,41 @@ func (a *jobAggregator) backoff(failures int) time.Duration {
 	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
 }
 
+// subscriberCount returns how many browsers are currently subscribed --
+// used to decide whether a periodic reconcile is worth running at all.
+func (a *jobAggregator) subscriberCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.subs)
+}
+
+// reconcileIfSubscribed runs reconcile only when at least one browser is
+// currently subscribed -- the periodic 24h, fleet-wide double query costs
+// real Loki load for a value nobody is watching when nothing is.
+func (a *jobAggregator) reconcileIfSubscribed(ctx context.Context) error {
+	if a.subscriberCount() == 0 {
+		return nil
+	}
+	return a.reconcile(ctx)
+}
+
 // Subscribe registers a new listener and returns the current state as a
 // snapshot, alongside the channel future upserts (and future full
 // snapshots, from reconcile) will arrive on. Callers must call unsubscribe
 // exactly once, typically via defer, when they stop reading.
-func (a *jobAggregator) Subscribe() (snapshot []jobDTO, ch chan jobsStreamMsg, unsubscribe func()) {
+//
+// On the 0->1 subscriber transition, Subscribe runs one synchronous
+// reconcile before computing the snapshot -- the periodic reconcileLoop
+// ticker skips work while unsubscribed (reconcileIfSubscribed, above), so
+// without this the first browser to connect after an idle stretch could
+// see a snapshot arbitrarily stale.
+func (a *jobAggregator) Subscribe(ctx context.Context) (snapshot []jobDTO, ch chan jobsStreamMsg, unsubscribe func()) {
+	if a.subscriberCount() == 0 {
+		if err := a.reconcile(ctx); err != nil {
+			a.logger.Error("jobAggregator: reconcile on first subscriber failed", "error", err)
+		}
+	}
+
 	ch = make(chan jobsStreamMsg, jobsAggregatorSubscriberBuffer)
 
 	a.mu.Lock()
@@ -222,7 +252,7 @@ func (a *jobAggregator) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.reconcile(ctx); err != nil {
+			if err := a.reconcileIfSubscribed(ctx); err != nil {
 				a.logger.Error("jobAggregator: periodic reconcile failed", "error", err)
 			}
 		}
