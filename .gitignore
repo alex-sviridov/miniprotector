@@ -69,5 +69,6 @@ web/dist/
 
 # e2e test artifacts (root-owned, written by docker compose exec)
 demo/policy-server/policies/backup/adhoc-*.json
+demo/policy-server/policies/restore/restore-*.json
 demo/policy-server/policies/.changed
 web/test-results/
