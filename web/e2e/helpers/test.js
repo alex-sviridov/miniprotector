@@ -10,7 +10,9 @@ export const AUTH_HEADERS = { Authorization: 'Bearer dev-placeholder-token-chang
 export const test = base.extend({
   trackPolicy: async ({ request }, use) => {
     const ids = []
-    await use((id) => ids.push(id))
+    await use((id) => {
+      ids.push(id)
+    })
     for (const id of ids) {
       let resp
       try {

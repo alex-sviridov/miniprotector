@@ -134,7 +134,10 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
     // attach happens to synchronize with the async submit call), this step
     // starts with a stale submission-results <ul> already on the page --
     // step 1's own verify result, carried over in the (page-navigation-
-    // persisted) restoreSubmission Pinia store. expect(...).toContainText
+    // persisted) restoreSubmission Pinia store. A plain .innerText() read
+    // right after the click can win the race against submit()'s own reset
+    // (results = [] synchronously, then repopulated once the POST
+    // resolves) and return step 1's stale text. expect(...).toContainText
     // is a web-first assertion that polls until the DOM actually reflects
     // this step's own submission, so it can't observe that transient state.
     const resultsLocator = page.getByTestId('submission-results')
