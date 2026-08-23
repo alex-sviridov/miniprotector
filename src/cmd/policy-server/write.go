@@ -33,6 +33,19 @@ func slugify(name string) string {
 	return strings.Trim(slug, "-")
 }
 
+// restorePolicyJobID builds the stable job_id for a restore policy's whole
+// lifecycle -- generated once, here, at CreatePolicy time. Prefix
+// determines the job's "kind" everywhere downstream (agent, api-server's
+// kindFromJobID): "restore:" for mode=="restore" (rwfs restore), "verify:"
+// for every other mode (rwfs verify) -- mirrors the prefix convention
+// cmd/agent/restore.go's restoreTaskID already uses for the task id.
+func restorePolicyJobID(name, mode string, now time.Time) string {
+	if mode == "restore" {
+		return fmt.Sprintf("restore:%s:%d", name, now.UnixNano())
+	}
+	return fmt.Sprintf("verify:%s:%d", name, now.UnixNano())
+}
+
 // uniqueFilename returns a filename in dir based on slug that doesn't
 // already exist: "<slug>.json" if free, otherwise "<slug>-2.json",
 // "<slug>-3.json", etc.
@@ -214,6 +227,7 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 			Rules:           rules,
 			Mode:            req.GetMode(),
 			Overwrite:       req.GetOverwrite(),
+			JobID:           restorePolicyJobID(req.GetName(), req.GetMode(), now),
 		}, nil
 	}
 	// A non-restore request setting rules is rejected here, once, for every
@@ -312,6 +326,10 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 		return nil, status.Error(codes.Internal, "policy not found in cache after create")
 	}
 	s.logger.Info("CreatePolicy", "id", created.Meta().ID, "name", created.Meta().Name, "path", filePath)
+	if rp, ok := created.(*RestorePolicy); ok {
+		s.logger.Info("restore policy created, waiting for client to connect",
+			"policy", rp.Meta().ID, "job_id", rp.JobID, "event", "created")
+	}
 	pp := created.ToProto(true)
 	attachDestination(ctx, pp, s.cache, s.checkins, s.logger)
 	return pp, nil
