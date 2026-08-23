@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process'
-import { test, expect } from '@playwright/test'
+import { test, expect, AUTH_HEADERS } from './helpers/test.js'
 import { COMPOSE_FILE } from './helpers/policySeeding.js'
 
 const SOURCE_HOST = 'database'
@@ -29,7 +29,7 @@ test.describe.configure({ mode: 'serial' })
 // is to land on /jobs (or /jobs/:job_id) while the job may still be running
 // and observe the WS-pushed live update do the rest -- waiting here would
 // defeat that.
-async function runAdhocBackupPolicy(page, policyName) {
+async function runAdhocBackupPolicy(page, policyName, trackPolicy) {
   await page.goto('/policies')
   await page.getByTestId('policy-new').click()
 
@@ -51,6 +51,15 @@ async function runAdhocBackupPolicy(page, policyName) {
   await page.getByTestId('backup-policy-run-now').click()
   await page.waitForURL('**/jobs')
 
+  // The UI gives no way to read back the ad-hoc backup policy's id, so look
+  // it up by the name we just gave it and hand it to trackPolicy -- same
+  // lookup-by-name-after-creation pattern policySeeding.js's
+  // seedRestoreCartCatalogData uses for the same kind of policy.
+  const policiesResp = await page.request.get('/api/v1/policies?type=backup', { headers: AUTH_HEADERS })
+  const { data: backupPolicies } = await policiesResp.json()
+  const backupPolicy = backupPolicies.find((p) => p.name === `adhoc_${policyName}`)
+  if (backupPolicy) trackPolicy(backupPolicy.id)
+
   // Same non-UI escape hatch policySeeding.js uses -- policyclient isn't on
   // $PATH inside the container (only /app/policyclient exists); docker
   // compose exec's default cwd is the image's WORKDIR (/app), so
@@ -58,13 +67,13 @@ async function runAdhocBackupPolicy(page, policyName) {
   execSync(`docker compose -f ${COMPOSE_FILE} exec -T ${SOURCE_HOST} ./policyclient fetch`, { stdio: 'inherit' })
 }
 
-test('job detail page flips to Finished live, with no manual reload', async ({ page, context }) => {
+test('job detail page flips to Finished live, with no manual reload', async ({ page, context, trackPolicy }) => {
   await context.addInitScript(() => {
     localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
   })
 
   const policyName = `e2e-live-detail-${Date.now()}`
-  await runAdhocBackupPolicy(page, policyName)
+  await runAdhocBackupPolicy(page, policyName, trackPolicy)
 
   // /jobs is already open with its own live jobs-list WS connection (Task
   // 10) -- the new job's row appears here purely from that stream's
@@ -117,7 +126,7 @@ test('job detail page flips to Finished live, with no manual reload', async ({ p
   })
 })
 
-test('jobs list page shows a new job appear and transition to success live', async ({ page, context }) => {
+test('jobs list page shows a new job appear and transition to success live', async ({ page, context, trackPolicy }) => {
   await context.addInitScript(() => {
     localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
   })
@@ -131,7 +140,7 @@ test('jobs list page shows a new job appear and transition to success live', asy
   // purely from its own live stream, not about how the job gets triggered.
   const policyName = `e2e-live-list-${Date.now()}`
   const policyPage = await context.newPage()
-  await runAdhocBackupPolicy(policyPage, policyName)
+  await runAdhocBackupPolicy(policyPage, policyName, trackPolicy)
   await policyPage.close()
 
   // Not a row-count delta: the table is paginated (DataTable's perPage), so
