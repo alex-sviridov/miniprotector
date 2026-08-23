@@ -188,8 +188,7 @@ creation time -- `restorePolicyJobID(name, mode, now)`, prefixed `restore:` when
 (an `rwfs` restore) or `verify:` otherwise -- and logs `event="created"` (with the policy's `id` and
 `job_id`) once the policy is written and reloaded into the cache. That `job_id` is what correlates
 the whole lifecycle: `agent` reports job progress under it, and `api-server`'s `JobStatusService`
-(see [Job Status Service protocol](../protocols/job-status-service.md)) answers whether a given
-`job_id` has finished.
+answers whether a given `job_id` has finished (see below).
 
 A background routine, `runRestoreCleanup`, ticks every `RestoreCleanupIntervalSec` (config key,
 default `300` = 5m) and calls `sweepRestorePolicies`, which checks every cached `"restore"`-type
