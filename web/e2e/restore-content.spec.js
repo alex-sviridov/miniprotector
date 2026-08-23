@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { test, expect } from '@playwright/test'
+import { test, expect, AUTH_HEADERS } from './helpers/test.js'
 import { COMPOSE_FILE, waitForCatalogFolderRow } from './helpers/policySeeding.js'
 
 const HOST = 'database'
@@ -9,11 +9,10 @@ const FILE_COUNT = 100
 // this test never generates data or triggers a backup itself, so repeated
 // runs don't each add a fresh ~100-150MB to the shared store.
 const FIXTURE_SRC_DIR = '/data/e2e-restore-content-fixture'
-const AUTH_HEADERS = { Authorization: 'Bearer dev-placeholder-token-change-me' }
 
 test.describe.configure({ mode: 'serial' })
 
-test('restore writes real file content, verified by checksum, with a folder rename', async ({ page, context }) => {
+test('restore writes real file content, verified by checksum, with a folder rename', async ({ page, context, trackPolicy }) => {
   test.setTimeout(600_000)
 
   await context.addInitScript(() => {
@@ -99,7 +98,6 @@ test('restore writes real file content, verified by checksum, with a folder rena
   // the same demo-up session) find it immediately.
   await waitForCatalogEntryCount(HOST, FIXTURE_SRC_DIR, FILE_COUNT, 360_000)
 
-  let restorePolicyId = null
   try {
     // --- Catalog selection + destination rename, through the real UI ---
     const parentSegments = FIXTURE_SRC_DIR.split('/').filter(Boolean).slice(0, -1) // ['data']
@@ -133,7 +131,7 @@ test('restore writes real file content, verified by checksum, with a folder rena
     const { data: restorePolicies } = await restorePoliciesResp.json()
     const restorePolicy = restorePolicies.find((p) => p.name === restorePolicyName)
     expect(restorePolicy).toBeTruthy()
-    restorePolicyId = restorePolicy.id
+    trackPolicy(restorePolicy.id)
 
     dockerExec('./policyclient fetch')
 
@@ -172,14 +170,8 @@ test('restore writes real file content, verified by checksum, with a folder rena
     // Best-effort: a failed cleanup is logged, never thrown, so it can't
     // mask whatever error the try block raised. The fixture source
     // directory and its backup are permanent (seeded once by demo/up.sh),
-    // never deleted here -- only this run's own destination directory and
-    // restore policy are.
-    if (restorePolicyId) {
-      const deleteResp = await page.request.delete(`/api/v1/policies/${restorePolicyId}`, { headers: AUTH_HEADERS })
-      if (!deleteResp.ok()) {
-        console.warn(`cleanup: failed to delete restore policy ${restorePolicyId}, status ${deleteResp.status()}`)
-      }
-    }
+    // never deleted here -- only this run's own destination directory is
+    // (the restore policy itself is now trackPolicy's job).
     try {
       dockerExec(`rm -rf "${destDir}"`)
     } catch (err) {
