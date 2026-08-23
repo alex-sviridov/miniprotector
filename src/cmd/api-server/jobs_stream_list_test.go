@@ -20,11 +20,11 @@ func TestHandleJobsStream_SendsSnapshotThenUpsert(t *testing.T) {
 	// TestJobAggregator_SubscribeReturnsCurrentSnapshot in
 	// jobs_aggregator_test.go for the same fix.
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "start"},
 				Values: []lokiValue{{Timestamp: 1752400500000000000}}},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "finish", "status": "success"},
 				Values: []lokiValue{{Timestamp: 1752400501000000000}}},
 		},

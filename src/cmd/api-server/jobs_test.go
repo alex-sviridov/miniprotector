@@ -41,24 +41,24 @@ func TestKindFromJobID(t *testing.T) {
 	assert.Equal(t, "", kindFromJobID("no-colon-here"))
 }
 
-func TestBinariesForKind(t *testing.T) {
+func TestBinariesForKind_RestoreAndVerifyIncludePolicyServer(t *testing.T) {
 	assert.Equal(t, "brfs|bwfs", binariesForKind("backup"))
 	assert.Equal(t, "agent", binariesForKind("bootstrap-refresh"))
 	assert.Equal(t, "agent", binariesForKind("operating-refresh"))
 	assert.Equal(t, "agent", binariesForKind("policy-update"))
-	assert.Equal(t, "agent", binariesForKind("verify"))
-	assert.Equal(t, "agent", binariesForKind("restore"))
-	assert.Equal(t, "agent|brfs|bwfs", binariesForKind(""))
+	assert.Equal(t, "agent|policy-server", binariesForKind("verify"))
+	assert.Equal(t, "agent|policy-server", binariesForKind("restore"))
+	assert.Equal(t, "agent|brfs|bwfs|policy-server", binariesForKind(""))
 }
 
 func TestHandleListJobs_PairsStartAndFinishByJobID(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "operating-refresh:1752400500"}},
 			}},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "webserver"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "operating-refresh:1752400500", "status": "success"}},
 			}},
@@ -99,13 +99,13 @@ func TestHandleListJobs_PairsStartAndFinishByJobID(t *testing.T) {
 // brfs/bwfs/agent and Vector all correctly producing and shipping the data.
 func TestHandleListJobs_ReadsJobIDFromStreamLevelStructuredMetadata(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{
 				Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1752400500", "event": "start"},
 				Values: []lokiValue{{Timestamp: 1752400500000000000}},
 			},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {
 			{
 				Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1752400500", "event": "finish", "status": "success"},
 				Values: []lokiValue{{Timestamp: 1752400501000000000}},
@@ -135,7 +135,7 @@ func TestHandleListJobs_ReadsJobIDFromStreamLevelStructuredMetadata(t *testing.T
 
 func TestHandleListJobs_NoFinishLineMeansInProgress(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "policy-update:1752400500"}},
 			}},
@@ -252,12 +252,12 @@ func TestHandleListJobs_KindRestoreIsAccepted(t *testing.T) {
 
 func TestHandleListJobs_RestoreKindUsesAgentBinaryLabel(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent"} | event="start"`: {
+		`{binary=~"agent|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-exec:1752400500"}},
 			}},
 		},
-		`{binary=~"agent"} | event="finish"`: {
+		`{binary=~"agent|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-exec:1752400500", "status": "success"}},
 			}},
@@ -299,12 +299,12 @@ func TestHandleListJobs_KindVerifyIsAccepted(t *testing.T) {
 
 func TestHandleListJobs_VerifyKindUsesAgentBinaryLabel(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent"} | event="start"`: {
+		`{binary=~"agent|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "verify:e2e-restore-verify:1752400500"}},
 			}},
 		},
-		`{binary=~"agent"} | event="finish"`: {
+		`{binary=~"agent|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "verify:e2e-restore-verify:1752400500", "status": "success"}},
 			}},
@@ -415,15 +415,52 @@ func TestPairJobEvents_StillMatchesPriorBehaviorViaAccumulator(t *testing.T) {
 	starts := []jobEventLine{{JobID: "a", Hostname: "h1", Timestamp: 1}}
 	finishes := []jobEventLine{{JobID: "a", Hostname: "h1", Timestamp: 2, Status: "success"}}
 
-	got := pairJobEvents(starts, finishes)
+	got := pairJobEvents(starts, finishes, nil)
 
 	require.Len(t, got, 1)
 	assert.Equal(t, "success", got[0].State)
 }
 
+func TestPairJobEvents_CreatedLineAloneShowsInProgressWithNoSourceHost(t *testing.T) {
+	jobs := pairJobEvents(nil, nil, []jobEventLine{
+		{JobID: "restore:x:1", Hostname: "policy-server-1", Timestamp: 500},
+	})
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "in_progress", jobs[0].State)
+	assert.Empty(t, jobs[0].SourceHost)
+}
+
+func TestPairJobEvents_CreatedThenFinishPopulatesSourceHostAndState(t *testing.T) {
+	jobs := pairJobEvents(nil,
+		[]jobEventLine{{JobID: "restore:x:1", Hostname: "web-01", Timestamp: 900, Status: "success"}},
+		[]jobEventLine{{JobID: "restore:x:1", Hostname: "policy-server-1", Timestamp: 500}},
+	)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "success", jobs[0].State)
+	assert.Equal(t, "web-01", jobs[0].SourceHost)
+	require.NotNil(t, jobs[0].StartedAt)
+	assert.Equal(t, int64(500), *jobs[0].StartedAt)
+}
+
+func TestHandleGetJobLogs_SelectorIncludesPolicyServer(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:x:1"`: {},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:x:1/logs", nil)
+	req.SetPathValue("job_id", "restore:x:1")
+	w := httptest.NewRecorder()
+	srv.handleGetJobLogs(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, fake.calls, "must have queried the widened selector exactly")
+}
+
 func TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {
 			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Line: "policy execution completed"},
 				{Timestamp: 1752400500000000000, Line: "policy execution started"},
@@ -467,7 +504,7 @@ func TestHandleGetJobLogs_InvalidJobIDCharacterReturns400(t *testing.T) {
 
 func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 1755094200000000000, Line: "policy execution started"},
 			}},
@@ -488,7 +525,7 @@ func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
 
 func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "brfs"}, Values: []lokiValue{
 				{Timestamp: 1752400000000000000, Line: "Backup reader started"},
 			}},
@@ -512,7 +549,7 @@ func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 
 func TestHandleGetJobLogs_IncludesRwfsBinaryLines(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="restore:e2e-restore-verify:1755094200"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:e2e-restore-verify:1755094200"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "rwfs"}, Values: []lokiValue{
 				{Timestamp: 1755094201000000000, Line: `{"msg":"verified","path":"/var/lib/dbdata/dump.sql"}`},
 			}},
@@ -580,7 +617,7 @@ func TestHandleGetJobLogs_InvalidStoreHostCharacterReturns400(t *testing.T) {
 
 func TestHandleGetJobLogs_DefaultLimitPassedToLoki(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {},
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {},
 	}}
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake
@@ -614,7 +651,7 @@ func TestHandleGetJobLogs_LimitOutsideRangeReturns400(t *testing.T) {
 
 func TestHandleGetJobLogs_HasMoreTrueWhenPageIsFull(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {
 			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 100, Line: "a"},
 				{Timestamp: 200, Line: "b"},
@@ -639,7 +676,7 @@ func TestHandleGetJobLogs_HasMoreTrueWhenPageIsFull(t *testing.T) {
 
 func TestHandleGetJobLogs_HasMoreFalseWhenPageIsPartial(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {
 			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 100, Line: "a"},
 			}},
@@ -663,7 +700,7 @@ func TestHandleGetJobLogs_HasMoreFalseWhenPageIsPartial(t *testing.T) {
 
 func TestHandleGetJobLogs_EndingBeforeNarrowsEndExclusive(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {},
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {},
 	}}
 	srv := newServer(nil, nil, nil, testLogger())
 	srv.loki = fake

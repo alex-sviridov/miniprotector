@@ -52,10 +52,12 @@ func binariesForKind(kind string) string {
 	switch kind {
 	case "backup":
 		return "brfs|bwfs"
-	case "bootstrap-refresh", "operating-refresh", "policy-update", "verify", "restore":
+	case "verify", "restore":
+		return "agent|policy-server"
+	case "bootstrap-refresh", "operating-refresh", "policy-update":
 		return "agent"
 	default:
-		return "agent|brfs|bwfs"
+		return "agent|brfs|bwfs|policy-server"
 	}
 }
 
@@ -215,12 +217,16 @@ func (a *jobEventAccumulator) All() []jobDTO {
 	return out
 }
 
-// pairJobEvents groups start/finish lines by job_id into one jobDTO each.
-// A job_id with only a start line is in_progress; one with only a finish
-// line (its start fell outside the queried window) gets a nil StartedAt --
-// never guessed.
-func pairJobEvents(starts, finishes []jobEventLine) []jobDTO {
+// pairJobEvents groups start/created/finish lines by job_id into one
+// jobDTO each. created and start are mutually exclusive per job kind
+// (restore/verify use created; every other kind uses start) so applying
+// both here is never a real conflict -- whichever is present for a given
+// job_id seeds StartedAt/State, and finish always applies last.
+func pairJobEvents(starts, finishes, createds []jobEventLine) []jobDTO {
 	acc := newJobEventAccumulator()
+	for _, e := range createds {
+		acc.ApplyCreated(e)
+	}
 	for _, e := range starts {
 		acc.ApplyStart(e)
 	}
@@ -307,6 +313,11 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	// selector is a pure Loki-side performance narrowing, not required for
 	// correctness, so it only applies where it can't cause data loss.
 	finishLabelSelector := fmt.Sprintf(`{binary=~"%s"}`, binarySelector)
+	// created lines are policy-server's own -- never narrowed by
+	// source_host, same reasoning as finishLabelSelector: source_host names
+	// the eventual executing node, not policy-server, so narrowing by it
+	// here would silently exclude every created line.
+	createdLabelSelector := fmt.Sprintf(`{binary=~"%s"}`, binarySelector)
 
 	starts, startsTruncated, err := queryEvent(r.Context(), s.loki, startLabelSelector, "start", since, until)
 	if err != nil {
@@ -320,8 +331,14 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
 		return
 	}
+	createds, createdsTruncated, err := queryEvent(r.Context(), s.loki, createdLabelSelector, "created", since, until)
+	if err != nil {
+		s.logger.Error("handleListJobs: query created events failed", "error", err)
+		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
+		return
+	}
 
-	jobs := pairJobEvents(starts, finishes)
+	jobs := pairJobEvents(starts, finishes, createds)
 
 	filtered := make([]jobDTO, 0, len(jobs))
 	for _, j := range jobs {
@@ -341,7 +358,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		filtered = filtered[:limit]
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": filtered, "truncated": startsTruncated || finishesTruncated})
+	writeJSON(w, http.StatusOK, map[string]any{"data": filtered, "truncated": startsTruncated || finishesTruncated || createdsTruncated})
 }
 
 var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:._-]+$`)
@@ -418,14 +435,14 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	// start/finish pairing), so rwfs's lines are useful signal here even
 	// though handleListJobs excludes rwfs to avoid pairing noise (rwfs never
 	// emits event=start/event=finish).
-	labelSelector := `{binary=~"agent|brfs|bwfs|rwfs"}`
+	labelSelector := `{binary=~"agent|brfs|bwfs|rwfs|policy-server"}`
 	switch {
 	case sourceHost != "" && storeHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"%s|%s"}`, sourceHost, storeHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname=~"%s|%s"}`, sourceHost, storeHost)
 	case sourceHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, sourceHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname="%s"}`, sourceHost)
 	case storeHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, storeHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname="%s"}`, storeHost)
 	}
 
 	query := fmt.Sprintf(`%s | job_id="%s"`, labelSelector, jobID)

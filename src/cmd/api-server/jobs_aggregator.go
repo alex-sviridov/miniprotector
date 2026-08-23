@@ -187,7 +187,7 @@ func (a *jobAggregator) ingestTailMessage(msg lokiTailMessage) {
 			if event == "" {
 				event = streamEvent
 			}
-			if jobID == "" || (event != "start" && event != "finish") {
+			if jobID == "" || (event != "start" && event != "finish" && event != "created") {
 				continue
 			}
 			status := v.Metadata["status"]
@@ -205,9 +205,12 @@ func (a *jobAggregator) ingestTailMessage(msg lokiTailMessage) {
 				acc = newJobEventAccumulator()
 			}
 			var updated jobDTO
-			if event == "start" {
+			switch event {
+			case "start":
 				updated = acc.ApplyStart(line)
-			} else {
+			case "created":
+				updated = acc.ApplyCreated(line)
+			default:
 				updated = acc.ApplyFinish(line)
 			}
 			a.jobs[jobID] = updated
@@ -229,7 +232,7 @@ func (a *jobAggregator) ingestTailMessage(msg lokiTailMessage) {
 func (a *jobAggregator) reconcile(ctx context.Context) error {
 	until := time.Now()
 	since := until.Add(-jobsAggregatorWindow)
-	const selector = `{binary=~"agent|brfs|bwfs"}`
+	const selector = `{binary=~"agent|brfs|bwfs|policy-server"}`
 
 	starts, _, err := queryEvent(ctx, a.loki, selector, "start", since, until)
 	if err != nil {
@@ -239,7 +242,11 @@ func (a *jobAggregator) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs := pairJobEvents(starts, finishes)
+	createds, _, err := queryEvent(ctx, a.loki, selector, "created", since, until)
+	if err != nil {
+		return err
+	}
+	jobs := pairJobEvents(starts, finishes, createds)
 
 	a.mu.Lock()
 	a.jobs = make(map[string]jobDTO, len(jobs))
@@ -309,7 +316,7 @@ func (a *jobAggregator) tailLoop(ctx context.Context) {
 		// silently sees everything as empty and drops every line -- exactly
 		// mirroring queryEvent's own `| event="%s"` filter (jobs.go), which
 		// works today only because it always references a metadata field.
-		err := a.tailer.Tail(attemptCtx, `{binary=~"agent|brfs|bwfs"} | job_id=~".+"`, time.Now(), func(msg lokiTailMessage) error {
+		err := a.tailer.Tail(attemptCtx, `{binary=~"agent|brfs|bwfs|policy-server"} | job_id=~".+"`, time.Now(), func(msg lokiTailMessage) error {
 			a.ingestTailMessage(msg)
 			return nil
 		})

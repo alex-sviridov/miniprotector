@@ -13,11 +13,11 @@ import (
 
 func TestJobAggregator_SubscribeReturnsCurrentSnapshot(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "start"},
 				Values: []lokiValue{{Timestamp: 1752400500000000000}}},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "webserver", "job_id": "a", "event": "finish", "status": "success"},
 				Values: []lokiValue{{Timestamp: 1752400501000000000}}},
 		},
@@ -29,6 +29,25 @@ func TestJobAggregator_SubscribeReturnsCurrentSnapshot(t *testing.T) {
 
 	require.Len(t, snapshot, 1)
 	assert.Equal(t, "a", snapshot[0].JobID)
+}
+
+func TestIngestTailMessage_CreatedEventFoldsIntoInProgressState(t *testing.T) {
+	a := newJobAggregator(&fakeLokiClient{}, nil, testLogger())
+	a.ingestTailMessage(lokiTailMessage{Streams: []lokiStream{
+		{
+			Stream: map[string]string{"hostname": "policy-server-1"},
+			Values: []lokiValue{{
+				Timestamp: 500_000_000_000,
+				Metadata:  map[string]string{"job_id": "restore:x:1", "event": "created"},
+			}},
+		},
+	}})
+
+	a.mu.Lock()
+	got, ok := a.jobs["restore:x:1"]
+	a.mu.Unlock()
+	require.True(t, ok)
+	assert.Equal(t, "in_progress", got.State)
 }
 
 func TestJobAggregator_IngestTailMessageUpsertsAndBroadcasts(t *testing.T) {
@@ -109,11 +128,11 @@ func TestJobAggregator_SlowSubscriberDoesNotBlockBroadcast(t *testing.T) {
 
 func TestJobAggregator_ReconcileReplacesStateFromLoki(t *testing.T) {
 	fakeLoki := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1", "event": "start"},
 				Values: []lokiValue{{Timestamp: 1752400500000000000}}},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1", "event": "finish", "status": "success"},
 				Values: []lokiValue{{Timestamp: 1752400501000000000}}},
 		},
@@ -131,8 +150,8 @@ func TestJobAggregator_ReconcileReplacesStateFromLoki(t *testing.T) {
 
 func TestJobAggregator_ReconcileBroadcastsSnapshot(t *testing.T) {
 	fakeLoki := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {},
 	}}
 	agg := newJobAggregator(fakeLoki, &fakeLokiTailer{}, testLogger())
 	_, ch, unsubscribe := agg.Subscribe(context.Background())
@@ -163,8 +182,8 @@ func (c *countingReconcileLokiClient) QueryRange(ctx context.Context, query stri
 
 func TestJobAggregator_ReconcileIfSubscribedSkipsWhenNoSubscribers(t *testing.T) {
 	counting := &countingReconcileLokiClient{fakeLokiClient: fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {},
 	}}}
 	agg := newJobAggregator(counting, &fakeLokiTailer{}, testLogger())
 
@@ -175,8 +194,8 @@ func TestJobAggregator_ReconcileIfSubscribedSkipsWhenNoSubscribers(t *testing.T)
 
 func TestJobAggregator_ReconcileIfSubscribedRunsWithSubscriber(t *testing.T) {
 	counting := &countingReconcileLokiClient{fakeLokiClient: fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {},
 	}}}
 	agg := newJobAggregator(counting, &fakeLokiTailer{}, testLogger())
 	_, _, unsubscribe := agg.Subscribe(context.Background())
@@ -185,19 +204,19 @@ func TestJobAggregator_ReconcileIfSubscribedRunsWithSubscriber(t *testing.T) {
 
 	require.NoError(t, agg.reconcileIfSubscribed(context.Background()))
 
-	// reconcile issues two QueryRange calls per run (one for event="start",
-	// one for event="finish" -- see queryEvent/jobs.go), so one reconcile
-	// here means calls == 2, not 1.
-	assert.EqualValues(t, 2, counting.calls.Load(), "must query Loki when at least one subscriber is connected")
+	// reconcile issues three QueryRange calls per run (one each for
+	// event="start", event="finish", event="created" -- see
+	// queryEvent/jobs.go), so one reconcile here means calls == 3, not 1.
+	assert.EqualValues(t, 3, counting.calls.Load(), "must query Loki when at least one subscriber is connected")
 }
 
 func TestJobAggregator_SubscribeTriggersReconcileOnFirstSubscriber(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1", "event": "start"},
 				Values: []lokiValue{{Timestamp: 1752400500000000000}}},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {},
 	}}
 	agg := newJobAggregator(fake, &fakeLokiTailer{}, testLogger())
 
@@ -210,17 +229,17 @@ func TestJobAggregator_SubscribeTriggersReconcileOnFirstSubscriber(t *testing.T)
 
 func TestJobAggregator_SecondSequentialSubscriberDoesNotTriggerExtraReconcile(t *testing.T) {
 	counting := &countingReconcileLokiClient{fakeLokiClient: fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {},
 	}}}
 	agg := newJobAggregator(counting, &fakeLokiTailer{}, testLogger())
 
 	_, _, unsubscribe1 := agg.Subscribe(context.Background())
 	defer unsubscribe1()
-	// reconcile issues two QueryRange calls per run (event="start" and
-	// event="finish" -- see queryEvent/jobs.go), so one reconcile here means
-	// calls == 2, not 1.
-	require.EqualValues(t, 2, counting.calls.Load())
+	// reconcile issues three QueryRange calls per run (event="start",
+	// event="finish", and event="created" -- see queryEvent/jobs.go), so one
+	// reconcile here means calls == 3, not 1.
+	require.EqualValues(t, 3, counting.calls.Load())
 
 	_, _, unsubscribe2 := agg.Subscribe(context.Background())
 	defer unsubscribe2()
@@ -230,7 +249,7 @@ func TestJobAggregator_SecondSequentialSubscriberDoesNotTriggerExtraReconcile(t 
 	// concurrent -- it exercises the already-subscribed (subscriberCount()
 	// > 0) path, not the 0->1 race. See Subscribe's doc comment for the
 	// separate, genuinely-concurrent case this test does not cover.
-	assert.EqualValues(t, 2, counting.calls.Load(), "a second sequential subscriber must not trigger another reconcile")
+	assert.EqualValues(t, 3, counting.calls.Load(), "a second sequential subscriber must not trigger another reconcile")
 }
 
 // blockingTailer's Tail call fails errCount times, then succeeds
@@ -253,8 +272,8 @@ func (b *blockingTailer) Tail(ctx context.Context, query string, start time.Time
 
 func TestJobAggregator_StartReconnectsAfterTailFailure(t *testing.T) {
 	fakeLoki := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`:  {},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`:  {},
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {},
 	}}
 	tailer := &blockingTailer{failuresBeforeSuccess: 2}
 	agg := newJobAggregator(fakeLoki, tailer, testLogger())
