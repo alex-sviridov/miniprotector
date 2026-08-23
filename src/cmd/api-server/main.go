@@ -21,6 +21,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"github.com/gorilla/websocket"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -114,6 +115,14 @@ func main() {
 	defer stop()
 
 	go srv.aggregator.Start(signalCtx)
+
+	go func() {
+		if err := connection.StartServer(signalCtx, logger, arguments.JobStatusPort, certsDir, roleRequirements(), func(s *grpc.Server) {
+			pb.RegisterJobStatusServiceServer(s, srv)
+		}); err != nil {
+			logger.Error("job-status server failed", "error", err)
+		}
+	}()
 
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", arguments.Port), Handler: handler}
 	go func() {

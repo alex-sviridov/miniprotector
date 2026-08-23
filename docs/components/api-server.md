@@ -22,6 +22,7 @@ api-server --port 8090 --token <bearer-token>
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port` | `api_server_port` config value (default: 8090) | Port the REST listener binds to |
+| `--job-status-port` | `APIServerJobStatusPort` config value (default: 8091) | Port the internal control-plane-only job-status gRPC service listens on |
 | `--token` | `api_server_token` config value | Bearer token required on every REST request |
 | `--debug` | false | Enable debug logging |
 
@@ -126,6 +127,19 @@ reported a renewal attempt, with `last_error`/`last_attempt_at` simply omitted, 
 absence isn't an error. See
 [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
 
+## Job-Status gRPC Listener
+
+Alongside its REST listener, `api-server` also serves one internal gRPC service,
+`JobStatusService` (`GetPolicyJobStatus`), over its own port (`APIServerJobStatusPort`, default
+`8091`) — mTLS-secured and role-gated to `control-plane` callers, exactly like `policy-server`'s
+`PolicyService` (see `cmd/api-server/authz.go`, mirroring `cmd/policy-server/authz.go`'s pattern).
+This is the *only* inbound mTLS surface on `api-server`: every other RPC it makes
+(`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`) is outbound, and its REST
+API (above) is plain HTTP, outside the mesh entirely, guarded by the bearer token instead. The sole
+caller today is `policy-server`'s restore-cleanup sweep, which polls `GetPolicyJobStatus` to learn
+whether a given restore-verification job has finished before deleting the one-shot policy that
+triggered it.
+
 ## Authentication
 
 Every request must present `Authorization: Bearer <token>`, checked against the single
@@ -148,6 +162,8 @@ and neither depends on the other holding. See
 
 - `api_server_port` — port the REST listener binds to *(default: 8090)*
 - `api_server_token` — bearer token required on every REST request
+- `APIServerJobStatusPort` — port the internal control-plane-only job-status gRPC service listens
+  on *(default: 8091)*
 - `clientmanager_api_host` / `clientmanager_api_port` — where to dial `clientmanager-api`
 - `clientmanager_admin_api_host` / `clientmanager_admin_api_port` — where to dial `clientmanager-admin-api` *(default port: 9501)*
 - `catalog_host` / `catalog_port` — where to dial `catalog`
@@ -162,8 +178,9 @@ and neither depends on the other holding. See
 ## Certificates
 
 Enrolls like any other mesh node (bootstrap credential → `certclient` → `issuer` operating cert) for
-its *outbound* gRPC calls to `clientmanager-api`/`catalog`. The REST listener itself is plain
-HTTP, guarded only by the bearer token above — it is not part of the mTLS mesh.
+its *outbound* gRPC calls to `clientmanager-api`/`catalog`/`policy-server`, and for the same
+identity's *inbound* job-status gRPC listener (above). The REST listener itself is plain HTTP,
+guarded only by the bearer token above — it is not part of the mTLS mesh.
 
 `api-server` is enrolled with `authz-role=control-plane` — required for its outbound calls to
 `clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server` to succeed at all, since

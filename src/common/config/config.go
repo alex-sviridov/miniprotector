@@ -115,6 +115,7 @@ type Config struct {
 	ClientManagerAPIHost             string
 	APIServerPort                    int
 	APIServerToken                   string
+	APIServerJobStatusPort           int
 	ClientManagerAdminAPIPort        int
 	ClientManagerAdminAPIHost        string
 	AdhocPolicyTimeoutSec            int
@@ -152,6 +153,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		IssuerPort:                       9200,
 		ClientManagerAPIPort:             9500,
 		APIServerPort:                    8090,
+		APIServerJobStatusPort:           8091,
 		OperatingCertTTLSec:              3600,
 		BootstrapCertRefreshIntervalSec:  86400,
 		BootstrapCertTTLSec:              7776000,
@@ -386,6 +388,13 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "api_server_token":
 			config.APIServerToken = value
 			foundFields["api_server_token"] = true
+		case "APIServerJobStatusPort":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid APIServerJobStatusPort value at line %d: %s", lineNum, value)
+			}
+			config.APIServerJobStatusPort = number
+			foundFields["APIServerJobStatusPort"] = true
 		case "PolicyFetchIntervalSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {

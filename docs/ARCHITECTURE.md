@@ -17,7 +17,7 @@ A backup system with intelligent deduplication and integrity verification.
 | log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; gates on a valid operating certificate, forwards the push body unmodified | Implemented (agent bundles, configures, and supervises the Vector process that ships to it) |
 | clientmanager-api | Read-only gRPC daemon exposing `client-manager`'s enrolled-client data (`ListClients`/`GetClient`), sharing its SQLite file the same way `issuer` already does | Implemented |
 | clientmanager-admin-api | CA-admin-equivalent gRPC writes (issue/re-enroll/revoke/unrevoke/description/attribute/SAN) onto the same database, packaged in clientmanager-api's container | Implemented |
-| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate | Implemented |
+| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate; also serves one inbound mTLS gRPC service, `JobStatusService`, polled by `policy-server`'s restore-cleanup sweep | Implemented |
 | web | Static Vue frontend over `api-server`'s REST API — this system's first browser UI; served by nginx, no mTLS identity of its own | Implemented |
 
 ## Control Plane vs. Agents
@@ -29,7 +29,7 @@ exercising this whole topology end to end.
 |---|---|---|
 | Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `policy-server`, `client-manager`, `issuer`, `clientmanager-api`, `clientmanager-admin-api`, `api-server` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
 | Runs where | On the CA host (`client-manager`, `issuer`, `clientmanager-api`, `clientmanager-admin-api`); `catalog`/`policy-server`/`api-server` run centrally, wherever each deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh, and `policy_server_host:9300` outbound for policy fetching; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, fetched by `agent` via `policyclient`); `clientmanager-api` serves `ListClients`/`GetClient` on `:9500` (mTLS); `clientmanager-admin-api` serves `AddClient`/`ReEnrollClient`/`RevokeClient`/`UnrevokeClient`/`UpdateDescription`/`UpdateAttributes`/`UpdateSANs` on `:9501` (mTLS) — a third holder of CA-admin-equivalent access, alongside `client-manager` and `issuer`, stated explicitly rather than left implicit; `api-server` serves this system's first REST (not gRPC) surface on `:8090` (plain HTTP, bearer-token authenticated), dialing `clientmanager-api`, `clientmanager-admin-api`, and `catalog` outbound over mTLS on their behalf — none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, fetched by `agent` via `policyclient`); `clientmanager-api` serves `ListClients`/`GetClient` on `:9500` (mTLS); `clientmanager-admin-api` serves `AddClient`/`ReEnrollClient`/`RevokeClient`/`UnrevokeClient`/`UpdateDescription`/`UpdateAttributes`/`UpdateSANs` on `:9501` (mTLS) — a third holder of CA-admin-equivalent access, alongside `client-manager` and `issuer`, stated explicitly rather than left implicit; `api-server` serves this system's first REST (not gRPC) surface on `:8090` (plain HTTP, bearer-token authenticated), dialing `clientmanager-api`, `clientmanager-admin-api`, `catalog`, `policy-server`, and `log-gateway` outbound over mTLS on their behalf, and also serves `GetPolicyJobStatus` on its own `:8091` (mTLS, role-gated to `control-plane`, polled by `policy-server`'s restore-cleanup sweep) — its first *inbound* mTLS surface, alongside those outbound ones — none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` and `agent` — `catalog`'s, `policy-server`'s, `clientmanager-api`'s, and `api-server`'s images are all among them, since each is deployed as an ordinary `agent`-managed enrolled node (see [Control Plane README](../deploy/control-plane/README.md)) |
 
 Each control-plane component above is enrolled with the `control-plane` authorization role;
@@ -77,13 +77,17 @@ otherwise be a purely operational cost, at the price of shared container-filesys
 the two binaries).
 
 `api-server` is control plane by role and, like `catalog`/`policy-server`, obtains its own mTLS
-identity as an ordinary `agent`-managed enrolled node — but only for its *outbound* calls to
-`clientmanager-api` and `catalog`. Its inbound side is this system's first REST (not gRPC) entry
-point: a plain-HTTP listener on its own port (`api_server_port`, default 8090), guarded by a single
-shared bearer token rather than mesh mTLS, for callers (browsers, admin tools) that don't hold a
-mesh client certificate. Each REST endpoint maps to exactly one backend gRPC call — no
-cross-service aggregation. See [api-server](components/api-server.md) and
-[REST API v1](api/rest-v1.md).
+identity as an ordinary `agent`-managed enrolled node — for its *outbound* calls to
+`clientmanager-api`, `clientmanager-admin-api`, `catalog`, `policy-server`, and `log-gateway`, and
+now also for one *inbound* gRPC service on that same identity: `JobStatusService`
+(`GetPolicyJobStatus`), on its own port (`APIServerJobStatusPort`, default 8091), mTLS-secured and
+role-gated to `control-plane` callers exactly like `policy-server`'s RPCs — polled by
+`policy-server`'s restore-cleanup sweep to learn whether a restore-verification job has finished.
+Its REST side remains this system's first REST (not gRPC) entry point: a plain-HTTP listener on its
+own port (`api_server_port`, default 8090), guarded by a single shared bearer token rather than mesh
+mTLS, for callers (browsers, admin tools) that don't hold a mesh client certificate. Each REST
+endpoint maps to exactly one backend gRPC call — no cross-service aggregation. See
+[api-server](components/api-server.md) and [REST API v1](api/rest-v1.md).
 
 A node's mTLS identity is obtained in two tiers, both via `certclient`: `bootstrap` redeems a
 one-time token minted by `client-manager` for `ca.crt` plus a long-lived `bootstrap.crt`/
