@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package jobstatusservice;
+
+option go_package = "./proto";
+
+import "google/protobuf/timestamp.proto";
+
+// JobStatusService is api-server's sole gRPC surface (its REST API remains
+// the deliberate non-mTLS surface for browsers/admin tools -- see
+// docs/components/api-server.md). It answers one question for
+// policy-server's restore-policy cleanup sweep: has a given job_id's Loki
+// event=finish line been observed? Restricted to the "control-plane" role.
+service JobStatusService {
+  rpc GetPolicyJobStatus(GetPolicyJobStatusRequest) returns (GetPolicyJobStatusResponse);
+}
+
+message GetPolicyJobStatusRequest {
+  string job_id = 1;
+  // Lower bound for the Loki query. api-server clamps this to at most
+  // maxJobsWindow (168h) before "now" -- a policy legitimately older than
+  // that is still searched, just over a narrower recent window, since a
+  // job that finishes at any point is always inside a future tick's
+  // window regardless of how old the policy is.
+  google.protobuf.Timestamp policy_created_at = 2;
+}
+
+message GetPolicyJobStatusResponse {
+  bool finished = 1;
+  // Set iff finished is true.
+  google.protobuf.Timestamp finished_at = 2;
+}

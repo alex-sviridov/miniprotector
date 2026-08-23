@@ -660,7 +660,16 @@ type Policy struct {
 	// sends this checkbox unconditionally on every submit (see
 	// docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md),
 	// so it is simply inert for a verify submission.
-	Overwrite     bool `protobuf:"varint,21,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
+	Overwrite bool `protobuf:"varint,21,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
+	// "restore" policy only. Generated once by policy-server at CreatePolicy
+	// time (stable for the policy's whole lifecycle -- a restore/verify task
+	// now runs exactly once, so there is no per-attempt id to distinguish).
+	// Shared with agent (which uses it verbatim as rwfs's --job-id) and with
+	// policy-server's own "created"/"deleted" lifecycle log lines, so every
+	// Loki line for one restore policy's execution correlates under this one
+	// id. Not settable via CreatePolicyRequest -- server-computed, like id
+	// (field 8).
+	JobId         string `protobuf:"bytes,22,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -819,6 +828,13 @@ func (x *Policy) GetOverwrite() bool {
 		return x.Overwrite
 	}
 	return false
+}
+
+func (x *Policy) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
 }
 
 type CreatePolicyRequest struct {
@@ -1213,7 +1229,7 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\tdest_path\x18\x04 \x01(\tR\bdestPath\x12\x1d\n" +
 	"\n" +
 	"not_before\x18\x05 \x01(\x03R\tnotBefore\x12\x1b\n" +
-	"\tnot_after\x18\x06 \x01(\x03R\bnotAfter\"\x9c\x06\n" +
+	"\tnot_after\x18\x06 \x01(\x03R\bnotAfter\"\xb3\x06\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -1236,7 +1252,8 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\fdestinations\x18\x11 \x03(\tR\fdestinations\x126\n" +
 	"\x05rules\x18\x13 \x03(\v2 .policyserverservice.RestoreRuleR\x05rules\x12\x12\n" +
 	"\x04mode\x18\x14 \x01(\tR\x04mode\x12\x1c\n" +
-	"\toverwrite\x18\x15 \x01(\bR\toverwriteJ\x04\b\a\x10\bJ\x04\b\v\x10\fJ\x04\b\x12\x10\x13R\vdestinationR\bhostnameR\fsource_store\"\xbf\x04\n" +
+	"\toverwrite\x18\x15 \x01(\bR\toverwrite\x12\x15\n" +
+	"\x06job_id\x18\x16 \x01(\tR\x05jobIdJ\x04\b\a\x10\bJ\x04\b\v\x10\fJ\x04\b\x12\x10\x13R\vdestinationR\bhostnameR\fsource_store\"\xbf\x04\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +

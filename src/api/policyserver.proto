@@ -184,6 +184,15 @@ message Policy {
   // docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md),
   // so it is simply inert for a verify submission.
   bool overwrite = 21;
+  // "restore" policy only. Generated once by policy-server at CreatePolicy
+  // time (stable for the policy's whole lifecycle -- a restore/verify task
+  // now runs exactly once, so there is no per-attempt id to distinguish).
+  // Shared with agent (which uses it verbatim as rwfs's --job-id) and with
+  // policy-server's own "created"/"deleted" lifecycle log lines, so every
+  // Loki line for one restore policy's execution correlates under this one
+  // id. Not settable via CreatePolicyRequest -- server-computed, like id
+  // (field 8).
+  string job_id = 22;
 }
 
 message CreatePolicyRequest {
