@@ -113,3 +113,64 @@ func TestSweepRestorePolicies_IgnoresNonRestorePolicies(t *testing.T) {
 	_, err := os.Stat(filepath.Join(dir, "storage", "storage-for-bwfs-east.json"))
 	require.NoError(t, err, "the storage policy must be untouched")
 }
+
+// writeLegacyRestorePolicy writes a restore-policy JSON file directly to
+// disk with no "job_id" key at all -- reproducing a policy written before
+// RestorePolicy carried a JobID (rather than one created through
+// CreatePolicy, which always generates one) -- and reloads the cache so it
+// picks the file up.
+func writeLegacyRestorePolicy(t *testing.T, srv *policyServerServer, dir, storageID, name string) {
+	t.Helper()
+	content := `{
+		"metadata": {"name": "` + name + `"},
+		"client_filters": {"hostnames": ["web-01"]},
+		"storage_policy_id": "` + storageID + `",
+		"rules": [{"path": "/var/www", "include": true}]
+	}`
+	writePolicyFile(t, filepath.Join(dir, "restore"), name+".json", content)
+	require.NoError(t, srv.cache.Reload(dir, testLogger()))
+}
+
+func TestSweepRestorePolicies_SkipsLegacyPolicyWithNoJobID(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+	writeLegacyRestorePolicy(t, srv, dir, storageID, "legacy-no-jobid")
+
+	logger, buf := testLoggerWithBuffer()
+	fake := &fakeJobStatusClient{resp: &pb.GetPolicyJobStatusResponse{Finished: true, FinishedAt: timestamppb.New(time.Now().Add(-time.Hour))}}
+	srv.sweepRestorePolicies(context.Background(), fake, time.Minute, logger)
+
+	assert.Empty(t, fake.calls, "must never call GetPolicyJobStatus for a policy with no job_id")
+	_, err := os.Stat(filepath.Join(dir, "restore", "legacy-no-jobid.json"))
+	require.NoError(t, err, "the legacy policy must survive the sweep")
+	assert.Contains(t, buf.String(), "no job_id")
+	assert.NotContains(t, buf.String(), `"level":"ERROR"`, "a missing job_id is an expected state, not an error")
+}
+
+func TestSweepRestorePolicies_DoesNotLogDeletedWhenDeletePolicyFails(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+	p := createTestRestorePolicy(t, srv, "web01-emergency", storageID)
+
+	// Remove the on-disk file out from under the cache so DeletePolicy's
+	// os.Remove(existing.Path()) fails, while the cache (loaded at
+	// createTestRestorePolicy time) still thinks the policy exists --
+	// forcing DeletePolicy to return an error without needing to touch
+	// directory permissions.
+	found, ok := srv.cache.FindByID(p.Id)
+	require.True(t, ok)
+	require.NoError(t, os.Remove(found.Path()))
+
+	logger, buf := testLoggerWithBuffer()
+	fake := &fakeJobStatusClient{resp: &pb.GetPolicyJobStatusResponse{
+		Finished:   true,
+		FinishedAt: timestamppb.New(time.Now().Add(-time.Hour)),
+	}}
+	srv.sweepRestorePolicies(context.Background(), fake, time.Minute, logger)
+
+	out := buf.String()
+	assert.NotContains(t, out, `"event":"deleted"`, "must not claim the policy was deleted when DeletePolicy failed")
+	assert.Contains(t, out, "DeletePolicy failed")
+}

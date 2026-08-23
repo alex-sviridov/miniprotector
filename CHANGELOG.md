@@ -15,7 +15,12 @@ timeline. `policy-server` also gained a background sweep (`RestoreCleanupInterva
 `RestoreCleanupGracePeriodSec` config keys) that polls a new mTLS `GetPolicyJobStatus` RPC —
 `api-server`'s first gRPC listener, restricted to the `control-plane` role — and automatically
 deletes a restore policy once its job is confirmed finished and a grace period has elapsed, so a
-completed restore policy no longer needs manual cleanup. See
+completed restore policy no longer needs manual cleanup. A legacy restore policy predating the
+`job_id` field is now skipped by the sweep (logged once per tick at `Info`, not `Error` — an empty
+`job_id` can never resolve through `GetPolicyJobStatus`, so treating it as a retryable failure was
+both permanent log spam and never actually eligible for automatic cleanup), and `event="deleted"`
+is now logged only after `DeletePolicy` actually succeeds, so the log timeline never claims a
+deletion that failed. See
 `docs/superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md` and the new
 `docs/protocols/jobstatus.md`.
 

@@ -193,13 +193,18 @@ answers whether a given `job_id` has finished (see below).
 A background routine, `runRestoreCleanup`, ticks every `RestoreCleanupIntervalSec` (config key,
 default `300` = 5m) and calls `sweepRestorePolicies`, which checks every cached `"restore"`-type
 policy's `job_id` against `api-server`'s `GetPolicyJobStatus` RPC (see
-[api-server's Job-Status gRPC Listener](./api-server.md#job-status-grpc-listener)). A policy whose job hasn't
-finished, or whose query fails, is left alone -- a failed query is logged and retried on the next
-tick, the same best-effort direction `DeletePolicy`'s own check-in cleanup already takes. Once a
-job is reported finished, the policy is kept for `RestoreCleanupGracePeriodSec` (config key,
-default `900` = 15m) past its finish time -- giving any still-in-flight status reads a window to
-observe it -- and then deleted via `policy-server`'s own `DeletePolicy`, logging `event="deleted"`
-with the policy's `id` and `job_id`. This is the only case where `policy-server` deletes a policy on
+[api-server's Job-Status gRPC Listener](./api-server.md#job-status-grpc-listener)). A policy with no
+`job_id` at all -- one written to disk before this field existed -- is skipped before the RPC is even
+attempted (an empty `job_id` would otherwise fail every query forever) and logged once per tick at
+`Info` level rather than `Error`, since it's an expected steady state, not an operational failure; such
+a policy is never cleaned up automatically and must be deleted manually if it's no longer needed. A
+policy whose job hasn't finished, or whose query fails, is left alone -- a failed query is logged and
+retried on the next tick, the same best-effort direction `DeletePolicy`'s own check-in cleanup already
+takes. Once a job is reported finished, the policy is kept for `RestoreCleanupGracePeriodSec` (config
+key, default `900` = 15m) past its finish time -- giving any still-in-flight status reads a window to
+observe it -- and then deleted via `policy-server`'s own `DeletePolicy`; only once that delete
+succeeds is `event="deleted"` logged with the policy's `id` and `job_id`, so the log timeline never
+claims a deletion that didn't happen. This is the only case where `policy-server` deletes a policy on
 its own initiative rather than in response to an operator's `DeletePolicy` call.
 
 This single purpose makes `policy-server` a gRPC client as well as a server: alongside serving
