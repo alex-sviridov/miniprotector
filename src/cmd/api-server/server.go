@@ -65,6 +65,7 @@ type server struct {
 	aggregator         *jobAggregator
 	logger             *slog.Logger
 	adhocPolicyTimeout time.Duration
+	pb.UnimplementedJobStatusServiceServer
 }
 
 func newServer(cm clientManagerClient, catalog catalogQueryClient, policy policyServiceClient, logger *slog.Logger) *server {
