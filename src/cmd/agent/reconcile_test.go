@@ -685,6 +685,32 @@ func TestLogExecOutcome_FailureWithoutExitErrorOmitsExitCode(t *testing.T) {
 	assert.False(t, hasExitCode, "a non-exec.ExitError failure must not fabricate an exit_code field")
 }
 
+func TestLogExecOutcome_RestorePolicyOmitsStartButKeepsFinish(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "restore:web01-emergency", JobID: "restore:web01-emergency:1700000000"}
+
+	logExecStart(logger, p)
+	logExecCompletion(logger, p, nil, 250*time.Millisecond)
+
+	out := buf.String()
+	assert.NotContains(t, out, `"event":"start"`, "policy-server's own created event is the start marker now")
+	assert.Contains(t, out, `"event":"finish"`)
+	assert.Contains(t, out, `"status":"success"`)
+}
+
+func TestLogExecOutcome_VerifyPolicyOmitsStartButKeepsFinish(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "verify:web01-emergency", JobID: "verify:web01-emergency:1700000000"}
+
+	logExecStart(logger, p)
+	logExecCompletion(logger, p, errors.New("boom"), time.Second)
+
+	out := buf.String()
+	assert.NotContains(t, out, `"event":"start"`)
+	assert.Contains(t, out, `"event":"finish"`)
+	assert.Contains(t, out, `"status":"failure"`)
+}
+
 func TestRun_LogsStartAndCompletionForEveryDispatchedExec(t *testing.T) {
 	testPolicies := []Policy{{ID: "test-policy", Binary: "true", JobID: "test-policy:456", Interval: time.Hour}}
 

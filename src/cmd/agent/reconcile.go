@@ -148,16 +148,28 @@ func isBackupPolicy(p Policy) bool {
 	return strings.HasPrefix(p.ID, "backup:")
 }
 
+// isRestorePolicy reports whether p is a restore/verify task -- their
+// event=start marker comes from policy-server's own "created" log line
+// now (see restore_cleanup.go/write.go), not from agent, so agent must
+// not also emit one. Unlike isBackupPolicy, event=finish is unaffected --
+// agent's own completion line remains the sole finish signal for these
+// kinds.
+func isRestorePolicy(p Policy) bool {
+	return strings.HasPrefix(p.ID, "restore:") || strings.HasPrefix(p.ID, "verify:")
+}
+
 // logExecStart logs that agent is about to dispatch p's exec. Called
 // immediately before execute for both the synchronous and background
 // dispatch paths in run(), so agent's own log always shows an exec
 // starting even if it never finishes (e.g. agent is killed mid-exec).
-// event=start is added for every policy except scheduled backups --
-// brfs's own "Backup reader started" line is that job kind's sole
-// event=start source, so this line staying untagged for backups is
-// deliberate, not an oversight (see isBackupPolicy).
+// event=start is added for every policy except scheduled backups and
+// restore/verify tasks -- brfs's own "Backup reader started" line is
+// backups' sole event=start source (see isBackupPolicy), and
+// policy-server's own "created" line is restore/verify's (see
+// isRestorePolicy), so this line staying untagged for both is
+// deliberate, not an oversight.
 func logExecStart(logger *slog.Logger, p Policy) {
-	if isBackupPolicy(p) {
+	if isBackupPolicy(p) || isRestorePolicy(p) {
 		logger.Info("policy execution started", "policy", p.ID, "binary", p.Binary, "job_id", p.JobID)
 		return
 	}
