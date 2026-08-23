@@ -47,6 +47,10 @@ type cachedPolicy struct {
 	Rules     []RestoreRule `json:"rules,omitempty"`
 	Mode      string        `json:"mode,omitempty"`
 	Overwrite bool          `json:"overwrite,omitempty"`
+	// "restore" policy only, empty for every other type. Generated once by
+	// policy-server at CreatePolicy time and used verbatim as the
+	// dispatched rwfs exec's --job-id -- see restore.go's restoreTasks.
+	JobID string `json:"job_id,omitempty"`
 	// DisabledAt is used by both backup and storage policies -- see backup.go's
 	// backupTasks and storage.go's storageTasks, which both skip policies with
 	// disabled_at in the past.

@@ -40,17 +40,6 @@ func restoreTaskID(policyName, mode string) string {
 	return fmt.Sprintf("verify:%s", policyName)
 }
 
-// restoreJobID is the --job-id passed to the dispatched rwfs subcommand
-// for one run -- includes a timestamp so a retry after failure gets a
-// distinct id, mirroring backup.go's backupJobID. Same prefix convention
-// as restoreTaskID.
-func restoreJobID(policyName, mode string, now time.Time) string {
-	if mode == "restore" {
-		return fmt.Sprintf("restore:%s:%d", policyName, now.Unix())
-	}
-	return fmt.Sprintf("verify:%s:%d", policyName, now.Unix())
-}
-
 // rulesStdinPayload is the JSON shape piped to `rwfs verify --rules-stdin`
 // / `rwfs restore --rules-stdin` -- {"rules": [...]}, matching
 // policy-server's RestorePolicy.Rules field name exactly (see
@@ -122,7 +111,7 @@ func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool
 			continue
 		}
 
-		jobID := restoreJobID(p.Name, p.Mode, time.Now())
+		jobID := p.JobID
 		args := []string{"verify", p.Destinations[0], "--rules-stdin", "--job-id", jobID}
 		if p.Mode == "restore" {
 			args = []string{"restore", p.Destinations[0], "--rules-stdin", "--job-id", jobID}
@@ -139,7 +128,7 @@ func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool
 			Stdin:      payload,
 			Background: true,
 			Due: func(s PolicyState, now time.Time) bool {
-				return s.LastSuccessAt == nil
+				return s.LastAttemptAt == nil
 			},
 		})
 	}
