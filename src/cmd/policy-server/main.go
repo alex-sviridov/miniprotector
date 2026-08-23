@@ -87,7 +87,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	jobStatusConn, err := connection.Connect(conf.APIServerHost, conf.APIServerJobStatusPort, conf.ConnectionTimeOutSec, certsDir)
+	jobStatusConn, err := connection.DialNonBlocking(conf.APIServerHost, conf.APIServerJobStatusPort, certsDir)
 	if err != nil {
 		logger.Error("connect to api-server job-status service failed", "error", err)
 		os.Exit(1)
