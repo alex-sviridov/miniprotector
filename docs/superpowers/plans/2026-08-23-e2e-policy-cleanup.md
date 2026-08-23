@@ -16,7 +16,8 @@
 - No `globalTeardown` and no suite-level sweep — cleanup is strictly per-test, via the `trackPolicy` fixture (see the spec's "Discovered: rejected approaches").
 - Do not retroactively delete the pre-existing leftover files already sitting in `demo/policy-server/policies/restore/` — out of scope for this plan (they're root-owned artifacts of the bug being fixed here, not something this plan needs to clean up).
 - Every verification step in this plan runs real Playwright specs against a live demo stack. Before starting Task 1, run `make demo-up` from the repo root and leave it running for the whole plan — these are integration tests against real backend state, not mocked unit tests.
-- Follow this repo's `.claude/CLAUDE.md` doc rule for feature changes... this plan is test-infrastructure-only (see the spec's "Documentation Impact": none), so no `docs/components/`, `README.md`, or `docs/ARCHITECTURE.md` updates are needed. Do still add a `CHANGELOG.md` entry before this branch merges to `main` (handled in Task 7).
+- **This work happens in a git worktree.** The live demo stack's `policy-server` container has its `/data/policies` directory bind-mounted from `/home/alex/miniprotector/demo/policy-server/policies` (confirmed via `docker inspect demo-policy-server-1`) — the original checkout, not the worktree. Every verification `ls`/`diff` step in this plan already uses that absolute path for this reason; keep using it in any ad-hoc verification too. All *code* changes (the `.js`/`.gitignore` edits) still target the worktree's own relative paths, unaffected by this.
+- Follow this repo's `.claude/CLAUDE.md` doc rule for feature changes... this plan is test-infrastructure-only (see the spec's "Documentation Impact": none), so no `docs/components/`, `README.md`, or `docs/ARCHITECTURE.md` updates are needed. Do still add a `CHANGELOG.md` entry before this branch merges to `main` (handled in Task 6).
 
 ---
 
@@ -235,9 +236,9 @@ with:
 Run:
 
 ```bash
-ls demo/policy-server/policies/backup/*.json demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t1a.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t1a.txt
 cd web && npx playwright test restore-cart.spec.js && cd ..
-ls demo/policy-server/policies/backup/*.json demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t1a.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t1a.txt
 diff /tmp/before-t1a.txt /tmp/after-t1a.txt
 ```
 
@@ -248,11 +249,11 @@ Expected: the Playwright test passes, and `diff` produces no output — `restore
 Run:
 
 ```bash
-ls demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/before-t1b.txt
-ls demo/policy-server/policies/restore/*.json 2>/dev/null | wc -l > /tmp/before-t1b-restore-count.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/before-t1b.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | wc -l > /tmp/before-t1b-restore-count.txt
 cd web && npx playwright test restore-verify.spec.js && cd ..
-ls demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/after-t1b.txt
-ls demo/policy-server/policies/restore/*.json 2>/dev/null | wc -l > /tmp/after-t1b-restore-count.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/after-t1b.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | wc -l > /tmp/after-t1b-restore-count.txt
 diff /tmp/before-t1b.txt /tmp/after-t1b.txt
 diff /tmp/before-t1b-restore-count.txt /tmp/after-t1b-restore-count.txt
 ```
@@ -565,9 +566,9 @@ Replace it with:
 Run:
 
 ```bash
-ls demo/policy-server/policies/backup/*.json demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t2.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t2.txt
 cd web && npx playwright test restore-verify.spec.js && cd ..
-ls demo/policy-server/policies/backup/*.json demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t2.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t2.txt
 diff /tmp/before-t2.txt /tmp/after-t2.txt
 ```
 
@@ -756,9 +757,9 @@ Replace the whole `try { ... } finally { ... }` block with:
 Run:
 
 ```bash
-ls demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t3.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t3.txt
 cd web && npx playwright test restore-content.spec.js && cd ..
-ls demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t3.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t3.txt
 diff /tmp/before-t3.txt /tmp/after-t3.txt
 ```
 
@@ -939,9 +940,9 @@ with:
 Run:
 
 ```bash
-ls demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/before-t4.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/before-t4.txt
 cd web && npx playwright test live-job-updates.spec.js && cd ..
-ls demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/after-t4.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json 2>/dev/null | sort > /tmp/after-t4.txt
 diff /tmp/before-t4.txt /tmp/after-t4.txt
 ```
 
@@ -1020,7 +1021,7 @@ Expected: all services show as running. If not, run `make demo-up` first and wai
 Run:
 
 ```bash
-ls demo/policy-server/policies/backup/*.json demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t6.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/before-t6.txt
 git status --short
 ```
 
@@ -1041,7 +1042,7 @@ Expected: all 5 specs pass — `smoke`, `restore-cart`, `restore-verify`, `resto
 Run:
 
 ```bash
-ls demo/policy-server/policies/backup/*.json demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t6.txt
+ls /home/alex/miniprotector/demo/policy-server/policies/backup/*.json /home/alex/miniprotector/demo/policy-server/policies/restore/*.json 2>/dev/null | sort > /tmp/after-t6.txt
 diff /tmp/before-t6.txt /tmp/after-t6.txt
 git status --short
 ```
