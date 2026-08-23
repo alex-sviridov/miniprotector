@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-23 — E2E policy cleanup fixture
+
+Fixed a leaked e2e-test policy: `restore-verify.spec.js` created a verify-mode restore policy in
+its first `test.step` but never deleted it, unlike its sibling steps — the cause of the untracked
+files accumulating in `demo/policy-server/policies/restore/`. Replaced every manually-written
+`try/finally`-delete cleanup block across `web/e2e` with a shared `trackPolicy` Playwright fixture
+(`web/e2e/helpers/test.js`) that deletes every policy a test creates once that test finishes, pass
+or fail — the same guarantee Go's `t.Cleanup` already gave `src/e2e`. This also closes a second,
+previously invisible leak: the ad-hoc backup policies created by the "Run now" UI flow
+(`seedRestoreCartCatalogData`, `runAdhocBackupPolicy`) are now cleaned up too, not just hidden from
+`git status` by a `.gitignore` pattern.
+
 ## 2026-08-22 — Role-based gRPC authorization
 
 Any node holding a valid operating certificate — including the least-privileged thing in the
