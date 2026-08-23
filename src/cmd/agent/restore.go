@@ -1,6 +1,7 @@
 // restore.go derives agent's dynamic "restore verification" tasks from
-// policies-cache.json -- one task per cached "restore" policy, one-shot:
-// due until it succeeds once, never again after. See
+// policies-cache.json -- one task per cached "restore" policy, run exactly
+// once ever: due until it's been attempted once, success or failure, never
+// again after -- see PolicyState.LastAttemptAt. See
 // docs/superpowers/specs/2026-08-10-restore-policy-verification-design.md.
 package main
 
