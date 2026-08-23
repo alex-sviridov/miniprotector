@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -293,4 +294,32 @@ func TestRestorePolicy_ToProtoIncludesModeAndOverwrite(t *testing.T) {
 
 	assert.Equal(t, "restore", pp.GetMode())
 	assert.True(t, pp.GetOverwrite())
+}
+
+func TestRestorePolicy_ToProtoCarriesJobID(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase: PolicyBase{Metadata: Metadata{Name: "x"}},
+		JobID:      "restore:x:1700000000",
+	}
+	pp := p.ToProto(false)
+	assert.Equal(t, "restore:x:1700000000", pp.JobId)
+}
+
+func TestRestorePolicy_CloneCarriesJobID(t *testing.T) {
+	p := &RestorePolicy{
+		PolicyBase: PolicyBase{Metadata: Metadata{Name: "x"}},
+		JobID:      "restore:x:1700000000",
+	}
+	cloned := p.Clone().(*RestorePolicy)
+	assert.Equal(t, "restore:x:1700000000", cloned.JobID)
+}
+
+func TestRestorePolicy_JobIDRoundTripsThroughJSON(t *testing.T) {
+	p := &RestorePolicy{JobID: "verify:x:1700000000"}
+	data, err := json.Marshal(p)
+	require.NoError(t, err)
+
+	parsed, err := parseRestorePolicyJSON(data)
+	require.NoError(t, err)
+	assert.Equal(t, "verify:x:1700000000", parsed.(*RestorePolicy).JobID)
 }
