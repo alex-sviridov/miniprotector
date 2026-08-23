@@ -73,11 +73,12 @@ func (s *server) handleJobLogsStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Includes rwfs, same as handleGetJobLogs (jobs.go) -- this endpoint
-	// returns every raw line for job_id verbatim, no start/finish pairing,
-	// so rwfs's lines (which never carry event/status) are still useful
-	// signal here.
-	query := fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="%s"`, jobID)
+	// Includes rwfs and policy-server, same as handleGetJobLogs (jobs.go) --
+	// this endpoint returns every raw line for job_id verbatim, no
+	// start/finish pairing, so rwfs's lines (which never carry event/status)
+	// and policy-server's own created/deleted lines for a restore/verify job
+	// are still useful signal here.
+	query := fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="%s"`, jobID)
 	err = s.lokiTail.Tail(ctx, query, start, func(msg lokiTailMessage) error {
 		for _, stream := range msg.Streams {
 			for _, v := range stream.Values {
