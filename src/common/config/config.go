@@ -120,6 +120,9 @@ type Config struct {
 	ClientManagerAdminAPIHost        string
 	AdhocPolicyTimeoutSec            int
 	CheckinRetentionSec              int
+	APIServerHost                    string
+	RestoreCleanupIntervalSec        int
+	RestoreCleanupGracePeriodSec     int
 }
 
 type contextKey string
@@ -169,6 +172,8 @@ func ParseConfig(configPath string) (*Config, error) {
 		ConnectionTimeOutSec:             30,
 		AdhocPolicyTimeoutSec:            3600,
 		CheckinRetentionSec:              86400,
+		RestoreCleanupIntervalSec:        300,
+		RestoreCleanupGracePeriodSec:     900,
 	}
 	foundFields := make(map[string]bool)
 
@@ -436,6 +441,23 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CheckinRetentionSec = number
 			foundFields["CheckinRetentionSec"] = true
+		case "api_server_host":
+			config.APIServerHost = value
+			foundFields["api_server_host"] = true
+		case "RestoreCleanupIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RestoreCleanupIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.RestoreCleanupIntervalSec = number
+			foundFields["RestoreCleanupIntervalSec"] = true
+		case "RestoreCleanupGracePeriodSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RestoreCleanupGracePeriodSec value at line %d: %s", lineNum, value)
+			}
+			config.RestoreCleanupGracePeriodSec = number
+			foundFields["RestoreCleanupGracePeriodSec"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

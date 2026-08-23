@@ -180,6 +180,37 @@ policy — decommissioned, or no longer matched — simply ages out of that poli
 its one row passes the retention window. See
 [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md).
 
+### Restore policy lifecycle
+
+A `"restore"` policy is one-shot: it exists only long enough for the targeted node to pick it up
+and run it, then it deletes itself. `CreatePolicy` generates a stable `job_id` for the policy at
+creation time -- `restorePolicyJobID(name, mode, now)`, prefixed `restore:` when `mode == "restore"`
+(an `rwfs` restore) or `verify:` otherwise -- and logs `event="created"` (with the policy's `id` and
+`job_id`) once the policy is written and reloaded into the cache. That `job_id` is what correlates
+the whole lifecycle: `agent` reports job progress under it, and `api-server`'s `JobStatusService`
+(see [Job Status Service protocol](../protocols/job-status-service.md)) answers whether a given
+`job_id` has finished.
+
+A background routine, `runRestoreCleanup`, ticks every `RestoreCleanupIntervalSec` (config key,
+default `300` = 5m) and calls `sweepRestorePolicies`, which checks every cached `"restore"`-type
+policy's `job_id` against `api-server`'s `GetPolicyJobStatus` RPC (see
+[api-server's Job-Status gRPC Listener](./api-server.md#job-status-grpc-listener)). A policy whose job hasn't
+finished, or whose query fails, is left alone -- a failed query is logged and retried on the next
+tick, the same best-effort direction `DeletePolicy`'s own check-in cleanup already takes. Once a
+job is reported finished, the policy is kept for `RestoreCleanupGracePeriodSec` (config key,
+default `900` = 15m) past its finish time -- giving any still-in-flight status reads a window to
+observe it -- and then deleted via `policy-server`'s own `DeletePolicy`, logging `event="deleted"`
+with the policy's `id` and `job_id`. This is the only case where `policy-server` deletes a policy on
+its own initiative rather than in response to an operator's `DeletePolicy` call.
+
+This single purpose makes `policy-server` a gRPC client as well as a server: alongside serving
+`PolicyService` itself (as it always has), it dials `api-server`'s `JobStatusService` at
+`api_server_host` / `APIServerJobStatusPort` (config keys; the latter is defined once, in
+`api-server`'s own config, and shared here as a second consumer -- the same pattern
+`policy_server_host`/`policy_server_port` already use in reverse, for `api-server`-as-client of
+`policy-server`) over the same mTLS mesh connection every other client uses. See
+[Design: Restore Policy Lifecycle](../superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md).
+
 ### Bootstrap-refresh cert status tracking
 
 Every `GetPolicies` call also records the caller's `bootstrap_refresh_last_error` /
@@ -207,6 +238,12 @@ and serialize as `-62135596800` instead of being omitted. See
   9300)*
 - `CheckinRetentionSec` — how long a check-in row survives with no re-poll before the cleanup
   routine removes it *(default: 86400)*
+- `api_server_host` / `APIServerJobStatusPort` — where `policy-server`'s restore-cleanup sweep dials
+  `api-server`'s `JobStatusService` to ask whether a restore policy's job has finished *(default
+  port: 8091, defined once in `api-server`'s own config)*
+- `RestoreCleanupIntervalSec` — how often the restore-cleanup sweep runs *(default: 300)*
+- `RestoreCleanupGracePeriodSec` — how long a finished restore policy is kept before it's deleted
+  *(default: 900)*
 
 ## Building
 
@@ -219,8 +256,11 @@ make policy-server
 - [issuer](./issuer.md) — mints the operating certificates whose embedded attribute extension
   `policy-server` reads
 - [policyclient](./policyclient.md) — fetches `GetPolicies` on `agent`'s `policy-update` schedule
+- [api-server](./api-server.md) — the `JobStatusService` `policy-server`'s restore-cleanup sweep
+  dials as a client
 - [Policy Server Protocol](../protocols/policy-server.md)
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
 - [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md)
 - [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
+- [Design: Restore Policy Lifecycle](../superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md)
 - [Architecture](../ARCHITECTURE.md)

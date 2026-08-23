@@ -87,6 +87,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	jobStatusConn, err := connection.Connect(conf.APIServerHost, conf.APIServerJobStatusPort, conf.ConnectionTimeOutSec, certsDir)
+	if err != nil {
+		logger.Error("connect to api-server job-status service failed", "error", err)
+		os.Exit(1)
+	}
+	defer jobStatusConn.Close()
+	jobStatusClient := pb.NewJobStatusServiceClient(jobStatusConn)
+
 	srv := NewPolicyServerServer(cache, policiesDir, logger, checkins)
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -99,6 +107,11 @@ func main() {
 	}()
 
 	go runCheckinCleanup(signalCtx, checkins, checkinCleanupInterval, time.Duration(conf.CheckinRetentionSec)*time.Second, logger)
+
+	go srv.runRestoreCleanup(signalCtx, jobStatusClient,
+		time.Duration(conf.RestoreCleanupIntervalSec)*time.Second,
+		time.Duration(conf.RestoreCleanupGracePeriodSec)*time.Second,
+		logger)
 
 	logger.Info("policy-server started", "port", arguments.Port, "policies_dir", policiesDir)
 
