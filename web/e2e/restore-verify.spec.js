@@ -1,10 +1,10 @@
 import { execSync } from 'node:child_process'
-import { test, expect } from '@playwright/test'
+import { test, expect } from './helpers/test.js'
 import { seedRestoreCartCatalogData, waitForJobSuccess, waitForJobState, COMPOSE_FILE } from './helpers/policySeeding.js'
 
 test.describe.configure({ mode: 'serial' })
 
-test('restore verification', async ({ page, context }) => {
+test('restore verification', async ({ page, context, trackPolicy }) => {
   // Seeding (its own real backup job) + this scenario's own restore job +
   // the log-line wait each poll a real backend interval in sequence -- the
   // task brief documents the full run as taking "up to ~3 minutes," which
@@ -20,7 +20,7 @@ test('restore verification', async ({ page, context }) => {
     localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
   })
 
-  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page)
+  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page, trackPolicy)
   const filePath = `${dirPath}/${files[0]}`
   const segments = dirPath.split('/').filter(Boolean)
 

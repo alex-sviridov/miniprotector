@@ -1,14 +1,14 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './helpers/test.js'
 import { seedRestoreCartCatalogData } from './helpers/policySeeding.js'
 
 test.describe.configure({ mode: 'serial' })
 
-test('restore cart selection', async ({ page, context }) => {
+test('restore cart selection', async ({ page, context, trackPolicy }) => {
   await context.addInitScript(() => {
     localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
   })
 
-  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page)
+  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page, trackPolicy)
   const [firstFile, secondFile] = files
   const segments = dirPath.split('/').filter(Boolean) // ['var', 'lib', 'dbdata']
 
