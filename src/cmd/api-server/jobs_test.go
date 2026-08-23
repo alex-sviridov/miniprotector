@@ -22,6 +22,7 @@ type fakeLokiClient struct {
 	lastStart time.Time
 	lastEnd   time.Time
 	lastLimit int
+	lastQuery string
 }
 
 func (f *fakeLokiClient) QueryRange(ctx context.Context, query string, start, end time.Time, limit int) ([]lokiStream, error) {
@@ -29,6 +30,7 @@ func (f *fakeLokiClient) QueryRange(ctx context.Context, query string, start, en
 	f.lastStart = start
 	f.lastEnd = end
 	f.lastLimit = limit
+	f.lastQuery = query
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -456,6 +458,8 @@ func TestHandleGetJobLogs_SelectorIncludesPolicyServer(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 1, fake.calls, "must have queried the widened selector exactly")
+	assert.Equal(t, `{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:x:1"`, fake.lastQuery,
+		"must have queried the widened selector's exact content, not just some query -- byQuery returns a zero-value match for any unrecognized key, so this is the only assertion that actually pins the selector string")
 }
 
 func TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp(t *testing.T) {
