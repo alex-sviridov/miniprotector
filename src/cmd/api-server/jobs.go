@@ -174,6 +174,20 @@ func (a *jobEventAccumulator) ApplyStart(e jobEventLine) jobDTO {
 	return *j
 }
 
+// ApplyCreated folds one event=created line in (policy-server's "restore
+// policy created, waiting for client to connect" log) -- like ApplyStart,
+// it seeds StartedAt/State, but unlike ApplyStart it never sets SourceHost:
+// the line's own hostname is policy-server's, not the node that will
+// eventually execute the restore, so attributing the job to it here would
+// be wrong. SourceHost for restore/verify comes from the finish line
+// instead -- see ApplyFinish.
+func (a *jobEventAccumulator) ApplyCreated(e jobEventLine) jobDTO {
+	j := a.get(e.JobID)
+	ts := e.Timestamp
+	j.StartedAt = &ts
+	return *j
+}
+
 // ApplyFinish folds one event=finish line in, returning the affected job's
 // current summary. For kind=backup, StoreHost comes from the finish
 // line's hostname (bwfs, the destination) -- every other kind leaves it
@@ -186,6 +200,9 @@ func (a *jobEventAccumulator) ApplyFinish(e jobEventLine) jobDTO {
 	if j.Kind == "backup" {
 		host := e.Hostname
 		j.StoreHost = &host
+	}
+	if j.Kind == "restore" || j.Kind == "verify" {
+		j.SourceHost = e.Hostname
 	}
 	return *j
 }

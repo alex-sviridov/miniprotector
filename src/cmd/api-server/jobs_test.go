@@ -716,3 +716,28 @@ func TestHandleGetJobLogs_EndingBeforeAtWindowFloorReturnsEmptyWithoutQueryingLo
 	assert.Equal(t, false, body["has_more"])
 	assert.Equal(t, 0, fake.calls, "must not query Loki with an inverted/empty range")
 }
+
+func TestApplyCreated_SeedsStartedAtAndInProgressWithoutSourceHost(t *testing.T) {
+	acc := newJobEventAccumulator()
+	got := acc.ApplyCreated(jobEventLine{JobID: "restore:x:1", Hostname: "policy-server-1", Timestamp: 1000, Status: ""})
+
+	assert.Equal(t, "restore", got.Kind)
+	assert.Equal(t, "in_progress", got.State)
+	require.NotNil(t, got.StartedAt)
+	assert.Equal(t, int64(1000), *got.StartedAt)
+	assert.Empty(t, got.SourceHost, "created event must never attribute the job to policy-server's own hostname")
+}
+
+func TestApplyFinish_SetsSourceHostForRestoreAndVerifyKinds(t *testing.T) {
+	for _, jobID := range []string{"restore:x:1", "verify:x:1"} {
+		acc := newJobEventAccumulator()
+		got := acc.ApplyFinish(jobEventLine{JobID: jobID, Hostname: "web-01", Timestamp: 2000, Status: "success"})
+		assert.Equal(t, "web-01", got.SourceHost, "job_id=%s", jobID)
+	}
+}
+
+func TestApplyFinish_DoesNotSetSourceHostForOtherKinds(t *testing.T) {
+	acc := newJobEventAccumulator()
+	got := acc.ApplyFinish(jobEventLine{JobID: "operating-refresh:1752400500", Hostname: "web-01", Timestamp: 2000, Status: "success"})
+	assert.Empty(t, got.SourceHost)
+}
