@@ -357,3 +357,24 @@ func TestToCachedPolicies_RestoreModeAndOverwriteRoundTrip(t *testing.T) {
 	assert.Equal(t, "restore", cached[0].Mode)
 	assert.True(t, cached[0].Overwrite)
 }
+
+// This is the one hop where a dropped job_id would silently break the
+// whole restore-policy lifecycle's job_id correlation (created -> executed
+// -> deleted, see docs/superpowers/specs/2026-08-23-restore-policy-
+// lifecycle-design.md): agent's restoreTasks (cmd/agent/restore.go) reads
+// CachedPolicy.JobID verbatim and passes it to rwfs as --job-id, with no
+// fallback -- an empty value here means every restore/verify job runs
+// uncorrelated with policy-server's own "created"/"deleted" log lines, and
+// no proto/RPC-level check catches that; only exercising this exact
+// conversion does.
+func TestToCachedPolicies_RestoreJobIDRoundTrips(t *testing.T) {
+	policies := []*pb.Policy{
+		{
+			Type:  "restore",
+			JobId: "verify:web01-emergency:1700000000",
+		},
+	}
+	cached := toCachedPolicies(policies)
+	require.Len(t, cached, 1)
+	assert.Equal(t, "verify:web01-emergency:1700000000", cached[0].JobID)
+}

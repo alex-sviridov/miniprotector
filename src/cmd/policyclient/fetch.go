@@ -85,6 +85,15 @@ type CachedPolicy struct {
 	Rules     []RestoreRule `json:"rules,omitempty"`
 	Mode      string        `json:"mode,omitempty"`
 	Overwrite bool          `json:"overwrite,omitempty"`
+	// "restore" policy only, empty for every other type. Generated once by
+	// policy-server at CreatePolicy time and consumed verbatim by agent
+	// (cmd/agent/backup.go's cachedPolicy.JobID, cmd/agent/restore.go's
+	// restoreTasks) as the dispatched rwfs exec's --job-id -- the
+	// mechanism that correlates a restore/verify policy's whole lifecycle
+	// (created -> executed -> deleted) under one Loki job_id. Without this
+	// field, agent always sees an empty JobID and rwfs falls back to
+	// generating its own random one, breaking that correlation entirely.
+	JobID string `json:"job_id,omitempty"`
 	// Derived by policy-server from the subfolder the policy file was
 	// loaded from (e.g. "backup"). Pure passthrough here -- policyclient
 	// itself never branches on it; agent does (see
@@ -229,6 +238,7 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			Rules:         rules,
 			Mode:          p.GetMode(),
 			Overwrite:     p.GetOverwrite(),
+			JobID:         p.GetJobId(),
 			Type:          p.GetType(),
 			DisabledAt:    disabledAtFromProto(p.GetDisabledAt()),
 		})
