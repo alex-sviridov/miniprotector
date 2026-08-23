@@ -258,6 +258,7 @@ make policy-server
 - [api-server](./api-server.md) — the `JobStatusService` `policy-server`'s restore-cleanup sweep
   dials as a client
 - [Policy Server Protocol](../protocols/policy-server.md)
+- [Job Status Protocol](../protocols/jobstatus.md) — the `JobStatusService` this component's restore-cleanup sweep calls as a client
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
 - [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md)
 - [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)

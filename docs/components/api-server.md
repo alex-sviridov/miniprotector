@@ -204,6 +204,7 @@ make api-server
 - [clientmanager-admin-api](./clientmanager-admin-api.md) — the write-capable backend behind this component's client-write endpoints
 - [catalog](./catalog.md) — the other backend
 - [REST API v1](../api/rest-v1.md)
+- [Job Status Protocol](../protocols/jobstatus.md) — the `JobStatusService` this component's gRPC listener serves
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
 - [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
 - [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)

@@ -88,6 +88,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol
 - **[Issuer Protocol](docs/protocols/issuer.md)** - issuer operating-certificate minting protocol
 - **[Policy Server Protocol](docs/protocols/policy-server.md)** - policy-server's GetPolicies protocol
+- **[Job Status Protocol](docs/protocols/jobstatus.md)** - api-server's GetPolicyJobStatus protocol, polled by policy-server's restore-cleanup sweep
 - **[Log Gateway Protocol](docs/protocols/log-gateway.md)** - log-gateway's mTLS-authenticated push-proxy protocol
 - **[Components](docs/components/)** - Individual component documentation
 

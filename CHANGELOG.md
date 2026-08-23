@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-23 — Restore policy lifecycle: one-shot execution, job correlation, automatic cleanup
+
+A restore/verify task now runs at most once per policy, ever — `agent` records an attempt
+(success or failure) and never retries it again, instead of retrying indefinitely on failure as
+before. `policy-server` generates a stable `job_id` for each restore policy at creation time and
+logs `event="created"` under it; `agent` now runs the task under that same `job_id` (instead of
+minting its own) and no longer emits its own `event="start"` for it, so the Jobs UI shows the job
+as `in_progress` from the moment the policy is created, not only once a node connects and starts
+running it — creation, execution, and deletion all correlate under one `job_id` in the log
+timeline. `policy-server` also gained a background sweep (`RestoreCleanupIntervalSec`,
+`RestoreCleanupGracePeriodSec` config keys) that polls a new mTLS `GetPolicyJobStatus` RPC —
+`api-server`'s first gRPC listener, restricted to the `control-plane` role — and automatically
+deletes a restore policy once its job is confirmed finished and a grace period has elapsed, so a
+completed restore policy no longer needs manual cleanup. See
+`docs/superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md` and the new
+`docs/protocols/jobstatus.md`.
+
 ## 2026-08-23 — E2E policy cleanup fixture
 
 Fixed a leaked e2e-test policy: `restore-verify.spec.js` created a verify-mode restore policy in
