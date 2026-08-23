@@ -6,8 +6,40 @@
 *.dylib
 bin/
 !bin/local.conf
-/src/certrequest
+
+# `make <binary>` always builds to bin/ (ignored above). These cover the two
+# other places a same-named binary lands without -o: `go build ./cmd/<name>/...`
+# from src/ (module root), and `go build .` run from inside cmd/<name>/ itself.
+/src/agent
+/src/api-server
+/src/brfs
+/src/bwfs
+/src/catalog
+/src/catalogsync
+/src/certclient
 /src/clientmanager
+/src/clientmanager-admin-api
+/src/clientmanager-api
+/src/issuer
+/src/log-gateway
+/src/policyclient
+/src/policy-server
+/src/rwfs
+/src/cmd/agent/agent
+/src/cmd/api-server/api-server
+/src/cmd/brfs/brfs
+/src/cmd/bwfs/bwfs
+/src/cmd/catalog/catalog
+/src/cmd/catalogsync/catalogsync
+/src/cmd/certclient/certclient
+/src/cmd/clientmanager/clientmanager
+/src/cmd/clientmanager-admin-api/clientmanager-admin-api
+/src/cmd/clientmanager-api/clientmanager-api
+/src/cmd/issuer/issuer
+/src/cmd/log-gateway/log-gateway
+/src/cmd/policyclient/policyclient
+/src/cmd/policy-server/policy-server
+/src/cmd/rwfs/rwfs
 
 # Logs
 log/
