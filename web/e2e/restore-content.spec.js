@@ -121,15 +121,16 @@ test('restore writes real file content, verified by checksum, with a folder rena
     await destinationSelect.selectOption(HOST)
 
     await page.getByTestId('restore-button').click()
+    await page.getByTestId('confirm-restore').click() // Task 6's pre-restore confirmation modal
 
-    const resultsLocator = page.getByTestId('submission-results')
-    await expect(resultsLocator).toContainText('Started restore policy')
-    const resultText = await resultsLocator.innerText()
-    const restorePolicyName = /Started restore policy (\S+) from/.exec(resultText)[1]
+    const statusLink = page.getByTestId(`status-${entryKey}`).getByRole('link')
+    await expect(statusLink).toBeVisible({ timeout: 30_000 })
+    const href = await statusLink.getAttribute('href') // "/jobs/<job_id>", from RestoreView's router-link
+    const jobId = href.replace(/^\/jobs\//, '')
 
     const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
     const { data: restorePolicies } = await restorePoliciesResp.json()
-    const restorePolicy = restorePolicies.find((p) => p.name === restorePolicyName)
+    const restorePolicy = restorePolicies.find((p) => p.job_id === jobId)
     expect(restorePolicy).toBeTruthy()
     trackPolicy(restorePolicy.id)
 

@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-27 — Restore workflow UI clarity
+
+Reworked the restore cart and submission flow for clarity: the cart no longer groups or reveals
+which storage host anything lives on, Restore now requires confirming a summary before it fires,
+each selected item shows its own live submission status linked to its job instead of a flat unlined
+results list, and the job detail view shows a human-readable outcome banner for restore/verify jobs
+instead of only a raw log tail. Selecting a file or folder now defaults to the latest version within
+the catalog's current date filter (previously an unbounded true-latest), and a specific historical
+version -- of a file or a folder -- can be picked directly from the catalog or cart via a shared,
+now-interactive version picker. See
+`docs/superpowers/specs/2026-08-27-restore-ui-clarity-design.md`.
+
 ## 2026-08-23 — Restore policy lifecycle: one-shot execution, job correlation, automatic cleanup
 
 A restore/verify task now runs at most once per policy, ever — `agent` records an attempt

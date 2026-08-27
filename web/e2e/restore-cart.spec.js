@@ -112,3 +112,38 @@ test('restore cart selection', async ({ page, context, trackPolicy }) => {
     await expect(page.getByText('No files selected for restore yet.')).toBeVisible()
   })
 })
+
+test('picking an older version pins the cart entry to it instead of "Latest"', async ({ page, context, trackPolicy }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
+  })
+
+  // Two separate ad-hoc backup runs of the same fixture file, each its own
+  // FileVersionRecord row (storage/filesystem/models.go) regardless of
+  // content -- genuinely two distinct, pickable versions.
+  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page, trackPolicy)
+  await new Promise((resolve) => setTimeout(resolve, 1000)) // ensure a distinct store_created_at from the second run
+  await seedRestoreCartCatalogData(page, trackPolicy)
+  const [firstFile] = files
+  const filePath = `${dirPath}/${firstFile}`
+
+  const segments = dirPath.split('/').filter(Boolean)
+  await page.getByRole('link', { name: 'Catalog' }).click()
+  await page.getByTestId('crumb-home').click()
+  await page.getByText('//', { exact: true }).click()
+  for (const segment of segments) {
+    await page.getByText(`${segment}/`, { exact: true }).click()
+  }
+
+  await page.getByTestId(`captured-${sourceHost}:${filePath}`).click()
+  const rows = page.locator('tbody tr')
+  await expect(rows).toHaveCount(2)
+  const olderRow = rows.nth(1) // newest-first, so index 1 is the older of the two
+  const olderTimestampText = await olderRow.locator('td').first().innerText()
+  await olderRow.getByRole('button', { name: 'Restore this version' }).click()
+
+  await page.getByRole('link', { name: 'Restore' }).click()
+  const capturedCell = page.getByTestId(`captured-${sourceHost}:${filePath}`)
+  await expect(capturedCell).not.toHaveText('Latest')
+  await expect(capturedCell).toHaveText(olderTimestampText)
+})
