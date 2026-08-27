@@ -201,11 +201,13 @@ created ahead of time.
 Phase 2 (file content) runs only once phase 1 has fully succeeded. It logs `restoring file content`
 once at start, fetches each resolved file's chunks via `RestoreFile` (concurrently, `--streams`
 workers wide), and writes them to its `dest_path`-renamed destination -- verifying every chunk's
-BLAKE3 hash and the whole-file CRC32 exactly as `rwfs verify` does, aborting on a mismatch the same
-way a stream or disk-write error would. On the first failure, every other in-flight file transfer is
-cancelled immediately, the failing (partial) file is removed from disk, a `failed to restore file`
-error is logged for it, and no summary line is logged -- the same abort convention phase 1 already
-uses. On full success, a `restore complete` line reports `files_written`, `bytes_written`, and
+BLAKE3 hash and the whole-file CRC32 exactly as `rwfs verify` does. A stream error is retried first
+(up to `--retries` times, see the flag above); a mismatch or a local disk-write error still aborts on
+the first occurrence, with no retry. On the first terminal failure -- a mismatch or disk-write error,
+or a stream error whose retries are exhausted -- every other in-flight file transfer is cancelled
+immediately, the failing (partial) file is removed from disk, a `failed to restore file` error is
+logged for it, and no summary line is logged -- the same abort convention phase 1 already uses. On
+full success, a `restore complete` line reports `files_written`, `bytes_written`, and
 `skipped` (files left untouched because they already existed and `--overwrite` was false). Per-file
 success (`file written` / `file skipped, already exists`) is logged at `Debug` level only -- pass
 `--debug` to see it; it is not controlled by `--quiet`. Every created or overwritten file uses a

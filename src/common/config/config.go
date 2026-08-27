@@ -465,6 +465,9 @@ func ParseConfig(configPath string) (*Config, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid RwfsRetries value at line %d: %s", lineNum, value)
 			}
+			if number <= 0 {
+				return nil, fmt.Errorf("RwfsRetries must be positive at line %d: %s", lineNum, value)
+			}
 			config.RwfsRetries = number
 			foundFields["RwfsRetries"] = true
 		default:

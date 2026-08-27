@@ -681,3 +681,23 @@ func TestParseConfig_RwfsRetriesParsesCorrectly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, conf.RwfsRetries)
 }
+
+func TestParseConfig_RwfsRetriesRejectsZeroOrNegative(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRwfsRetries=0\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := ParseConfig(path)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "must be positive")
+
+	dir2 := t.TempDir()
+	path2 := filepath.Join(dir2, "local.conf")
+	content2 := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRwfsRetries=-1\n"
+	require.NoError(t, os.WriteFile(path2, []byte(content2), 0o644))
+
+	_, err2 := ParseConfig(path2)
+	require.Error(t, err2)
+	assert.ErrorContains(t, err2, "must be positive")
+}

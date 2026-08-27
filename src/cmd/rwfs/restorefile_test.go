@@ -178,6 +178,7 @@ func TestWriteRestoreFile_DirectoryAtDestinationIsHardError(t *testing.T) {
 	require.Error(t, result.Err)
 	assert.Contains(t, result.Err.Error(), "directory")
 	assert.Empty(t, restoreSrv.Requested(), "RestoreFile must never be called when the destination is a directory")
+	assert.False(t, result.Retryable)
 }
 
 func TestWriteRestoreFile_BlakeMismatchAbortsAndRemovesPartialFile(t *testing.T) {
@@ -190,6 +191,7 @@ func TestWriteRestoreFile_BlakeMismatchAbortsAndRemovesPartialFile(t *testing.T)
 
 	require.Error(t, result.Err)
 	assert.Contains(t, result.Err.Error(), "blake3_mismatch")
+	assert.False(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a BLAKE3 mismatch must remove the partial file")
 }
@@ -204,6 +206,7 @@ func TestWriteRestoreFile_CRCMismatchAbortsAndRemovesPartialFile(t *testing.T) {
 
 	require.Error(t, result.Err)
 	assert.Contains(t, result.Err.Error(), "crc_mismatch")
+	assert.False(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a CRC32 mismatch must remove the partial file")
 }
@@ -218,6 +221,7 @@ func TestWriteRestoreFile_StreamErrorReturnsErrorAndCreatesNoFile(t *testing.T) 
 	}, false)
 
 	require.Error(t, result.Err)
+	assert.True(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a stream error before any chunk arrives must never create a file")
 }
@@ -236,6 +240,7 @@ func TestWriteRestoreFile_MissingParentDirectoryIsHardError(t *testing.T) {
 	}, false)
 
 	require.Error(t, result.Err)
+	assert.False(t, result.Retryable)
 }
 
 // flakyRestoreServer fails RestoreFile with a stream-level error the
