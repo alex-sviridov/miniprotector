@@ -5,8 +5,13 @@ import { createTestingPinia } from '@pinia/testing'
 import JobDetailView from './JobDetailView.vue'
 import { useJobsStore } from '../stores/jobs'
 
+const { getJobId, setJobId } = vi.hoisted(() => {
+  let jobId = 'backup:nightly:1752400000'
+  return { getJobId: () => jobId, setJobId: (v) => { jobId = v } }
+})
+
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { job_id: 'backup:nightly:1752400000' } }),
+  useRoute: () => ({ params: { job_id: getJobId() } }),
 }))
 
 // JobDetailView always wires useAutoFollow, which observes a sentinel via
@@ -26,6 +31,7 @@ class MockIntersectionObserver {
 beforeEach(() => {
   observedCallback = null
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+  setJobId('backup:nightly:1752400000')
 })
 
 function mountView(state) {
@@ -235,6 +241,58 @@ describe('JobDetailView', () => {
       await nextTick()
 
       expect(scrollIntoView).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('restore/verify summary banner', () => {
+    function logLine(binary, fields) {
+      return { timestamp: 1, hostname: 'h', binary, line: JSON.stringify(fields) }
+    }
+
+    it('renders no banner for a non-restore/verify job', () => {
+      setJobId('backup:nightly:1752400000')
+      const { wrapper, jobs } = mountView({ logs: [] })
+      expect(wrapper.find('[data-test="restore-summary-banner"]').exists()).toBe(false)
+    })
+
+    it('shows an in-progress banner when no finish line has arrived yet', () => {
+      setJobId('restore:x:1')
+      const { wrapper } = mountView({ logs: [] })
+      expect(wrapper.get('[data-test="restore-summary-banner"]').text()).toContain('in progress')
+    })
+
+    it('shows a success banner with file counts for a finished restore job', () => {
+      setJobId('restore:x:1')
+      const { wrapper } = mountView({
+        logs: [
+          logLine('rwfs', { msg: 'restore complete', files_written: 12, bytes_written: 4400000000, skipped: 0 }),
+          logLine('agent', { msg: 'policy execution completed', event: 'finish', status: 'success' }),
+        ],
+      })
+      const text = wrapper.get('[data-test="restore-summary-banner"]').text()
+      expect(text).toContain('12 files written')
+      expect(text).toContain('0 skipped')
+    })
+
+    it('shows a failure banner without counts for a failed restore job', () => {
+      setJobId('restore:x:1')
+      const { wrapper } = mountView({
+        logs: [logLine('agent', { msg: 'policy execution completed', event: 'finish', status: 'failure' })],
+      })
+      expect(wrapper.get('[data-test="restore-summary-banner"]').text()).toContain('Restore failed')
+    })
+
+    it('shows a success banner with verified/warnings counts for a finished verify job', () => {
+      setJobId('verify:x:1')
+      const { wrapper } = mountView({
+        logs: [
+          logLine('rwfs', { msg: 'summary', verified: 8, warnings: 1 }),
+          logLine('agent', { msg: 'policy execution completed', event: 'finish', status: 'success' }),
+        ],
+      })
+      const text = wrapper.get('[data-test="restore-summary-banner"]').text()
+      expect(text).toContain('8 files verified')
+      expect(text).toContain('1 warning')
     })
   })
 })

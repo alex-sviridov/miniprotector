@@ -8,11 +8,44 @@ import StatusMessage from '../components/ui/StatusMessage.vue'
 import ConnectionStatus from '../components/ui/ConnectionStatus.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import LogLine from '../components/LogLine.vue'
-import { logKey } from '../utils/logLine'
+import { logKey, parseLogLine } from '../utils/logLine'
+import { formatBytes } from '../utils/format'
 
 const route = useRoute()
 const jobs = useJobsStore()
 const jobId = computed(() => route.params.job_id)
+
+const kind = computed(() => {
+  if (jobId.value.startsWith('restore:')) return 'restore'
+  if (jobId.value.startsWith('verify:')) return 'verify'
+  return null
+})
+
+// Scans newest-to-oldest for the last line whose parsed `msg` matches, and
+// picks the requested fields off it. Returns null if no such line has
+// arrived yet (in-progress, or the job predates this feature).
+function lastMatchingFields(msg, fields) {
+  for (let i = jobs.logs.length - 1; i >= 0; i--) {
+    const parsed = parseLogLine(jobs.logs[i].line)
+    if (parsed.ok && parsed.message === msg) {
+      return Object.fromEntries(fields.map((f) => [f, parsed.fields[f]]))
+    }
+  }
+  return null
+}
+
+// agent's own event=finish line is the authoritative terminal status (see
+// docs/components/agent.md's "Logging and correlation") -- rwfs's own
+// "restore complete"/"summary" line only ever carries the human-readable
+// counts, and is absent entirely on a hard failure (e.g. the directory
+// structure phase aborting on its first error, per rwfs's restore docs).
+const finishStatus = computed(() => lastMatchingFields('policy execution completed', ['status'])?.status ?? null)
+
+const summary = computed(() => {
+  if (kind.value === 'restore') return lastMatchingFields('restore complete', ['files_written', 'bytes_written', 'skipped'])
+  if (kind.value === 'verify') return lastMatchingFields('summary', ['verified', 'warnings'])
+  return null
+})
 
 // Tail activity, not logs.length: loadOlder also grows the array, and
 // counting its prepended history as "new lines" would offer to scroll the
@@ -50,6 +83,18 @@ function loadOlder() {
         <ConnectionStatus :status="jobs.logsStatus" />
       </template>
     </PageHeader>
+    <div v-if="kind" data-test="restore-summary-banner" class="mb-4 rounded border px-3 py-2 text-sm">
+      <span v-if="!finishStatus">⏳ {{ kind === 'restore' ? 'Restore' : 'Verify' }} in progress.</span>
+      <span v-else-if="finishStatus === 'failure'">❌ {{ kind === 'restore' ? 'Restore' : 'Verify' }} failed — see log below.</span>
+      <span v-else-if="kind === 'restore' && summary">
+        ✅ Restore complete — {{ summary.files_written }} file{{ summary.files_written === 1 ? '' : 's' }} written
+        ({{ formatBytes(summary.bytes_written) }}), {{ summary.skipped }} skipped.
+      </span>
+      <span v-else-if="kind === 'verify' && summary">
+        ✅ Verify complete — {{ summary.verified }} file{{ summary.verified === 1 ? '' : 's' }} verified, {{ summary.warnings }} warning{{ summary.warnings === 1 ? '' : 's' }}.
+      </span>
+      <span v-else>✅ {{ kind === 'restore' ? 'Restore' : 'Verify' }} complete.</span>
+    </div>
     <div v-if="jobs.hasOlderLogs" class="mb-2">
       <BaseButton data-test="load-older" :disabled="jobs.logsOlderLoading" @click="loadOlder">
         {{ jobs.logsOlderLoading ? 'Loading…' : 'Load older lines' }}
