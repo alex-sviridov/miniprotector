@@ -212,6 +212,22 @@ func TestToPolicyDTO_IncludesStorageFields(t *testing.T) {
 	assert.Equal(t, `{"backend": "filesystem", "root": "/data/storage"}`, dto.Config)
 }
 
+func TestToPolicyDTO_IncludesJobIDForRestorePolicies(t *testing.T) {
+	p := &pb.Policy{Id: "r1", Name: "web01-emergency", Type: "restore", JobId: "restore:web01-emergency:1700000000"}
+
+	dto := toPolicyDTO(p)
+
+	assert.Equal(t, "restore:web01-emergency:1700000000", dto.JobID)
+}
+
+func TestToPolicyDTO_OmitsJobIDForNonRestorePolicies(t *testing.T) {
+	p := &pb.Policy{Id: "b1", Name: "nightly", Type: "backup"}
+
+	dto := toPolicyDTO(p)
+
+	assert.Empty(t, dto.JobID)
+}
+
 func TestHandleCreatePolicy_ReturnsCreatedPolicy(t *testing.T) {
 	fake := &fakePolicyServiceClient{createResp: &pb.Policy{Id: "p1", Name: "nightly", Destinations: []string{"bwfs:8080"}}}
 	srv := newServer(nil, nil, fake, testLogger())
@@ -774,6 +790,39 @@ func TestHandleCreateRestore_ReturnsCreatedPolicy(t *testing.T) {
 	var respBody map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
 	assert.Equal(t, "sp-1", respBody["storage_policy_id"])
+}
+
+// TestHandleCreateRestore_ResponseIncludesJobID guards the REST-layer
+// serialization gap this was added to close: policy-server generates and
+// returns job_id synchronously on the CreatePolicy response for a
+// restore-typed policy (restorePolicyJobID, cmd/policy-server/write.go),
+// but toPolicyDTO previously dropped it, leaving POST /restore's JSON body
+// with no way for a caller (e.g. web/src/stores/restoreSubmission.js) to
+// learn the job it just created without a second lookup.
+func TestHandleCreateRestore_ResponseIncludesJobID(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "web01-emergency", Type: "restore",
+		JobId: "restore:web01-emergency:1700000000",
+	}}
+	srv := newServer(nil, nil, fake, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	body := strings.NewReader(`{
+		"name": "web01-emergency",
+		"client_filters": {"hostnames": ["web-01"], "labels": {}},
+		"storage_policy_id": "sp-1",
+		"rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/restore", body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var respBody map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "restore:web01-emergency:1700000000", respBody["job_id"])
 }
 
 func TestHandleCreateRestore_MalformedJSONReturns400(t *testing.T) {

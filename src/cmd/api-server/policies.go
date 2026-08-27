@@ -55,6 +55,12 @@ type policyDTO struct {
 	Overwrite       bool              `json:"overwrite,omitempty"`
 	DisabledAt      int64             `json:"disabled_at,omitempty"`
 	Checkins        []checkinDTO      `json:"checkins"`
+	// JobID is only ever set on a restore/verify-typed policy -- policy-server
+	// generates it synchronously at creation time (restorePolicyJobID,
+	// cmd/policy-server/write.go) and stamps it onto the Policy message
+	// (field 22, policyserver.proto) it returns from both CreatePolicy and
+	// ListPolicies. A plain backup/storage policy never has one.
+	JobID string `json:"job_id,omitempty"`
 }
 
 func toPolicyDTO(p *pb.Policy) policyDTO {
@@ -91,6 +97,7 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 		Mode:            p.GetMode(),
 		Overwrite:       p.GetOverwrite(),
 		Checkins:        checkins,
+		JobID:           p.GetJobId(),
 	}
 	if p.GetDisabledAt() != nil {
 		dto.DisabledAt = p.GetDisabledAt().AsTime().Unix()
