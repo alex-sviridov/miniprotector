@@ -49,7 +49,10 @@ no data — there's no read-only "guest" mode.
   (folder or file) is a button that opens `VersionsModal` — a real version picker, not just a
   read-only list: it fetches every version of that exact path (newest first, ignoring the active
   date filter so the user can reach further back than what's currently browsed), and "Restore this
-  version" on any row pins the restore cart's selection to that version's exact timestamp. A folder's
+  version" on any row pins the restore cart's selection to that version's exact timestamp. The
+  button's own label reflects an already-pinned version for that row's exact `(source_host, path)`
+  when the restore cart has one, falling back to the representative/last-seen default otherwise, the
+  same per-row cart lookup the selection checkbox already does. A folder's
   versions can span multiple source hosts (each host's own capture of that path is a separate row);
   the modal calls this out with a note when it detects more than one, since picking a version in that
   case scopes the selection down to just that host's capture. Each row (folder or file) also carries
@@ -63,15 +66,18 @@ no data — there's no read-only "guest" mode.
   a version from the modal) defaults the selection's version window to the catalog's *currently
   active date filter* (previously an unbounded true-latest) — "latest" therefore means latest within
   whatever range is currently browsed, not latest ever. The cart is in-memory only (no persistence
-  yet) and UI-only: nothing is submitted for restore in this pass.
+  yet); submission itself happens from `/restore` below.
 - `/restore` — a flat table, one row per cart selection, listing source host, source path (folder
   selections shown as `path/*`), the version captured (see below), a destination path, size (file
   rows only), and a live status column. Deliberately no storage-host grouping or column: which
   physical store a file happens to live on is an implementation detail the cart never surfaces, here
-  or anywhere else in this view. The "Captured" column shows "Latest" for an unpinned selection or a
-  formatted timestamp for one pinned to a specific version (via the catalog's or this page's own
-  version picker, `VersionsModal` — clicking the cell reopens it, and "Use latest" resets the pin
-  back to the catalog's active date-filter window at pick time). The destination path defaults to the
+  or anywhere else in this view. The "Captured" column shows a formatted timestamp for a selection
+  pinned to a specific version; for an unpinned one it shows the bare word "Latest" only when the
+  window is genuinely unbounded (an explicit "Use latest" reset), and otherwise the captured filter
+  window's upper-bound date, since an unpinned default is still a real `[notBefore, notAfter]` range
+  rather than an unqualified "latest ever" (via the catalog's or this page's own version picker,
+  `VersionsModal` — clicking the cell reopens it, and "Use latest" resets the pin back to the
+  catalog's active date-filter window at pick time). The destination path defaults to the
   source path; clicking it swaps in a text input (`restoreCart.setDestPath`) to rename that
   selection's restore target, whether a file or a folder -- purely client-side data at this point,
   sent as `dest_path` on the submitted rule only when it differs from the source path (see
