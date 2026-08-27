@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { test, expect, AUTH_HEADERS } from './helpers/test.js'
 import { COMPOSE_FILE, waitForCatalogFolderRow } from './helpers/policySeeding.js'
+import { submitAndTrackPolicy } from './helpers/restoreUi.js'
 
 const HOST = 'database'
 const FILE_COUNT = 100
@@ -123,28 +124,16 @@ test('restore writes real file content, verified by checksum, with a folder rena
     await expect(destinationSelect.locator('option', { hasText: HOST })).toHaveCount(1)
     await destinationSelect.selectOption(HOST)
 
-    await page.getByTestId('restore-button').click()
-    await page.getByTestId('confirm-restore').click() // Task 6's pre-restore confirmation modal
-
-    const statusLink = page.getByTestId(`status-${entryKey}`).getByRole('link')
-    await expect(statusLink).toBeVisible({ timeout: 30_000 })
-    const href = await statusLink.getAttribute('href') // "/jobs/<job_id>", from RestoreView's router-link
-    const jobId = href.replace(/^\/jobs\//, '')
-    // policy-server's restorePolicyJobID (write.go) prefixes every
-    // restore-mode job id "restore:" -- confirms the status link really
-    // points at a restore (not verify) job before it's used below.
-    expect(jobId).toMatch(/^restore:/)
-
-    // policyDTO (cmd/api-server/policies.go) now serializes job_id (it's
-    // been on the underlying pb.Policy message all along, field 22 --
-    // policy-server sets it synchronously at creation time; the REST layer
-    // just never exposed it), so the policy the UI just submitted can be
-    // found directly by the job_id its own status link already named.
-    const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
-    const { data: restorePolicies } = await restorePoliciesResp.json()
-    const restorePolicy = restorePolicies.find((p) => p.job_id === jobId)
-    expect(restorePolicy).toBeTruthy()
-    trackPolicy(restorePolicy.id)
+    // submitAndTrackPolicy: click Restore + its confirmation modal (Task 6),
+    // wait for the row's status link, and find/track the created policy by
+    // the job_id that link names (see helpers/restoreUi.js).
+    await submitAndTrackPolicy(page, {
+      entryKey,
+      buttonTestId: 'restore-button',
+      mode: 'restore',
+      confirm: true,
+      trackPolicy,
+    })
 
     dockerExec('./policyclient fetch')
 

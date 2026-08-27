@@ -1,5 +1,6 @@
 import { test, expect } from './helpers/test.js'
 import { seedRestoreCartCatalogData } from './helpers/policySeeding.js'
+import { drillInto } from './helpers/restoreUi.js'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -25,25 +26,9 @@ test('restore cart selection', async ({ page, context, trackPolicy }) => {
   // user browsing the app. (Task 3's seeding helper uses page.goto() freely
   // for its own polling loops -- that's fine there, because it all happens
   // before any restore-cart selection exists to lose.)
-
-  async function goToCatalogHome(page) {
-    await page.getByRole('link', { name: 'Catalog' }).click()
-    await page.getByTestId('crumb-home').click()
-    // The catalog's directory tree has a synthetic root "/" folder row
-    // between Home and the first real path segment (parent_path="" returns
-    // {name: "/"} before e.g. "var" appears as its child) -- confirmed live
-    // against /api/v1/catalog/directories/children (see Task 3's
-    // policySeeding.js for the same fix applied to its own drill-down).
-    // Renders as "//" since the row template appends "/" to row.name.
-    await page.getByText('//', { exact: true }).click()
-  }
-
-  async function drillInto(page, pathSegments) {
-    await goToCatalogHome(page)
-    for (const segment of pathSegments) {
-      await page.getByText(`${segment}/`, { exact: true }).click()
-    }
-  }
+  //
+  // goToCatalogHome/drillInto live in ./helpers/restoreUi.js, shared with
+  // this file's second test and restore-verify.spec.js.
 
   await test.step('selecting a file checks it, highlights the sidebar, and lists it on /restore', async () => {
     await drillInto(page, segments)
@@ -128,12 +113,7 @@ test('picking an older version pins the cart entry to it instead of "Latest"', a
   const filePath = `${dirPath}/${firstFile}`
 
   const segments = dirPath.split('/').filter(Boolean)
-  await page.getByRole('link', { name: 'Catalog' }).click()
-  await page.getByTestId('crumb-home').click()
-  await page.getByText('//', { exact: true }).click()
-  for (const segment of segments) {
-    await page.getByText(`${segment}/`, { exact: true }).click()
-  }
+  await drillInto(page, segments)
 
   await page.getByTestId(`captured-${sourceHost}:${filePath}`).click()
   // VersionsModal renders as an overlay on top of CatalogView's own table

@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process'
 import { test, expect, AUTH_HEADERS } from './helpers/test.js'
 import { seedRestoreCartCatalogData, waitForJobSuccess, waitForJobState, COMPOSE_FILE } from './helpers/policySeeding.js'
+import { goToCatalogHome, submitAndTrackPolicy } from './helpers/restoreUi.js'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -24,16 +25,9 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
   const filePath = `${dirPath}/${files[0]}`
   const segments = dirPath.split('/').filter(Boolean)
 
-  // Same drill-down sequence restore-cart.spec.js already uses: sidebar
-  // link -> breadcrumb home -> the synthetic "/" root row -> each real path
-  // segment. All real <router-link>/row clicks, never page.goto(), so
-  // restoreCart's in-memory selection state survives (see Global
-  // Constraints).
-  async function goToCatalogHome() {
-    await page.getByRole('link', { name: 'Catalog' }).click()
-    await page.getByTestId('crumb-home').click()
-    await page.getByText('//', { exact: true }).click()
-  }
+  // goToCatalogHome (./helpers/restoreUi.js) uses real <router-link>/row
+  // clicks, never page.goto(), so restoreCart's in-memory selection state
+  // survives (see Global Constraints).
 
   // JobDetailView only fetches logs once, on mount (no client-side polling) -- and rwfs's
   // own "verified"/"summary" lines are a separate Loki ingestion stream from the "agent"
@@ -56,7 +50,7 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
   }
 
   await test.step('a real backed-up file verifies successfully, readable in its job log', async () => {
-    await goToCatalogHome()
+    await goToCatalogHome(page)
     for (const segment of segments) {
       await page.getByText(`${segment}/`, { exact: true }).click()
     }
@@ -74,29 +68,16 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
 
     // Verify submits directly (no confirmation modal -- only Restore has
     // one, Task 6) via RestoreView's per-row status column, not the old
-    // flat submission-results list Task 7 removed.
+    // flat submission-results list Task 7 removed. submitAndTrackPolicy
+    // (./helpers/restoreUi.js) waits for that status link, confirms it
+    // names a verify-kind job, and finds/tracks the policy by its job_id.
     const entryKey = `${sourceHost}:${filePath}`
-    await page.getByTestId('verify-button').click()
-
-    const statusLink = page.getByTestId(`status-${entryKey}`).getByRole('link')
-    await expect(statusLink).toBeVisible({ timeout: 30_000 })
-    const href = await statusLink.getAttribute('href') // "/jobs/<job_id>", from RestoreView's router-link
-    const jobId = href.replace(/^\/jobs\//, '')
-    // policy-server's restorePolicyJobID (write.go) prefixes every
-    // verify-mode job id "verify:" -- confirms the status link really
-    // points at a verify (not restore) job before it's used below.
-    expect(jobId).toMatch(/^verify:/)
-
-    // policyDTO (cmd/api-server/policies.go) serializes job_id -- it's been
-    // on the underlying pb.Policy message all along (field 22), policy-server
-    // sets it synchronously at creation time, the REST layer just used to
-    // never expose it -- so the policy this submission created can be found
-    // directly by the job_id its own status link already named.
-    const verifyPoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
-    const { data: verifyPolicies } = await verifyPoliciesResp.json()
-    const verifyPolicy = verifyPolicies.find((p) => p.job_id === jobId)
-    expect(verifyPolicy).toBeTruthy()
-    trackPolicy(verifyPolicy.id)
+    const { policy: verifyPolicy } = await submitAndTrackPolicy(page, {
+      entryKey,
+      buttonTestId: 'verify-button',
+      mode: 'verify',
+      trackPolicy,
+    })
 
     // No UI/API surface to force policyclient's pickup faster than its
     // default 900s fetch interval -- same non-UI escape hatch
@@ -130,7 +111,7 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
     // reload, same as page.goto() -- so restoreCart's in-memory selection
     // doesn't survive step 1; re-select the same file rather than assuming
     // it's still there.
-    await goToCatalogHome()
+    await goToCatalogHome(page)
     for (const segment of segments) {
       await page.getByText(`${segment}/`, { exact: true }).click()
     }
@@ -149,27 +130,13 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
     // its own entry starts with no prior status -- unlike restore-content.spec.js,
     // there's no stale-status race to guard against here.
     const entryKey = `${sourceHost}:${filePath}`
-    await page.getByTestId('restore-button').click()
-    await page.getByTestId('confirm-restore').click() // Task 6's pre-restore confirmation modal
-
-    const statusLink = page.getByTestId(`status-${entryKey}`).getByRole('link')
-    await expect(statusLink).toBeVisible({ timeout: 30_000 })
-    const href = await statusLink.getAttribute('href') // "/jobs/<job_id>", from RestoreView's router-link
-    const jobId = href.replace(/^\/jobs\//, '')
-    // policy-server's restorePolicyJobID (write.go) prefixes every
-    // restore-mode job id "restore:" -- confirms the status link really
-    // points at a restore (not verify) job before it's used below.
-    expect(jobId).toMatch(/^restore:/)
-
-    // RestoreView's status link confirms the /restore call returned 201 and
-    // which job it started; policyDTO now serializes job_id too (see step
-    // 1's comment above), so the policy itself -- needed only for
-    // trackPolicy's cleanup -- can be found directly by that job_id.
-    const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
-    const { data: restorePolicies } = await restorePoliciesResp.json()
-    const policy = restorePolicies.find((p) => p.job_id === jobId)
-    expect(policy).toBeTruthy()
-    trackPolicy(policy.id)
+    await submitAndTrackPolicy(page, {
+      entryKey,
+      buttonTestId: 'restore-button',
+      mode: 'restore',
+      confirm: true,
+      trackPolicy,
+    })
   })
 
   await test.step('a rule naming a file that was never backed up fails, readable in its job log', async () => {
