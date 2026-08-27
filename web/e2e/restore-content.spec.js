@@ -123,18 +123,6 @@ test('restore writes real file content, verified by checksum, with a folder rena
     await expect(destinationSelect.locator('option', { hasText: HOST })).toHaveCount(1)
     await destinationSelect.selectOption(HOST)
 
-    // Snapshot restore-policy ids before submitting -- policyDTO
-    // (cmd/api-server/policies.go's toPolicyDTO) never exposes job_id, so
-    // unlike a direct page.request.post('/api/v1/restore', ...) creation
-    // (see live-job-updates.spec.js), a policy submitted through the real
-    // UI can't be looked up by job_id afterward. Diffing against this
-    // snapshot instead identifies the newly created policy -- this test
-    // runs alone, in serial mode, in its own file, so there's no
-    // concurrent restore-policy creation to collide with.
-    const beforeResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
-    const { data: beforePolicies } = await beforeResp.json()
-    const beforeIds = new Set(beforePolicies.map((p) => p.id))
-
     await page.getByTestId('restore-button').click()
     await page.getByTestId('confirm-restore').click() // Task 6's pre-restore confirmation modal
 
@@ -147,11 +135,14 @@ test('restore writes real file content, verified by checksum, with a folder rena
     // points at a restore (not verify) job before it's used below.
     expect(jobId).toMatch(/^restore:/)
 
+    // policyDTO (cmd/api-server/policies.go) now serializes job_id (it's
+    // been on the underlying pb.Policy message all along, field 22 --
+    // policy-server sets it synchronously at creation time; the REST layer
+    // just never exposed it), so the policy the UI just submitted can be
+    // found directly by the job_id its own status link already named.
     const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
     const { data: restorePolicies } = await restorePoliciesResp.json()
-    const restorePolicy = restorePolicies.find(
-      (p) => !beforeIds.has(p.id) && p.client_filters.hostnames.includes(HOST) && p.rules.some((r) => r.path === FIXTURE_SRC_DIR)
-    )
+    const restorePolicy = restorePolicies.find((p) => p.job_id === jobId)
     expect(restorePolicy).toBeTruthy()
     trackPolicy(restorePolicy.id)
 

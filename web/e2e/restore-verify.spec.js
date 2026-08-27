@@ -71,23 +71,40 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
     // reasoning as policySeeding.js's own storageSelect wait).
     await expect(destinationSelect.locator('option', { hasText: sourceHost })).toHaveCount(1)
     await destinationSelect.selectOption(sourceHost)
+
+    // Verify submits directly (no confirmation modal -- only Restore has
+    // one, Task 6) via RestoreView's per-row status column, not the old
+    // flat submission-results list Task 7 removed.
+    const entryKey = `${sourceHost}:${filePath}`
     await page.getByTestId('verify-button').click()
 
-    const resultText = await page.getByTestId('submission-results').innerText()
-    const policyName = /Started verification policy (\S+) from/.exec(resultText)[1]
+    const statusLink = page.getByTestId(`status-${entryKey}`).getByRole('link')
+    await expect(statusLink).toBeVisible({ timeout: 30_000 })
+    const href = await statusLink.getAttribute('href') // "/jobs/<job_id>", from RestoreView's router-link
+    const jobId = href.replace(/^\/jobs\//, '')
+    // policy-server's restorePolicyJobID (write.go) prefixes every
+    // verify-mode job id "verify:" -- confirms the status link really
+    // points at a verify (not restore) job before it's used below.
+    expect(jobId).toMatch(/^verify:/)
 
+    // policyDTO (cmd/api-server/policies.go) serializes job_id -- it's been
+    // on the underlying pb.Policy message all along (field 22), policy-server
+    // sets it synchronously at creation time, the REST layer just used to
+    // never expose it -- so the policy this submission created can be found
+    // directly by the job_id its own status link already named.
     const verifyPoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
     const { data: verifyPolicies } = await verifyPoliciesResp.json()
-    const verifyPolicy = verifyPolicies.find((p) => p.name === policyName)
-    if (verifyPolicy) trackPolicy(verifyPolicy.id)
+    const verifyPolicy = verifyPolicies.find((p) => p.job_id === jobId)
+    expect(verifyPolicy).toBeTruthy()
+    trackPolicy(verifyPolicy.id)
 
     // No UI/API surface to force policyclient's pickup faster than its
     // default 900s fetch interval -- same non-UI escape hatch
     // seedRestoreCartCatalogData already uses for its own backup policy.
     execSync(`docker compose -f ${COMPOSE_FILE} exec -T ${sourceHost} ./policyclient fetch`, { stdio: 'inherit' })
-    await waitForJobSuccess(page, policyName)
+    await waitForJobSuccess(page, verifyPolicy.name)
 
-    await page.locator('tbody tr', { hasText: policyName }).locator('a').click()
+    await page.locator('tbody tr', { hasText: verifyPolicy.name }).locator('a').click()
 
     const verifiedLine = await waitForLogLine('verified')
     await expect(verifiedLine).toBeVisible()
@@ -127,30 +144,30 @@ test('restore verification', async ({ page, context, trackPolicy }) => {
     await destinationSelect.selectOption(sourceHost)
 
     await page.getByTestId('overwrite-checkbox').check()
+
+    // This step re-selects the same file fresh (see the comment above), so
+    // its own entry starts with no prior status -- unlike restore-content.spec.js,
+    // there's no stale-status race to guard against here.
+    const entryKey = `${sourceHost}:${filePath}`
     await page.getByTestId('restore-button').click()
+    await page.getByTestId('confirm-restore').click() // Task 6's pre-restore confirmation modal
 
-    // Unlike step 1's first-ever submission (where submission-results starts
-    // absent and Playwright's own actionability wait for the element to
-    // attach happens to synchronize with the async submit call), this step
-    // starts with a stale submission-results <ul> already on the page --
-    // step 1's own verify result, carried over in the (page-navigation-
-    // persisted) restoreSubmission Pinia store. A plain .innerText() read
-    // right after the click can win the race against submit()'s own reset
-    // (results = [] synchronously, then repopulated once the POST
-    // resolves) and return step 1's stale text. expect(...).toContainText
-    // is a web-first assertion that polls until the DOM actually reflects
-    // this step's own submission, so it can't observe that transient state.
-    const resultsLocator = page.getByTestId('submission-results')
-    await expect(resultsLocator).toContainText('Started restore policy')
-    const resultText = await resultsLocator.innerText()
-    const policyName = /Started restore policy (\S+) from/.exec(resultText)[1]
+    const statusLink = page.getByTestId(`status-${entryKey}`).getByRole('link')
+    await expect(statusLink).toBeVisible({ timeout: 30_000 })
+    const href = await statusLink.getAttribute('href') // "/jobs/<job_id>", from RestoreView's router-link
+    const jobId = href.replace(/^\/jobs\//, '')
+    // policy-server's restorePolicyJobID (write.go) prefixes every
+    // restore-mode job id "restore:" -- confirms the status link really
+    // points at a restore (not verify) job before it's used below.
+    expect(jobId).toMatch(/^restore:/)
 
-    // RestoreView's success copy confirms the /restore call returned 201,
-    // but not the policy's id -- look it up by name via the REST API (the
-    // UI has no affordance to read it back) so trackPolicy can clean it up.
+    // RestoreView's status link confirms the /restore call returned 201 and
+    // which job it started; policyDTO now serializes job_id too (see step
+    // 1's comment above), so the policy itself -- needed only for
+    // trackPolicy's cleanup -- can be found directly by that job_id.
     const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
     const { data: restorePolicies } = await restorePoliciesResp.json()
-    const policy = restorePolicies.find((p) => p.name === policyName)
+    const policy = restorePolicies.find((p) => p.job_id === jobId)
     expect(policy).toBeTruthy()
     trackPolicy(policy.id)
   })
