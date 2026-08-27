@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useCatalogStore } from '../stores/catalog'
 import { useRestoreCartStore } from '../stores/restoreCart'
+import { useRestoreSubmissionStore } from '../stores/restoreSubmission'
 import { resolveFile, resolveFolderState } from '../utils/restoreRules'
 import { formatBytes, formatTimestamp } from '../utils/format'
 import { groupEntriesByFile } from '../utils/catalogGrouping'
@@ -16,6 +17,7 @@ import TriStateCheckbox from '../components/ui/TriStateCheckbox.vue'
 
 const catalog = useCatalogStore()
 const restoreCart = useRestoreCartStore()
+const submission = useRestoreSubmissionStore()
 const activePanel = ref('date')
 const versionsFor = ref(null) // { path, sourceHost } | null
 
@@ -71,9 +73,17 @@ function capturedLabel(row) {
   return formatTimestamp(row.isFolder ? row.last_seen : row.representative.store_created_at)
 }
 
+// Toggling here is the other path (besides RestoreView.vue's remove()) that
+// can add/remove a rule at a given (host, path) -- so it needs the same
+// stale-status clear: a checked/verified/unchecked/re-checked file must not
+// surface a leftover badge from the earlier selection at this key. Cleared
+// unconditionally on every toggle (both directions) since clearEntry is a
+// no-op when nothing is recorded, so there's no need to distinguish check
+// from uncheck.
 function toggleSelection(row) {
   if (row.isFolder) {
     restoreCart.toggleFolder(row.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
+    submission.clearEntry({ host: null, path: row.path })
   } else {
     restoreCart.toggleFile(
       row.sourceHost,
@@ -83,6 +93,7 @@ function toggleSelection(row) {
       catalog.filters.receivedAfter,
       catalog.filters.receivedBefore
     )
+    submission.clearEntry({ host: row.sourceHost, path: row.path })
   }
 }
 

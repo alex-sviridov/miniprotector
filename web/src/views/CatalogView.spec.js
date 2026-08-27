@@ -4,6 +4,7 @@ import { createTestingPinia } from '@pinia/testing'
 import CatalogView from './CatalogView.vue'
 import { useCatalogStore } from '../stores/catalog'
 import { useRestoreCartStore } from '../stores/restoreCart'
+import { useRestoreSubmissionStore } from '../stores/restoreSubmission'
 import DateRangePanel from '../components/catalog/DateRangePanel.vue'
 import FacetPanel from '../components/catalog/FacetPanel.vue'
 import DirectoryPathBar from '../components/catalog/DirectoryPathBar.vue'
@@ -57,7 +58,7 @@ function mountView(state, restoreCartState = {}) {
   const wrapper = mount(CatalogView, {
     global: { plugins: [pinia], stubs: { DateRangePanel: true, FacetPanel: true } },
   })
-  return { wrapper, catalog, restoreCart: useRestoreCartStore() }
+  return { wrapper, catalog, restoreCart: useRestoreCartStore(), submission: useRestoreSubmissionStore() }
 }
 
 describe('CatalogView', () => {
@@ -394,6 +395,17 @@ describe('CatalogView', () => {
     expect(catalog.navigateTo).not.toHaveBeenCalled()
   })
 
+  it('clicking a file checkbox also clears any stale submission status recorded for that entry', async () => {
+    const { wrapper, submission } = mountView({
+      currentPath: '/var/lib/dbdata',
+      entries: [entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/data.db' })],
+    })
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    await checkbox.trigger('click')
+    await checkbox.trigger('change')
+    expect(submission.clearEntry).toHaveBeenCalledWith({ host: 'database', path: '/var/lib/dbdata/data.db' })
+  })
+
   it('renders a checked checkbox for a folder row fully covered by a wildcard rule', () => {
     const { wrapper } = mountView(
       {
@@ -437,6 +449,17 @@ describe('CatalogView', () => {
     await checkbox.trigger('change')
     expect(restoreCart.toggleFolder).toHaveBeenCalledWith('/var/log', 1000, 2000)
     expect(catalog.navigateTo).not.toHaveBeenCalled()
+  })
+
+  it('clicking a folder checkbox also clears any stale submission status recorded for that entry', async () => {
+    const { wrapper, submission } = mountView({
+      currentPath: '/var',
+      directoryChildren: [{ path: '/var/log', name: 'log', file_count: 3, last_seen: 1752400010, has_children: false }],
+    })
+    const checkbox = wrapper.find('tbody tr input[type="checkbox"]')
+    await checkbox.trigger('click')
+    await checkbox.trigger('change')
+    expect(submission.clearEntry).toHaveBeenCalledWith({ host: null, path: '/var/log' })
   })
 
   it('sets a data-test attribute identifying each row\'s checkbox', () => {
