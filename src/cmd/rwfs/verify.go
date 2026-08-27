@@ -19,11 +19,6 @@ import (
 	"lukechampine.com/blake3"
 )
 
-const (
-	retryBackoffInitial = 500 * time.Millisecond
-	retryBackoffCap     = 5 * time.Second
-)
-
 type verifyResult struct {
 	fileUUID   string
 	source     string
