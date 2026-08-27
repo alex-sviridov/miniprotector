@@ -32,7 +32,7 @@ import (
 // fetches and writes every resolved file's content (phase 2). jobID rides
 // every RPC call as outgoing job-id metadata, the same convention
 // runVerify uses.
-func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdin io.Reader, quiet bool, streams int, certsDir, jobID string) error {
+func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdin io.Reader, quiet bool, streams, retries int, certsDir, jobID string) error {
 	rules, err := parseRulesStdin(stdin)
 	if err != nil {
 		return err
@@ -44,7 +44,7 @@ func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdi
 	}
 	defer conn.Close()
 
-	return runRestoreWithConn(logger, conn, overwrite, rules, quiet, streams, jobID)
+	return runRestoreWithConn(logger, conn, overwrite, rules, quiet, streams, retries, jobID)
 }
 
 // runRestoreWithConn is runRestore's body, parameterized on an
@@ -52,7 +52,7 @@ func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdi
 // bufconn dial without duplicating anything past the transport-level
 // connect (runRestore itself is the only production caller). See
 // restore_test.go's runRestoreWithDialer.
-func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bool, rules []RestoreRule, quiet bool, streams int, jobID string) error {
+func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bool, rules []RestoreRule, quiet bool, streams, retries int, jobID string) error {
 	callCtx := jobid.Outgoing(context.Background(), jobID)
 
 	logger.Info("restore starting", "overwrite", overwrite, "rules", len(rules))
@@ -113,7 +113,7 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 		return err
 	}
 
-	return restoreFileContent(callCtx, logger, restoreClient, files, overwrite, streams)
+	return restoreFileContent(callCtx, logger, restoreClient, files, overwrite, streams, retries)
 }
 
 // createRestoreDirectoryStructure is restore's phase 1: recreate every
@@ -187,7 +187,7 @@ func createRestoreDirectoryStructure(logger *slog.Logger, dirs []restoreDirector
 // must already exist. On failure, no summary line is logged, mirroring
 // createRestoreDirectoryStructure's existing convention; the triggering
 // file's own logged error carries the diagnostic.
-func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, files []restoreFile, overwrite bool, streams int) error {
+func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, files []restoreFile, overwrite bool, streams, retries int) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -215,7 +215,7 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 	}()
 
 	resultCh := runWorkerPool(writeCtx, streams, workCh, func(ctx context.Context, f restoreFile) restoreFileResult {
-		return writeRestoreFile(ctx, client, f, overwrite)
+		return writeRestoreFileWithRetry(ctx, logger, client, f, overwrite, retries)
 	})
 
 	var firstErr error

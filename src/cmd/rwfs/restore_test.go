@@ -29,7 +29,7 @@ import (
 // dial step against lis, then calls runRestoreWithConn, the exact same
 // package-level resolution/dispatch logic runRestore itself calls after
 // dialing.
-func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, rulesJSON string, overwrite bool, streams int) error {
+func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, rulesJSON string, overwrite bool, streams, retries int) error {
 	t.Helper()
 
 	rules, err := parseRulesStdin(strings.NewReader(rulesJSON))
@@ -44,7 +44,7 @@ func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listen
 	require.NoError(t, err)
 	defer conn.Close()
 
-	return runRestoreWithConn(logger, conn, overwrite, rules, false, streams, "test-job")
+	return runRestoreWithConn(logger, conn, overwrite, rules, false, streams, retries, "test-job")
 }
 
 func TestRunRestore_LogsResolvedFileWithRenamedDestPath(t *testing.T) {
@@ -76,7 +76,7 @@ func TestRunRestore_LogsResolvedFileWithRenamedDestPath(t *testing.T) {
 	destDir := t.TempDir() + "/photos_recovered"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4, 1)
 	require.NoError(t, err)
 
 	out := logBuf.String()
@@ -109,7 +109,7 @@ func TestRunRestore_FileLevelRuleMatchingNothingFails(t *testing.T) {
 
 	rulesJSON := `{"rules":[{"host":"hosta","path":"/etc/never-backed-up.conf","include":true}]}`
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 file(s) failed resolution")
 	assert.Contains(t, logBuf.String(), `reason="not found on this store"`)
@@ -133,7 +133,7 @@ func TestRunRestore_FolderLevelRuleMatchingNothingSucceeds(t *testing.T) {
 
 	rulesJSON := `{"rules":[{"host":"","path":"/empty","include":true}]}`
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	assert.NoError(t, err)
 }
 
@@ -175,7 +175,7 @@ func TestRunRestore_CreatesDirectoryStructureForFolderSelection(t *testing.T) {
 	destDir := destBase + "/nested_recovered"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	info, statErr := os.Stat(destDir)
@@ -212,7 +212,7 @@ func TestRunRestore_ReusesExistingDirectory(t *testing.T) {
 	require.NoError(t, os.Mkdir(destDir, 0o755))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	out := logBuf.String()
@@ -244,7 +244,7 @@ func TestRunRestore_AbortsOnDirectoryCreationFailureBeforeSummary(t *testing.T) 
 	require.NoError(t, os.WriteFile(destDir, []byte("data"), 0o644))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "blocked")
 
@@ -281,7 +281,7 @@ func TestRunRestore_ParentBeforeChildOrdering(t *testing.T) {
 	destRoot := destBase + "/a"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/a","include":true,"dest_path":%q}]}`, destRoot)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	for _, p := range []string{destRoot, destRoot + "/b", destRoot + "/b/c"} {
@@ -317,7 +317,7 @@ func TestRunRestore_NotFoundAbortsBeforePhase1(t *testing.T) {
 		{"host":"hosta","path":"/etc/never-backed-up.conf","include":true}
 	]}`, destBase+"/nested")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 file(s) failed resolution")
 
@@ -350,7 +350,7 @@ func TestRunRestore_WritesFileContent(t *testing.T) {
 	destBase := t.TempDir()
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
@@ -391,7 +391,7 @@ func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
 	destBase := t.TempDir()
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	assert.Contains(t, logBuf.String(), "file written")
@@ -421,7 +421,7 @@ func TestRunRestore_OverwriteFalseSkipsExistingFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(destBase+"/recovered/vacation.jpg", []byte("original content on disk"), 0o644))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
@@ -457,7 +457,7 @@ func TestRunRestore_OverwriteTrueReplacesExistingFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(destBase+"/recovered/vacation.jpg", []byte("stale content on disk"), 0o644))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4, 1)
 	require.NoError(t, err)
 
 	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
@@ -493,7 +493,7 @@ func TestRunRestore_FileWriteFailureAbortsWithoutSummary(t *testing.T) {
 	destBase := t.TempDir()
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"hosta","path":"/data/a.txt","include":true,"dest_path":%q}]}`, destBase+"/missing-parent/a.txt")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 
 	out := logBuf.String()
@@ -567,7 +567,7 @@ func TestRestoreFileContent_FirstFailureCancelsOtherInFlightTransfers(t *testing
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	err = restoreFileContent(context.Background(), logger, client, files, false, 2)
+	err = restoreFileContent(context.Background(), logger, client, files, false, 2, 1)
 	require.Error(t, err)
 
 	select {
@@ -602,8 +602,39 @@ func TestRunRestore_DuplicateDestinationAcrossHostsIsHardError(t *testing.T) {
 	// /data/a.txt copies land at the same dest_path.
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), destBase+"/recovered/a.txt")
 	assert.Empty(t, restoreSrv.Requested(), "no file should be fetched once a destination collision is detected")
+}
+
+func TestRunRestore_RecoversFromTransientFileErrorViaRetry(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/photos/vacation.jpg", "job1", 5000, []byte("vacation photo bytes"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &flakyRestoreServer{failuresBeforeSuccess: 1, wrapped: &realRestoreServer{store: store}}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destDir := t.TempDir() + "/photos_recovered"
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destDir)
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4, 3)
+	require.NoError(t, err, "a single transient failure must not abort the run when retries are available")
+
+	got, readErr := os.ReadFile(destDir + "/vacation.jpg")
+	require.NoError(t, readErr)
+	assert.Equal(t, "vacation photo bytes", string(got))
+	assert.Equal(t, 2, restoreSrv.Calls(), "one failed attempt, then one successful retry")
 }

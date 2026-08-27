@@ -67,7 +67,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "restore":
-		if err := runRestore(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.Overwrite, os.Stdin, arguments.Quiet, arguments.Streams, certsDir, jobID); err != nil {
+		if err := runRestore(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.Overwrite, os.Stdin, arguments.Quiet, arguments.Streams, arguments.Retries, certsDir, jobID); err != nil {
 			logger.Error("Restore failed", "error", err)
 			os.Exit(1)
 		}
