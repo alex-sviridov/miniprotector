@@ -100,9 +100,12 @@ failure) against every cart entry that request covered.
 - That entry's underlying submission failed outright (e.g. "No storage policy found for X"): the
   error shown inline on the row.
 
-No separate results list below the table. On completion, only rows whose submission succeeded are
-removed from the cart (`restoreCart`'s rule list) — a row that failed to submit stays, so the user
-can fix and resubmit without reselecting everything else.
+No separate results list below the table. A row stays visible after submission regardless of
+outcome — a success badge needs to stay on screen long enough to actually be seen and clicked, so
+nothing auto-removes it. Instead, an entry that already carries a successful outcome is simply
+excluded from being resubmitted on a later Verify/Restore click (a failed one remains fully
+eligible for retry). Manually clearing a completed row out of the cart is what the existing Remove
+button is for.
 
 This still never surfaces which storage host anything went through — the per-row status derives
 from whichever request ended up covering that entry, but the entry itself never displays a store
