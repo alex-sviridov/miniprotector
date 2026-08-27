@@ -123,6 +123,7 @@ type Config struct {
 	APIServerHost                    string
 	RestoreCleanupIntervalSec        int
 	RestoreCleanupGracePeriodSec     int
+	RwfsRetries                      int
 }
 
 type contextKey string
@@ -174,6 +175,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		CheckinRetentionSec:              86400,
 		RestoreCleanupIntervalSec:        300,
 		RestoreCleanupGracePeriodSec:     900,
+		RwfsRetries:                      3,
 	}
 	foundFields := make(map[string]bool)
 
@@ -458,6 +460,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.RestoreCleanupGracePeriodSec = number
 			foundFields["RestoreCleanupGracePeriodSec"] = true
+		case "RwfsRetries":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RwfsRetries value at line %d: %s", lineNum, value)
+			}
+			config.RwfsRetries = number
+			foundFields["RwfsRetries"] = true
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

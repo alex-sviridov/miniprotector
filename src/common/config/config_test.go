@@ -659,3 +659,25 @@ func TestParseConfig_CheckinRetentionSecRejectsZeroOrNegative(t *testing.T) {
 	_, err := ParseConfig(path)
 	require.Error(t, err)
 }
+
+func TestParseConfig_RwfsRetriesDefaultsTo3(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 3, conf.RwfsRetries)
+}
+
+func TestParseConfig_RwfsRetriesParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRwfsRetries=5\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, conf.RwfsRetries)
+}
