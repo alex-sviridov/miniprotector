@@ -8,6 +8,20 @@ vi.mock('../api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
+function mockStorageAndRestore({ store = 'store-a', policyId = 's1', restoreOk = true, restoreError } = {}) {
+  apiFetch.mockImplementation((path, opts) => {
+    if (path.startsWith('/catalog/stores')) return Promise.resolve({ data: [{ name: store, count: 1, last_seen: 100 }] })
+    if (path === '/policies?type=storage') {
+      return Promise.resolve({ data: [{ id: policyId, port: 8080, checkins: [{ hostname: store, last_seen_at: 1 }] }] })
+    }
+    if (path === '/restore') {
+      if (!restoreOk) return Promise.reject(new Error(restoreError))
+      return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name, job_id: 'restore:r1:1' })
+    }
+    throw new Error(`unexpected apiFetch call: ${path}`)
+  })
+}
+
 describe('restoreSubmission store', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -22,313 +36,106 @@ describe('restoreSubmission store', () => {
 
   it('reports an error and makes no network calls when the cart is empty', async () => {
     const submission = useRestoreSubmissionStore()
-
     await submission.submit('web01', { mode: 'verify', overwrite: false })
-
     expect(apiFetch).not.toHaveBeenCalled()
     expect(submission.error).toBe('Nothing selected for restore.')
-    expect(submission.results).toEqual([])
+    expect(submission.entryStatus).toEqual({})
   })
 
-  it('sends the full, unsplit rule list to the one store a folder rule touches', async () => {
+  it('records a success status carrying the job_id for a single-store entry', async () => {
     const cart = useRestoreCartStore()
-    cart.toggleFolder('/var/lib/dbdata')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
+    cart.toggleFile('web01', '/etc/hosts')
+    mockStorageAndRestore()
 
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
-    expect(submission.error).toBeNull()
-    expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
-    ])
-    expect(apiFetch).toHaveBeenCalledWith('/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'restore-2026-08-10T00:00:00.000Z-store-a',
-        client_filters: { hostnames: ['web01'], labels: {} },
-        storage_policy_id: 's1',
-        rules: [{ host: null, path: '/var/lib/dbdata', include: true }],
-        mode: 'verify',
-        overwrite: false,
-      }),
-    })
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'success', jobId: 'restore:r1:1' }])
   })
 
-  // rulesForStore pulls the rules each store's CreatePolicy call carried,
-  // keyed by the store host its generated policy name ends with.
-  function rulesByStoreFromCalls() {
-    const byStore = {}
-    for (const [path, opts] of apiFetch.mock.calls) {
-      if (path !== '/restore') continue
-      const body = JSON.parse(opts.body)
-      byStore[body.name.replace(/^restore-.*Z-/, '')] = body.rules
-    }
-    return byStore
-  }
-
-  // The failure this splitting exists to prevent: rwfs treats a file-level
-  // rule that matches nothing on the store it is checking as a verification
-  // failure, so telling store-b to verify a file that only ever lived on
-  // store-a would fail store-b's one-shot task forever.
-  it('creates one restore policy per distinct store, each carrying only its own file rules', async () => {
+  it('records a per-store error without blocking other stores, keyed by their own entries', async () => {
     const cart = useRestoreCartStore()
     cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
     cart.toggleFile('web01', '/etc/hosts')
 
     apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores?source_hosts=database')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path.startsWith('/catalog/stores?source_hosts=web01')) {
-        return Promise.resolve({ data: [{ name: 'store-b', count: 1, last_seen: 100 }] })
-      }
+      if (path.startsWith('/catalog/stores?source_hosts=database')) return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
+      if (path.startsWith('/catalog/stores?source_hosts=web01')) return Promise.resolve({ data: [{ name: 'store-b', count: 1, last_seen: 100 }] })
       if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [
-            { id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] },
-            { id: 's2', port: 9090, checkins: [{ hostname: 'store-b', last_seen_at: 1 }] },
-          ],
-        })
+        return Promise.resolve({ data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }] })
       }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
+      if (path === '/restore') return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name, job_id: 'restore:r1:1' })
       throw new Error(`unexpected apiFetch call: ${path}`)
     })
 
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
-    expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
-      { storeHost: 'store-b', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-b' }, mode: 'verify' },
-    ])
-    expect(rulesByStoreFromCalls()).toEqual({
-      'store-a': [{ path: '/var/lib/dbdata/dump.sql', host: 'database', include: true }],
-      'store-b': [{ path: '/etc/hosts', host: 'web01', include: true }],
-    })
+    expect(submission.entryStatus['database:/var/lib/dbdata/dump.sql']).toEqual([{ status: 'success', jobId: 'restore:r1:1' }])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'No storage policy found for store-b' }])
   })
 
-  it('sends folder rules to every store alongside each store\'s own file rules', async () => {
+  it('includes not_before/not_after on the wire only for an included rule that has them', async () => {
     const cart = useRestoreCartStore()
-    cart.toggleFolder('/srv/shared')
-    cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
+    cart.toggleFile('web01', '/etc/hosts', undefined, undefined, 1000, 2000)
+    mockStorageAndRestore()
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    const body = JSON.parse(restoreCall[1].body)
+    expect(body.rules).toEqual([{ host: 'web01', path: '/etc/hosts', include: true, not_before: 1000, not_after: 2000 }])
+  })
+
+  it('omits not_before/not_after from an exclusion rule even if present', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/srv/shared', 1000, 2000)
+    cart.toggleFile('web01', '/srv/shared/secret.env', undefined, undefined, 1000, 2000) // deselect -> exclusion rule
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores')) return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
+      if (path === '/policies?type=storage') return Promise.resolve({ data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }] })
+      if (path === '/restore') return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name, job_id: 'restore:r1:1' })
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    const body = JSON.parse(restoreCall[1].body)
+    const exclusion = body.rules.find((r) => r.include === false)
+    expect(exclusion).toEqual({ host: 'web01', path: '/srv/shared/secret.env', include: false })
+  })
+
+  it('excludes an already-succeeded entry from a later submit, without dropping still-eligible entries', async () => {
+    const cart = useRestoreCartStore()
     cart.toggleFile('web01', '/etc/hosts')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores?pattern=%2Fsrv%2Fshared')) {
-        return Promise.resolve({
-          data: [
-            { name: 'store-a', count: 1, last_seen: 100 },
-            { name: 'store-b', count: 1, last_seen: 100 },
-          ],
-        })
-      }
-      if (path.startsWith('/catalog/stores?source_hosts=database')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path.startsWith('/catalog/stores?source_hosts=web01')) {
-        return Promise.resolve({ data: [{ name: 'store-b', count: 1, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [
-            { id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] },
-            { id: 's2', port: 9090, checkins: [{ hostname: 'store-b', last_seen_at: 1 }] },
-          ],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
+    mockStorageAndRestore()
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
+    expect(apiFetch).toHaveBeenCalledTimes(3) // stores facet, storage policies, /restore
 
-    const folderRule = { path: '/srv/shared', host: null, include: true }
-    expect(rulesByStoreFromCalls()).toEqual({
-      'store-a': [folderRule, { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true }],
-      'store-b': [folderRule, { path: '/etc/hosts', host: 'web01', include: true }],
-    })
-  })
-
-  // An exclusion rule can only ever suppress a selection -- rwfs's
-  // not-found scan skips it -- so it is safe on every store, and dropping
-  // it would restore a file the user explicitly deselected.
-  it('sends exclusion rules to every store', async () => {
-    const cart = useRestoreCartStore()
-    cart.toggleFolder('/srv/shared')
-    cart.toggleFile('web01', '/srv/shared/secret.env') // deselects one file under the folder
-    cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
-
-    expect(cart.rules).toEqual([
-      { path: '/srv/shared', host: null, include: true, destPath: '/srv/shared' },
-      { path: '/srv/shared/secret.env', host: 'web01', include: false, destPath: '/srv/shared/secret.env' },
-      { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true, destPath: '/var/lib/dbdata/dump.sql' },
-    ])
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores?pattern=%2Fsrv%2Fshared')) {
-        return Promise.resolve({
-          data: [
-            { name: 'store-a', count: 1, last_seen: 100 },
-            { name: 'store-b', count: 1, last_seen: 100 },
-          ],
-        })
-      }
-      if (path.startsWith('/catalog/stores?source_hosts=database')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [
-            { id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] },
-            { id: 's2', port: 9090, checkins: [{ hostname: 'store-b', last_seen_at: 1 }] },
-          ],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
-    const submission = useRestoreSubmissionStore()
+    apiFetch.mockClear()
+    cart.toggleFile('web01', '/etc/nginx/nginx.conf')
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
-    const shared = [
-      { path: '/srv/shared', host: null, include: true },
-      { path: '/srv/shared/secret.env', host: 'web01', include: false },
-    ]
-    expect(rulesByStoreFromCalls()).toEqual({
-      'store-a': [...shared, { path: '/var/lib/dbdata/dump.sql', host: 'database', include: true }],
-      'store-b': shared,
-    })
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    const body = JSON.parse(restoreCall[1].body)
+    expect(body.rules).toEqual([{ host: 'web01', path: '/etc/nginx/nginx.conf', include: true }])
   })
 
-  it('sets an error and makes no /restore call when the store-facets fetch rejects', async () => {
+  it('retries a previously-failed entry on a later submit', async () => {
     const cart = useRestoreCartStore()
-    cart.toggleFolder('/var/lib/dbdata')
-
-    apiFetch.mockImplementation((path) => {
-      if (path.startsWith('/catalog/stores')) return Promise.reject(new Error('catalog unavailable'))
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
-    const submission = useRestoreSubmissionStore()
-    await expect(submission.submit('web01', { mode: 'verify', overwrite: false })).resolves.toBeUndefined()
-
-    expect(submission.error).toBe('catalog unavailable')
-    expect(submission.results).toEqual([])
-    expect(submission.submitting).toBe(false)
-    expect(apiFetch).not.toHaveBeenCalledWith('/restore', expect.anything())
-  })
-
-  it('reports a storage-policy lookup failure and creates no policies', async () => {
-    const cart = useRestoreCartStore()
-    cart.toggleFolder('/var/lib/dbdata')
-
-    apiFetch.mockImplementation((path) => {
-      if (path.startsWith('/catalog/stores')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') return Promise.reject(new Error('policy server down'))
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
-    const submission = useRestoreSubmissionStore()
-    await submission.submit('web01', { mode: 'verify', overwrite: false })
-
-    expect(submission.error).toBe('Could not look up storage policies: policy server down')
-    expect(submission.results).toEqual([])
-    expect(apiFetch).not.toHaveBeenCalledWith('/restore', expect.anything())
-  })
-
-  it('reports a per-store error when a store has no matching storage policy, without blocking other stores', async () => {
-    const cart = useRestoreCartStore()
-    cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
     cart.toggleFile('web01', '/etc/hosts')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores?source_hosts=database')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path.startsWith('/catalog/stores?source_hosts=web01')) {
-        return Promise.resolve({ data: [{ name: 'store-b', count: 1, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
+    mockStorageAndRestore({ restoreOk: false, restoreError: 'transient failure' })
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'transient failure' }])
 
-    expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
-      { storeHost: 'store-b', status: 'error', message: 'No storage policy found for store-b' },
-    ])
-  })
-
-  it('reports a per-store error when CreatePolicy fails, without blocking other stores', async () => {
-    const cart = useRestoreCartStore()
-    cart.toggleFile('database', '/var/lib/dbdata/dump.sql')
-    cart.toggleFile('web01', '/etc/hosts')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores?source_hosts=database')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path.startsWith('/catalog/stores?source_hosts=web01')) {
-        return Promise.resolve({ data: [{ name: 'store-b', count: 1, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [
-            { id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] },
-            { id: 's2', port: 9090, checkins: [{ hostname: 'store-b', last_seen_at: 1 }] },
-          ],
-        })
-      }
-      if (path === '/restore') {
-        const name = JSON.parse(opts.body).name
-        if (name.endsWith('store-b')) return Promise.reject(new Error('name already exists'))
-        return Promise.resolve({ id: 'r1', name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
-    const submission = useRestoreSubmissionStore()
+    mockStorageAndRestore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
-
-    expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: 'restore-2026-08-10T00:00:00.000Z-store-a' }, mode: 'verify' },
-      { storeHost: 'store-b', status: 'error', message: 'name already exists' },
-    ])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'success', jobId: 'restore:r1:1' }])
   })
 
   it('tracks submitting state across the whole flow', async () => {
@@ -343,54 +150,10 @@ describe('restoreSubmission store', () => {
     expect(submission.submitting).toBe(false)
   })
 
-  it('includes dest_path on the wire only for a rule whose destPath differs from its path', async () => {
-    const cart = useRestoreCartStore()
-    cart.toggleFile('web01', '/etc/nginx/nginx.conf')
-    cart.setDestPath({ host: 'web01', path: '/etc/nginx/nginx.conf' }, '/etc/nginx/nginx.conf.bak')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
-    const submission = useRestoreSubmissionStore()
-    await submission.submit('web01', { mode: 'verify', overwrite: false })
-
-    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
-    const body = JSON.parse(restoreCall[1].body)
-    expect(body.rules).toEqual([
-      { host: 'web01', path: '/etc/nginx/nginx.conf', include: true, dest_path: '/etc/nginx/nginx.conf.bak' },
-    ])
-  })
-
   it('sends mode and overwrite through on every per-store /restore call', async () => {
     const cart = useRestoreCartStore()
     cart.toggleFolder('/var/lib/dbdata')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
+    mockStorageAndRestore()
 
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'restore', overwrite: true })
@@ -401,85 +164,10 @@ describe('restoreSubmission store', () => {
     expect(body.overwrite).toBe(true)
   })
 
-  it('tags each success result with the mode it was submitted under', async () => {
+  it('never sends storeHost, size, or notBefore/notAfter-as-camelCase on the wire', async () => {
     const cart = useRestoreCartStore()
-    cart.toggleFolder('/var/lib/dbdata')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name, mode: 'restore' })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
-    const submission = useRestoreSubmissionStore()
-    await submission.submit('web01', { mode: 'restore', overwrite: true })
-
-    expect(submission.results).toEqual([
-      { storeHost: 'store-a', status: 'success', policy: { id: 'r1', name: expect.any(String), mode: 'restore' }, mode: 'restore' },
-    ])
-  })
-
-  it('reports a per-store error when the /restore call is rejected, without dropping mode/overwrite from the request', async () => {
-    const cart = useRestoreCartStore()
-    cart.toggleFolder('/var/lib/dbdata')
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 2, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
-        })
-      }
-      if (path === '/restore') {
-        const body = JSON.parse(opts.body)
-        expect(body.mode).toBe('restore')
-        expect(body.overwrite).toBe(false)
-        return Promise.reject(new Error('policy creation failed'))
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
-
-    const submission = useRestoreSubmissionStore()
-    await submission.submit('web01', { mode: 'restore', overwrite: false })
-
-    expect(submission.results).toEqual([
-      {
-        storeHost: 'store-a',
-        status: 'error',
-        message: 'policy creation failed',
-      },
-    ])
-  })
-
-  it('never sends storeHost or size on the wire', async () => {
-    const cart = useRestoreCartStore()
-    cart.toggleFile('web01', '/etc/hosts', 'bwfs-1', 4096)
-
-    apiFetch.mockImplementation((path, opts) => {
-      if (path.startsWith('/catalog/stores')) {
-        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }] })
-      }
-      if (path === '/policies?type=storage') {
-        return Promise.resolve({
-          data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }],
-        })
-      }
-      if (path === '/restore') {
-        return Promise.resolve({ id: 'r1', name: JSON.parse(opts.body).name })
-      }
-      throw new Error(`unexpected apiFetch call: ${path}`)
-    })
+    cart.toggleFile('web01', '/etc/hosts', 'bwfs-1', 4096, 1000, 1000)
+    mockStorageAndRestore()
 
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
@@ -488,6 +176,7 @@ describe('restoreSubmission store', () => {
     const body = JSON.parse(restoreCall[1].body)
     expect(body.rules[0]).not.toHaveProperty('storeHost')
     expect(body.rules[0]).not.toHaveProperty('size')
-    expect(body.rules[0]).not.toHaveProperty('dest_path')
+    expect(body.rules[0]).not.toHaveProperty('notBefore')
+    expect(body.rules[0]).not.toHaveProperty('notAfter')
   })
 })
