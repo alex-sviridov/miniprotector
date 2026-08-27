@@ -77,7 +77,7 @@ or stream error after retries). Per-file results and a summary are written via `
 |------|---------|-------------|
 | `--filter` | | Substring filter on file path |
 | `--streams` | 4 | Concurrent verification workers |
-| `--retries` | 3 | Max retry attempts per file on stream error |
+| `--retries` | `RwfsRetries` config (default 3) | Max retry attempts per file on stream error |
 | `--quiet` | false | Suppress per-file success lines (warnings and summary always shown) |
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
 
@@ -94,8 +94,12 @@ path), and each per-file `RestoreFile` stream are all protected by the same idle
 that goes idle that long is cancelled rather than hanging forever. The window measures stream
 inactivity only — time spent handing a received row to a busy consumer (a saturated worker pool)
 is explicitly excluded, so worker backpressure can never be mistaken for a stalled server.
-`verifyFileWithRetry` also waits between retry attempts (capped, doubling backoff starting
-at 500ms) instead of retrying immediately, so a struggling `bwfs` isn't hammered. Internally,
+Both `verify` and `restore` share one retry implementation (`withRetry`, `retry.go`) that waits
+between retry attempts (capped, doubling backoff starting at 500ms) instead of retrying
+immediately, so a struggling `bwfs` isn't hammered -- `restore` retries only network/RPC-facing
+stream errors; an integrity mismatch or a local destination-side problem (existing directory,
+disk error) still fails immediately, no retry, exactly as before. See
+[Design: Restore Per-File Retry](../superpowers/specs/2026-08-27-restore-retry-design.md). Internally,
 `verify` uses a generic worker pool; `verify --rules-stdin` and `restore` share one resolved-row
 source for `ResolveRestoreFiles` consumption (`list` uses neither) — none of this is CLI-visible,
 but it's the reusable shape a future file-content restore phase is expected to build on. See
@@ -176,6 +180,7 @@ reused regardless of it; it governs phase 2 (file content), as described above.
 | `--rules-stdin` | | **Required.** Read `{"rules":[...]}` from stdin -- same shape `verify --rules-stdin` uses. |
 | `--overwrite` | false | A pre-existing destination file is skipped when false, overwritten when true. Has no effect on directories (always reused) or on a non-file occupying a destination path (always a hard error). |
 | `--streams` | 4 | Concurrent file restore workers (phase 2 only; phase 1's directory creation is sequential) |
+| `--retries` | `RwfsRetries` config (default 3) | Max retry attempts per file on stream error |
 | `--quiet` | false | Suppress per-file resolved lines (warnings and summary always shown) |
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
 

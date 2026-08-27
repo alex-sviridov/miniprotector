@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-27 — Restore retries transient per-file stream errors
+
+`rwfs restore` now retries a transient `RestoreFile` stream error per file (network blip, momentary
+`bwfs` hiccup) instead of immediately aborting the whole run -- the same retry-with-backoff `rwfs
+verify` already had, now shared by both commands through one implementation (`withRetry`,
+`cmd/rwfs/retry.go`). This matters more than it used to: since restore/verify policies now run at
+most once ever (`agent`'s one-shot semantics, 2026-08-23), a single blip on one file out of
+thousands used to permanently sacrifice the entire policy with no automatic recovery. Only
+network/RPC-facing failures are retried -- an integrity mismatch (BLAKE3/CRC) or a local
+destination-side problem still aborts immediately, unchanged. The retry count defaults from a new
+`RwfsRetries` config key (default 3) for both commands, overridable per-invocation via `--retries`
+on either. See `docs/superpowers/specs/2026-08-27-restore-retry-design.md`.
+
 ## 2026-08-27 — Restore workflow UI clarity
 
 Reworked the restore cart and submission flow for clarity: the cart no longer groups or reveals
