@@ -253,6 +253,24 @@ describe('restoreSubmission store', () => {
     expect(submission.entryStatus[':/var/lib/dbdata']).toContainEqual({ status: 'error', message: 'store-b unavailable', mode: 'verify' })
   })
 
+  it('does not re-send an already-succeeded-for-this-mode folder rule as a shared rule on a later submit', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+    mockStorageAndRestore()
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+    expect(submission.entryStatus[':/var/lib/dbdata']).toEqual([{ status: 'success', jobId: 'restore:r1:1', mode: 'verify' }])
+
+    apiFetch.mockClear()
+    cart.toggleFolder('/srv/shared')
+    mockStorageAndRestore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    const body = JSON.parse(restoreCall[1].body)
+    expect(body.rules).toEqual([{ host: null, path: '/srv/shared', include: true }])
+  })
+
   it('clearEntry removes all recorded outcomes for that entry, across every mode', async () => {
     const cart = useRestoreCartStore()
     cart.toggleFile('web01', '/etc/hosts')

@@ -54,7 +54,18 @@ async function buildRulesByStore(positiveEntries, allRules) {
   const perEntryStores = await Promise.all(positiveEntries.map((e) => storesTouchedByEntry(e)))
   const allStores = new Set(perEntryStores.flat())
 
-  const sharedRules = allRules.filter((r) => !r.include || !r.host)
+  // A folder-level include rule is only "shared" (sent to every store)
+  // when its own entry actually survived the already-succeeded-for-this-
+  // mode filter above (i.e. is present in positiveEntries) -- otherwise
+  // an already-completed folder tree would get silently re-sent (and
+  // re-restored) on every later submit, since a host-agnostic include
+  // rule always matches `!r.host` regardless of whether it's still
+  // pending. Exclusion rules are unconditionally kept: they're only ever
+  // supporting context for whichever include rules remain active, not a
+  // restore target of their own, so there's nothing to guard against
+  // re-sending.
+  const positiveKeys = new Set(positiveEntries.map(entryKey))
+  const sharedRules = allRules.filter((r) => !r.include || (!r.host && positiveKeys.has(entryKey(r))))
   const sharedFolderEntries = positiveEntries.filter((e) => e.host === null)
 
   const fileEntriesByStore = new Map()
