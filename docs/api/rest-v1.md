@@ -294,7 +294,10 @@ the response to one policy type; omitted returns every type.
 `created_at`/`updated_at` are Unix seconds, matching every other timestamp field in this API.
 `checkins` lists every host that has received this policy from `GetPolicies`, each with its most
 recent check-in time (Unix seconds) -- not a full history, one entry per host. Empty for a policy no
-host has polled yet.
+host has polled yet. A restore/verify-typed policy also carries `"job_id"` (e.g.
+`"job_id": "restore:r1:1"`), generated synchronously at creation and stamped onto every later
+response for it -- a plain backup/storage policy never has one, and the field is omitted entirely
+rather than sent as `null` or empty.
 
 ## `GET /api/v1/policies/{id}`
 
@@ -408,7 +411,7 @@ Creates a new `"restore"`-typed policy -- the only way to create one; there is n
   "name": "web01-emergency",
   "client_filters": {"hostnames": ["web-01"], "labels": {}},
   "storage_policy_id": "<id of an existing \"storage\" policy>",
-  "rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}],
+  "rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true, "not_before": 1752400000, "not_after": 1752400000}],
   "mode": "verify",
   "overwrite": false
 }
