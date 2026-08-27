@@ -223,6 +223,31 @@ describe('CatalogView', () => {
     expect(cell.text()).not.toBe('')
   })
 
+  it('reflects an already-pinned version in a file row\'s Captured cell, instead of the representative default', () => {
+    const wrapper = mountView(
+      { entries: [entry({ path: '/etc/hosts', source_host: 'web01', store_created_at: 1752400000 })] },
+      { rules: [{ host: 'web01', path: '/etc/hosts', include: true, destPath: '/etc/hosts', notBefore: 555, notAfter: 555 }] }
+    ).wrapper
+    const cell = wrapper.get('[data-test="captured-web01:/etc/hosts"]')
+    expect(cell.text()).toBe(new Date(555 * 1000).toLocaleString())
+    expect(cell.text()).not.toBe(new Date(1752400000 * 1000).toLocaleString())
+  })
+
+  it('falls back to the representative default in a file row\'s Captured cell when no pin exists', () => {
+    const wrapper = mountView({ entries: [entry({ path: '/etc/hosts', source_host: 'web01', store_created_at: 1752400000 })] }).wrapper
+    const cell = wrapper.get('[data-test="captured-web01:/etc/hosts"]')
+    expect(cell.text()).toBe(new Date(1752400000 * 1000).toLocaleString())
+  })
+
+  it('reflects an already-pinned version in a folder row\'s Captured cell, instead of last_seen', () => {
+    const wrapper = mountView(
+      { directoryChildren: [{ path: '/var', name: 'var', file_count: 3, last_seen: 1752400010 }] },
+      { rules: [{ host: null, path: '/var', include: true, destPath: '/var', notBefore: 555, notAfter: 555 }] }
+    ).wrapper
+    const cell = wrapper.get('[data-test="captured-/var"]')
+    expect(cell.text()).toBe(new Date(555 * 1000).toLocaleString())
+  })
+
   it('opens the version picker for the row whose Captured cell was clicked, scoped to that file\'s host', async () => {
     const wrapper = mountView({
       entries: [

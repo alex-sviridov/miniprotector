@@ -99,6 +99,24 @@ function isPinned(entry) {
   return Boolean(entry.notBefore) && Boolean(entry.notAfter) && entry.notBefore === entry.notAfter
 }
 
+// capturedLabel must not claim the bare "Latest" when the entry is
+// actually bounded by a real captured filter window -- an unbounded
+// "Latest" is only true after an explicit "Use latest" reset (which sets
+// notBefore/notAfter to 0/0, see useLatestVersion above). Every other
+// unpinned entry defaults to the catalog's filter window at selection
+// time (see restoreRules.js's toggle functions), a real
+// [notBefore, notAfter] range -- if the file's actual last backup falls
+// outside that window, the restore finds nothing, so the label needs to
+// surface the cutoff rather than implying an unqualified "latest version,
+// no matter when."
+function capturedLabel(entry) {
+  if (isPinned(entry)) return formatTimestamp(entry.notBefore)
+  if (entry.notBefore && entry.notAfter && entry.notBefore !== entry.notAfter) {
+    return `Latest through ${formatTimestamp(entry.notAfter)}`
+  }
+  return 'Latest'
+}
+
 const totalSize = computed(() => restoreCart.entries.reduce((sum, e) => sum + (e.size || 0), 0))
 const pinnedCount = computed(() => restoreCart.entries.filter(isPinned).length)
 
@@ -174,7 +192,7 @@ function badgeVariant(status) {
                 class="cursor-pointer text-blue-600 hover:underline"
                 @click="openVersions(entry)"
               >
-                {{ isPinned(entry) ? formatTimestamp(entry.notBefore) : 'Latest' }}
+                {{ capturedLabel(entry) }}
               </button>
             </td>
             <td>

@@ -26,6 +26,8 @@ function mountView(initialState = {}) {
 const fileEntry = { host: 'web01', path: '/etc/hosts', include: true, destPath: '/etc/hosts', size: 100 }
 const folderEntry = { host: null, path: '/var', include: true, destPath: '/var' }
 const pinnedEntry = { host: 'web01', path: '/etc/nginx.conf', include: true, destPath: '/etc/nginx.conf', notBefore: 555, notAfter: 555 }
+const unboundedEntry = { host: 'web01', path: '/etc/resolved.conf', include: true, destPath: '/etc/resolved.conf', notBefore: 0, notAfter: 0 }
+const windowedEntry = { host: 'web01', path: '/etc/motd', include: true, destPath: '/etc/motd', notBefore: 1000, notAfter: 2000 }
 
 describe('RestoreView', () => {
   it('shows the empty state when the cart has no selections', () => {
@@ -43,10 +45,21 @@ describe('RestoreView', () => {
     expect(wrapper.text()).not.toMatch(/store.?host/i)
   })
 
-  it('shows "Latest" for an entry with no version pin, and the pinned timestamp for one that has it', () => {
-    const { wrapper } = mountView({ restoreCart: { rules: [fileEntry, pinnedEntry] } })
-    expect(wrapper.get('[data-test="captured-web01:/etc/hosts"]').text()).toBe('Latest')
+  it('shows the pinned timestamp for an entry pinned to a specific version', () => {
+    const { wrapper } = mountView({ restoreCart: { rules: [pinnedEntry] } })
     expect(wrapper.get('[data-test="captured-web01:/etc/nginx.conf"]').text()).not.toBe('Latest')
+  })
+
+  it('shows bare "Latest" only for a genuinely unbounded entry (explicit "Use latest" reset, notBefore/notAfter both 0)', () => {
+    const { wrapper } = mountView({ restoreCart: { rules: [unboundedEntry] } })
+    expect(wrapper.get('[data-test="captured-web01:/etc/resolved.conf"]').text()).toBe('Latest')
+  })
+
+  it('does not claim bare "Latest" for an entry bounded by a real captured filter window -- shows the window\'s upper-bound date instead', () => {
+    const { wrapper } = mountView({ restoreCart: { rules: [windowedEntry] } })
+    const text = wrapper.get('[data-test="captured-web01:/etc/motd"]').text()
+    expect(text).not.toBe('Latest')
+    expect(text).toContain(new Date(2000 * 1000).toLocaleString())
   })
 
   it('clicking a Captured cell opens the version picker scoped to that entry', async () => {

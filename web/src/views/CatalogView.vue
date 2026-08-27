@@ -53,6 +53,24 @@ function checkboxProps(row) {
   return { checked: resolveFile(restoreCart.rules, row.sourceHost, row.path), indeterminate: false }
 }
 
+// capturedLabel mirrors checkboxProps' per-row cart lookup: if an *exact*
+// rule for this row is already pinned to a specific version (notBefore ===
+// notAfter, both set), reflect that pin here instead of always showing the
+// representative/last-seen default -- otherwise pinning an older version
+// from the picker and then looking back at the catalog table shows no
+// visual change at all. Only an exact rule counts (not one inherited from
+// an ancestor folder) since a pin is always applied at the exact path it
+// was picked for (see restoreCart's ensureFileSelected/ensureFolderSelected).
+function capturedLabel(row) {
+  const rule = row.isFolder
+    ? restoreCart.rules.find((r) => r.host === null && r.path === row.path)
+    : restoreCart.rules.find((r) => r.host === row.sourceHost && r.path === row.path)
+  if (rule && rule.notBefore && rule.notAfter && rule.notBefore === rule.notAfter) {
+    return formatTimestamp(rule.notBefore)
+  }
+  return formatTimestamp(row.isFolder ? row.last_seen : row.representative.store_created_at)
+}
+
 function toggleSelection(row) {
   if (row.isFolder) {
     restoreCart.toggleFolder(row.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
@@ -306,7 +324,7 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
                 class="text-blue-600 hover:underline"
                 @click.stop="openVersions(row)"
               >
-                {{ formatTimestamp(row.last_seen) || '—' }}
+                {{ capturedLabel(row) || '—' }}
               </button>
             </span>
             <span v-else></span>
@@ -325,7 +343,7 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
                 class="text-blue-600 hover:underline"
                 @click.stop="openVersions(row)"
               >
-                {{ formatTimestamp(row.representative.store_created_at) || '—' }}
+                {{ capturedLabel(row) || '—' }}
               </button>
             </span>
           </template>
