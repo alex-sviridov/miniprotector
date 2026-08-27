@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRestoreCartStore } from '../stores/restoreCart'
 import { useClientsStore } from '../stores/clients'
 import { useRestoreSubmissionStore } from '../stores/restoreSubmission'
@@ -39,6 +39,10 @@ const confirming = ref(false)
 onMounted(() => {
   if (clients.list.length === 0) clients.fetchAll()
   jobs.connectJobsStream()
+})
+
+onUnmounted(() => {
+  jobs.disconnectJobsStream()
 })
 
 function sourcePathLabel(entry) {

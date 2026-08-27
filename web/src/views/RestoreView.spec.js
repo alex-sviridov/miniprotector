@@ -1,12 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import RestoreView from './RestoreView.vue'
 import { useRestoreCartStore } from '../stores/restoreCart'
 import { useRestoreSubmissionStore } from '../stores/restoreSubmission'
+import { useCatalogStore } from '../stores/catalog'
+import { useJobsStore } from '../stores/jobs'
 
 function mountView(initialState = {}) {
   const pinia = createTestingPinia({ stubActions: true, initialState })
+  // Without this, opening a real VersionsModal (see the "captured" tests
+  // below) leaves its fetchPathVersions call auto-stubbed to resolve
+  // `undefined` instead of an array, and VersionsModal's own
+  // spansMultipleHosts computed then throws on `.map()` of that
+  // `undefined` as an unhandled rejection -- see CatalogView.spec.js's
+  // mountView for the same fix applied to the same underlying problem.
+  const catalog = useCatalogStore()
+  vi.spyOn(catalog, 'fetchPathVersions').mockResolvedValue([])
   const wrapper = mount(RestoreView, {
     global: { plugins: [pinia], stubs: { 'router-link': { template: '<a><slot /></a>' } } },
   })
@@ -185,5 +195,12 @@ describe('RestoreView', () => {
     expect(wrapper.get('[data-test="verify-button"]').attributes('disabled')).toBeDefined()
     await wrapper.get('[data-test="destination-select"]').setValue('web01')
     expect(wrapper.get('[data-test="verify-button"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('disconnects the jobs stream on unmount', () => {
+    const { wrapper } = mountView({ restoreCart: { rules: [fileEntry] } })
+    const jobs = useJobsStore()
+    wrapper.unmount()
+    expect(jobs.disconnectJobsStream).toHaveBeenCalledTimes(1)
   })
 })
