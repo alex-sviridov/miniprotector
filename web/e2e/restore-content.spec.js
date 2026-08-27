@@ -111,7 +111,10 @@ test('restore writes real file content, verified by checksum, with a folder rena
     const entryKey = `:${FIXTURE_SRC_DIR}`
     await expect(page.getByTestId(`restore-row-${entryKey}`)).toBeVisible()
 
-    await page.getByTestId(`dest-path-text-${entryKey}`).click()
+    // Task 7 (feat(web): restructure the restore cart page for clarity)
+    // moved the edit-trigger click handler off the text span and onto its
+    // own pencil button -- dest-path-text is now display-only.
+    await page.getByTestId(`edit-dest-path-${entryKey}`).click()
     await page.getByTestId(`dest-path-input-${entryKey}`).fill(destDir)
     await page.getByTestId(`dest-path-input-${entryKey}`).press('Enter')
     await expect(page.getByTestId(`dest-path-text-${entryKey}`)).toHaveText(destDir)
@@ -120,6 +123,18 @@ test('restore writes real file content, verified by checksum, with a folder rena
     await expect(destinationSelect.locator('option', { hasText: HOST })).toHaveCount(1)
     await destinationSelect.selectOption(HOST)
 
+    // Snapshot restore-policy ids before submitting -- policyDTO
+    // (cmd/api-server/policies.go's toPolicyDTO) never exposes job_id, so
+    // unlike a direct page.request.post('/api/v1/restore', ...) creation
+    // (see live-job-updates.spec.js), a policy submitted through the real
+    // UI can't be looked up by job_id afterward. Diffing against this
+    // snapshot instead identifies the newly created policy -- this test
+    // runs alone, in serial mode, in its own file, so there's no
+    // concurrent restore-policy creation to collide with.
+    const beforeResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
+    const { data: beforePolicies } = await beforeResp.json()
+    const beforeIds = new Set(beforePolicies.map((p) => p.id))
+
     await page.getByTestId('restore-button').click()
     await page.getByTestId('confirm-restore').click() // Task 6's pre-restore confirmation modal
 
@@ -127,10 +142,16 @@ test('restore writes real file content, verified by checksum, with a folder rena
     await expect(statusLink).toBeVisible({ timeout: 30_000 })
     const href = await statusLink.getAttribute('href') // "/jobs/<job_id>", from RestoreView's router-link
     const jobId = href.replace(/^\/jobs\//, '')
+    // policy-server's restorePolicyJobID (write.go) prefixes every
+    // restore-mode job id "restore:" -- confirms the status link really
+    // points at a restore (not verify) job before it's used below.
+    expect(jobId).toMatch(/^restore:/)
 
     const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
     const { data: restorePolicies } = await restorePoliciesResp.json()
-    const restorePolicy = restorePolicies.find((p) => p.job_id === jobId)
+    const restorePolicy = restorePolicies.find(
+      (p) => !beforeIds.has(p.id) && p.client_filters.hostnames.includes(HOST) && p.rules.some((r) => r.path === FIXTURE_SRC_DIR)
+    )
     expect(restorePolicy).toBeTruthy()
     trackPolicy(restorePolicy.id)
 

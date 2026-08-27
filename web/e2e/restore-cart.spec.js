@@ -136,9 +136,24 @@ test('picking an older version pins the cart entry to it instead of "Latest"', a
   }
 
   await page.getByTestId(`captured-${sourceHost}:${filePath}`).click()
-  const rows = page.locator('tbody tr')
-  await expect(rows).toHaveCount(2)
-  const olderRow = rows.nth(1) // newest-first, so index 1 is the older of the two
+  // VersionsModal renders as an overlay on top of CatalogView's own table
+  // (CatalogView.vue), which stays mounted (just visually covered) while
+  // the modal is open -- an unscoped `tbody tr` locator would also match
+  // that background table's rows, so scope to the modal itself.
+  const modal = page.getByTestId('versions-modal')
+  const rows = modal.locator('tbody tr')
+  // Not toHaveCount(2): /var/lib/dbdata is also targeted by the demo's own
+  // seeded hourly "database-backup" policy
+  // (demo/policy-server/policies/backup/database-backup.json), and this
+  // spec file's own preceding "restore cart selection" test seeds the same
+  // fixture once more -- so more than this test's own two versions can
+  // exist by the time this runs, on a demo stack that's been up a while.
+  // Newest-first sort (catalog.js's fetchPathVersions) still guarantees
+  // index 0 is this test's second (newest) seed and index 1 is its first,
+  // regardless of how many older rows also exist -- nothing else can land
+  // between two calls 1s apart in serial mode.
+  const olderRow = rows.nth(1) // newest-first, so index 1 is the older of this test's own two seeded versions
+  await expect(olderRow).toBeVisible()
   const olderTimestampText = await olderRow.locator('td').first().innerText()
   await olderRow.getByRole('button', { name: 'Restore this version' }).click()
 
