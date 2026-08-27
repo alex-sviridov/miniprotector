@@ -92,13 +92,36 @@ function openVersions(row) {
   versionsFor.value = row.isFolder ? { path: row.path, sourceHost: null } : { path: row.path, sourceHost: row.sourceHost }
 }
 
+// selectVersion needs to guarantee an *exact* rule exists at (sourceHost,
+// path) before pinning it -- setVersionWindow only mutates an exact
+// matching rule and silently no-ops otherwise. resolveFile/
+// resolveFolderState return the *resolved* selection state, which is
+// true/'checked' even when the path is only covered by an ancestor
+// folder rule with no rule of its own at this exact path. So the gate
+// here is "does an exact rule already exist," not "is this resolved as
+// selected":
+//   - no exact rule, not resolved as selected -> toggleFile/toggleFolder
+//     (creates a fresh include rule, same as checking the box).
+//   - no exact rule, but already resolved as selected via an ancestor ->
+//     ensureFileSelected/ensureFolderSelected (materializes the implicit
+//     selection into a real rule -- toggling here would incorrectly flip
+//     it to an exclusion, since toggle flips based on resolved state).
+//   - exact rule already exists -> either path is a no-op; setVersionWindow
+//     below does the only work needed.
 function selectVersion(version) {
   const target = versionsFor.value
   if (target.sourceHost === null) {
-    if (resolveFolderState(restoreCart.rules, target.path) !== 'checked') {
+    if (resolveFolderState(restoreCart.rules, target.path) === 'checked') {
+      restoreCart.ensureFolderSelected(target.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
+    } else {
       restoreCart.toggleFolder(target.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
     }
-  } else if (!resolveFile(restoreCart.rules, target.sourceHost, target.path)) {
+  } else if (resolveFile(restoreCart.rules, target.sourceHost, target.path)) {
+    restoreCart.ensureFileSelected(
+      target.sourceHost, target.path, version.store_host, version.size,
+      catalog.filters.receivedAfter, catalog.filters.receivedBefore
+    )
+  } else {
     restoreCart.toggleFile(
       target.sourceHost, target.path, version.store_host, version.size,
       catalog.filters.receivedAfter, catalog.filters.receivedBefore

@@ -260,6 +260,35 @@ describe('CatalogView', () => {
     expect(restoreCart.setVersionWindow).toHaveBeenCalledWith({ host: 'web01', path: '/etc/hosts' }, 555, 555)
   })
 
+  it('picking a version for a file only covered by an ancestor folder rule creates a real pinned rule at the exact path, instead of silently no-op-ing', async () => {
+    const wrapper = mountView(
+      { entries: [entry({ path: '/etc/hosts', source_host: 'web01' })] },
+      { rules: [{ host: null, path: '/etc', include: true, destPath: '/etc' }] } // ancestor-only coverage, no exact rule at /etc/hosts
+    ).wrapper
+    const restoreCart = useRestoreCartStore()
+    await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
+    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('select-version', { store_created_at: 555, store_host: 'bwfs-1', size: 10 })
+    // Not toggleFile: the path already resolves as selected (via the
+    // ancestor), so toggling would flip it to an exclusion instead of
+    // materializing the implicit selection into a real rule.
+    expect(restoreCart.toggleFile).not.toHaveBeenCalled()
+    expect(restoreCart.ensureFileSelected).toHaveBeenCalledWith('web01', '/etc/hosts', 'bwfs-1', 10, expect.any(Number), expect.any(Number))
+    expect(restoreCart.setVersionWindow).toHaveBeenCalledWith({ host: 'web01', path: '/etc/hosts' }, 555, 555)
+  })
+
+  it('picking a version for a folder only covered by an ancestor folder rule creates a real pinned rule at the exact path', async () => {
+    const wrapper = mountView(
+      { directoryChildren: [{ path: '/var/lib/db', name: 'db', file_count: 3, last_seen: 100 }] },
+      { rules: [{ host: null, path: '/var', include: true, destPath: '/var' }] } // ancestor-only coverage, no exact rule at /var/lib/db
+    ).wrapper
+    const restoreCart = useRestoreCartStore()
+    await wrapper.get('[data-test="captured-/var/lib/db"]').trigger('click')
+    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('select-version', { store_created_at: 555 })
+    expect(restoreCart.toggleFolder).not.toHaveBeenCalled()
+    expect(restoreCart.ensureFolderSelected).toHaveBeenCalledWith('/var/lib/db', expect.any(Number), expect.any(Number))
+    expect(restoreCart.setVersionWindow).toHaveBeenCalledWith({ host: null, path: '/var/lib/db' }, 555, 555)
+  })
+
   it('selecting a version for an already-selected file does not re-toggle it', async () => {
     const wrapper = mountView(
       { entries: [entry({ path: '/etc/hosts', source_host: 'web01' })] },

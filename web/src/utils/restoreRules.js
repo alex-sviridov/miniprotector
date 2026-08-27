@@ -108,3 +108,31 @@ export function toggleFile(rules, host, path, extra = {}) {
   const checked = resolveFile(rules, host, path)
   return [...rules, { path, host, include: !checked, destPath: path, ...extra }]
 }
+
+// ensureFileRule guarantees an exact include rule exists at (host, path),
+// merging in any caller-supplied extra properties on a newly-created one.
+// Unlike toggleFile, it never flips based on the *resolved* state: it's
+// meant for a path that already resolves as selected -- possibly only via
+// an inherited ancestor folder rule, with no rule of its own -- and
+// something needs to attach directly to this exact (host, path), e.g.
+// pinning a version window (restoreCart.setVersionWindow only mutates an
+// *exact* matching rule and silently no-ops otherwise). If an exact rule
+// already exists here (include or exclude), it's left untouched -- callers
+// should only reach for this when resolveFile(rules, host, path) is
+// already true, so an exact exclude rule shouldn't be possible, but this
+// stays a pure "create if missing" op regardless.
+export function ensureFileRule(rules, host, path, extra = {}) {
+  if (rules.some((r) => r.host === host && r.path === path)) return rules
+  return [...rules, { path, host, include: true, destPath: path, ...extra }]
+}
+
+// ensureFolderRule is ensureFileRule's folder-level counterpart: guarantees
+// an exact host-agnostic include rule exists at path, without pruning or
+// flipping based on resolved state. Safe to call whenever
+// resolveFolderState(rules, path) === 'checked' (that state already
+// guarantees nothing sits underneath, so -- unlike toggleFolder's
+// checked->unchecked branch -- there's nothing to prune).
+export function ensureFolderRule(rules, path, extra = {}) {
+  if (rules.some((r) => r.host === null && r.path === path)) return rules
+  return [...rules, { path, host: null, include: true, destPath: path, ...extra }]
+}

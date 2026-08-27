@@ -1,5 +1,10 @@
 import { defineStore } from 'pinia'
-import { toggleFile as toggleFileRule, toggleFolder as toggleFolderRule } from '../utils/restoreRules'
+import {
+  toggleFile as toggleFileRule,
+  toggleFolder as toggleFolderRule,
+  ensureFileRule,
+  ensureFolderRule,
+} from '../utils/restoreRules'
 
 export const useRestoreCartStore = defineStore('restoreCart', {
   state: () => ({
@@ -19,6 +24,20 @@ export const useRestoreCartStore = defineStore('restoreCart', {
     },
     toggleFolder(path, notBefore, notAfter) {
       this.rules = toggleFolderRule(this.rules, path, { notBefore, notAfter })
+    },
+    // ensureFileSelected/ensureFolderSelected guarantee an exact rule
+    // exists at (host, path)/path -- used instead of toggleFile/toggleFolder
+    // when the path is already selected (possibly only via an inherited
+    // ancestor folder rule, with no rule of its own to pin a version window
+    // onto): toggling in that case would incorrectly flip the *resolved*
+    // state to unselected (creating an exclusion rule) instead of
+    // materializing the implicit selection into a real rule. See
+    // CatalogView.vue's selectVersion, which is the only current caller.
+    ensureFileSelected(host, path, storeHost, size, notBefore, notAfter) {
+      this.rules = ensureFileRule(this.rules, host, path, { storeHost, size, notBefore, notAfter })
+    },
+    ensureFolderSelected(path, notBefore, notAfter) {
+      this.rules = ensureFolderRule(this.rules, path, { notBefore, notAfter })
     },
     removeEntry(entry) {
       if (entry.host === null) this.toggleFolder(entry.path)

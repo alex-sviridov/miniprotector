@@ -142,6 +142,39 @@ describe('restoreCart store', () => {
     expect(cart.rules).toEqual([{ path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }])
   })
 
+  it('ensureFileSelected creates an exact rule for a file only covered by an ancestor folder rule', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+
+    cart.ensureFileSelected('web01', '/var/lib/db/dump.sql', 'bwfs-1', 4096, 100, 100)
+
+    expect(cart.rules).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var' },
+      {
+        path: '/var/lib/db/dump.sql',
+        host: 'web01',
+        include: true,
+        destPath: '/var/lib/db/dump.sql',
+        storeHost: 'bwfs-1',
+        size: 4096,
+        notBefore: 100,
+        notAfter: 100,
+      },
+    ])
+  })
+
+  it('ensureFolderSelected creates an exact rule for a folder only covered by an ancestor folder rule', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+
+    cart.ensureFolderSelected('/var/lib/db', 100, 100)
+
+    expect(cart.rules).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var' },
+      { path: '/var/lib/db', host: null, include: true, destPath: '/var/lib/db', notBefore: 100, notAfter: 100 },
+    ])
+  })
+
   it('removeEntry unsets a folder wildcard entry', () => {
     const cart = useRestoreCartStore()
     cart.toggleFolder('/var')
