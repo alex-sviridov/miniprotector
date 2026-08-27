@@ -50,7 +50,7 @@ describe('restoreSubmission store', () => {
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
-    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'success', jobId: 'restore:r1:1' }])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'success', jobId: 'restore:r1:1', mode: 'verify' }])
   })
 
   it('records a per-store error without blocking other stores, keyed by their own entries', async () => {
@@ -71,8 +71,8 @@ describe('restoreSubmission store', () => {
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
-    expect(submission.entryStatus['database:/var/lib/dbdata/dump.sql']).toEqual([{ status: 'success', jobId: 'restore:r1:1' }])
-    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'No storage policy found for store-b' }])
+    expect(submission.entryStatus['database:/var/lib/dbdata/dump.sql']).toEqual([{ status: 'success', jobId: 'restore:r1:1', mode: 'verify' }])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'No storage policy found for store-b', mode: 'verify' }])
   })
 
   it('includes not_before/not_after on the wire only for an included rule that has them', async () => {
@@ -131,11 +131,33 @@ describe('restoreSubmission store', () => {
     mockStorageAndRestore({ restoreOk: false, restoreError: 'transient failure' })
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
-    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'transient failure' }])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'transient failure', mode: 'verify' }])
 
     mockStorageAndRestore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
-    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'success', jobId: 'restore:r1:1' }])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'success', jobId: 'restore:r1:1', mode: 'verify' }])
+  })
+
+  it('does not let a successful Verify block a later Restore of the same entry, and records both outcomes', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+    mockStorageAndRestore()
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'success', jobId: 'restore:r1:1', mode: 'verify' }])
+
+    apiFetch.mockClear()
+    mockStorageAndRestore()
+    await submission.submit('web01', { mode: 'restore', overwrite: false })
+
+    const restoreCall = apiFetch.mock.calls.find(([path]) => path === '/restore')
+    expect(restoreCall).toBeDefined()
+    const body = JSON.parse(restoreCall[1].body)
+    expect(body.rules).toEqual([{ host: 'web01', path: '/etc/hosts', include: true }])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([
+      { status: 'success', jobId: 'restore:r1:1', mode: 'verify' },
+      { status: 'success', jobId: 'restore:r1:1', mode: 'restore' },
+    ])
   })
 
   it('tracks submitting state across the whole flow', async () => {
@@ -193,7 +215,7 @@ describe('restoreSubmission store', () => {
     const submission = useRestoreSubmissionStore()
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
-    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'No storage host found for this selection' }])
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'No storage host found for this selection', mode: 'verify' }])
     expect(submission.error).toBeNull()
     expect(submission.submitting).toBe(false)
   })
@@ -227,7 +249,20 @@ describe('restoreSubmission store', () => {
     await submission.submit('web01', { mode: 'verify', overwrite: false })
 
     expect(submission.entryStatus[':/var/lib/dbdata']).toHaveLength(2)
-    expect(submission.entryStatus[':/var/lib/dbdata']).toContainEqual({ status: 'success', jobId: 'restore:r1:1' })
-    expect(submission.entryStatus[':/var/lib/dbdata']).toContainEqual({ status: 'error', message: 'store-b unavailable' })
+    expect(submission.entryStatus[':/var/lib/dbdata']).toContainEqual({ status: 'success', jobId: 'restore:r1:1', mode: 'verify' })
+    expect(submission.entryStatus[':/var/lib/dbdata']).toContainEqual({ status: 'error', message: 'store-b unavailable', mode: 'verify' })
+  })
+
+  it('clearEntry removes all recorded outcomes for that entry, across every mode', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+    mockStorageAndRestore()
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+    expect(submission.entryStatus['web01:/etc/hosts']).toBeDefined()
+
+    submission.clearEntry({ host: 'web01', path: '/etc/hosts' })
+
+    expect(submission.entryStatus['web01:/etc/hosts']).toBeUndefined()
   })
 })

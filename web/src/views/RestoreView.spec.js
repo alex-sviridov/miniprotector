@@ -190,6 +190,16 @@ describe('RestoreView', () => {
     expect(restoreCart.removeEntry).toHaveBeenCalledWith(fileEntry)
   })
 
+  it('removing an entry also clears its recorded submission status, so a re-added entry starts fresh', async () => {
+    const { wrapper } = mountView({
+      restoreCart: { rules: [fileEntry] },
+      restoreSubmission: { entryStatus: { 'web01:/etc/hosts': [{ status: 'success', jobId: 'restore:r1:1', mode: 'verify' }] } },
+    })
+    const submission = useRestoreSubmissionStore()
+    await wrapper.get('[data-test="remove-web01:/etc/hosts"]').trigger('click')
+    expect(submission.clearEntry).toHaveBeenCalledWith(fileEntry)
+  })
+
   it('disables verify and restore until the cart has a selection and a destination is chosen', async () => {
     const { wrapper } = mountView({ restoreCart: { rules: [fileEntry] } })
     expect(wrapper.get('[data-test="verify-button"]').attributes('disabled')).toBeDefined()

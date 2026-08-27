@@ -101,15 +101,19 @@ function storagePolicyIdForHost(storagePolicies, storeHost) {
 export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
   state: () => ({
     submitting: false,
-    // entryKey(entry) -> [{ status: 'submitting'|'success'|'error', jobId?, message? }].
+    // entryKey(entry) -> [{ status: 'submitting'|'success'|'error', jobId?, message?, mode }].
     // An array because one folder entry can fan out to more than one
     // storage host's policy, each with its own independent outcome --
-    // almost always length 1 for a file entry, which only ever touches
-    // one store. Persists across submit() calls (not reset to {} each
-    // time) so a completed row's status/link stays visible after the
-    // request that produced it finishes -- see submit()'s
-    // already-succeeded filter below for how re-submission is guarded
-    // instead of relying on the cart being emptied.
+    // almost always length 1 per mode for a file entry, which only ever
+    // touches one store. Also holds at most one outcome per *mode*: a
+    // Verify success and a Restore success for the same (host, path) are
+    // two independent facts and both stay recorded. Persists across
+    // submit() calls (not reset to {} each time) so a completed row's
+    // status/link stays visible after the request that produced it
+    // finishes -- see submit()'s already-succeeded filter below for how
+    // re-submission is guarded (per mode) instead of relying on the cart
+    // being emptied. Cleared per-entry via clearEntry(), called when the
+    // entry is removed from the cart (see RestoreView.vue's remove()).
     entryStatus: {},
     error: null,
   }),
@@ -123,8 +127,12 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
       this.error = null
 
       try {
+        // A success is only "already succeeded" for *this* mode -- a
+        // completed Verify must never block a later Restore of the same
+        // entry (or vice versa); see restoreCart's design doc for why
+        // there's no other mode-vs-status coupling here.
         const alreadySucceeded = (entry) =>
-          (this.entryStatus[entryKey(entry)] || []).some((s) => s.status === 'success')
+          (this.entryStatus[entryKey(entry)] || []).some((s) => s.status === 'success' && s.mode === mode)
         const positiveEntries = distinctPositiveEntries(cart.entries).filter((e) => !alreadySucceeded(e))
         if (positiveEntries.length === 0) {
           this.error = 'Nothing selected for restore.'
@@ -139,13 +147,22 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
           return
         }
 
-        for (const entry of positiveEntries) this.entryStatus[entryKey(entry)] = [{ status: 'submitting' }]
+        // Drop any prior outcome recorded for *this* mode (a submitting
+        // placeholder, or a stale error being retried) while preserving
+        // outcomes recorded under a different mode -- e.g. an earlier
+        // Verify success must survive a subsequent Restore submission for
+        // the same entry.
+        for (const entry of positiveEntries) {
+          const key = entryKey(entry)
+          const preserved = (this.entryStatus[key] || []).filter((s) => s.mode !== mode)
+          this.entryStatus[key] = [...preserved, { status: 'submitting', mode }]
+        }
 
         for (const [storeHost, rules] of rulesByStore) {
           const coveredEntries = entriesByStore.get(storeHost)
           const storagePolicyId = storagePolicyIdForHost(storagePolicies.list, storeHost)
           if (!storagePolicyId) {
-            this.recordOutcome(coveredEntries, { status: 'error', message: `No storage policy found for ${storeHost}` })
+            this.recordOutcome(coveredEntries, { status: 'error', message: `No storage policy found for ${storeHost}`, mode })
             continue
           }
           try {
@@ -158,20 +175,27 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
               mode,
               overwrite,
             })
-            this.recordOutcome(coveredEntries, { status: 'success', jobId: policy.job_id })
+            this.recordOutcome(coveredEntries, { status: 'success', jobId: policy.job_id, mode })
           } catch (err) {
-            this.recordOutcome(coveredEntries, { status: 'error', message: err.message })
+            this.recordOutcome(coveredEntries, { status: 'error', message: err.message, mode })
           }
         }
 
         // For entries that touched zero storage hosts, they were initialized to
-        // 'submitting' but never passed to recordOutcome. Replace the placeholder
-        // with an explicit error so they don't stay stuck at 'submitting' forever.
+        // 'submitting' (for this mode) but never passed to recordOutcome. Replace
+        // that placeholder with an explicit error so they don't stay stuck at
+        // 'submitting' forever, without disturbing any other-mode outcomes also
+        // held for this entry.
         for (const entry of positiveEntries) {
           const key = entryKey(entry)
-          const status = this.entryStatus[key]
-          if (status && status.length === 1 && status[0].status === 'submitting') {
-            this.entryStatus[key] = [{ status: 'error', message: 'No storage host found for this selection' }]
+          const status = this.entryStatus[key] || []
+          const stillSubmitting = status.find((s) => s.status === 'submitting' && s.mode === mode)
+          if (stillSubmitting) {
+            this.entryStatus[key] = status.map((s) =>
+              s === stillSubmitting
+                ? { status: 'error', message: 'No storage host found for this selection', mode }
+                : s
+            )
           }
         }
       } catch (err) {
@@ -184,9 +208,21 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
     recordOutcome(entries, outcome) {
       for (const entry of entries) {
         const key = entryKey(entry)
-        this.entryStatus[key] = (this.entryStatus[key] || []).filter((s) => s.status !== 'submitting')
+        this.entryStatus[key] = (this.entryStatus[key] || []).filter(
+          (s) => !(s.status === 'submitting' && s.mode === outcome.mode)
+        )
         this.entryStatus[key].push(outcome)
       }
+    },
+
+    // clearEntry drops all recorded outcomes (any mode) for one entry --
+    // called when the entry itself is removed from the cart, so a stale
+    // status/badge for a since-removed-and-possibly-re-added entry can't
+    // linger (restoreCart and restoreSubmission are separate stores that
+    // don't import each other, so this is wired at the call site instead;
+    // see RestoreView.vue's remove()).
+    clearEntry(entry) {
+      delete this.entryStatus[entryKey(entry)]
     },
   },
 })

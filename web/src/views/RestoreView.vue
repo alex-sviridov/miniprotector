@@ -51,6 +51,7 @@ function sourcePathLabel(entry) {
 
 function remove(entry) {
   restoreCart.removeEntry(entry)
+  submission.clearEntry(entry)
 }
 
 function startEditing(entry) {
