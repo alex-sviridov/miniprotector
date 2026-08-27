@@ -373,4 +373,47 @@ describe('catalog store', () => {
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('parent_path=&'))
     })
   })
+
+  describe('fetchPathVersions', () => {
+    it("queries the path's parent directory and filters the response down to that exact path, sorted newest-first", async () => {
+      apiFetch.mockResolvedValue({
+        data: [
+          { path: '/var/lib/dbdata', store_created_at: 100, source_host: 'db1' },
+          { path: '/var/lib/other', store_created_at: 200, source_host: 'db1' },
+          { path: '/var/lib/dbdata', store_created_at: 300, source_host: 'db1' },
+        ],
+      })
+      const catalog = useCatalogStore()
+
+      const versions = await catalog.fetchPathVersions('/var/lib/dbdata')
+
+      expect(apiFetch).toHaveBeenCalledWith('/catalog?parent_directories=%2Fvar%2Flib&limit=500')
+      expect(versions).toEqual([
+        { path: '/var/lib/dbdata', store_created_at: 300, source_host: 'db1' },
+        { path: '/var/lib/dbdata', store_created_at: 100, source_host: 'db1' },
+      ])
+    })
+
+    it('scopes the query to a single source host when one is passed', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const catalog = useCatalogStore()
+
+      await catalog.fetchPathVersions('/etc/hosts', 'web01')
+
+      expect(apiFetch).toHaveBeenCalledWith('/catalog?parent_directories=%2Fetc&limit=500&source_hosts=web01')
+    })
+
+    it('ignores the current receivedAfter/receivedBefore filter -- always full history', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const catalog = useCatalogStore()
+      catalog.filters.receivedAfter = 12345
+      catalog.filters.receivedBefore = 67890
+
+      await catalog.fetchPathVersions('/etc/hosts')
+
+      const [url] = apiFetch.mock.calls[0]
+      expect(url).not.toContain('received_after')
+      expect(url).not.toContain('received_before')
+    })
+  })
 })
