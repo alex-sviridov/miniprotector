@@ -2,16 +2,22 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"lukechampine.com/blake3"
 )
@@ -230,6 +236,110 @@ func TestWriteRestoreFile_MissingParentDirectoryIsHardError(t *testing.T) {
 	}, false)
 
 	require.Error(t, result.Err)
+}
+
+// flakyRestoreServer fails RestoreFile with a stream-level error the
+// first failuresBeforeSuccess calls, then delegates to wrapped -- proving
+// writeRestoreFileWithRetry actually recovers a transient failure rather
+// than merely detecting one.
+type flakyRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	mu                    sync.Mutex
+	calls                 int
+	failuresBeforeSuccess int
+	wrapped               pb.RestoreServiceServer
+}
+
+func (s *flakyRestoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	s.mu.Lock()
+	s.calls++
+	shouldFail := s.calls <= s.failuresBeforeSuccess
+	s.mu.Unlock()
+	if shouldFail {
+		return status.Error(codes.Unavailable, "simulated transient failure")
+	}
+	return s.wrapped.RestoreFile(req, stream)
+}
+
+func (s *flakyRestoreServer) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestWriteRestoreFileWithRetry_RecoversAfterTransientFailures(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFile(t, store, "hosta", "/data/a.txt", "job1", 1000, []byte("recovered content"))
+
+	flakySrv := &flakyRestoreServer{failuresBeforeSuccess: 2, wrapped: &realRestoreServer{store: store}}
+	client := dialRestoreClient(t, flakySrv)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+	result := writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+
+	require.NoError(t, result.Err)
+	assert.Equal(t, 3, flakySrv.Calls(), "must have failed twice then succeeded on the third attempt")
+	got, readErr := os.ReadFile(destPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "recovered content", string(got))
+}
+
+func TestWriteRestoreFileWithRetry_ExhaustsRetriesAndReturnsFinalError(t *testing.T) {
+	restoreSrv := &recordingRestoreServer{} // always fails RestoreFile with codes.Unimplemented
+	client := dialRestoreClient(t, restoreSrv)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+	result := writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+
+	require.Error(t, result.Err)
+	assert.True(t, result.Retryable, "a stream error stays marked Retryable even once retries are exhausted")
+	assert.Len(t, restoreSrv.Requested(), 3, "must attempt exactly maxRetries times")
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestWriteRestoreFileWithRetry_IntegrityMismatchNeverRetries(t *testing.T) {
+	client := dialRestoreClient(t, &hashMismatchRestoreServer{})
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+
+	start := time.Now()
+	result := writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+	elapsed := time.Since(start)
+
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "blake3_mismatch")
+	assert.False(t, result.Retryable)
+	assert.Less(t, elapsed, 200*time.Millisecond, "an integrity mismatch must fail on the first attempt with no backoff wait")
+}
+
+func TestWriteRestoreFileWithRetry_BacksOffBetweenAttempts(t *testing.T) {
+	restoreSrv := &recordingRestoreServer{}
+	client := dialRestoreClient(t, restoreSrv)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+
+	start := time.Now()
+	writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+	elapsed := time.Since(start)
+
+	if elapsed < 1300*time.Millisecond {
+		t.Fatalf("expected at least ~1.5s of backoff across 2 waits, took %v", elapsed)
+	}
 }
 
 // blake3Sum is a tiny local wrapper so crcMismatchRestoreServer above

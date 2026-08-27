@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"log/slog"
 	"os"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -47,6 +48,14 @@ type restoreFileResult struct {
 	Bytes                  int64
 	Skipped                bool
 	Err                    error
+	// Retryable is true only when Err comes from the network/RPC-facing
+	// call to bwfs (connect, Recv, or an unexpected event type) -- the
+	// same class of failure verifyFileWithRetry already retries. It
+	// stays false (the zero value) for every other failure: integrity
+	// mismatches (blake3_mismatch, crc_mismatch), a pre-existing
+	// directory at the destination, and local disk I/O errors -- none of
+	// which retrying can fix. See writeRestoreFileWithRetry.
+	Retryable bool
 }
 
 // writeRestoreFile fetches f's content via RestoreFile and writes it to
@@ -83,18 +92,21 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileUuid: f.FileUUID})
 	if err != nil {
 		base.Err = fmt.Errorf("stream error: %w", err)
+		base.Retryable = true
 		return base
 	}
 
 	firstEvent, err := stream.Recv()
 	if err != nil {
 		base.Err = fmt.Errorf("stream error: %w", err)
+		base.Retryable = true
 		return base
 	}
 	touch()
 	meta := firstEvent.GetMeta()
 	if meta == nil {
 		base.Err = fmt.Errorf("stream error: expected RestoreFileMeta as first event")
+		base.Retryable = true
 		return base
 	}
 
@@ -127,12 +139,14 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		event, err := stream.Recv()
 		if err != nil {
 			base.Err = fmt.Errorf("stream error: %w", err)
+			base.Retryable = true
 			return base
 		}
 		touch()
 		chunk := event.GetChunk()
 		if chunk == nil {
 			base.Err = fmt.Errorf("stream error: expected RestoreChunk")
+			base.Retryable = true
 			return base
 		}
 
@@ -177,4 +191,21 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 	success = true
 	base.Bytes = written
 	return base
+}
+
+// writeRestoreFileWithRetry retries writeRestoreFile up to maxRetries
+// times on a retryable (network/RPC-facing) failure, sharing withRetry's
+// backoff with verifyFileWithRetry (retry.go) so the two commands can't
+// drift apart. A retry is safe with no extra cleanup: writeRestoreFile's
+// own defer already removes any partial destination file before
+// returning on failure, so each attempt starts from a clean slate (fresh
+// stat, open, truncate). A non-retryable failure (integrity mismatch,
+// pre-existing directory, local disk error) surfaces on the first
+// attempt with no backoff wait.
+func writeRestoreFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int) restoreFileResult {
+	return withRetry(ctx, logger.With("source", f.Source, "path", f.Path, "dest_path", f.DestPath), maxRetries,
+		func(ctx context.Context) restoreFileResult { return writeRestoreFile(ctx, client, f, overwrite) },
+		func(r restoreFileResult) bool { return r.Err != nil && r.Retryable },
+		func(r restoreFileResult) string { return r.Err.Error() },
+	)
 }
