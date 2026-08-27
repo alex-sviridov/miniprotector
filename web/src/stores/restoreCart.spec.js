@@ -86,6 +86,62 @@ describe('restoreCart store', () => {
     ])
   })
 
+  it('toggleFile threads notBefore/notAfter onto the created rule when passed', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts', 'bwfs-1', 4096, 1000, 2000)
+    expect(cart.rules).toEqual([
+      {
+        path: '/etc/hosts',
+        host: 'web01',
+        include: true,
+        destPath: '/etc/hosts',
+        storeHost: 'bwfs-1',
+        size: 4096,
+        notBefore: 1000,
+        notAfter: 2000,
+      },
+    ])
+  })
+
+  it('toggleFolder threads notBefore/notAfter onto the created rule when passed', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var', 1000, 2000)
+    expect(cart.rules).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var', notBefore: 1000, notAfter: 2000 },
+    ])
+  })
+
+  it('setVersionWindow updates the matching rule and leaves others untouched', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+    cart.toggleFolder('/var')
+
+    cart.setVersionWindow({ host: 'web01', path: '/etc/hosts' }, 1000, 1000)
+
+    expect(cart.rules).toEqual([
+      { path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts', notBefore: 1000, notAfter: 1000 },
+      { path: '/var', host: null, include: true, destPath: '/var' },
+    ])
+  })
+
+  it('setVersionWindow on a folder rule (host: null) updates its window', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+
+    cart.setVersionWindow({ host: null, path: '/var' }, 500, 600)
+
+    expect(cart.rules).toEqual([{ path: '/var', host: null, include: true, destPath: '/var', notBefore: 500, notAfter: 600 }])
+  })
+
+  it('setVersionWindow is a no-op when no rule matches', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+
+    cart.setVersionWindow({ host: 'web02', path: '/nope' }, 1, 2)
+
+    expect(cart.rules).toEqual([{ path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }])
+  })
+
   it('removeEntry unsets a folder wildcard entry', () => {
     const cart = useRestoreCartStore()
     cart.toggleFolder('/var')

@@ -14,6 +14,14 @@
 // docs/superpowers/specs/2026-08-09-restore-cart-design.md.
 import { pathCrumbs } from './pathSplit'
 
+// entryKey identifies a cart entry/rule by its (host, path) identity -- the
+// same key restoreCart's rule list, restoreSubmission's per-entry status
+// map, and RestoreView's table rows all use, so a single source of truth
+// replaces three independent copies of the same template string.
+export function entryKey(entry) {
+  return `${entry.host ?? ''}:${entry.path}`
+}
+
 // ancestorsOrSelf returns path's ancestor chain root-first, path itself
 // last -- reuses pathCrumbs (already handles Unix/Windows/UNC shapes)
 // rather than re-deriving path structure here.
