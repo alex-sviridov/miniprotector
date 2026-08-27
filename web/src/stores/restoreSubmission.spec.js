@@ -179,4 +179,55 @@ describe('restoreSubmission store', () => {
     expect(body.rules[0]).not.toHaveProperty('notBefore')
     expect(body.rules[0]).not.toHaveProperty('notAfter')
   })
+
+  it('reports an error for an entry that touches zero storage hosts', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores')) return Promise.resolve({ data: [] }) // zero stores found
+      if (path === '/policies?type=storage') return Promise.resolve({ data: [{ id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] }] })
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+
+    expect(submission.entryStatus['web01:/etc/hosts']).toEqual([{ status: 'error', message: 'No storage host found for this selection' }])
+    expect(submission.error).toBeNull()
+    expect(submission.submitting).toBe(false)
+  })
+
+  it('tracks a folder entry fanning out to two stores with different outcomes', async () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var/lib/dbdata')
+
+    apiFetch.mockImplementation((path, opts) => {
+      if (path.startsWith('/catalog/stores?pattern=%2Fvar%2Flib%2Fdbdata')) {
+        return Promise.resolve({ data: [{ name: 'store-a', count: 1, last_seen: 100 }, { name: 'store-b', count: 1, last_seen: 100 }] })
+      }
+      if (path === '/policies?type=storage') {
+        return Promise.resolve({
+          data: [
+            { id: 's1', port: 8080, checkins: [{ hostname: 'store-a', last_seen_at: 1 }] },
+            { id: 's2', port: 9090, checkins: [{ hostname: 'store-b', last_seen_at: 1 }] },
+          ],
+        })
+      }
+      if (path === '/restore') {
+        const name = JSON.parse(opts.body).name
+        if (name.endsWith('store-a')) return Promise.resolve({ id: 'r1', name, job_id: 'restore:r1:1' })
+        if (name.endsWith('store-b')) return Promise.reject(new Error('store-b unavailable'))
+        throw new Error(`unexpected store: ${name}`)
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`)
+    })
+
+    const submission = useRestoreSubmissionStore()
+    await submission.submit('web01', { mode: 'verify', overwrite: false })
+
+    expect(submission.entryStatus[':/var/lib/dbdata']).toHaveLength(2)
+    expect(submission.entryStatus[':/var/lib/dbdata']).toContainEqual({ status: 'success', jobId: 'restore:r1:1' })
+    expect(submission.entryStatus[':/var/lib/dbdata']).toContainEqual({ status: 'error', message: 'store-b unavailable' })
+  })
 })

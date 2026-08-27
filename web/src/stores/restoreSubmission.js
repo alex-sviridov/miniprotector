@@ -163,6 +163,17 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
             this.recordOutcome(coveredEntries, { status: 'error', message: err.message })
           }
         }
+
+        // For entries that touched zero storage hosts, they were initialized to
+        // 'submitting' but never passed to recordOutcome. Replace the placeholder
+        // with an explicit error so they don't stay stuck at 'submitting' forever.
+        for (const entry of positiveEntries) {
+          const key = entryKey(entry)
+          const status = this.entryStatus[key]
+          if (status && status.length === 1 && status[0].status === 'submitting') {
+            this.entryStatus[key] = [{ status: 'error', message: 'No storage host found for this selection' }]
+          }
+        }
       } catch (err) {
         this.error = err.message
       } finally {
