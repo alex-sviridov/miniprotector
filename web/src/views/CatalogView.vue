@@ -17,7 +17,7 @@ import TriStateCheckbox from '../components/ui/TriStateCheckbox.vue'
 const catalog = useCatalogStore()
 const restoreCart = useRestoreCartStore()
 const activePanel = ref('date')
-const selectedGroup = ref(null)
+const versionsFor = ref(null) // { path, sourceHost } | null
 
 // browsing is true whenever we're not in the flat, cross-directory
 // pattern-search mode -- the two are mutually exclusive (see the
@@ -54,8 +54,18 @@ function checkboxProps(row) {
 }
 
 function toggleSelection(row) {
-  if (row.isFolder) restoreCart.toggleFolder(row.path)
-  else restoreCart.toggleFile(row.sourceHost, row.path, row.representative?.store_host, row.representative?.size)
+  if (row.isFolder) {
+    restoreCart.toggleFolder(row.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
+  } else {
+    restoreCart.toggleFile(
+      row.sourceHost,
+      row.path,
+      row.representative?.store_host,
+      row.representative?.size,
+      catalog.filters.receivedAfter,
+      catalog.filters.receivedBefore
+    )
+  }
 }
 
 function summaryLabel(names, allLabel) {
@@ -75,11 +85,37 @@ function togglePanel(name) {
 }
 
 function onRowClick(row) {
-  if (row.isFolder) {
-    catalog.navigateTo(row.path)
-    return
+  if (row.isFolder) catalog.navigateTo(row.path)
+}
+
+function openVersions(row) {
+  versionsFor.value = row.isFolder ? { path: row.path, sourceHost: null } : { path: row.path, sourceHost: row.sourceHost }
+}
+
+function selectVersion(version) {
+  const target = versionsFor.value
+  if (target.sourceHost === null) {
+    if (resolveFolderState(restoreCart.rules, target.path) !== 'checked') {
+      restoreCart.toggleFolder(target.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
+    }
+  } else if (!resolveFile(restoreCart.rules, target.sourceHost, target.path)) {
+    restoreCart.toggleFile(
+      target.sourceHost, target.path, version.store_host, version.size,
+      catalog.filters.receivedAfter, catalog.filters.receivedBefore
+    )
   }
-  if (row.versions.length > 1) selectedGroup.value = row
+  restoreCart.setVersionWindow({ host: target.sourceHost, path: target.path }, version.store_created_at, version.store_created_at)
+  versionsFor.value = null
+}
+
+function useLatestVersion() {
+  const target = versionsFor.value
+  restoreCart.setVersionWindow(
+    { host: target.sourceHost, path: target.path },
+    catalog.filters.receivedAfter,
+    catalog.filters.receivedBefore
+  )
+  versionsFor.value = null
 }
 
 function onPathBarNavigate(path) {
@@ -139,7 +175,7 @@ const baseColumns = [
   { label: 'Size', field: 'representative.size', sortable: true, type: 'number' },
   { label: 'Mode', field: 'representative.mode', sortable: true },
   { label: 'Modified', field: 'representative.mod_time', sortable: true, type: 'number' },
-  { label: 'Versions', field: 'versions', sortable: false },
+  { label: 'Captured', field: 'captured', sortable: false },
 ]
 // Sorting is disabled while browsing so folder rows stay pinned above
 // file rows -- vue-good-table's per-column sort has no notion of
@@ -240,7 +276,16 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
           <template v-else-if="row.isFolder">
             <span v-if="column.field === 'path'" class="font-semibold">{{ row.name }}/</span>
             <span v-else-if="column.field === 'representative.mod_time'">{{ formatTimestamp(row.last_seen) || '—' }}</span>
-            <span v-else-if="column.field === 'versions'">{{ row.file_count || '' }}</span>
+            <span v-else-if="column.field === 'captured'">
+              <button
+                type="button"
+                :data-test="`captured-${row.path}`"
+                class="text-blue-600 hover:underline"
+                @click.stop="openVersions(row)"
+              >
+                {{ formatTimestamp(row.last_seen) || '—' }}
+              </button>
+            </span>
             <span v-else></span>
           </template>
           <template v-else>
@@ -250,11 +295,27 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
             <span v-else-if="column.field === 'representative.size'">{{ formatBytes(row.representative.size) }}</span>
             <span v-else-if="column.field === 'representative.mode'">{{ row.representative.mode }}</span>
             <span v-else-if="column.field === 'representative.mod_time'">{{ formatTimestamp(row.representative.mod_time) || '—' }}</span>
-            <span v-else-if="column.field === 'versions'">{{ row.versions.length > 1 ? row.versions.length : '' }}</span>
+            <span v-else-if="column.field === 'captured'">
+              <button
+                type="button"
+                :data-test="`captured-${row.sourceHost}:${row.path}`"
+                class="text-blue-600 hover:underline"
+                @click.stop="openVersions(row)"
+              >
+                {{ formatTimestamp(row.representative.store_created_at) || '—' }}
+              </button>
+            </span>
           </template>
         </template>
       </DataTable>
     </StatusMessage>
-    <VersionsModal v-if="selectedGroup" :group="selectedGroup" @close="selectedGroup = null" />
+    <VersionsModal
+      v-if="versionsFor"
+      :path="versionsFor.path"
+      :source-host="versionsFor.sourceHost"
+      @close="versionsFor = null"
+      @select-version="selectVersion"
+      @use-latest="useLatestVersion"
+    />
   </div>
 </template>
