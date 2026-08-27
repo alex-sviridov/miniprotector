@@ -9,7 +9,6 @@ import (
 	"hash/crc32"
 	"io"
 	"log/slog"
-	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/checksum"
@@ -253,29 +252,11 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 }
 
 func verifyFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, row *pb.FileRow, maxRetries int) verifyResult {
-	backoff := retryBackoffInitial
-	var result verifyResult
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		result = verifyFile(ctx, client, row)
-		if result.ok || result.reason == "blake3_mismatch" || result.reason == "crc_mismatch" {
-			return result
-		}
-		if attempt < maxRetries {
-			logger.Warn("stream error, retrying",
-				"path", row.Path,
-				"file_uuid", row.FileUuid,
-				"attempt", attempt,
-				"reason", result.reason,
-			)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return result
-			}
-			backoff = min(backoff*2, retryBackoffCap)
-		}
-	}
-	return result
+	return withRetry(ctx, logger.With("path", row.Path, "file_uuid", row.FileUuid), maxRetries,
+		func(ctx context.Context) verifyResult { return verifyFile(ctx, client, row) },
+		func(r verifyResult) bool { return !r.ok && r.reason != "blake3_mismatch" && r.reason != "crc_mismatch" },
+		func(r verifyResult) string { return r.reason },
+	)
 }
 
 func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.FileRow) verifyResult {
