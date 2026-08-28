@@ -123,7 +123,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	}
 
 	reconcileInterval := time.Duration(conf.ReconcileIntervalSec) * time.Second
-	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	vectorSup := newVectorSupervisor(vectorBinary, vectorConfigPath, logger)
