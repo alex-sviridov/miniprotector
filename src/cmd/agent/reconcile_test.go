@@ -138,7 +138,7 @@ func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil, defaultBackoffPolicy)
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, fr.callCount(), "a healthy 1-hour-interval policy must not re-trigger within the test window")
@@ -160,7 +160,7 @@ func TestRun_FailedExecutionRecordsFailureAndRetriesAfterBackoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil, backoffPolicy{Base: 20 * time.Millisecond, Max: 50 * time.Millisecond})
+	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, backoffPolicy{Base: 20 * time.Millisecond, Max: 50 * time.Millisecond})
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, fr.callCount(), 2, "must retry after the backoff window elapses")
@@ -224,7 +224,7 @@ func TestRun_BackgroundPolicyDoesNotBlockSyncPolicyInSameTick(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil, defaultBackoffPolicy)
+		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -275,7 +275,7 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 1, nil, nil, nil, defaultBackoffPolicy)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 1, nil, nil, defaultBackoffPolicy)
 	}()
 
 	<-entered
@@ -314,7 +314,7 @@ func TestRun_SamePolicyNotRedispatchedWhileStillInFlight(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 5, nil, nil, nil, defaultBackoffPolicy)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 5, nil, nil, defaultBackoffPolicy)
 	}()
 
 	<-entered
@@ -343,7 +343,7 @@ func TestRun_BackgroundExecReceivesCancelledContextOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil, defaultBackoffPolicy)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	}()
 
 	time.Sleep(20 * time.Millisecond) // let the background goroutine launch and block on ctx.Done()
@@ -427,7 +427,7 @@ func TestRun_PrunesOrphanedEntryOnConfirmedGoodTick(t *testing.T) {
 	defer cancel()
 
 	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run,
-		func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil, defaultBackoffPolicy)
+		func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	cache, err := readCache(cachePath)
@@ -465,7 +465,9 @@ func TestRun_DisabledPolicyPrunedViaBackupTasks(t *testing.T) {
 	defer cancel()
 
 	err := run(ctx, testLogger(), stateCachePath, 10*time.Millisecond, fr.run,
-		func() ([]Policy, bool) { return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf), true }, 2, nil, nil, nil, defaultBackoffPolicy)
+		func() ([]Policy, []storageTask, bool) {
+			return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf), nil, true
+		}, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	cache, err := readCache(stateCachePath)
@@ -487,7 +489,7 @@ func TestRun_SkipsPruneWhenPoliciesFuncReportsNotOk(t *testing.T) {
 	// ok=false every tick, mirroring a persistently unreadable
 	// policies-cache.json -- "stale" must survive untouched.
 	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run,
-		func() ([]Policy, bool) { return nil, false }, 2, nil, nil, nil, defaultBackoffPolicy)
+		func() ([]Policy, []storageTask, bool) { return nil, nil, false }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	cache, err := readCache(cachePath)
@@ -524,19 +526,19 @@ func TestRun_PruneRaceResurrectedEntryPrunedAgainNextTick(t *testing.T) {
 
 	var mu sync.Mutex
 	removed := false
-	policiesFunc := func() ([]Policy, bool) {
+	derivedFunc := func() ([]Policy, []storageTask, bool) {
 		mu.Lock()
 		defer mu.Unlock()
 		if removed {
-			return nil, true
+			return nil, nil, true
 		}
-		return []Policy{{ID: "slow-backup", Binary: "slow", Interval: time.Hour, Background: true}}, true
+		return []Policy{{ID: "slow-backup", Binary: "slow", Interval: time.Hour, Background: true}}, nil, true
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, policiesFunc, 2, nil, nil, nil, defaultBackoffPolicy)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, derivedFunc, 2, nil, nil, defaultBackoffPolicy)
 	}()
 
 	<-entered // dispatched while "slow-backup" was still present in the policy list
@@ -593,14 +595,14 @@ func TestRun_StdinIsPassedThroughToRunner(t *testing.T) {
 	cachePath := filepath.Join(dir, "agent-state.json")
 	fr := &fakeRunner{}
 	p := Policy{ID: "restore:x", Binary: "rwfs", Args: []string{"verify"}, Stdin: []byte(`{"rules":[]}`)}
-	policiesFunc := func() ([]Policy, bool) { return []Policy{p}, true }
+	derivedFunc := func() ([]Policy, []storageTask, bool) { return []Policy{p}, nil, true }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	_ = run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, policiesFunc, 2, nil, nil, nil, defaultBackoffPolicy)
+	_ = run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, derivedFunc, 2, nil, nil, defaultBackoffPolicy)
 
 	assert.Equal(t, []byte(`{"rules":[]}`), fr.lastStdin)
 }
@@ -712,7 +714,7 @@ func TestRun_LogsStartAndCompletionForEveryDispatchedExec(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, logger, cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil, defaultBackoffPolicy)
+	err := run(ctx, logger, cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	out := buf.String()
@@ -741,7 +743,7 @@ func TestRun_CallsOnSuccessAfterASuccessfulExecOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, bool) { return testPolicies, true }, 2, onSuccess, nil, nil, backoffPolicy{Base: 20 * time.Millisecond, Max: 50 * time.Millisecond})
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, onSuccess, nil, backoffPolicy{Base: 20 * time.Millisecond, Max: 50 * time.Millisecond})
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -758,6 +760,6 @@ func TestRun_NilOnSuccessIsSafe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil, defaultBackoffPolicy)
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	assert.NoError(t, err, "run must not panic when onSuccess is nil")
 }

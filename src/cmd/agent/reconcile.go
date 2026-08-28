@@ -254,7 +254,7 @@ func (rs *reconcileState) recordOutcome(id string, attemptErr error, attemptTime
 
 // prune removes any cache entry whose ID isn't present in currentIDs --
 // called once per reconcile tick, only when that tick's policy list came
-// from a confirmed-good read (run passes ok from policiesFunc), so a
+// from a confirmed-good read (run passes ok from derivedFunc), so a
 // transient unreadable policies-cache.json can never be mistaken for
 // "every backup task was removed" and wipe live backoff/RPO history for
 // tasks that are still current.
@@ -277,7 +277,7 @@ func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
 	}
 }
 
-// run polls policiesFunc() every reconcileInterval, executing and
+// run polls derivedFunc() every reconcileInterval, executing and
 // recording the outcome of any policy isDue reports as due. A due policy
 // with Background == false runs synchronously, exactly as before this
 // type existed. A due policy with Background == true is launched in its
@@ -288,10 +288,11 @@ func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
 // goroutine it launched has finished (each one's execute call receives
 // the same ctx, so a context-respecting runner like realExec terminates
 // rather than being orphaned).
-// storageTasksFunc/storageMgr add ensure-running bwfs supervision alongside
-// the due/execute policy loop below -- either nil disables it entirely,
-// preserving prior behavior exactly (see storage.go).
-func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string), storageTasksFunc func() ([]storageTask, bool), storageMgr *storageManager, backoff backoffPolicy) error {
+// storageMgr adds ensure-running bwfs supervision alongside the due/execute
+// policy loop below, driven by derivedFunc()'s storage-task slice -- a nil
+// storageMgr disables it entirely, preserving prior behavior exactly (see
+// storage.go).
+func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, derivedFunc func() ([]Policy, []storageTask, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string), storageMgr *storageManager, backoff backoffPolicy) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
@@ -303,15 +304,9 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 
 	for ctx.Err() == nil {
 		now := time.Now()
-		policyList, ok := policiesFunc()
+		policyList, storageTaskList, ok := derivedFunc()
 
-		var storageTaskList []storageTask
-		storageOk := true
-		if storageTasksFunc != nil {
-			storageTaskList, storageOk = storageTasksFunc()
-		}
-
-		if ok && storageOk {
+		if ok {
 			currentIDs := make(map[string]struct{}, len(policyList)+len(storageTaskList))
 			for _, p := range policyList {
 				currentIDs[p.ID] = struct{}{}
@@ -322,7 +317,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 			rs.prune(currentIDs)
 		}
 
-		if storageMgr != nil && storageOk {
+		if storageMgr != nil && ok {
 			storageMgr.reconcile(ctx, rs, storageTaskList)
 		}
 

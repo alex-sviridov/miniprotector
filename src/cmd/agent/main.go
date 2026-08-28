@@ -74,34 +74,6 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
 
-	// policiesFunc combines the three static policies with the dynamic
-	// backup tasks derived from policies-cache.json -- called fresh every
-	// reconcile tick (not resolved once here) so agent serve notices
-	// policy-update's cache changing over time without needing a restart.
-	// ok is false whenever this tick's read of policies-cache.json failed
-	// -- see reconcile.go's prune, which must not treat a failed read as
-	// "every backup task was removed."
-	policiesFunc := func() ([]Policy, bool) {
-		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
-		if !ok {
-			// Bootstrap/self-heal: even on a failed read (missing cache
-			// file on a fresh node, or a transient corrupt read), the
-			// three static policies must still run -- policy-update is
-			// what (re)creates policies-cache.json in the first place, so
-			// suppressing it here would deadlock a fresh install forever
-			// (never able to run the one thing that fixes the read).
-			// Matches the pre-refactor code's actual behavior: it always
-			// started from append(policies(conf), ...), so a failed
-			// backupTasks/restoreTasks read (nil, false in the old
-			// contract) still left the static policies in policyList --
-			// only ok=false (suppressing prune, see reconcile.go) changed.
-			return policies(conf), false
-		}
-		all := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
-		all = append(all, restoreTasks(cachedPolicies, logger)...)
-		return all, true
-	}
-
 	certsDir, err := config.ResolveCertsDir()
 	if err != nil {
 		logger.Error("certs directory resolution failed", "error", err)
@@ -116,13 +88,31 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	bwfsBinary := resolveExecPath("bwfs")
 	catalogsyncBinary := resolveExecPath("catalogsync")
 	storageMgr := newStorageManager(logger)
-	storageTasksFunc := func() ([]storageTask, bool) {
+
+	// derivedFunc reads policies-cache.json exactly once per reconcile
+	// tick and derives every dynamic policy/task kind from that single
+	// snapshot -- previously this was two separate reads (one inside
+	// backupTasks+restoreTasks combined, one inside storageTasks), which
+	// could observe two different snapshots of the file within the same
+	// tick. ok is false whenever this tick's read failed -- see
+	// reconcile.go's prune, which must not treat a failed read as "every
+	// task was removed." On a failed read, the three static policies
+	// still run (see policies(conf) below) -- policy-update is what
+	// (re)creates policies-cache.json, so suppressing it on a missing/
+	// unreadable cache would deadlock a fresh install forever. Only the
+	// storage task list is genuinely empty on failure, matching
+	// storageTasks's own old contract.
+	derivedFunc := func() ([]Policy, []storageTask, bool) {
 		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
 		if !ok {
-			return nil, false
+			return policies(conf), nil, false
 		}
-		return storageTasks(cachedPolicies, logger, bwfsBinary, catalogsyncBinary), true
+		allPolicies := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
+		allPolicies = append(allPolicies, restoreTasks(cachedPolicies, logger)...)
+		storageTaskList := storageTasks(cachedPolicies, logger, bwfsBinary, catalogsyncBinary)
+		return allPolicies, storageTaskList, true
 	}
+
 	hostname, err := hostnameFromBootstrapCert(certsDir)
 	if err != nil {
 		logger.Error("hostname resolution from bootstrap credential failed", "error", err)
@@ -155,7 +145,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	}
 
 	logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath, "vector_config", vectorConfigPath)
-	if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess, storageTasksFunc, storageMgr, defaultBackoffPolicy); err != nil {
+	if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, derivedFunc, conf.MaxConcurrentBackupJobs, onSuccess, storageMgr, defaultBackoffPolicy); err != nil {
 		logger.Error("agent exited with error", "error", err)
 		return 1
 	}
