@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-08-28 — Agent reliability/readability/performance refactor
+
+Unified `agent`'s two independently-written process supervisors (for its bundled Vector process and
+for `bwfs`/`catalogsync` storage-policy supervision) into one shared implementation, fixing two bugs
+the drift between them had introduced: `Stop()` no longer waits out a pending crash-backoff window
+before taking effect, and a `Stop()` racing a concurrent respawn can no longer leave an unsignalled
+process running. Also: `agent` now reads `policies-cache.json` once per reconcile tick instead of
+three times; backoff/stability-window tuning moved out of test-mutated package globals into
+per-instance config; `main.go`'s fatal startup errors are now guaranteed to reach the log file before
+the process exits; and every binary in the repo now uses typed `context.Context` keys for its
+app-name/debug/quiet/job-id logging values instead of raw strings.
+
 ## 2026-08-27 — Restore retries transient per-file stream errors
 
 `rwfs restore` now retries a transient `RestoreFile` stream error per file (network blip, momentary

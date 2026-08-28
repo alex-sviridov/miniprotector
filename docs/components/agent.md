@@ -164,7 +164,7 @@ start is recorded as success (not "exited successfully" — neither is expected 
 only once the process has stayed running for a short stability window (a few seconds) — a crash
 faster than that never resets the failure count, so a persistently crash-looping process accumulates
 failures instead of bouncing back to "1 failure" on every restart. An unexpected exit is recorded as
-a failure with the same jittered `backoff()` reconcile.go already uses elsewhere, and a policy that's
+a failure with the same jittered `backoffPolicy` reconcile.go already uses elsewhere, and a policy that's
 edited (port/path changed) or removed causes both running processes to be stopped (`SIGTERM`, a
 graceful drain for `bwfs` — see [bwfs](./bwfs.md) — and for `catalogsync`, which already honors it)
 and, for an edit, fresh ones started with the new arguments; a `Stop()` issued while a supervisor is
@@ -275,7 +275,7 @@ when available) for every dispatched exec, not just failures.
 `agent` also bundles, configures, and directly supervises a Vector process that tails `log_dir`
 and ships every line to `log-gateway` over mTLS, using this node's own operating certificate --
 restarted immediately after every successful `operating-refresh` (so a rotated cert is always
-picked up promptly) and crash-restarted with backoff otherwise, the same `backoff()` failing
+picked up promptly) and crash-restarted with backoff otherwise, the same `backoffPolicy` failing
 policies already use. Vector's own HTTP API is never enabled, so this adds no listening socket to
 `agent`'s footprint, which stays outbound-only. `log-gateway` authenticates the push but never
 inspects its body (see [Security Model](../SECURITY.md)), so `agent` is the one that sets each
