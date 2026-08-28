@@ -66,10 +66,6 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 }
 
 func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *testing.T) {
-	origWindow := storageStabilityWindow
-	storageStabilityWindow = 20 * time.Millisecond
-	defer func() { storageStabilityWindow = origWindow }()
-
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
 	policiesCachePath := filepath.Join(dir, "policies-cache.json")
@@ -91,6 +87,7 @@ func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *te
 	// packages.
 	storageTasksFunc := func() ([]storageTask, bool) { return storageTasks(policiesCachePath, testLogger(), script, script) }
 	mgr := newStorageManager(testLogger())
+	mgr.stabilityWindow = 20 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

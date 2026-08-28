@@ -4,8 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,227 +122,6 @@ func TestStorageTasks_MultiplePoliciesEachGetTheirOwnTask(t *testing.T) {
 	assert.Contains(t, ids, "storage:b:catalogsync")
 }
 
-func TestStorageSupervisor_StartsAndStopsCleanlyOnContextCancel(t *testing.T) {
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fake-bwfs.sh")
-	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
-
-	var spawns int64
-	sup := newStorageSupervisor(script, nil, testLogger(), func(error) {})
-	sup.onSpawnForTest = func() { atomic.AddInt64(&spawns, 1) }
-
-	ctx, cancel := context.WithCancel(context.Background())
-	sup.Start(ctx)
-
-	time.Sleep(100 * time.Millisecond)
-	require.EqualValues(t, 1, atomic.LoadInt64(&spawns))
-	cancel()
-
-	select {
-	case <-sup.loopDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervise loop did not stop after context cancellation")
-	}
-	assert.EqualValues(t, 1, atomic.LoadInt64(&spawns), "no respawn should happen once ctx is cancelled")
-}
-
-func TestStorageSupervisor_RestartsOnUnexpectedExitAndRecordsFailure(t *testing.T) {
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fake-bwfs.sh")
-	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\nexit 1\n"))
-
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 10*time.Millisecond, 30*time.Millisecond
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
-
-	var spawns int64
-	var mu sync.Mutex
-	var outcomes []error
-	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
-		mu.Lock()
-		defer mu.Unlock()
-		outcomes = append(outcomes, err)
-	})
-	sup.onSpawnForTest = func() { atomic.AddInt64(&spawns, 1) }
-
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	sup.Start(ctx)
-
-	select {
-	case <-sup.loopDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervise loop did not stop after context timeout")
-	}
-
-	assert.GreaterOrEqual(t, atomic.LoadInt64(&spawns), int64(2), "a persistently crashing bwfs must be respawned more than once")
-
-	mu.Lock()
-	defer mu.Unlock()
-	var sawFailure bool
-	for _, err := range outcomes {
-		if err != nil {
-			sawFailure = true
-		}
-	}
-	assert.True(t, sawFailure, "at least one crash must be recorded as a failure")
-}
-
-func TestStorageSupervisor_SuccessfulStartRecordsSuccessAfterStabilityWindow(t *testing.T) {
-	origWindow := storageStabilityWindow
-	storageStabilityWindow = 20 * time.Millisecond
-	defer func() { storageStabilityWindow = origWindow }()
-
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fake-bwfs.sh")
-	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
-
-	outcomes := make(chan error, 1)
-	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) { outcomes <- err })
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sup.Start(ctx)
-
-	// The outcome must not arrive before the (shrunk) stability window has
-	// had a chance to elapse -- proves onOutcome(nil) isn't fired immediately
-	// on spawn anymore.
-	select {
-	case err := <-outcomes:
-		t.Fatalf("onOutcome fired before the stability window elapsed: %v", err)
-	case <-time.After(5 * time.Millisecond):
-	}
-
-	select {
-	case err := <-outcomes:
-		assert.NoError(t, err, "a start that stays up past the stability window must record success")
-	case <-time.After(time.Second):
-		t.Fatal("onOutcome was never called after the stability window elapsed")
-	}
-	sup.Stop()
-}
-
-func TestStorageSupervisor_CrashBeforeStabilityWindowNeverRecordsSuccess(t *testing.T) {
-	origWindow := storageStabilityWindow
-	storageStabilityWindow = 200 * time.Millisecond
-	defer func() { storageStabilityWindow = origWindow }()
-
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 10*time.Millisecond, 30*time.Millisecond
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
-
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fake-bwfs.sh")
-	// Exits almost immediately -- well before the 200ms stability window.
-	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\nsleep 0.01\nexit 1\n"))
-
-	var mu sync.Mutex
-	var outcomes []error
-	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
-		mu.Lock()
-		defer mu.Unlock()
-		outcomes = append(outcomes, err)
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	sup.Start(ctx)
-
-	select {
-	case <-sup.loopDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervise loop did not stop after context timeout")
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.NotEmpty(t, outcomes, "a persistently crashing bwfs must record at least one outcome")
-	for _, err := range outcomes {
-		assert.Error(t, err, "a process that crashes before the stability window elapses must never be recorded as a success")
-	}
-}
-
-func TestStorageSupervisor_DeliberateStopDoesNotRecordFailure(t *testing.T) {
-	origWindow := storageStabilityWindow
-	storageStabilityWindow = 20 * time.Millisecond
-	defer func() { storageStabilityWindow = origWindow }()
-
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fake-bwfs.sh")
-	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
-
-	var mu sync.Mutex
-	var outcomes []error
-	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
-		mu.Lock()
-		defer mu.Unlock()
-		outcomes = append(outcomes, err)
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sup.Start(ctx)
-	time.Sleep(100 * time.Millisecond) // let it start and clear the (shrunk) stability window, recording one nil outcome
-
-	sup.Stop()
-	select {
-	case <-sup.loopDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervise loop did not stop after Stop()")
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.NotEmpty(t, outcomes, "the process should have stayed up past the stability window and recorded a success before Stop()")
-	for _, err := range outcomes {
-		assert.NoError(t, err, "a deliberate Stop() must never record a failure outcome")
-	}
-}
-
-func TestStorageSupervisor_StopDuringBackoffWaitReturnsPromptly(t *testing.T) {
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 10*time.Second, 10*time.Second
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
-
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fake-bwfs.sh")
-	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\nexit 1\n"))
-
-	failed := make(chan struct{}, 1)
-	sup := newStorageSupervisor(script, nil, testLogger(), func(err error) {
-		if err != nil {
-			select {
-			case failed <- struct{}{}:
-			default:
-			}
-		}
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sup.Start(ctx)
-
-	// Wait until the first crash has been recorded as a failure -- by then
-	// superviseLoop has already passed its shuttingDown check for this
-	// iteration and is heading into (or already sitting in) the 10s backoff
-	// select, exactly the state this fix targets.
-	select {
-	case <-failed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first crash was never recorded as a failure")
-	}
-
-	start := time.Now()
-	sup.Stop()
-
-	select {
-	case <-sup.loopDone:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Stop() during backoff wait did not stop the supervisor promptly")
-	}
-	assert.Less(t, time.Since(start), 500*time.Millisecond, "Stop() must interrupt the backoff wait, not wait out the full 10s backoff")
-}
-
 // osWriteExecutable writes content to path as an executable file --
 // shared test helper so every fake-bwfs.sh fixture above is one line.
 func osWriteExecutable(t *testing.T, path, content string) error {
@@ -353,16 +130,13 @@ func osWriteExecutable(t *testing.T, path, content string) error {
 }
 
 func TestStorageManager_StartsSupervisorForNewTask(t *testing.T) {
-	origWindow := storageStabilityWindow
-	storageStabilityWindow = 20 * time.Millisecond
-	defer func() { storageStabilityWindow = origWindow }()
-
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
-	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger(), backoff: defaultBackoffPolicy}
 	mgr := newStorageManager(testLogger())
+	mgr.stabilityWindow = 20 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -380,7 +154,7 @@ func TestStorageManager_StopsSupervisorForRemovedTask(t *testing.T) {
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
-	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger(), backoff: defaultBackoffPolicy}
 	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -404,7 +178,7 @@ func TestStorageManager_RestartsSupervisorWhenArgsChange(t *testing.T) {
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
-	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger(), backoff: defaultBackoffPolicy}
 	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -432,7 +206,7 @@ func TestStorageManager_DoesNotDoubleStartAlreadySupervisedTask(t *testing.T) {
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
-	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger(), backoff: defaultBackoffPolicy}
 	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -460,7 +234,7 @@ func TestStorageManager_StopAllStopsEverySupervisor(t *testing.T) {
 	script := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, script, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 
-	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger(), backoff: defaultBackoffPolicy}
 	mgr := newStorageManager(testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -498,22 +272,16 @@ func TestStorageManager_StopAllStopsEverySupervisor(t *testing.T) {
 // catalogsync): one crash-looping task's failures never affect its sibling,
 // and the healthy one is never restarted or delayed by the other's backoff.
 func TestStorageManager_TasksSuperviseFullyIndependently(t *testing.T) {
-	origWindow := storageStabilityWindow
-	storageStabilityWindow = 20 * time.Millisecond
-	defer func() { storageStabilityWindow = origWindow }()
-
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 10*time.Millisecond, 30*time.Millisecond
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
-
 	dir := t.TempDir()
 	healthyScript := filepath.Join(dir, "fake-bwfs.sh")
 	require.NoError(t, osWriteExecutable(t, healthyScript, "#!/bin/sh\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"))
 	crashingScript := filepath.Join(dir, "fake-catalogsync.sh")
 	require.NoError(t, osWriteExecutable(t, crashingScript, "#!/bin/sh\nexit 1\n"))
 
-	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger()}
+	rs := &reconcileState{cachePath: filepath.Join(dir, "agent-state.json"), cache: Cache{}, logger: testLogger(), backoff: defaultBackoffPolicy}
 	mgr := newStorageManager(testLogger())
+	mgr.stabilityWindow = 20 * time.Millisecond
+	mgr.backoff = backoffPolicy{Base: 10 * time.Millisecond, Max: 30 * time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

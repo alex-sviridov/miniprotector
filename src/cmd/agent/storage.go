@@ -17,12 +17,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -111,211 +108,43 @@ func storageTasks(policiesCachePath string, logger *slog.Logger, bwfsBinary, cat
 	return tasks, true
 }
 
-// storageStabilityWindow is how long a spawned supervised process must stay
-// running before its start is reported as a success. A process that crashes
-// faster than this never resets the persisted failure count, so a
-// genuine crash loop's failure count climbs instead of bouncing back to
-// "1 failure" on every restart attempt. A var (not const) so tests can
-// shrink it instead of waiting out a real multi-second window.
-var storageStabilityWindow = 3 * time.Second
+// defaultStorageStabilityWindow is production's StabilityWindow for every
+// storage-policy-derived processSupervisor -- see supervisor.go. A var
+// (not const) only so it reads naturally next to storageManager's own
+// backoff/stabilityWindow fields below; never mutated outside a test's own
+// storageManager instance.
+var defaultStorageStabilityWindow = 3 * time.Second
 
-// storageSupervisor owns the lifecycle of one supervised process (bwfs
-// server or catalogsync): a long-running child, not a due/execute/complete
-// Policy, so it gets its own small supervise loop -- modeled directly on
-// vector.go's vectorSupervisor. Two differences: no TriggerRestart (unlike
-// Vector, both bwfs and catalogsync already hot-reload their mTLS identity
-// cert without a restart (bwfs via mtls.LoadServerCredentials's
-// GetCertificate, catalogsync via mtls.LoadClientCredentials's
-// GetClientCertificate -- each reload is bounded by a ~60s in-memory cache
-// rather than happening on literally every handshake, but no restart is
-// ever needed either way), so a cert-rotation-triggered restart would only
-// add disruption with no benefit), and an onOutcome callback so the supervised
-// process's state reaches agent-state.json via reconcileState.recordOutcome
-// (see storageManager in this same file).
-type storageSupervisor struct {
-	binary string
-	args   []string
-	logger *slog.Logger
-
-	mu           sync.Mutex
-	cmd          *exec.Cmd
-	shuttingDown bool
-
-	// onSpawnForTest, when non-nil, is called once per spawn attempt --
-	// test-only instrumentation, never set in production.
-	onSpawnForTest func()
-
-	// onOutcome is called with nil once a successful process start has
-	// stayed running past storageStabilityWindow (this supervisor's notion
-	// of "success" -- a server isn't expected to exit on its own), and with
-	// a non-nil error only when the process exits unexpectedly. Never
-	// called for a deliberate Stop().
-	onOutcome func(err error)
-
-	// loopDone is closed when superviseLoop returns, giving callers (and
-	// tests) a real signal to synchronize on instead of guessing at a
-	// sleep duration.
-	loopDone chan struct{}
-
-	// stopCh is closed exactly once, by Stop(), so a superviseLoop sitting
-	// in its backoff wait (no live process to signal -- the supervisor is
-	// between crashes) notices Stop() immediately instead of only via ctx
-	// (which Stop() doesn't touch) or waiting out the full backoff.
-	stopCh   chan struct{}
-	stopOnce sync.Once
-}
-
-func newStorageSupervisor(binary string, args []string, logger *slog.Logger, onOutcome func(err error)) *storageSupervisor {
-	return &storageSupervisor{binary: binary, args: args, logger: logger, onOutcome: onOutcome, stopCh: make(chan struct{})}
-}
-
-// Start launches the supervise loop in its own goroutine and returns
-// immediately; the loop itself runs until ctx is done, at which point the
-// currently-running process (if any) is also signalled to exit.
-func (s *storageSupervisor) Start(ctx context.Context) {
-	s.loopDone = make(chan struct{})
-	go func() {
-		defer close(s.loopDone)
-		s.superviseLoop(ctx)
-	}()
-}
-
-// Stop signals the currently-running process to exit (SIGTERM -- a
-// graceful drain once bwfs's own signal.NotifyContext fix lands, see Task 11)
-// and tells the supervise loop not to respawn it.
-func (s *storageSupervisor) Stop() {
-	s.mu.Lock()
-	s.shuttingDown = true
-	cmd := s.cmd
-	s.mu.Unlock()
-	s.stopOnce.Do(func() { close(s.stopCh) })
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-	}
-}
-
-func (s *storageSupervisor) superviseLoop(ctx context.Context) {
-	failures := 0
-	for ctx.Err() == nil {
-		err := s.spawnAndWait(ctx)
-
-		s.mu.Lock()
-		shuttingDown := s.shuttingDown
-		s.mu.Unlock()
-
-		if shuttingDown || ctx.Err() != nil {
-			return
-		}
-
-		failures++
-		s.logger.Error("supervised process exited unexpectedly, restarting with backoff", "binary", s.binary, "failures", failures, "error", err)
-		if s.onOutcome != nil {
-			s.onOutcome(err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.stopCh:
-			return
-		case <-time.After(backoff(failures)):
-		}
-	}
-}
-
-// spawnAndWait starts the process and blocks until it exits, calling onOutcome(nil)
-// only once the process has stayed running past storageStabilityWindow --
-// not immediately on a successful start. A process that crashes faster than
-// that window never reaches onOutcome(nil), so a genuine crash loop's
-// persisted failure count (reset to 0 by any nil outcome, see
-// reconcileState.recordOutcome) climbs instead of bouncing back to "1
-// failure" on every restart attempt; the crash itself is still reported via
-// superviseLoop's own onOutcome(err) call for the exit. If ctx is cancelled
-// while the process is still running, it is sent SIGTERM -- see
-// vectorSupervisor.spawnAndWait in vector.go for the detailed reasoning
-// behind starting cmd.Start() under the mutex and handling ctx cancellation
-// this way; identical here.
-func (s *storageSupervisor) spawnAndWait(ctx context.Context) error {
-	cmd := exec.Command(s.binary, s.args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	s.mu.Lock()
-	err := cmd.Start()
-	shuttingDown := s.shuttingDown
-	if err == nil {
-		s.cmd = cmd
-	}
-	s.mu.Unlock()
-	if err != nil {
-		return fmt.Errorf("start %s: %w", s.binary, err)
-	}
-	if shuttingDown {
-		// Stop() raced ahead of this spawn: it ran (and saw s.cmd == nil,
-		// so sent no signal) before cmd.Start() above completed. Without
-		// this check the process just-started would run forever unsignalled
-		// -- superviseLoop only rechecks shuttingDown after spawnAndWait
-		// returns, which blocks on cmd.Wait() until the process exits.
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-	}
-	if s.onSpawnForTest != nil {
-		s.onSpawnForTest()
-	}
-
-	waitDone := make(chan struct{})
-	defer close(waitDone)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-		case <-waitDone:
-		}
-	}()
-
-	// Read storageStabilityWindow synchronously here, on the same goroutine
-	// that will go on to close waitDone (via cmd.Wait() below returning and
-	// the deferred close above), rather than inside the goroutine below --
-	// tests shrink this var and restore it only after synchronizing on
-	// loopDone, so a read inside the goroutine (which isn't guaranteed to
-	// have run by the time spawnAndWait returns) would race with that
-	// restore.
-	stabilityWindow := storageStabilityWindow
-	go func() {
-		timer := time.NewTimer(stabilityWindow)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-			if s.onOutcome != nil {
-				s.onOutcome(nil)
-			}
-		case <-waitDone:
-			// Process exited before the stability window elapsed -- the
-			// crash is reported by superviseLoop's own onOutcome(err) call
-			// instead, not here.
-		}
-	}()
-
-	return cmd.Wait()
-}
-
-// storageManager holds one storageSupervisor per current storage task,
+// storageManager holds one processSupervisor per current storage task,
 // keyed by task ID, and reconciles that set against agent's latest read of
 // policies-cache.json every tick (see reconcile.go's run(), which calls
-// reconcile once per loop iteration). It has no knowledge of what any given
-// task actually runs -- bwfs, catalogsync, or anything else -- it only ever
-// sees (ID, Binary, Args) tuples and supervises whatever it's handed.
+// reconcile once per loop iteration). It has no knowledge of what any
+// given task actually runs -- bwfs, catalogsync, or anything else -- it
+// only ever sees (ID, Binary, Args) tuples and supervises whatever it's
+// handed.
 type storageManager struct {
 	logger *slog.Logger
 
+	// backoff/stabilityWindow configure every processSupervisor this
+	// manager creates -- defaulted to production values by
+	// newStorageManager, overridable directly (same package) by a test
+	// that needs faster timing, replacing the old package-level
+	// backoffBase/backoffMax/storageStabilityWindow var-mutation pattern.
+	backoff         backoffPolicy
+	stabilityWindow time.Duration
+
 	mu          sync.Mutex
-	supervisors map[string]*storageSupervisor
+	supervisors map[string]*processSupervisor
 	args        map[string][]string // last-started args, to detect a changed task
 }
 
 func newStorageManager(logger *slog.Logger) *storageManager {
 	return &storageManager{
-		logger:      logger,
-		supervisors: map[string]*storageSupervisor{},
-		args:        map[string][]string{},
+		logger:          logger,
+		backoff:         defaultBackoffPolicy,
+		stabilityWindow: defaultStorageStabilityWindow,
+		supervisors:     map[string]*processSupervisor{},
+		args:            map[string][]string{},
 	}
 }
 
@@ -325,7 +154,7 @@ func newStorageManager(logger *slog.Logger) *storageManager {
 // fresh one started with the new args), and leaves an unchanged task's
 // supervisor running untouched. rs is the same reconcileState run()'s own
 // loop already uses -- recordOutcome is mutex-guarded internally, so this
-// is safe to call from storageSupervisor's own background goroutines
+// is safe to call from a processSupervisor's own background goroutines
 // concurrently with run()'s main loop, exactly like backup-task goroutines
 // already do.
 func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, tasks []storageTask) {
@@ -351,8 +180,13 @@ func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, task
 			continue
 		}
 		id := t.ID
-		sup := newStorageSupervisor(t.Binary, t.Args, m.logger, func(err error) {
-			rs.recordOutcome(id, err, time.Now())
+		sup := newProcessSupervisor(supervisorConfig{
+			Binary:          t.Binary,
+			Args:            t.Args,
+			Logger:          m.logger,
+			Backoff:         m.backoff,
+			StabilityWindow: m.stabilityWindow,
+			OnOutcome:       func(err error) { rs.recordOutcome(id, err, time.Now()) },
 		})
 		sup.Start(ctx)
 		m.supervisors[t.ID] = sup
