@@ -30,7 +30,7 @@ func main() {
 	// Put context variables
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx = context.WithValue(ctx, "appName", appName)
+	ctx = logging.WithAppName(ctx, appName)
 
 	// Get configuration
 	configPath, err := config.ResolveConfigPath()
@@ -55,12 +55,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Arguments error: %v\n", err)
 		os.Exit(1)
 	}
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, arguments.Quiet)
 	ctx = context.WithValue(ctx, common.HostnameContextKey, common.GetHostname())
 
 	jobID := jobid.Resolve(arguments.JobID)
-	ctx = context.WithValue(ctx, "jobId", jobID)
+	ctx = logging.WithJobID(ctx, jobID)
 	ctx = jobid.Outgoing(ctx, jobID)
 
 	// Initialize logger

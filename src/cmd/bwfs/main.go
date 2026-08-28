@@ -19,7 +19,7 @@ import (
 func main() {
 	const appName = "bwfs"
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 
 	configPath, err := config.ResolveConfigPath()
 	if err != nil {
@@ -40,8 +40,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Arguments error: %v\n", err)
 		os.Exit(1)
 	}
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, arguments.Quiet)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()

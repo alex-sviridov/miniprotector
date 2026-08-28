@@ -63,10 +63,10 @@ func main() {
 	}
 	defer store.Close()
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", args.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = logging.WithDebugMode(ctx, args.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()

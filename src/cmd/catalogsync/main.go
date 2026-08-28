@@ -38,10 +38,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()

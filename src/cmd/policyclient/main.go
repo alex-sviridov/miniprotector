@@ -48,11 +48,11 @@ func main() {
 
 	jobID := jobid.Resolve(args.JobID)
 
-	ctx := context.WithValue(context.Background(), "appName", "policyclient")
+	ctx := logging.WithAppName(context.Background(), "policyclient")
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", args.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
-	ctx = context.WithValue(ctx, "jobId", jobID)
+	ctx = logging.WithDebugMode(ctx, args.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
+	ctx = logging.WithJobID(ctx, jobID)
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
 
