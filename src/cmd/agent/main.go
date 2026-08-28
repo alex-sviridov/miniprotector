@@ -138,7 +138,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	}
 
 	logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath, "vector_config", vectorConfigPath)
-	if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess, storageTasksFunc, storageMgr); err != nil {
+	if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, policiesFunc, conf.MaxConcurrentBackupJobs, onSuccess, storageTasksFunc, storageMgr, defaultBackoffPolicy); err != nil {
 		logger.Error("agent exited with error", "error", err)
 		return 1
 	}

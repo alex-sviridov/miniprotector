@@ -21,6 +21,37 @@ var (
 	backoffMax  = 10 * time.Minute
 )
 
+// backoffPolicy is an injectable version of the backoff() computation
+// below, so each consumer (reconcileState here; processSupervisor from
+// Task 6/7) can be given its own value instead of sharing package-level
+// vars -- the old backoffBase/backoffMax/backoff() stay in place for now,
+// still used by storage.go/vector.go until they migrate too (Task 6/7),
+// at which point they're deleted for good.
+type backoffPolicy struct {
+	Base, Max time.Duration
+}
+
+// next returns a jittered retry delay for the given number of consecutive
+// failures -- identical computation to backoff() below, just parameterized
+// instead of reading package vars. Must be called exactly once per failure
+// and the result stored (see reconcileState.recordOutcome), not recomputed
+// on every isDue check.
+func (b backoffPolicy) next(failures int) time.Duration {
+	exp := min(max(failures-1, 0), 8)
+	d := b.Base * time.Duration(1<<exp)
+	if d > b.Max {
+		d = b.Max
+	}
+	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
+}
+
+// defaultBackoffPolicy is the production default for reconcileState (and,
+// from Task 6/7, every processSupervisor) -- same values as backoffBase/
+// backoffMax below. A plain default, never mutated by tests: tests that
+// need different timing construct their own backoffPolicy{...} value
+// instead.
+var defaultBackoffPolicy = backoffPolicy{Base: 30 * time.Second, Max: 10 * time.Minute}
+
 // runner executes a policy's binary under ctx; production code uses
 // realExec, tests substitute a fake so they don't actually invoke
 // certclient/policyclient/brfs. ctx is honored via exec.CommandContext so
@@ -109,6 +140,7 @@ type reconcileState struct {
 	cache     Cache
 	logger    *slog.Logger
 	inFlight  map[string]bool
+	backoff   backoffPolicy
 }
 
 // tryMarkInFlight marks id as in-flight and returns true if it wasn't
@@ -233,7 +265,7 @@ func (rs *reconcileState) recordOutcome(id string, attemptErr error, attemptTime
 		state.LastError = ""
 	} else {
 		state.ConsecutiveFailures++
-		retryAt := attemptTime.Add(backoff(state.ConsecutiveFailures))
+		retryAt := attemptTime.Add(rs.backoff.next(state.ConsecutiveFailures))
 		state.NextRetryAt = &retryAt
 		state.LastError = attemptErr.Error()
 		rs.logger.Error("policy execution failed", "policy", id, "error", attemptErr)
@@ -284,12 +316,12 @@ func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
 // storageTasksFunc/storageMgr add ensure-running bwfs supervision alongside
 // the due/execute policy loop below -- either nil disables it entirely,
 // preserving prior behavior exactly (see storage.go).
-func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string), storageTasksFunc func() ([]storageTask, bool), storageMgr *storageManager) error {
+func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string), storageTasksFunc func() ([]storageTask, bool), storageMgr *storageManager, backoff backoffPolicy) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
 	}
-	rs := &reconcileState{cachePath: cachePath, cache: cache, logger: logger}
+	rs := &reconcileState{cachePath: cachePath, cache: cache, logger: logger, backoff: backoff}
 
 	sem := make(chan struct{}, maxConcurrentBackgroundJobs)
 	var wg sync.WaitGroup

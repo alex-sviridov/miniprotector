@@ -53,7 +53,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr, policiesFunc, 2, nil, nil, nil)
+	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr, policiesFunc, 2, nil, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	assert.Equal(t, "brfs", capturedBinary)
@@ -96,7 +96,7 @@ func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *te
 	done := make(chan error, 1)
 	go func() {
 		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec,
-			func() ([]Policy, bool) { return nil, true }, 2, nil, storageTasksFunc, mgr)
+			func() ([]Policy, bool) { return nil, true }, 2, nil, storageTasksFunc, mgr, defaultBackoffPolicy)
 	}()
 
 	require.Eventually(t, func() bool {
