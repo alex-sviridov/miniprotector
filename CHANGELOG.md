@@ -12,7 +12,12 @@ process running. Also: `agent` now reads `policies-cache.json` once per reconcil
 three times; backoff/stability-window tuning moved out of test-mutated package globals into
 per-instance config; `main.go`'s fatal startup errors are now guaranteed to reach the log file before
 the process exits; and every binary in the repo now uses typed `context.Context` keys for its
-app-name/debug/quiet/job-id logging values instead of raw strings.
+app-name/debug/quiet/job-id logging values instead of raw strings. As part of the supervisor
+unification, Vector's crash-related log lines changed from the Vector-specific strings `"vector
+process error"` and `"vector exited unexpectedly, restarting with backoff"` to a generic
+`"supervised process exited unexpectedly, restarting with backoff"` with structured
+`binary`/`failures`/`error` attributes -- update any existing Loki alert or saved log query keyed on
+the old exact strings.
 
 ## 2026-08-27 — Restore retries transient per-file stream errors
 

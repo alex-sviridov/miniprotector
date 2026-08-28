@@ -89,29 +89,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	catalogsyncBinary := resolveExecPath("catalogsync")
 	storageMgr := newStorageManager(logger)
 
-	// derivedFunc reads policies-cache.json exactly once per reconcile
-	// tick and derives every dynamic policy/task kind from that single
-	// snapshot -- previously this was two separate reads (one inside
-	// backupTasks+restoreTasks combined, one inside storageTasks), which
-	// could observe two different snapshots of the file within the same
-	// tick. ok is false whenever this tick's read failed -- see
-	// reconcile.go's prune, which must not treat a failed read as "every
-	// task was removed." On a failed read, the three static policies
-	// still run (see policies(conf) below) -- policy-update is what
-	// (re)creates policies-cache.json, so suppressing it on a missing/
-	// unreadable cache would deadlock a fresh install forever. Only the
-	// storage task list is genuinely empty on failure, matching
-	// storageTasks's own old contract.
-	derivedFunc := func() ([]Policy, []storageTask, bool) {
-		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
-		if !ok {
-			return policies(conf), nil, false
-		}
-		allPolicies := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
-		allPolicies = append(allPolicies, restoreTasks(cachedPolicies, logger)...)
-		storageTaskList := storageTasks(cachedPolicies, logger, bwfsBinary, catalogsyncBinary)
-		return allPolicies, storageTaskList, true
-	}
+	derivedFunc := newDerivedFunc(policiesCachePath, logger, conf, bwfsBinary, catalogsyncBinary)
 
 	hostname, err := hostnameFromBootstrapCert(certsDir)
 	if err != nil {
@@ -150,6 +128,37 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 		return 1
 	}
 	return 0
+}
+
+// newDerivedFunc returns the reconcile loop's per-tick policy/storage-task
+// derivation function -- reads policies-cache.json exactly once per tick,
+// and, on any read failure, still returns the three static policies (see
+// policies(conf)) so bootstrap-refresh/operating-refresh/policy-update
+// keep running even when the cache is missing or unreadable. policy-update
+// is the only thing that (re)creates that file, so suppressing it here
+// would deadlock a fresh install forever -- see docs/superpowers/specs/
+// 2026-08-28-agent-reliability-refactor-design.md for the incident this
+// guards against. A missing file (fresh install, not yet fetched) logs at
+// Debug; anything else (permission error, corrupt JSON) logs at Warn,
+// since that's a real operator-actionable signal that was previously
+// completely silent -- pruning and storage supervision both freeze on a
+// persistently unreadable cache with nothing in agent.log to show it.
+func newDerivedFunc(policiesCachePath string, logger *slog.Logger, conf *config.Config, bwfsBinary, catalogsyncBinary string) func() ([]Policy, []storageTask, bool) {
+	return func() ([]Policy, []storageTask, bool) {
+		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
+		if !ok {
+			if _, statErr := os.Stat(policiesCachePath); os.IsNotExist(statErr) {
+				logger.Debug("policies cache not yet present, static policies still running", "path", policiesCachePath)
+			} else {
+				logger.Warn("policies cache unreadable or corrupt, static policies still running but dynamic tasks skipped this tick", "path", policiesCachePath)
+			}
+			return policies(conf), nil, false
+		}
+		allPolicies := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
+		allPolicies = append(allPolicies, restoreTasks(cachedPolicies, logger)...)
+		storageTaskList := storageTasks(cachedPolicies, logger, bwfsBinary, catalogsyncBinary)
+		return allPolicies, storageTaskList, true
+	}
 }
 
 // listPolicies runs the "list-policies" subcommand: reads and renders

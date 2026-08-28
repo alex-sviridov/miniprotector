@@ -38,7 +38,7 @@ type Policy struct {
 // frequent), and policy-update (fetches this node's applicable backup
 // policies from policy-server into a local cache). Each gets a fresh
 // per-invocation JobID (also embedded in Args as --job-id) every time this
-// function is called -- policiesFunc calls it fresh every reconcile tick,
+// function is called -- derivedFunc calls it fresh every reconcile tick,
 // the same way backupTasks already does for backup jobs, so an unused
 // policy's JobID (one not actually due this tick) is simply discarded.
 func policies(conf *config.Config) []Policy {
