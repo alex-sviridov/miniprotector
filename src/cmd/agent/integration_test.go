@@ -48,7 +48,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 		return nil
 	}
 
-	policiesFunc := func() ([]Policy, bool) { return backupTasks(policiesCachePath, testLogger(), conf) }
+	policiesFunc := func() ([]Policy, bool) { return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf), true }
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -85,7 +85,7 @@ func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *te
 	// the reconcile-loop wiring (both tasks start, both prune together), not
 	// bwfs/catalogsync's real behavior, which is covered by their own
 	// packages.
-	storageTasksFunc := func() ([]storageTask, bool) { return storageTasks(policiesCachePath, testLogger(), script, script) }
+	storageTasksFunc := func() ([]storageTask, bool) { return storageTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), script, script), true }
 	mgr := newStorageManager(testLogger())
 	mgr.stabilityWindow = 20 * time.Millisecond
 

@@ -465,7 +465,7 @@ func TestRun_DisabledPolicyPrunedViaBackupTasks(t *testing.T) {
 	defer cancel()
 
 	err := run(ctx, testLogger(), stateCachePath, 10*time.Millisecond, fr.run,
-		func() ([]Policy, bool) { return backupTasks(policiesCachePath, testLogger(), conf) }, 2, nil, nil, nil, defaultBackoffPolicy)
+		func() ([]Policy, bool) { return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf), true }, 2, nil, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	cache, err := readCache(stateCachePath)
