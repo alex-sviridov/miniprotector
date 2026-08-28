@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -18,6 +19,10 @@ type retryTestResult struct {
 }
 
 func TestWithRetry_RecoversAfterRetryableFailures(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	attempts := 0
 	result := withRetry(context.Background(), logger, 3,
@@ -36,6 +41,10 @@ func TestWithRetry_RecoversAfterRetryableFailures(t *testing.T) {
 }
 
 func TestWithRetry_StopsAtMaxRetriesAndReturnsFinalResult(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	attempts := 0
 	result := withRetry(context.Background(), logger, 3,
@@ -107,4 +116,44 @@ func TestWithRetry_RespectsContextCancellationDuringBackoffWait(t *testing.T) {
 	assert.False(t, result.ok)
 	assert.Less(t, elapsed, 500*time.Millisecond, "cancellation during a backoff wait must return promptly, not wait out the full backoff")
 	assert.Equal(t, 1, attempts, "cancellation during the first backoff wait must prevent a second attempt")
+}
+
+func TestWithRetry_NoSpuriousLogWhenContextAlreadyCancelledAfterAttempt(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts := 0
+
+	start := time.Now()
+	result := withRetry(ctx, logger, 5,
+		func(ctx context.Context) retryTestResult {
+			attempts++
+			cancel() // simulate a sibling worker's failure aborting the whole run
+			return retryTestResult{err: errors.New("fail")}
+		},
+		func(r retryTestResult) bool { return true },
+		func(r retryTestResult) string { return r.err.Error() },
+	)
+	elapsed := time.Since(start)
+
+	assert.False(t, result.ok)
+	assert.Equal(t, 1, attempts, "must not attempt again once ctx is already cancelled")
+	assert.Less(t, elapsed, 100*time.Millisecond, "must return promptly, no backoff wait")
+	assert.NotContains(t, buf.String(), "retrying",
+		"must not log a misleading retry line when the run is already being aborted out from under it")
+}
+
+func TestWithRetry_ClampsMaxRetriesBelowOneToOneAttempt(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	attempts := 0
+	result := withRetry(context.Background(), logger, 0,
+		func(ctx context.Context) retryTestResult {
+			attempts++
+			return retryTestResult{ok: true}
+		},
+		func(r retryTestResult) bool { return !r.ok },
+		func(r retryTestResult) string { return r.err.Error() },
+	)
+	assert.Equal(t, 1, attempts, "maxRetries <= 0 must still attempt once, not fabricate a zero-value result")
+	assert.True(t, result.ok)
 }

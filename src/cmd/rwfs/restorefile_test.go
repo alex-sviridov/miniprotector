@@ -273,6 +273,10 @@ func (s *flakyRestoreServer) Calls() int {
 }
 
 func TestWriteRestoreFileWithRetry_RecoversAfterTransientFailures(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
 	store, err := wfs.New(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
@@ -295,6 +299,10 @@ func TestWriteRestoreFileWithRetry_RecoversAfterTransientFailures(t *testing.T) 
 }
 
 func TestWriteRestoreFileWithRetry_ExhaustsRetriesAndReturnsFinalError(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
 	restoreSrv := &recordingRestoreServer{} // always fails RestoreFile with codes.Unimplemented
 	client := dialRestoreClient(t, restoreSrv)
 
