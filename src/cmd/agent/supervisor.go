@@ -176,6 +176,24 @@ func (s *processSupervisor) superviseLoop(ctx context.Context) {
 		}
 
 		s.mu.Lock()
+		if s.restarting {
+			// TriggerRestart landed in the window between the top-of-loop
+			// clear above and here -- before this wait's waitCh even
+			// existed for it to close, so it found waitCh == nil and could
+			// only set the flag. Consume it here instead of walking into
+			// the backoff select and parking for the full delay: without
+			// this, the flag would still eventually be consumed (at the
+			// top of the loop or in the select's own checks below), but
+			// only after waiting out the entire backoff first.
+			s.restarting = false
+			shuttingDownNow := s.shuttingDown
+			s.mu.Unlock()
+			if shuttingDownNow {
+				return
+			}
+			failures = 0
+			continue
+		}
 		waitCh := make(chan struct{})
 		s.waitCh = waitCh
 		s.mu.Unlock()
@@ -208,6 +226,17 @@ func (s *processSupervisor) superviseLoop(ctx context.Context) {
 
 		s.mu.Lock()
 		s.waitCh = nil
+		if s.restarting {
+			// TriggerRestart raced the timer and lost the select -- it set
+			// the flag but its close(waitCh) either never happened (it
+			// read waitCh == nil under this same lock, after this branch
+			// already cleared it) or happened too late to be observed by
+			// the select above. Consume it here instead of letting it
+			// leak into the next generation's own outcome classification
+			// at the top of the loop.
+			s.restarting = false
+			failures = 0
+		}
 		s.mu.Unlock()
 	}
 }

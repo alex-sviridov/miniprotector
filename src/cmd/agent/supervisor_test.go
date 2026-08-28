@@ -341,7 +341,15 @@ func TestProcessSupervisor_TriggerRestartDoesNotApplyBackoff(t *testing.T) {
 // respawn happens promptly (not waiting out a 10s backoff), and the
 // respawned process's own subsequent crash is still correctly reported as
 // a real failure, proving s.restarting did not leak into its
-// classification.
+// classification. Because this test's TriggerRestart() call happens
+// asynchronously relative to superviseLoop's own progress, it isn't pinned
+// to landing only in the "wait already parked, waitCh non-nil" window
+// (case <-waitCh) -- it can just as well land in the narrower window right
+// before that wait is entered (waitCh not created yet, only the
+// s.restarting flag catches it) or, rarely, right as the backoff timer
+// itself fires. All three windows are covered by superviseLoop's fix, so
+// this test exercises whichever one scheduling happens to hit without
+// needing to pin the exact interleaving.
 func TestProcessSupervisor_TriggerRestartDuringBackoffWaitRespawnsPromptlyAndClassifiesNextCrashCorrectly(t *testing.T) {
 	script := writeFakeScript(t, "#!/bin/sh\nexit 1\n")
 
@@ -391,8 +399,19 @@ func TestProcessSupervisor_TriggerRestartDuringBackoffWaitRespawnsPromptlyAndCla
 	// crash must still be reported as a real failure via OnOutcome(err),
 	// not silently swallowed as "deliberate" because s.restarting leaked
 	// past the triggered respawn into gen 2's own outcome classification.
+	//
+	// The spawn-count assertion right after is load-bearing, not
+	// decorative: if the leak this test guards against were still present,
+	// gen 2's crash would be misclassified as deliberate too, which would
+	// reset failures and respawn gen 3 immediately (no backoff) -- and
+	// gen 3's own crash (correctly classified this time, since the flag
+	// only leaks one generation deep) would deliver a second failureCh
+	// token just the same, but with spawns already at 3. Without pinning
+	// the count here, that scenario would satisfy "a second failure
+	// arrived" and hide the very leak this test exists to catch.
 	select {
 	case <-failureCh:
+		assert.EqualValues(t, 2, atomic.LoadInt64(&spawns), "the reported failure must be gen 2's own crash (spawns==2), not a leaked-deliberate gen 2 followed by gen 3's crash (spawns==3)")
 	case <-time.After(2 * time.Second):
 		t.Fatal("the respawned process's own crash was never reported -- s.restarting leaked into its outcome classification")
 	}
