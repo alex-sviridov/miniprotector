@@ -187,14 +187,10 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 }
 
 // backupTasks derives one Policy per (cached policy, object_filters path)
-// pair from policiesCachePath, valid at the instant it's called. Callers
+// pair from cachedPolicies, valid at the instant it's called. Callers
 // that need to notice policies-cache.json changing over time (agent
 // serve's reconcile loop) must call this fresh every tick rather than
 // caching its result once.
-//
-// The second return value is ok=false whenever the underlying read
-// failed (see readCachedPolicies) -- callers must treat that as "this
-// tick's view is untrustworthy," never as "there are zero tasks."
 //
 // A policy with an unparseable rpo, or with no valid backup_window
 // schedule at all, contributes no tasks -- there is no sound due-check
@@ -209,13 +205,8 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 // and would-be job id so the gap is visible without needing to reproduce a
 // misdirected backup first. Only Destinations[0] is ever used -- retrying
 // the rest of the list on failure is future work.
-func backupTasks(policiesCachePath string, logger *slog.Logger, conf *config.Config) ([]Policy, bool) {
+func backupTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, conf *config.Config) []Policy {
 	grace := time.Duration(conf.BackupWindowGraceSec) * time.Second
-
-	cachedPolicies, ok := readCachedPolicies(policiesCachePath)
-	if !ok {
-		return nil, false
-	}
 
 	var tasks []Policy
 	for _, p := range cachedPolicies {
@@ -274,5 +265,5 @@ func backupTasks(policiesCachePath string, logger *slog.Logger, conf *config.Con
 			})
 		}
 	}
-	return tasks, true
+	return tasks
 }

@@ -64,21 +64,12 @@ type storageConfig struct {
 // (agent serve's reconcile loop) must call this fresh every tick rather than
 // caching its result once.
 //
-// ok=false mirrors backupTasks's contract: it means this tick's read of
-// policiesCachePath failed, and callers must never treat that as "there are
-// zero storage tasks."
-//
 // A policy whose config doesn't parse as a filesystem-backend JSON object,
 // or whose root is empty, is skipped entirely (contributing neither task)
 // with a logged error -- the same fail-safe "skip, don't block the rest"
 // direction backupTasks already uses for an unparseable rpo or missing
 // backup_window.
-func storageTasks(policiesCachePath string, logger *slog.Logger, bwfsBinary, catalogsyncBinary string) ([]storageTask, bool) {
-	cachedPolicies, ok := readCachedPolicies(policiesCachePath)
-	if !ok {
-		return nil, false
-	}
-
+func storageTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, bwfsBinary, catalogsyncBinary string) []storageTask {
 	var tasks []storageTask
 	for _, p := range cachedPolicies {
 		if p.Type != "storage" {
@@ -105,7 +96,7 @@ func storageTasks(policiesCachePath string, logger *slog.Logger, bwfsBinary, cat
 			},
 		)
 	}
-	return tasks, true
+	return tasks
 }
 
 // defaultStorageStabilityWindow is production's StabilityWindow for every

@@ -78,15 +78,17 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	// backup tasks derived from policies-cache.json -- called fresh every
 	// reconcile tick (not resolved once here) so agent serve notices
 	// policy-update's cache changing over time without needing a restart.
-	// ok is false whenever backupTasks's own read of policies-cache.json
-	// failed this tick -- see reconcile.go's prune, which must not treat a
-	// failed read as "every backup task was removed."
+	// ok is false whenever this tick's read of policies-cache.json failed
+	// -- see reconcile.go's prune, which must not treat a failed read as
+	// "every backup task was removed."
 	policiesFunc := func() ([]Policy, bool) {
-		backupTaskList, backupOk := backupTasks(policiesCachePath, logger, conf)
-		restoreTaskList, restoreOk := restoreTasks(policiesCachePath, logger)
-		all := append(policies(conf), backupTaskList...)
-		all = append(all, restoreTaskList...)
-		return all, backupOk && restoreOk
+		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
+		if !ok {
+			return nil, false
+		}
+		all := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
+		all = append(all, restoreTasks(cachedPolicies, logger)...)
+		return all, true
 	}
 
 	certsDir, err := config.ResolveCertsDir()
@@ -104,7 +106,11 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	catalogsyncBinary := resolveExecPath("catalogsync")
 	storageMgr := newStorageManager(logger)
 	storageTasksFunc := func() ([]storageTask, bool) {
-		return storageTasks(policiesCachePath, logger, bwfsBinary, catalogsyncBinary)
+		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
+		if !ok {
+			return nil, false
+		}
+		return storageTasks(cachedPolicies, logger, bwfsBinary, catalogsyncBinary), true
 	}
 	hostname, err := hostnameFromBootstrapCert(certsDir)
 	if err != nil {
@@ -152,13 +158,12 @@ func listPolicies(conf *config.Config, cachePath, policiesCachePath string) int 
 	// backupTasks'/storageTasks' own skip-with-log warnings out of stdout's
 	// table, matching this command's existing read-only, no-noise character.
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	backupTaskList, _ := backupTasks(policiesCachePath, silentLogger, conf)
-	restoreTaskList, _ := restoreTasks(policiesCachePath, silentLogger)
-	allPolicies := append(policies(conf), backupTaskList...)
-	allPolicies = append(allPolicies, restoreTaskList...)
+	cachedPolicies, _ := readCachedPolicies(policiesCachePath)
+	allPolicies := append(policies(conf), backupTasks(cachedPolicies, silentLogger, conf)...)
+	allPolicies = append(allPolicies, restoreTasks(cachedPolicies, silentLogger)...)
 	bwfsBinary := resolveExecPath("bwfs")
 	catalogsyncBinary := resolveExecPath("catalogsync")
-	storageTaskList, _ := storageTasks(policiesCachePath, silentLogger, bwfsBinary, catalogsyncBinary)
+	storageTaskList := storageTasks(cachedPolicies, silentLogger, bwfsBinary, catalogsyncBinary)
 	if err := renderPolicies(os.Stdout, cachePath, time.Now(), allPolicies, storageTaskList); err != nil {
 		fmt.Fprintf(os.Stderr, "list-policies failed: %v\n", err)
 		return 1

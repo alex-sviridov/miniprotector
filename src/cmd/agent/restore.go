@@ -51,14 +51,10 @@ type rulesStdinPayload struct {
 }
 
 // restoreTasks derives one Policy per cached "restore" policy from
-// policiesCachePath, valid at the instant it's called -- callers that need
+// cachedPolicies, valid at the instant it's called -- callers that need
 // to notice policies-cache.json changing over time (agent serve's
 // reconcile loop) must call this fresh every tick, exactly like
 // backupTasks/storageTasks.
-//
-// ok=false mirrors backupTasks's contract: it means this tick's read of
-// policiesCachePath failed, and callers must never treat that as "there
-// are zero restore tasks."
 //
 // A policy whose Destinations is empty (its storage policy has no live
 // checkins yet, or storage_policy_id is dangling) contributes no task --
@@ -82,12 +78,7 @@ type rulesStdinPayload struct {
 // with --overwrite appended iff p.Overwrite. Every other mode (unset or
 // "verify") dispatches `rwfs verify`, byte-for-byte what this policy type
 // has always run.
-func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool) {
-	cachedPolicies, ok := readCachedPolicies(policiesCachePath)
-	if !ok {
-		return nil, false
-	}
-
+func restoreTasks(cachedPolicies []cachedPolicy, logger *slog.Logger) []Policy {
 	var tasks []Policy
 	for _, p := range cachedPolicies {
 		if p.Type != "restore" {
@@ -133,5 +124,5 @@ func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool
 			},
 		})
 	}
-	return tasks, true
+	return tasks
 }

@@ -20,8 +20,7 @@ func TestStorageTasks_BuildsTaskFromFilesystemConfig(t *testing.T) {
 		"config": "{\"backend\": \"filesystem\", \"root\": \"/data/storage\"}"
 	}]`)
 
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
-	require.True(t, ok)
+	tasks := storageTasks(mustReadCachedPolicies(t, path), testLogger(), "bwfs-bin", "catalogsync-bin")
 	require.Len(t, tasks, 2)
 
 	assert.Equal(t, "storage:east-1-storage", tasks[0].ID)
@@ -42,8 +41,7 @@ func TestStorageTasks_SkipsUnsupportedBackend(t *testing.T) {
 		"config": "{\"backend\": \"s3\", \"root\": \"/data/storage\"}"
 	}]`)
 
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
-	assert.True(t, ok, "the file itself was still validly read")
+	tasks := storageTasks(mustReadCachedPolicies(t, path), testLogger(), "bwfs-bin", "catalogsync-bin")
 	assert.Empty(t, tasks)
 }
 
@@ -56,8 +54,7 @@ func TestStorageTasks_SkipsMissingRoot(t *testing.T) {
 		"config": "{\"backend\": \"filesystem\"}"
 	}]`)
 
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
-	assert.True(t, ok)
+	tasks := storageTasks(mustReadCachedPolicies(t, path), testLogger(), "bwfs-bin", "catalogsync-bin")
 	assert.Empty(t, tasks)
 }
 
@@ -70,8 +67,7 @@ func TestStorageTasks_SkipsUnparseableConfigJSON(t *testing.T) {
 		"config": "not json"
 	}]`)
 
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
-	assert.True(t, ok)
+	tasks := storageTasks(mustReadCachedPolicies(t, path), testLogger(), "bwfs-bin", "catalogsync-bin")
 	assert.Empty(t, tasks)
 }
 
@@ -86,23 +82,8 @@ func TestStorageTasks_IgnoresNonStorageType(t *testing.T) {
 		"destination": "bwfs:8080"
 	}]`)
 
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
-	assert.True(t, ok)
+	tasks := storageTasks(mustReadCachedPolicies(t, path), testLogger(), "bwfs-bin", "catalogsync-bin")
 	assert.Empty(t, tasks, "a cached policy whose type isn't \"storage\" must contribute zero storage tasks")
-}
-
-func TestStorageTasks_MissingCacheFileReturnsOkFalse(t *testing.T) {
-	tasks, ok := storageTasks(filepath.Join(t.TempDir(), "does-not-exist.json"), testLogger(), "bwfs-bin", "catalogsync-bin")
-	assert.False(t, ok)
-	assert.Empty(t, tasks)
-}
-
-func TestStorageTasks_CorruptCacheFileReturnsOkFalse(t *testing.T) {
-	dir := t.TempDir()
-	path := writeCachedPolicies(t, dir, `not json`)
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
-	assert.False(t, ok)
-	assert.Empty(t, tasks)
 }
 
 func TestStorageTasks_MultiplePoliciesEachGetTheirOwnTask(t *testing.T) {
@@ -112,8 +93,7 @@ func TestStorageTasks_MultiplePoliciesEachGetTheirOwnTask(t *testing.T) {
 		{"name": "b", "type": "storage", "port": 9401, "config": "{\"backend\": \"filesystem\", \"root\": \"/data/b\"}"}
 	]`)
 
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
-	require.True(t, ok)
+	tasks := storageTasks(mustReadCachedPolicies(t, path), testLogger(), "bwfs-bin", "catalogsync-bin")
 	require.Len(t, tasks, 4)
 	ids := []string{tasks[0].ID, tasks[1].ID, tasks[2].ID, tasks[3].ID}
 	assert.Contains(t, ids, "storage:a")
@@ -312,8 +292,7 @@ func TestStorageTasks_SkipsDisabledPolicy(t *testing.T) {
 		"disabled_at": "2020-01-01T00:00:00Z"
 	}]`)
 
-	tasks, ok := storageTasks(path, testLogger(), "bwfs-bin", "catalogsync-bin")
+	tasks := storageTasks(mustReadCachedPolicies(t, path), testLogger(), "bwfs-bin", "catalogsync-bin")
 
-	assert.True(t, ok, "the file itself was still validly read")
 	assert.Empty(t, tasks)
 }

@@ -34,8 +34,7 @@ func TestRestoreTasks_OneTaskPerRestorePolicy(t *testing.T) {
 		{Name: "nightly", Type: "backup"}, // must contribute zero restore tasks
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "verify:web01-emergency", tasks[0].ID)
 	assert.Equal(t, "rwfs", tasks[0].Binary)
@@ -57,8 +56,7 @@ func TestRestoreTasks_NoDestinationsSkipsWithNoTask(t *testing.T) {
 		{Name: "dangling", Type: "restore", Rules: []RestoreRule{{Path: "/x", Include: true}}},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	assert.Empty(t, tasks)
 }
 
@@ -73,8 +71,7 @@ func TestRestoreTasks_NoRulesSkipsWithNoTask(t *testing.T) {
 		{Name: "rules-less", Type: "restore", Destinations: []string{"bwfs-1:8080"}},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	assert.Empty(t, tasks)
 }
 
@@ -90,14 +87,8 @@ func TestRestoreTasks_DisabledPolicySkipped(t *testing.T) {
 		},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	assert.Empty(t, tasks)
-}
-
-func TestRestoreTasks_UnreadableCacheReturnsNotOK(t *testing.T) {
-	_, ok := restoreTasks(filepath.Join(t.TempDir(), "missing.json"), testLogger())
-	assert.False(t, ok)
 }
 
 func TestRestoreTasks_DueUntilFirstAttemptThenNeverAgain(t *testing.T) {
@@ -106,8 +97,7 @@ func TestRestoreTasks_DueUntilFirstAttemptThenNeverAgain(t *testing.T) {
 	writeCachedPoliciesJSON(t, cachePath, []cachedPolicy{
 		{Name: "x", Type: "restore", JobID: "verify:x:1700000000", Destinations: []string{"bwfs-1:8080"}, Rules: []RestoreRule{{Path: "/x", Include: true}}},
 	})
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 
 	now := time.Now()
@@ -127,8 +117,7 @@ func TestRestoreTasks_RestoreModeUsesRestorePrefixAndRestoreSubcommand(t *testin
 		},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "restore:web01-actual-restore", tasks[0].ID)
 	assert.Equal(t, "restore:web01-actual-restore:1700000000", tasks[0].JobID)
@@ -146,8 +135,7 @@ func TestRestoreTasks_RestoreModeWithoutOverwriteOmitsFlag(t *testing.T) {
 		},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 	assert.Equal(t, []string{"restore", "bwfs-1:8080", "--rules-stdin", "--job-id", tasks[0].JobID}, tasks[0].Args)
 }

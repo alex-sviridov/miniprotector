@@ -66,8 +66,7 @@ func TestRestoreTask_RealRwfsBinaryAcceptsTheArgvAgentProduces(t *testing.T) {
 		},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 	task := tasks[0]
 	require.Equal(t, "rwfs", task.Binary, "this test only makes sense for an rwfs task")
