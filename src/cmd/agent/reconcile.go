@@ -14,28 +14,19 @@ import (
 	"time"
 )
 
-// backoffBase and backoffMax are vars (not consts) so tests can shrink them
-// temporarily instead of waiting out real multi-minute backoff windows.
-var (
-	backoffBase = 30 * time.Second
-	backoffMax  = 10 * time.Minute
-)
-
-// backoffPolicy is an injectable version of the backoff() computation
-// below, so each consumer (reconcileState here; processSupervisor from
-// Task 6/7) can be given its own value instead of sharing package-level
-// vars -- the old backoffBase/backoffMax/backoff() stay in place for now,
-// still used by storage.go/vector.go until they migrate too (Task 6/7),
-// at which point they're deleted for good.
+// backoffPolicy is an injectable jittered-retry-delay computation, so each
+// consumer (reconcileState here; every processSupervisor, see
+// supervisor.go) can be given its own value instead of sharing
+// package-level vars.
 type backoffPolicy struct {
 	Base, Max time.Duration
 }
 
 // next returns a jittered retry delay for the given number of consecutive
-// failures -- identical computation to backoff() below, just parameterized
-// instead of reading package vars. Must be called exactly once per failure
-// and the result stored (see reconcileState.recordOutcome), not recomputed
-// on every isDue check.
+// failures. Must be called exactly once per failure and the result stored
+// (see reconcileState.recordOutcome), not recomputed on every isDue check
+// -- recomputing it would redraw the jitter each time and make the
+// due-ness threshold unstable.
 func (b backoffPolicy) next(failures int) time.Duration {
 	exp := min(max(failures-1, 0), 8)
 	d := b.Base * time.Duration(1<<exp)
@@ -45,10 +36,9 @@ func (b backoffPolicy) next(failures int) time.Duration {
 	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
 }
 
-// defaultBackoffPolicy is the production default for reconcileState (and,
-// from Task 6/7, every processSupervisor) -- same values as backoffBase/
-// backoffMax below. A plain default, never mutated by tests: tests that
-// need different timing construct their own backoffPolicy{...} value
+// defaultBackoffPolicy is the production default for reconcileState and
+// every processSupervisor. A plain default, never mutated by tests: tests
+// that need different timing construct their own backoffPolicy{...} value
 // instead.
 var defaultBackoffPolicy = backoffPolicy{Base: 30 * time.Second, Max: 10 * time.Minute}
 
@@ -111,21 +101,6 @@ func isDue(p Policy, s PolicyState, now time.Time) bool {
 		return !now.Before(s.LastSuccessAt.Add(p.Interval))
 	}
 	return s.NextRetryAt == nil || !now.Before(*s.NextRetryAt)
-}
-
-// backoff returns a jittered retry delay for the given number of
-// consecutive failures. It must be called exactly once per failure and the
-// result stored (see reconcileState.recordOutcome, PolicyState.NextRetryAt)
-// rather than recomputed on every isDue check — recomputing it would
-// redraw the jitter each time and make the due-ness threshold unstable.
-func backoff(failures int) time.Duration {
-	exp := min(max(failures-1, 0), 8)
-	d := backoffBase * time.Duration(1<<exp)
-	if d > backoffMax {
-		d = backoffMax
-	}
-	// half jitter: never near-zero, still spreads retries across a fleet
-	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
 }
 
 // reconcileState bundles the persisted Cache with the mutex guarding it.
