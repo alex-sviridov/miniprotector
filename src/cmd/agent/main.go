@@ -84,7 +84,18 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	policiesFunc := func() ([]Policy, bool) {
 		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
 		if !ok {
-			return nil, false
+			// Bootstrap/self-heal: even on a failed read (missing cache
+			// file on a fresh node, or a transient corrupt read), the
+			// three static policies must still run -- policy-update is
+			// what (re)creates policies-cache.json in the first place, so
+			// suppressing it here would deadlock a fresh install forever
+			// (never able to run the one thing that fixes the read).
+			// Matches the pre-refactor code's actual behavior: it always
+			// started from append(policies(conf), ...), so a failed
+			// backupTasks/restoreTasks read (nil, false in the old
+			// contract) still left the static policies in policyList --
+			// only ok=false (suppressing prune, see reconcile.go) changed.
+			return policies(conf), false
 		}
 		all := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
 		all = append(all, restoreTasks(cachedPolicies, logger)...)
