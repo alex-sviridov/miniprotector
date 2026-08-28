@@ -78,6 +78,19 @@ type processSupervisor struct {
 	// (which Stop() doesn't touch) or waiting out the full backoff.
 	stopCh   chan struct{}
 	stopOnce sync.Once
+
+	// waitCh, when non-nil, is the channel the current backoff wait (if
+	// any) is parked on -- TriggerRestart closes it (under mu) to wake the
+	// wait immediately, in addition to signalling s.cmd, closing the same
+	// "loop is parked with no live process to signal" gap stopCh already
+	// closes for Stop(). nil whenever superviseLoop isn't currently
+	// sitting in the backoff select (a process is running, or the
+	// supervisor hasn't reached its first wait yet); a fresh channel is
+	// made each time a wait begins rather than reused, since a stale
+	// buffered signal from an earlier TriggerRestart call (already
+	// consumed via the direct process signal at the time) must never wake
+	// a later, unrelated wait.
+	waitCh chan struct{}
 }
 
 func newProcessSupervisor(cfg supervisorConfig) *processSupervisor {
@@ -105,13 +118,21 @@ func (s *processSupervisor) Start(ctx context.Context) {
 // the next respawn as deliberate, so the supervise loop skips the
 // crash-backoff delay for it. Only vector.go's caller uses this today (a
 // fresh operating certificate landing); storage's tasks never call it.
+// If the loop is currently sitting in a crash-backoff wait (no live
+// process to signal -- see waitCh), that wait is woken immediately too,
+// instead of only taking effect once the backoff naturally elapses.
 func (s *processSupervisor) TriggerRestart() {
 	s.mu.Lock()
 	cmd := s.cmd
 	s.restarting = true
+	waitCh := s.waitCh
+	s.waitCh = nil
 	s.mu.Unlock()
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
+	}
+	if waitCh != nil {
+		close(waitCh)
 	}
 }
 
@@ -153,13 +174,41 @@ func (s *processSupervisor) superviseLoop(ctx context.Context) {
 		if s.cfg.OnOutcome != nil {
 			s.cfg.OnOutcome(err)
 		}
+
+		s.mu.Lock()
+		waitCh := make(chan struct{})
+		s.waitCh = waitCh
+		s.mu.Unlock()
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.stopCh:
 			return
+		case <-waitCh:
+			// TriggerRestart woke this wait -- consume the deliberate flag
+			// here (not at the top of the loop) so it applies to skipping
+			// THIS backoff only, and never leaks into the outcome
+			// classification of the generation we're about to respawn.
+			// Re-check shuttingDown too: Stop() and TriggerRestart() can
+			// race here, and select doesn't prefer stopCh over waitCh just
+			// because both became ready -- Stop() must still win.
+			s.mu.Lock()
+			s.waitCh = nil
+			s.restarting = false
+			shuttingDownNow := s.shuttingDown
+			s.mu.Unlock()
+			if shuttingDownNow {
+				return
+			}
+			failures = 0
+			continue
 		case <-time.After(s.cfg.Backoff.next(failures)):
 		}
+
+		s.mu.Lock()
+		s.waitCh = nil
+		s.mu.Unlock()
 	}
 }
 

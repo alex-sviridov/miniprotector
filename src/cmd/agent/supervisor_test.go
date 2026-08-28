@@ -324,3 +324,76 @@ func TestProcessSupervisor_TriggerRestartDoesNotApplyBackoff(t *testing.T) {
 		return atomic.LoadInt64(&spawns) >= 2
 	}, time.Second, 20*time.Millisecond, "TriggerRestart must respawn promptly, not wait out the crash-backoff window")
 }
+
+// TestProcessSupervisor_TriggerRestartDuringBackoffWaitRespawnsPromptlyAndClassifiesNextCrashCorrectly
+// is a regression test for a bug found in the original TriggerRestart
+// design (pre-existing in vectorSupervisor, not a regression from
+// unification): TriggerRestart() called while superviseLoop is parked in a
+// crash-backoff wait had no way to wake that wait -- only Stop() had a
+// dedicated stopCh for this. Without a fix, two things go wrong: (1) the
+// respawn TriggerRestart intends to trigger doesn't happen until the full
+// backoff elapses (up to 10 minutes in production), and (2) s.restarting
+// stays true until that eventual respawn's own spawnAndWait() returns, so
+// whatever that respawned process's own outcome actually is -- a genuine
+// crash or a genuine success -- gets misclassified as "deliberate,"
+// silently losing the real failure count and skipping the real OnOutcome
+// call for it. This test proves both halves of the fix: the triggered
+// respawn happens promptly (not waiting out a 10s backoff), and the
+// respawned process's own subsequent crash is still correctly reported as
+// a real failure, proving s.restarting did not leak into its
+// classification.
+func TestProcessSupervisor_TriggerRestartDuringBackoffWaitRespawnsPromptlyAndClassifiesNextCrashCorrectly(t *testing.T) {
+	script := writeFakeScript(t, "#!/bin/sh\nexit 1\n")
+
+	var spawns int64
+	failureCh := make(chan struct{}, 8)
+	sup := newProcessSupervisor(supervisorConfig{
+		Binary:  script,
+		Logger:  testLogger(),
+		Backoff: backoffPolicy{Base: 10 * time.Second, Max: 10 * time.Second}, // large -- must not be waited out
+		OnOutcome: func(err error) {
+			if err != nil {
+				select {
+				case failureCh <- struct{}{}:
+				default:
+				}
+			}
+		},
+	})
+	sup.onSpawnForTest = func() { atomic.AddInt64(&spawns, 1) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sup.Start(ctx)
+
+	// Wait until the first crash (gen 1) has been recorded as a failure --
+	// by then superviseLoop has already passed its shuttingDown check for
+	// this iteration and is heading into (or already sitting in) the 10s
+	// backoff select, exactly the state this fix targets.
+	select {
+	case <-failureCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first crash was never recorded as a failure")
+	}
+	require.EqualValues(t, 1, atomic.LoadInt64(&spawns))
+
+	start := time.Now()
+	sup.TriggerRestart()
+
+	// Half 1: the triggered respawn (gen 2) must happen promptly, not wait
+	// out the 10s backoff.
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt64(&spawns) >= 2
+	}, 500*time.Millisecond, 10*time.Millisecond, "TriggerRestart during a parked backoff wait must respawn promptly, not wait out the 10s backoff")
+	assert.Less(t, time.Since(start), 500*time.Millisecond, "TriggerRestart must wake the parked backoff wait, not wait out the full 10s backoff")
+
+	// Half 2: gen 2 crashes on its own (the script always exits 1) -- that
+	// crash must still be reported as a real failure via OnOutcome(err),
+	// not silently swallowed as "deliberate" because s.restarting leaked
+	// past the triggered respawn into gen 2's own outcome classification.
+	select {
+	case <-failureCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the respawned process's own crash was never reported -- s.restarting leaked into its outcome classification")
+	}
+}
