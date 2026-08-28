@@ -1867,7 +1867,18 @@ with:
 	policiesFunc := func() ([]Policy, bool) {
 		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
 		if !ok {
-			return nil, false
+			// Bootstrap/self-heal: even on a failed read (missing cache
+			// file on a fresh node, or a transient corrupt read), the
+			// three static policies must still run -- policy-update is
+			// what (re)creates policies-cache.json in the first place, so
+			// suppressing it here would deadlock a fresh install forever
+			// (never able to run the one thing that fixes the read).
+			// Matches the pre-refactor code's actual behavior: it always
+			// started from append(policies(conf), ...), so a failed
+			// backupTasks/restoreTasks read (nil, false in the old
+			// contract) still left the static policies in policyList --
+			// only ok=false (suppressing prune, see reconcile.go) changed.
+			return policies(conf), false
 		}
 		all := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
 		all = append(all, restoreTasks(cachedPolicies, logger)...)
@@ -1875,7 +1886,7 @@ with:
 	}
 ```
 
-And `storageTasksFunc`:
+And `storageTasksFunc` — no equivalent fix needed here: storage tasks have no static-policy counterpart, so `nil, false` on a failed read matches `storageTasks`'s own old contract exactly:
 
 ```go
 	storageTasksFunc := func() ([]storageTask, bool) {
@@ -2075,7 +2086,7 @@ In `serve()`, replace (the Task 8 version of) both closures:
 	policiesFunc := func() ([]Policy, bool) {
 		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
 		if !ok {
-			return nil, false
+			return policies(conf), false
 		}
 		all := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
 		all = append(all, restoreTasks(cachedPolicies, logger)...)
@@ -2105,11 +2116,16 @@ with one combined closure, placed where `policiesFunc` used to be (after `bwfsBi
 	// could observe two different snapshots of the file within the same
 	// tick. ok is false whenever this tick's read failed -- see
 	// reconcile.go's prune, which must not treat a failed read as "every
-	// task was removed."
+	// task was removed." On a failed read, the three static policies
+	// still run (see policies(conf) below) -- policy-update is what
+	// (re)creates policies-cache.json, so suppressing it on a missing/
+	// unreadable cache would deadlock a fresh install forever. Only the
+	// storage task list is genuinely empty on failure, matching
+	// storageTasks's own old contract.
 	derivedFunc := func() ([]Policy, []storageTask, bool) {
 		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
 		if !ok {
-			return nil, nil, false
+			return policies(conf), nil, false
 		}
 		allPolicies := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
 		allPolicies = append(allPolicies, restoreTasks(cachedPolicies, logger)...)
