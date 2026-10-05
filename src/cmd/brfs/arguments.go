@@ -25,26 +25,28 @@ func splitPatterns(raw string) []string {
 
 // Command line flags
 var (
-	destination string
-	streams     int
-	debug       bool
-	quiet       bool
-	jobIDFlag   string
-	includeFlag string
-	excludeFlag string
+	destination   string
+	streams       int
+	debug         bool
+	quiet         bool
+	jobIDFlag     string
+	includeFlag   string
+	excludeFlag   string
+	retentionFile string
 )
 
 // Arguments holds parsed command line arguments
 type Arguments struct {
-	SourceFolder string
-	WriterHost   string
-	WriterPort   int
-	Streams      int
-	Debug        bool
-	Quiet        bool
-	JobID        string
-	Include      []string
-	Exclude      []string
+	SourceFolder  string
+	WriterHost    string
+	WriterPort    int
+	Streams       int
+	Debug         bool
+	Quiet         bool
+	JobID         string
+	Include       []string
+	Exclude       []string
+	RetentionFile string
 }
 
 // parseArguments uses Cobra to parse command line arguments
@@ -64,6 +66,8 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	cmd.Flags().StringVar(&jobIDFlag, "job-id", "", "Backup job ID (auto-generated if omitted)")
 	cmd.Flags().StringVar(&includeFlag, "include", "*", "Comma-separated glob patterns; only matching files are backed up")
 	cmd.Flags().StringVar(&excludeFlag, "exclude", "", "Comma-separated glob patterns; matching files/directories are skipped")
+
+	cmd.Flags().StringVar(&retentionFile, "retention-file", "", "JSON retention matrix resolved by agent; per-file expire_at is stamped from it (omit to send none)")
 
 	// Parse arguments and flags
 	if err := cmd.Execute(); err != nil {
@@ -98,14 +102,15 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	}
 
 	return &Arguments{
-		SourceFolder: validatedSourceFolder,
-		WriterHost:   host,
-		WriterPort:   port,
-		Streams:      streams,
-		Debug:        debug,
-		Quiet:        quiet,
-		JobID:        jobIDFlag,
-		Include:      splitPatterns(includeFlag),
-		Exclude:      splitPatterns(excludeFlag),
+		SourceFolder:  validatedSourceFolder,
+		WriterHost:    host,
+		WriterPort:    port,
+		Streams:       streams,
+		Debug:         debug,
+		Quiet:         quiet,
+		JobID:         jobIDFlag,
+		Include:       splitPatterns(includeFlag),
+		Exclude:       splitPatterns(excludeFlag),
+		RetentionFile: retentionFile,
 	}, nil
 }

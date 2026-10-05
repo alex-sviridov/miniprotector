@@ -1,6 +1,7 @@
 package retention
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -122,4 +123,17 @@ func BenchmarkExpireAt_TenRows(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		m.ExpireAt("other/deep/path/file.txt", now)
 	}
+}
+
+func TestLoadFile_MalformedJSONAndInvalidRowsAreErrors(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.json")
+	require.NoError(t, os.WriteFile(bad, []byte("{not json"), 0o644))
+	_, err := LoadFile(bad)
+	assert.Error(t, err)
+
+	invalid := filepath.Join(dir, "invalid.json")
+	require.NoError(t, os.WriteFile(invalid, []byte(`[{"prefix":"/abs","keep_seconds":1}]`), 0o644))
+	_, err = LoadFile(invalid)
+	assert.Error(t, err)
 }

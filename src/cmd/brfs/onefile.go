@@ -19,7 +19,7 @@ import (
 )
 
 // processOneFile handles the complete backup lifecycle for one file
-func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
+func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo, expireAt int64) error {
 
 	conf := config.GetConfigFromContext(ctx)
 	logger.Debug("Started file processing")
@@ -33,7 +33,7 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 	defer fileLock.Unlock()
 
 	// Send file info and get server response
-	fileResponse, err := sendFileMetadata(ctx, logger, stream, file)
+	fileResponse, err := sendFileMetadata(ctx, logger, stream, file, expireAt)
 	if err != nil {
 		return fmt.Errorf("failed to get file needed response: %w", err)
 	}
@@ -140,7 +140,7 @@ func getFileStatus(ctx context.Context, logger *slog.Logger, stream pb.BackupSer
 }
 
 // sendFileMetadata sends metadata for one file
-func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) (*pb.FileNeeded, error) {
+func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo, expireAt int64) (*pb.FileNeeded, error) {
 	conf := config.GetConfigFromContext(ctx)
 	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
 
@@ -154,6 +154,7 @@ func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.Backup
 			FileInfo: &pb.FileInfo{
 				FileId:     file.ID(),
 				Attributes: encoded,
+				ExpireAt:   expireAt,
 			},
 		},
 	}

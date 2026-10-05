@@ -84,3 +84,21 @@ func TestParseArguments_ExcludeFlag_SplitsOnComma(t *testing.T) {
 		assert.Equal(t, []string{"node_modules", "*.tmp"}, args.Exclude)
 	})
 }
+
+func TestParseArguments_RetentionFileFlag_ParsesValue(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir, "--retention-file", "/x/m.json"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, "/x/m.json", args.RetentionFile)
+	})
+}
+
+func TestParseArguments_RetentionFileFlag_DefaultsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Empty(t, args.RetentionFile)
+	})
+}
