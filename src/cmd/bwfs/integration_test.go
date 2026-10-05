@@ -109,6 +109,13 @@ func jobContext(jobID string) context.Context {
 // Returns (fileHash, error). fileHash is nil for non-file or already-known files.
 func backupOneFile(ctx context.Context, t *testing.T, stream pb.BackupService_ProcessBackupStreamClient, file wfs.FileInfo) ([]byte, error) {
 	t.Helper()
+	return backupOneFileWithExpiry(ctx, t, stream, file, 0)
+}
+
+// backupOneFileWithExpiry is backupOneFile with the client-computed expire_at
+// attached to the file's FileInfo message, as brfs does.
+func backupOneFileWithExpiry(ctx context.Context, t *testing.T, stream pb.BackupService_ProcessBackupStreamClient, file wfs.FileInfo, expireAt int64) ([]byte, error) {
+	t.Helper()
 	conf := &config.Config{ConnectionTimeOutSec: 10, FileLockTimeoutSec: 5}
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
 	logger := slog.Default()
@@ -119,7 +126,7 @@ func backupOneFile(ctx context.Context, t *testing.T, stream pb.BackupService_Pr
 
 	err = stream.Send(&pb.FileRequest{
 		RequestType: &pb.FileRequest_FileInfo{
-			FileInfo: &pb.FileInfo{FileId: file.ID(), Attributes: encoded},
+			FileInfo: &pb.FileInfo{FileId: file.ID(), Attributes: encoded, ExpireAt: expireAt},
 		},
 	})
 	require.NoError(t, err)
@@ -841,4 +848,66 @@ func TestIntegration_StallWatchdog_FailsSilentJob(t *testing.T) {
 		record, err := backupJobRow(t, env, "job-stalled")
 		return err == nil && record.Status == storage.JobStatusFailure
 	}, 8*time.Second, 100*time.Millisecond, "watchdog should fail a job with zero-duration timeout within one poll interval")
+}
+
+// fileVersionExpireAt reads one file_version row's expire_at directly.
+func fileVersionExpireAt(t *testing.T, env *testEnv, jobID, objectID string) *int64 {
+	t.Helper()
+	concrete, ok := env.store.store.(*storagefs.Store)
+	require.True(t, ok)
+	var rec storagefs.FileVersionRecord
+	require.NoError(t, concrete.RawDB().First(&rec, "job_id = ? AND object_id = ?", jobID, objectID).Error)
+	return rec.ExpireAt
+}
+
+// TestIntegration_ExpireAt_StoredForNewAndSkippedFiles verifies the
+// client-computed expire_at lands on the file version both when the file's
+// content is transferred (fileWritten path) and when it is already known
+// (skip path, a later job re-observing unchanged content).
+func TestIntegration_ExpireAt_StoredForNewAndSkippedFiles(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+
+	srcDir := makeTestDir(t)
+	files, err := wfs.Discover(srcDir, []string{"*"}, nil)
+	require.NoError(t, err)
+	var target wfs.FileInfo
+	for _, f := range files {
+		if f.GetType() == 'f' && f.Size() > 0 {
+			target = f
+			break
+		}
+	}
+	require.NotEmpty(t, target.ID())
+
+	// New file: content transferred, version recorded in fileWritten.
+	ctx1 := jobContext("job-expiry-1")
+	s1, err := env.client.ProcessBackupStream(ctx1)
+	require.NoError(t, err)
+	_, err = backupOneFileWithExpiry(ctx1, t, s1, target, 1_700_000_000)
+	require.NoError(t, err)
+	require.NoError(t, s1.CloseSend())
+	got := fileVersionExpireAt(t, env, "job-expiry-1", target.ID())
+	require.NotNil(t, got)
+	assert.Equal(t, int64(1_700_000_000), *got)
+
+	// Same content in a later job: skip path, still stamped with that job's expiry.
+	ctx2 := jobContext("job-expiry-2")
+	s2, err := env.client.ProcessBackupStream(ctx2)
+	require.NoError(t, err)
+	_, err = backupOneFileWithExpiry(ctx2, t, s2, target, 1_800_000_000)
+	require.NoError(t, err)
+	require.NoError(t, s2.CloseSend())
+	got = fileVersionExpireAt(t, env, "job-expiry-2", target.ID())
+	require.NotNil(t, got)
+	assert.Equal(t, int64(1_800_000_000), *got)
+
+	// No expiry sent: NULL.
+	ctx3 := jobContext("job-expiry-3")
+	s3, err := env.client.ProcessBackupStream(ctx3)
+	require.NoError(t, err)
+	_, err = backupOneFile(ctx3, t, s3, target)
+	require.NoError(t, err)
+	require.NoError(t, s3.CloseSend())
+	assert.Nil(t, fileVersionExpireAt(t, env, "job-expiry-3", target.ID()))
 }

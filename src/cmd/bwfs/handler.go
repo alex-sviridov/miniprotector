@@ -26,6 +26,7 @@ type streamHandler struct {
 	logger             *slog.Logger
 	jobID              string
 	currentFile        *filesystem.FileInfo
+	currentExpireAt    int64       // client-computed expiry for currentFile, from FileInfo.expire_at
 	fileChecksumHasher hash.Hash32 // incremental CRC32 over chunk checksums
 	EOF                bool
 	handlerMap         map[string]RequestHandlerFunc
@@ -67,6 +68,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		return err
 	}
 	h.currentFile = fileInfo
+	h.currentExpireAt = fi.GetExpireAt()
 	h.fileChecksumHasher = crc32.NewIEEE()
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 	fileLogger.Debug("Received file metadata", "file_info", fmt.Sprintf("%s", h.currentFile))
@@ -106,6 +108,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 			fmt.Sprintf("%c", h.currentFile.GetType()),
 			h.currentFile.MetadataBlob(),
 			h.currentFile.Ctime(),
+			h.currentExpireAt,
 		); err != nil {
 			return fmt.Errorf("ensure file version: %w", err)
 		}
@@ -244,6 +247,7 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 		fmt.Sprintf("%c", h.currentFile.GetType()),
 		h.currentFile.MetadataBlob(),
 		h.currentFile.Ctime(),
+		h.currentExpireAt,
 	); err != nil {
 		return fmt.Errorf("ensure file version: %w", err)
 	}

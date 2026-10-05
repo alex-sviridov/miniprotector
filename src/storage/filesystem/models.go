@@ -35,6 +35,7 @@ type FileVersionRecord struct {
 	Type       string // single char, from FileInfo.GetType() -- 'f', 'd', 'l', ...
 	Metadata   []byte
 	Ctime      int64
+	ExpireAt   *int64    // unix seconds; NULL = no expiry recorded / never expires
 	CreatedAt  time.Time `gorm:"index:idx_file_version_object_created,priority:2"`
 }
 

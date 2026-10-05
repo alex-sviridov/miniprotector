@@ -18,7 +18,13 @@ import (
 // sourceHost/path/objType are the caller's already-known values (from
 // filesystem.FileInfo's Source()/Path()/GetType() accessors at both
 // cmd/bwfs/handler.go call sites) -- never re-derived from objectID here.
-func (s *Store) EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64) error {
+// expireAt is the client-computed expiry (unix seconds); 0 means none
+// recorded or never expires, and is stored as NULL.
+func (s *Store) EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64, expireAt int64) error {
+	var expire *int64
+	if expireAt != 0 {
+		expire = &expireAt
+	}
 	record := FileVersionRecord{
 		JobID:      jobID,
 		ObjectID:   objectID,
@@ -27,6 +33,7 @@ func (s *Store) EnsureFileVersion(jobID, objectID, sourceHost, path, objType str
 		Type:       objType,
 		Metadata:   metadata,
 		Ctime:      ctime,
+		ExpireAt:   expire,
 		CreatedAt:  time.Now(),
 	}
 	return s.db.Clauses(clause.OnConflict{
