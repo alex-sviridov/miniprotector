@@ -197,6 +197,11 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 // that could be built for it, so skipping entirely (rather than running
 // on a guess) is the fail-safe choice.
 //
+// Each task carries a Prepare hook that resolves the job's retention matrix
+// when the task is actually due (see retention.go) and supplies brfs's
+// --retention-file argument, so nothing is written per tick for tasks that
+// aren't running.
+//
 // A policy whose Destinations is empty (its storage policy has no live
 // checkins yet, or storage_policy_id is dangling) contributes no task for
 // any of its object filters -- rather than exec'ing brfs with an empty
@@ -205,8 +210,9 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 // and would-be job id so the gap is visible without needing to reproduce a
 // misdirected backup first. Only Destinations[0] is ever used -- retrying
 // the rest of the list on failure is future work.
-func backupTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, conf *config.Config) []Policy {
+func backupTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, conf *config.Config, retentionDir string) []Policy {
 	grace := time.Duration(conf.BackupWindowGraceSec) * time.Second
+	rules := retentionRulesFrom(cachedPolicies)
 
 	var tasks []Policy
 	for _, p := range cachedPolicies {
@@ -256,6 +262,9 @@ func backupTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, conf *confi
 				JobID:      jobID,
 				Args:       args,
 				Background: true,
+				Prepare: func(l *slog.Logger) ([]string, error) {
+					return prepareRetention(l, conf, retentionDir, backupTaskID(policyName, filter.Path, filter.ID), jobID, filter.Path, rules)
+				},
 				Due: func(s PolicyState, now time.Time) bool {
 					return windowOpen(schedules, now, grace) && rpoElapsed(s, now, rpo)
 				},

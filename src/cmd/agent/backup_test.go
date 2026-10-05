@@ -123,7 +123,7 @@ func TestBackupTasks_OnePolicyWithTwoPathsYieldsTwoTasksWithStableDistinctIDs(t 
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 
 	require.Len(t, tasks, 2)
 	ids := []string{tasks[0].ID, tasks[1].ID}
@@ -147,7 +147,7 @@ func TestBackupTasks_ObjectFiltersSharingPathGetDistinctTaskIDs(t *testing.T) {
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 
 	require.Len(t, tasks, 2)
 	assert.NotEqual(t, tasks[0].ID, tasks[1].ID, "two object filters sharing a path must get distinct task IDs")
@@ -168,7 +168,7 @@ func TestBackupTasks_TaskArgsMatchBrfsShape(t *testing.T) {
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 
 	require.Len(t, tasks, 1)
 	task := tasks[0]
@@ -193,7 +193,7 @@ func TestBackupTasks_DueRequiresBothWindowOpenAndRpoElapsed(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 	require.Len(t, tasks, 1)
 	task := tasks[0]
 
@@ -222,7 +222,7 @@ func TestBackupTasks_PerPathIndependence(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 	require.Len(t, tasks, 2)
 
 	windowOpenTime := time.Date(2026, 7, 4, 2, 10, 0, 0, time.UTC)
@@ -253,7 +253,7 @@ func TestBackupTasks_UnparseableRpoSkipsPolicyEntirely(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 	assert.Empty(t, tasks)
 }
 
@@ -268,7 +268,7 @@ func TestBackupTasks_NoValidBackupWindowSkipsPolicyEntirely(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 	assert.Empty(t, tasks)
 }
 
@@ -283,7 +283,7 @@ func TestBackupTasks_NonBackupTypeSkipsPolicyEntirely(t *testing.T) {
 		"destinations": ["bwfs:8080"]
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 	assert.Empty(t, tasks, "a cached policy whose type isn't \"backup\" must contribute zero tasks")
 }
 
@@ -308,7 +308,7 @@ func TestBackupTasks_MixedTypesOnlyBackupTypeProducesTasks(t *testing.T) {
 		}
 	]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 	require.Len(t, tasks, 1)
 	assert.Contains(t, tasks[0].ID, "backup-policy")
 }
@@ -329,7 +329,7 @@ func TestBackupTasks_JobIDFieldMatchesArgsFlag(t *testing.T) {
 	require.NoError(t, os.WriteFile(cachePath, data, 0o644))
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, cachePath), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, cachePath), testLogger(), conf, t.TempDir())
 	require.Len(t, tasks, 1)
 
 	task := tasks[0]
@@ -347,11 +347,11 @@ func TestBackupTasks_RemovedPolicyStopsBeingDerived(t *testing.T) {
 		"name": "p", "type": "backup", "object_filters": [{"path": "/data"}], "rpo": "1h",
 		"backup_window": ["0 2 * * *"], "destinations": ["bwfs:8080"]
 	}]`), 0o644))
-	tasks := backupTasks(mustReadCachedPolicies(t, cachePath), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, cachePath), testLogger(), conf, t.TempDir())
 	require.Len(t, tasks, 1)
 
 	require.NoError(t, os.WriteFile(cachePath, []byte(`[]`), 0o644))
-	tasks = backupTasks(mustReadCachedPolicies(t, cachePath), testLogger(), conf)
+	tasks = backupTasks(mustReadCachedPolicies(t, cachePath), testLogger(), conf, t.TempDir())
 	assert.Empty(t, tasks)
 }
 
@@ -367,7 +367,7 @@ func TestBackupTasks_TaskArgsIncludeIncludeExcludeFlagsWhenPresent(t *testing.T)
 	}]`)
 
 	conf := &config.Config{BackupWindowGraceSec: 3600}
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 
 	require.Len(t, tasks, 1)
 	task := tasks[0]
@@ -395,7 +395,7 @@ func TestBackupTasks_EmptyDestinationsSkipsTaskAndLogsError(t *testing.T) {
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 	logger, buf := testLoggerWithBuffer()
 
-	tasks := backupTasks(mustReadCachedPolicies(t, path), logger, conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), logger, conf, t.TempDir())
 
 	assert.Empty(t, tasks, "a policy with no resolved destinations must contribute no task")
 	logOutput := buf.String()
@@ -416,7 +416,7 @@ func TestBackupTasks_DisabledAtInPastSkipsPolicyEntirely(t *testing.T) {
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 
 	assert.Empty(t, tasks)
 }
@@ -434,7 +434,34 @@ func TestBackupTasks_FutureDisabledAtDoesNotSkip(t *testing.T) {
 	}]`)
 	conf := &config.Config{BackupWindowGraceSec: 3600}
 
-	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf)
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, t.TempDir())
 
 	assert.Len(t, tasks, 1)
+}
+
+func TestBackupTasks_AttachPrepareThatAddsRetentionFile(t *testing.T) {
+	path := writeCachedPolicies(t, t.TempDir(), `[{
+		"name": "daily-db-backup",
+		"type": "backup",
+		"object_filters": [{"path": "/var/lib/postgres"}],
+		"rpo": "24h",
+		"backup_window": ["0 2 * * *"],
+		"destinations": ["bwfs-east:8080"]
+	}]`)
+	retentionDir := t.TempDir()
+	conf := &config.Config{BackupWindowGraceSec: 3600, RetentionDefaultDays: 7}
+	tasks := backupTasks(mustReadCachedPolicies(t, path), testLogger(), conf, retentionDir)
+	require.Len(t, tasks, 1)
+	require.NotNil(t, tasks[0].Prepare)
+	before := len(tasks[0].Args)
+
+	extra, err := tasks[0].Prepare(testLogger())
+	require.NoError(t, err)
+
+	require.Len(t, extra, 2)
+	assert.Equal(t, "--retention-file", extra[0])
+	assert.Equal(t, retentionDir, filepath.Dir(extra[1]))
+	_, statErr := os.Stat(extra[1])
+	assert.NoError(t, statErr, "the matrix file must exist once Prepare has run")
+	assert.Len(t, tasks[0].Args, before, "Prepare must not mutate Args")
 }

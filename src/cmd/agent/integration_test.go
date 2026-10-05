@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 	}
 
 	derivedFunc := func() ([]Policy, []storageTask, bool) {
-		return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf), nil, true
+		return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf, t.TempDir()), nil, true
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
@@ -59,12 +60,15 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 	require.NoError(t, err)
 
 	assert.Equal(t, "brfs", capturedBinary)
-	require.Len(t, capturedArgs, 5)
+	require.Len(t, capturedArgs, 7)
 	assert.Equal(t, "/var/lib/postgres", capturedArgs[0])
 	assert.Equal(t, "--destination", capturedArgs[1])
 	assert.Equal(t, "bwfs-east.internal:8080", capturedArgs[2])
 	assert.Equal(t, "--job-id", capturedArgs[3])
 	assert.Contains(t, capturedArgs[4], "backup:daily-db-backup:var-lib-postgres:")
+	// agent resolves the job's retention matrix just before exec and hands brfs the file.
+	assert.Equal(t, "--retention-file", capturedArgs[5])
+	assert.True(t, strings.HasSuffix(capturedArgs[6], ".json"))
 }
 
 func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *testing.T) {

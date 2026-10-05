@@ -20,7 +20,7 @@ func TestNewDerivedFunc_MissingCacheFileStillRunsStaticPolicies(t *testing.T) {
 	missingPath := filepath.Join(dir, "policies-cache.json")
 	conf := &config.Config{}
 
-	derivedFunc := newDerivedFunc(missingPath, testLogger(), conf, "bwfs-bin", "catalogsync-bin")
+	derivedFunc := newDerivedFunc(missingPath, t.TempDir(), testLogger(), conf, "bwfs-bin", "catalogsync-bin")
 	policyList, storageTaskList, ok := derivedFunc()
 
 	assert.False(t, ok, "a missing cache file must report ok=false, so run() doesn't prune live task state")
