@@ -25,7 +25,8 @@ version needs an expiry decided at backup time by operator-controlled rules.
   evaluates it per file.
 - **`expire_at` is an absolute unix timestamp computed by `brfs`** (`now + keep`) and stored as
   received. **Assumption: node clocks are synced** (stated, not enforced).
-- `keep_seconds = 0` in a rule means *never expire* (`expire_at = 0`).
+- `keep_seconds = 0` in a rule means *never expire* (`expire_at = 0`). `0` therefore also means
+  "no `expire_at` sent" (hand-run `brfs`); both are stored as NULL and both mean never auto-deleted.
 
 ## 1. Matrix resolution (`agent`)
 
@@ -45,7 +46,7 @@ At job start, for the task `(host, type=filesystem, root path)`, `agent`:
 
 - logs the matrix once under the job's `job_id` as structured event `retention_matrix` (the rows as
   attributes);
-- writes the identical JSON to `<state-dir>/retention/<job-id>.json`, removed with the task's state;
+- writes the identical JSON to `<state-dir>/retention/<task>.json` (one file per task, overwritten on each run, so the directory stays bounded);
 - passes `--retention-file <path>` to `brfs`.
 
 Because `agent` is the only place that resolves rules, the logged matrix is exactly what `brfs`

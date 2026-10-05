@@ -42,6 +42,30 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 - The next backup run then sees those files as not-yet-backed-up (their `FileData` is gone) and re-uploads them via the normal `SEND_FILE` path — chunk-level dedup still skips any of the file's chunks that are intact, so only the actually-missing data is re-transferred
 - This is a reactive, not a proactive, self-heal: corruption is only detected and fixed when something tries to read the affected chunk (a `verify` run, or a real restore). A proactive integrity-scan routine is a possible future addition, not implemented now
 
+## **Retention Expiry (`expire_at`)**
+
+Each file's metadata message (`FileInfo`) carries the expiry its file version should have:
+
+```proto
+message FileInfo {
+  string file_id = 1;
+  bytes attributes = 2;
+  int64 expire_at = 3; // unix seconds; 0 = no expiry recorded / never expires
+}
+```
+
+`brfs` computes it per file as `now + keep`, where `keep` comes from the first matching row of the
+retention matrix `agent` resolved for the job and handed over via `--retention-file` (see
+[brfs](../components/brfs.md#retention) and [agent](../components/agent.md#retention-matrix)). It
+travels in `FileInfo` and not in stream metadata (like `job-id`) because it is per file, and
+because the `SEND_FILE`/`SKIP_FILE` decision follows immediately: a skipped (unchanged) file still
+records a version for the job, so both the new-file and the skip path store the value on the
+`file_versions` row. `0` means none was sent (a hand-run `brfs` without `--retention-file`) or the
+matching rule says never expire; both are stored as NULL and neither is ever treated as expired.
+Node clocks are assumed synced, since `brfs`'s clock produces the absolute timestamp. Nothing acts
+on `expire_at` yet. See
+[Design: Retention Expiry Stamping](../superpowers/specs/2026-10-05-retention-expiry-stamping-design.md).
+
 ## **Backup Job Tracking & Completion Verification**
 
 Every `ProcessBackupStream` call carries a `job-id` gRPC metadata key, attached by `brfs` when it

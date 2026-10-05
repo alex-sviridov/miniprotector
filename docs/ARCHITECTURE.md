@@ -130,7 +130,8 @@ to avoid this.
 
 - **brfs** reads files from the source filesystem
 - Connects to **bwfs** via network or Unix socket, authenticated with mutual TLS
-- Sends chunked file data using the backup protocol
+- Sends chunked file data using the backup protocol, each file's metadata carrying an `expire_at`
+  that `brfs` resolves from the per-job retention matrix `agent` hands it (`--retention-file`)
 - **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
 
 ## Restore/Verify Process

@@ -39,6 +39,8 @@ host.
 
 ## How It Works
 
+Each replicated entry includes the row's `expire_at` (NULL sent as `0`).
+
 `catalogsync` polls `file_versions` for rows newer than its own local cursor, in batches, and
 hands each batch to a `Sender`:
 

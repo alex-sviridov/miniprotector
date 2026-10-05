@@ -48,6 +48,8 @@ persisted keyed by `(store_node, job_id, object_id)`:
   `ListDirectoryChildren` (see [Catalog Sync Protocol](../protocols/catalog-sync.md)): answering
   "what's directly under this path" from `EntryRecord`'s `parent_directory` column alone isn't
   possible, since it only names a file's *immediate* directory, not every ancestor of it.
+- `expire_at` — the per-file retention expiry `brfs` stamped at backup time — is stored as received
+  (`0` on the wire becomes NULL). It is informational for now; nothing acts on it.
 - A batch containing an entry already stored for its `(store_node, job_id, object_id)` is a
   no-op for that entry (`ON CONFLICT DO NOTHING`) — safe for `catalogsync` to resend a batch it
   isn't sure was received.

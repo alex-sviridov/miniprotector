@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — Retention expiry stamping
+
+Every new file version now carries an `expire_at`, decided per file at backup time. When a backup
+task is due, `agent` resolves a retention rule matrix for the job (today just the built-in default,
+`RetentionDefaultDays`, 7), logs it as a `retention_matrix` event under the job's id and hands it to
+`brfs` via `--retention-file`; `brfs` evaluates it per file (first matching rule wins, path prefix
+plus optional glob) and sends `expire_at` with the file's metadata, `bwfs` stores it on
+`file_versions`, and `catalogsync` replicates it to the catalog. Nothing deletes anything yet: this
+lays the data foundation for retention policies (separate, ordered, matched by host/attributes like
+backup policies) and a later cleanup process. Versions recorded before this change keep a NULL
+`expire_at`, which is never treated as expired. Also fixed a stale `ListFiles` call in `bwfs`'s
+integration test that kept the package's integration tests from compiling. See
+`docs/superpowers/specs/2026-10-05-retention-expiry-stamping-design.md` and the new "Retention
+Expiry" section of `docs/protocols/backup.md`.
+
 ## 2026-08-28 — Agent reliability/readability/performance refactor
 
 Unified `agent`'s two independently-written process supervisors (for its bundled Vector process and

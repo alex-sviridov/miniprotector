@@ -33,6 +33,7 @@ message FileVersionEntry {
   int64  ctime      = 4;
   int64  store_seq  = 5; // bwfs's local file_versions.seq — informational only
   int64  created_at = 6; // unix seconds; bwfs's original recording time
+  int64  expire_at  = 7; // unix seconds; 0 = no expiry recorded / never expires
 }
 
 message SyncRequest {
@@ -41,6 +42,11 @@ message SyncRequest {
 
 message SyncResponse {} // empty ack
 ```
+
+`expire_at` is the per-file retention expiry `brfs` stamped at backup time (see
+[Backup Protocol](backup.md#retention-expiry-expire_at)). `catalogsync` forwards it from
+`file_versions.expire_at` (NULL becomes `0`) and `catalog` stores `0` as NULL again, so the
+catalog can show it later; nothing acts on it yet.
 
 ## Identity
 

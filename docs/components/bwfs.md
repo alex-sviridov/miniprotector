@@ -73,6 +73,13 @@ A job starts `status=in_progress` and is only finalized (`success` or `failure`,
 3. On startup, `bwfs` fails any job left `in_progress` by a previous, uncleanly-terminated process,
    before accepting new connections.
 
+Each `file_versions` row also carries a nullable `expire_at` (unix seconds) taken from the file's
+`FileInfo.expire_at`, stamped by `brfs` from its job's retention matrix, on both the new-file and
+already-known-file paths. NULL means no expiry was recorded or the file never expires — rows from
+before this column existed stay NULL — and nothing treats NULL as expired. Nothing deletes
+versions based on `expire_at` yet; chunk reclamation for versions removed later is the existing
+startup vacuum.
+
 See [Backup Protocol](../protocols/backup.md) for the full RPC and lifecycle.
 
 **Server configuration keys:**

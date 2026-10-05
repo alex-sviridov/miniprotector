@@ -22,6 +22,7 @@ brfs <source_folder> --destination <host:port>
 - `--job-id <id>` - Backup job ID *(default: auto-generated UUID)*
 - `--include <patterns>` - Comma-separated glob patterns; only matching files are backed up *(default: `*`)*
 - `--exclude <patterns>` - Comma-separated glob patterns; matching files and directories are skipped *(default: none)*
+- `--retention-file <path>` - JSON retention matrix resolved by `agent`; each file's `expire_at` is stamped from it *(default: none — no `expire_at` is sent)*
 - `--debug` - Enable debug logging
 - `--quiet` - Suppress stdout logging
 
@@ -63,6 +64,21 @@ directories.
 # Back up only .sql files, skipping anything under a "tmp" directory
 brfs /var/lib/postgres --destination localhost:8080 --include "*.sql" --exclude "tmp"
 ```
+
+## Retention
+
+When `agent` launches `brfs` for a scheduled backup it passes `--retention-file`, a JSON array of
+rows `{"prefix": "<root-relative dir>", "include": ["<glob>"...], "keep_seconds": N}` in priority
+order. `brfs` validates and compiles it once at start, shared read-only by all `--streams`
+workers, and for each file takes the first row whose `prefix` matches on a path-segment boundary
+(`""` matches everything) and whose optional `include` globs match (same glob semantics as
+[Filtering](#filtering)): `expire_at = now + keep_seconds`, or `0` when `keep_seconds` is `0`
+(never expire). It is sent with the file's metadata (see
+[Backup Protocol](../protocols/backup.md#retention-expiry-expire_at)).
+
+An unreadable or invalid retention file makes `brfs` exit non-zero before connecting, so a job
+never silently runs without the retention it was given. Without `--retention-file` (for example a
+hand-run `brfs`) no `expire_at` is sent.
 
 ## Protocol
 
