@@ -28,6 +28,17 @@ type ObjectFilter struct {
 	Exclude []string `json:"exclude,omitempty"`
 }
 
+// cachedRetention mirrors policyclient's on-disk RetentionRule
+// (cmd/policyclient/fetch.go), duplicated for the same reason as
+// ObjectFilter above.
+type cachedRetention struct {
+	BackupType  string   `json:"backup_type"`
+	Path        string   `json:"path"`
+	Include     []string `json:"include,omitempty"`
+	KeepSeconds int64    `json:"keep_seconds"`
+	Priority    int32    `json:"priority"`
+}
+
 // cachedPolicy mirrors the subset of policyclient's on-disk CachedPolicy
 // schema (cmd/policyclient/fetch.go) that agent needs. agent can't import
 // cmd/policyclient directly -- Go forbids importing another command's
@@ -51,6 +62,9 @@ type cachedPolicy struct {
 	// policy-server at CreatePolicy time and used verbatim as the
 	// dispatched rwfs exec's --job-id -- see restore.go's restoreTasks.
 	JobID string `json:"job_id,omitempty"`
+	// "retention" policy only, nil for every other type -- see
+	// retention.go's retentionRulesFrom, the consumer.
+	Retention *cachedRetention `json:"retention,omitempty"`
 	// DisabledAt is used by both backup and storage policies -- see backup.go's
 	// backupTasks and storage.go's storageTasks, which both skip policies with
 	// disabled_at in the past.

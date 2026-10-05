@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -377,4 +378,33 @@ func TestToCachedPolicies_RestoreJobIDRoundTrips(t *testing.T) {
 	cached := toCachedPolicies(policies)
 	require.Len(t, cached, 1)
 	assert.Equal(t, "verify:web01-emergency:1700000000", cached[0].JobID)
+}
+
+func TestToCachedPolicies_RetentionRuleRoundTrips(t *testing.T) {
+	cached := toCachedPolicies([]*pb.Policy{
+		{
+			Id:   "ret-1",
+			Name: "keep-logs",
+			Type: "retention",
+			Retention: &pb.RetentionRule{
+				BackupType:  "filesystem",
+				Path:        "/var/log",
+				Include:     []string{"*.log"},
+				KeepSeconds: 2592000,
+				Priority:    3,
+			},
+		},
+		{Id: "b-1", Name: "nightly", Type: "backup"},
+	})
+	require.Len(t, cached, 2)
+
+	data, err := json.Marshal(cached)
+	require.NoError(t, err)
+	var got []CachedPolicy
+	require.NoError(t, json.Unmarshal(data, &got))
+
+	require.NotNil(t, got[0].Retention)
+	assert.Equal(t, RetentionRule{BackupType: "filesystem", Path: "/var/log", Include: []string{"*.log"}, KeepSeconds: 2592000, Priority: 3}, *got[0].Retention)
+	assert.Nil(t, got[1].Retention, "a non-retention policy must not carry a retention rule")
+	assert.NotContains(t, string(data[strings.Index(string(data), `"nightly"`):]), `"retention"`)
 }
