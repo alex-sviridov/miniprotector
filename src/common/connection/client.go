@@ -30,8 +30,10 @@ func dial(creds credentials.TransportCredentials, host string, port int) (*grpc.
 	// single RPC.
 	conn, err := grpc.NewClient(
 		fmt.Sprintf("%s:%d", host, port),
-		grpc.WithTransportCredentials(creds),
-		grpc.WithKeepaliveParams(keepaliveParams),
+		append([]grpc.DialOption{
+			grpc.WithTransportCredentials(creds),
+			grpc.WithKeepaliveParams(keepaliveParams),
+		}, windowDialOptions()...)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
@@ -206,4 +208,3 @@ func FileResult(expectedFileId string) ResponseMatcher {
 		return nil, false
 	}
 }
-

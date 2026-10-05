@@ -140,6 +140,7 @@ type ReportConfig struct {
 	Window             int      `json:"window"`
 	BrfsArgs           []string `json:"brfs_args"`
 	RwfsArgs           []string `json:"rwfs_args"`
+	ConfLines          []string `json:"conf_lines"`
 	Runs               int      `json:"runs"`
 }
 
@@ -147,7 +148,7 @@ func configOf(a Args) ReportConfig {
 	return ReportConfig{
 		Files: a.Files, Profile: a.Profile, DupRatio: a.DupRatio, Seed: a.Seed,
 		RTTMillis: float64(a.RTT) / float64(time.Millisecond), BandwidthBytesPerS: a.Bandwidth,
-		Streams: a.Streams, Window: a.Window, BrfsArgs: a.BrfsArgs, RwfsArgs: a.RwfsArgs, Runs: a.Runs,
+		Streams: a.Streams, Window: a.Window, BrfsArgs: a.BrfsArgs, RwfsArgs: a.RwfsArgs, ConfLines: a.ConfLines, Runs: a.Runs,
 	}
 }
 

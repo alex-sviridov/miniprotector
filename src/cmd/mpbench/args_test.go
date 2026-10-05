@@ -116,3 +116,14 @@ func TestParseArgs_SweepRejectsBadLists(t *testing.T) {
 		assert.Error(t, err, name)
 	}
 }
+
+func TestParseArgs_ConfLines(t *testing.T) {
+	a, err := parseArgs([]string{"--bin-dir", "/x", "--conf", "grpc_window_bytes=4194304, default_window=4"}, io.Discard)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"grpc_window_bytes=4194304", "default_window=4"}, a.ConfLines)
+
+	for _, bad := range []string{"novalue", "=3", "a=1,,b=2"} {
+		_, err := parseArgs([]string{"--bin-dir", "/x", "--conf", bad}, io.Discard)
+		assert.Error(t, err, bad)
+	}
+}

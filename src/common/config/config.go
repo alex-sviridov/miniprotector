@@ -83,6 +83,7 @@ type Config struct {
 	DefaultPort                      int
 	DefaultStreams                   int
 	DefaultWindow                    int // brfs: max in-flight chunks per stream (--window default)
+	GrpcWindowBytes                  int // fixed gRPC flow-control window in bytes; 0 = grpc-go's dynamic default
 	LogDir                           string
 	ClientHashQueryBatchSize         int
 	ConnectionTimeOutSec             int
@@ -133,6 +134,13 @@ type Config struct {
 	RestoreCleanupGracePeriodSec     int
 	RwfsRetries                      int
 }
+
+// Bounds for grpc_window_bytes: HTTP/2's initial window may not go below 64KiB
+// (grpc-go ignores smaller values) and is capped well under its 2GiB limit.
+const (
+	MinGrpcWindowBytes = 64 * 1024
+	MaxGrpcWindowBytes = 1 << 30
+)
 
 type contextKey string
 
@@ -190,7 +198,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		RestoreCleanupIntervalSec:        300,
 		RestoreCleanupGracePeriodSec:     900,
 		RwfsRetries:                      3,
-		DefaultWindow:                    8,
+		DefaultWindow:                    16,
 	}
 	foundFields := make(map[string]bool)
 
@@ -239,6 +247,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.DefaultWindow = window
 			foundFields["default_window"] = true
+		case "grpc_window_bytes":
+			bytes, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid grpc_window_bytes value at line %d: %s", lineNum, value)
+			}
+			if bytes != 0 && (bytes < MinGrpcWindowBytes || bytes > MaxGrpcWindowBytes) {
+				return nil, fmt.Errorf("grpc_window_bytes must be 0 or between %d and %d at line %d: %s", MinGrpcWindowBytes, MaxGrpcWindowBytes, lineNum, value)
+			}
+			config.GrpcWindowBytes = bytes
+			foundFields["grpc_window_bytes"] = true
 		case "log_dir":
 			config.LogDir = value
 			foundFields["log_dir"] = true

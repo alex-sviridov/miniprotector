@@ -90,13 +90,16 @@ func WriteIdentity(cfgDir string) error {
 	return write("client.key", "EC PRIVATE KEY", keyDER, 0o600)
 }
 
-// WriteLocalConf writes the minimal local.conf the three binaries need and
-// creates the log directory it points at.
-func WriteLocalConf(cfgDir, logDir string, streams int) error {
+// WriteLocalConf writes the minimal local.conf the three binaries need, plus
+// any extra key=value lines, and creates the log directory it points at.
+func WriteLocalConf(cfgDir, logDir string, streams int, extra ...string) error {
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return err
 	}
 	conf := fmt.Sprintf("default_port=8080\ndefault_streams=%d\nlog_dir=%s\nFileLockTimeoutSec=5\nConnectionTimeOutSec=30\n",
 		streams, logDir)
+	for _, line := range extra {
+		conf += line + "\n"
+	}
 	return os.WriteFile(filepath.Join(cfgDir, "local.conf"), []byte(conf), 0o644)
 }

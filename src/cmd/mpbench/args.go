@@ -31,6 +31,10 @@ type Args struct {
 	SweepWindows []int
 	SweepStreams []int
 	SweepRTTs    []time.Duration
+
+	// ConfLines are extra key=value lines appended to the generated local.conf,
+	// so any config key (default_window, grpc_window_bytes, ...) can be set.
+	ConfLines []string
 }
 
 var validProfiles = map[string]bool{"small": true, "mixed": true, "large": true}
@@ -54,7 +58,8 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	fs.IntVar(&a.Runs, "runs", 3, "number of full cycles to run")
 	fs.StringVar(&a.JSONPath, "json", "", "also write the full report as JSON to this path")
 	fs.BoolVar(&a.Keep, "keep", false, "keep the work directory of each run")
-	var sweepWindow, sweepStreams, sweepRTT string
+	var sweepWindow, sweepStreams, sweepRTT, confLines string
+	fs.StringVar(&confLines, "conf", "", "comma-separated key=value lines appended to the generated local.conf, e.g. grpc_window_bytes=4194304")
 	fs.StringVar(&sweepWindow, "sweep-window", "", "comma-separated --window values to compare, e.g. 1,4,8 (0 = brfs default)")
 	fs.StringVar(&sweepStreams, "sweep-streams", "", "comma-separated --streams values to compare, e.g. 2,4,8")
 	fs.StringVar(&sweepRTT, "sweep-rtt", "", "comma-separated --rtt values to compare, e.g. 0,20ms,100ms")
@@ -76,6 +81,9 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 		return nil, err
 	}
 	if a.SweepRTTs, err = parseDurationList("--sweep-rtt", sweepRTT); err != nil {
+		return nil, err
+	}
+	if a.ConfLines, err = parseConfLines(confLines); err != nil {
 		return nil, err
 	}
 	a.BrfsArgs = strings.Fields(brfsArgs)
@@ -173,4 +181,20 @@ func parseDurationList(flagName, s string) ([]time.Duration, error) {
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+// parseConfLines validates "key=value,key2=value2" into individual local.conf
+// lines.
+func parseConfLines(s string) ([]string, error) {
+	parts, err := splitList("--conf", s)
+	if err != nil || parts == nil {
+		return nil, err
+	}
+	for _, p := range parts {
+		key, _, ok := strings.Cut(p, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("--conf: %q must be key=value", p)
+		}
+	}
+	return parts, nil
 }

@@ -56,3 +56,13 @@ func TestWriteLocalConf_ParsesAndCreatesLogDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, st.IsDir())
 }
+
+func TestWriteLocalConf_AppendsExtraLines(t *testing.T) {
+	cfg := t.TempDir()
+	require.NoError(t, WriteLocalConf(cfg, filepath.Join(t.TempDir(), "logs"), 2, "grpc_window_bytes=4194304", "default_window=3"))
+
+	conf, err := config.ParseConfig(filepath.Join(cfg, "local.conf"))
+	require.NoError(t, err)
+	assert.Equal(t, 4194304, conf.GrpcWindowBytes)
+	assert.Equal(t, 3, conf.DefaultWindow)
+}

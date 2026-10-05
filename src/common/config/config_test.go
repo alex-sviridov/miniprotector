@@ -763,7 +763,7 @@ func TestParseConfig_StoreGCRejectsInvalidValues(t *testing.T) {
 	}
 }
 
-func TestParseConfig_DefaultWindowDefaultsTo8(t *testing.T) {
+func TestParseConfig_DefaultWindowDefaultsTo16(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
 	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
@@ -771,7 +771,7 @@ func TestParseConfig_DefaultWindowDefaultsTo8(t *testing.T) {
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
-	assert.Equal(t, 8, conf.DefaultWindow)
+	assert.Equal(t, 16, conf.DefaultWindow)
 }
 
 func TestParseConfig_DefaultWindowParsesCorrectly(t *testing.T) {
@@ -791,6 +791,37 @@ func TestParseConfig_DefaultWindowRejectsZeroOrNegative(t *testing.T) {
 		path := filepath.Join(dir, "local.conf")
 		content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ndefault_window=" + v + "\n"
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+		_, err := ParseConfig(path)
+		require.Error(t, err, v)
+	}
+}
+
+func TestParseConfig_GrpcWindowBytesDefaultsToZero(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 0, conf.GrpcWindowBytes)
+}
+
+func TestParseConfig_GrpcWindowBytesParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ngrpc_window_bytes=4194304\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 4194304, conf.GrpcWindowBytes)
+}
+
+func TestParseConfig_GrpcWindowBytesRejectsOutOfRange(t *testing.T) {
+	for _, v := range []string{"-1", "1024", "65535", "1073741825", "abc"} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "local.conf")
+		require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ngrpc_window_bytes="+v+"\n"), 0o644))
 
 		_, err := ParseConfig(path)
 		require.Error(t, err, v)

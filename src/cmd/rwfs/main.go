@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
@@ -27,6 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
+	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
 
 	arguments, err := parseArguments(conf)
 	if err != nil {

@@ -46,6 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
+	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
 
 	// Get arguments
 	arguments, err := parseArguments(conf)

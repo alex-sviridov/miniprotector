@@ -46,7 +46,7 @@ func StartServerWithCredentials(ctx context.Context, logger *slog.Logger, port i
 		grpc.Creds(creds),
 		grpc.ChainUnaryInterceptor(unaryInterceptor),
 		grpc.ChainStreamInterceptor(streamInterceptor),
-	}, opts...)...)
+	}, append(windowServerOptions(), opts...)...)...)
 	register(grpcServer)
 
 	logger.Info("Server ready, accepting connections")

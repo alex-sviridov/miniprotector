@@ -34,6 +34,7 @@ func main() {
 	}
 
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
+	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
 
 	arguments, err := parseArguments(conf)
 	if err != nil {

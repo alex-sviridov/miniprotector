@@ -163,7 +163,7 @@ func RunOnce(ctx context.Context, a *Args, idx int, logf func(string, ...any)) (
 	if err := WriteIdentity(cfg); err != nil {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
-	if err := WriteLocalConf(cfg, filepath.Join(work, "logs"), a.Streams); err != nil {
+	if err := WriteLocalConf(cfg, filepath.Join(work, "logs"), a.Streams, a.ConfLines...); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	env := []string{"MP_CONFIG_PATH=" + cfg}
