@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -203,6 +204,23 @@ func (s *policyServerServer) ListPolicies(ctx context.Context, req *pb.ListPolic
 		attachCheckins(ctx, pp, s.checkins, s.logger)
 		out = append(out, pp)
 	}
+	if req.GetType() == "retention" {
+		sortRetentionByPriority(out)
+	}
 	s.logger.Info("ListPolicies", "type", req.GetType(), "count", len(out))
 	return &pb.ListPoliciesResponse{Policies: out}, nil
+}
+
+// sortRetentionByPriority orders retention policies the way they are
+// evaluated -- ascending priority, ties broken by id for determinism -- so
+// the admin list (and the web UI's reorderable view) matches what a node's
+// first-match-wins evaluation actually does.
+func sortRetentionByPriority(policies []*pb.Policy) {
+	sort.SliceStable(policies, func(i, j int) bool {
+		pi, pj := policies[i].GetRetention().GetPriority(), policies[j].GetRetention().GetPriority()
+		if pi != pj {
+			return pi < pj
+		}
+		return policies[i].GetId() < policies[j].GetId()
+	})
 }

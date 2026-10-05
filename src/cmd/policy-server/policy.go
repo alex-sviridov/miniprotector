@@ -108,9 +108,10 @@ type Policy interface {
 // new policy type means writing its parseXPolicyJSON and adding one entry
 // here -- no other code in this file changes.
 var policyParsers = map[string]func(data []byte) (Policy, error){
-	"backup":  parseBackupPolicyJSON,
-	"storage": parseStoragePolicyJSON,
-	"restore": parseRestorePolicyJSON,
+	"backup":    parseBackupPolicyJSON,
+	"storage":   parseStoragePolicyJSON,
+	"restore":   parseRestorePolicyJSON,
+	"retention": parseRetentionPolicyJSON,
 }
 
 // validateCommon checks the fields every policy type shares, independent of

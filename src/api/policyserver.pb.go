@@ -598,6 +598,85 @@ func (x *RestoreRule) GetNotAfter() int64 {
 	return 0
 }
 
+// One retention rule: how long file versions under `path` are kept. A
+// "retention" policy is exactly one of these plus the usual client_filters.
+// Rules are evaluated in ascending priority; the first match wins.
+type RetentionRule struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BackupType    string                 `protobuf:"bytes,1,opt,name=backup_type,json=backupType,proto3" json:"backup_type,omitempty"`     // "filesystem" -- the only value accepted today
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`                                   // absolute, slash-separated prefix, matched on a segment boundary
+	Include       []string               `protobuf:"bytes,3,rep,name=include,proto3" json:"include,omitempty"`                             // optional basename globs that must also match; a "/" is rejected
+	KeepSeconds   int64                  `protobuf:"varint,4,opt,name=keep_seconds,json=keepSeconds,proto3" json:"keep_seconds,omitempty"` // 0 = never expire
+	Priority      int32                  `protobuf:"varint,5,opt,name=priority,proto3" json:"priority,omitempty"`                          // server-assigned, lower is evaluated first; ignored on Create/Update requests
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetentionRule) Reset() {
+	*x = RetentionRule{}
+	mi := &file_api_policyserver_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetentionRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetentionRule) ProtoMessage() {}
+
+func (x *RetentionRule) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policyserver_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetentionRule.ProtoReflect.Descriptor instead.
+func (*RetentionRule) Descriptor() ([]byte, []int) {
+	return file_api_policyserver_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RetentionRule) GetBackupType() string {
+	if x != nil {
+		return x.BackupType
+	}
+	return ""
+}
+
+func (x *RetentionRule) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *RetentionRule) GetInclude() []string {
+	if x != nil {
+		return x.Include
+	}
+	return nil
+}
+
+func (x *RetentionRule) GetKeepSeconds() int64 {
+	if x != nil {
+		return x.KeepSeconds
+	}
+	return 0
+}
+
+func (x *RetentionRule) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
 type Policy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -669,14 +748,16 @@ type Policy struct {
 	// Loki line for one restore policy's execution correlates under this one
 	// id. Not settable via CreatePolicyRequest -- server-computed, like id
 	// (field 8).
-	JobId         string `protobuf:"bytes,22,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	JobId string `protobuf:"bytes,22,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	// "retention" policy only.
+	Retention     *RetentionRule `protobuf:"bytes,23,opt,name=retention,proto3" json:"retention,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Policy) Reset() {
 	*x = Policy{}
-	mi := &file_api_policyserver_proto_msgTypes[10]
+	mi := &file_api_policyserver_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -688,7 +769,7 @@ func (x *Policy) String() string {
 func (*Policy) ProtoMessage() {}
 
 func (x *Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policyserver_proto_msgTypes[10]
+	mi := &file_api_policyserver_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -701,7 +782,7 @@ func (x *Policy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Policy.ProtoReflect.Descriptor instead.
 func (*Policy) Descriptor() ([]byte, []int) {
-	return file_api_policyserver_proto_rawDescGZIP(), []int{10}
+	return file_api_policyserver_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Policy) GetName() string {
@@ -837,6 +918,13 @@ func (x *Policy) GetJobId() string {
 	return ""
 }
 
+func (x *Policy) GetRetention() *RetentionRule {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
 type CreatePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -861,14 +949,17 @@ type CreatePolicyRequest struct {
 	// "restore" policy only. See Policy.mode above.
 	Mode string `protobuf:"bytes,15,opt,name=mode,proto3" json:"mode,omitempty"`
 	// "restore" policy only. See Policy.overwrite above.
-	Overwrite     bool `protobuf:"varint,16,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
+	Overwrite bool `protobuf:"varint,16,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
+	// "retention" policy only, required. retention.priority is ignored: a new
+	// retention policy is always appended after the existing ones.
+	Retention     *RetentionRule `protobuf:"bytes,17,opt,name=retention,proto3" json:"retention,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreatePolicyRequest) Reset() {
 	*x = CreatePolicyRequest{}
-	mi := &file_api_policyserver_proto_msgTypes[11]
+	mi := &file_api_policyserver_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -880,7 +971,7 @@ func (x *CreatePolicyRequest) String() string {
 func (*CreatePolicyRequest) ProtoMessage() {}
 
 func (x *CreatePolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policyserver_proto_msgTypes[11]
+	mi := &file_api_policyserver_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -893,7 +984,7 @@ func (x *CreatePolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePolicyRequest.ProtoReflect.Descriptor instead.
 func (*CreatePolicyRequest) Descriptor() ([]byte, []int) {
-	return file_api_policyserver_proto_rawDescGZIP(), []int{11}
+	return file_api_policyserver_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CreatePolicyRequest) GetName() string {
@@ -987,6 +1078,13 @@ func (x *CreatePolicyRequest) GetOverwrite() bool {
 	return false
 }
 
+func (x *CreatePolicyRequest) GetRetention() *RetentionRule {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
 type UpdatePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1002,13 +1100,16 @@ type UpdatePolicyRequest struct {
 	DisabledAt    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=disabled_at,json=disabledAt,proto3" json:"disabled_at,omitempty"`
 	// "backup" only, required.
 	StoragePolicyId string `protobuf:"bytes,12,opt,name=storage_policy_id,json=storagePolicyId,proto3" json:"storage_policy_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// "retention" only, required. Full replacement; retention.priority is
+	// ignored -- a policy's position changes only via ReorderRetentionPolicies.
+	Retention     *RetentionRule `protobuf:"bytes,13,opt,name=retention,proto3" json:"retention,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdatePolicyRequest) Reset() {
 	*x = UpdatePolicyRequest{}
-	mi := &file_api_policyserver_proto_msgTypes[12]
+	mi := &file_api_policyserver_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1020,7 +1121,7 @@ func (x *UpdatePolicyRequest) String() string {
 func (*UpdatePolicyRequest) ProtoMessage() {}
 
 func (x *UpdatePolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policyserver_proto_msgTypes[12]
+	mi := &file_api_policyserver_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1033,7 +1134,7 @@ func (x *UpdatePolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdatePolicyRequest.ProtoReflect.Descriptor instead.
 func (*UpdatePolicyRequest) Descriptor() ([]byte, []int) {
-	return file_api_policyserver_proto_rawDescGZIP(), []int{12}
+	return file_api_policyserver_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *UpdatePolicyRequest) GetId() string {
@@ -1106,6 +1207,13 @@ func (x *UpdatePolicyRequest) GetStoragePolicyId() string {
 	return ""
 }
 
+func (x *UpdatePolicyRequest) GetRetention() *RetentionRule {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
 type DeletePolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1115,7 +1223,7 @@ type DeletePolicyRequest struct {
 
 func (x *DeletePolicyRequest) Reset() {
 	*x = DeletePolicyRequest{}
-	mi := &file_api_policyserver_proto_msgTypes[13]
+	mi := &file_api_policyserver_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1127,7 +1235,7 @@ func (x *DeletePolicyRequest) String() string {
 func (*DeletePolicyRequest) ProtoMessage() {}
 
 func (x *DeletePolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policyserver_proto_msgTypes[13]
+	mi := &file_api_policyserver_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1140,7 +1248,7 @@ func (x *DeletePolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePolicyRequest.ProtoReflect.Descriptor instead.
 func (*DeletePolicyRequest) Descriptor() ([]byte, []int) {
-	return file_api_policyserver_proto_rawDescGZIP(), []int{13}
+	return file_api_policyserver_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DeletePolicyRequest) GetId() string {
@@ -1158,7 +1266,7 @@ type DeletePolicyResponse struct {
 
 func (x *DeletePolicyResponse) Reset() {
 	*x = DeletePolicyResponse{}
-	mi := &file_api_policyserver_proto_msgTypes[14]
+	mi := &file_api_policyserver_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1170,7 +1278,7 @@ func (x *DeletePolicyResponse) String() string {
 func (*DeletePolicyResponse) ProtoMessage() {}
 
 func (x *DeletePolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policyserver_proto_msgTypes[14]
+	mi := &file_api_policyserver_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1183,7 +1291,99 @@ func (x *DeletePolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePolicyResponse.ProtoReflect.Descriptor instead.
 func (*DeletePolicyResponse) Descriptor() ([]byte, []int) {
-	return file_api_policyserver_proto_rawDescGZIP(), []int{14}
+	return file_api_policyserver_proto_rawDescGZIP(), []int{15}
+}
+
+// ids must be exactly the set of every existing "retention" policy id, in the
+// desired evaluation order; a missing, unknown or duplicate id rejects the
+// whole request so a stale caller can never silently drop or reorder rules it
+// did not see. Priorities are rewritten 1..n in that order.
+type ReorderRetentionPoliciesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ids           []string               `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReorderRetentionPoliciesRequest) Reset() {
+	*x = ReorderRetentionPoliciesRequest{}
+	mi := &file_api_policyserver_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReorderRetentionPoliciesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReorderRetentionPoliciesRequest) ProtoMessage() {}
+
+func (x *ReorderRetentionPoliciesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policyserver_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReorderRetentionPoliciesRequest.ProtoReflect.Descriptor instead.
+func (*ReorderRetentionPoliciesRequest) Descriptor() ([]byte, []int) {
+	return file_api_policyserver_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ReorderRetentionPoliciesRequest) GetIds() []string {
+	if x != nil {
+		return x.Ids
+	}
+	return nil
+}
+
+type ReorderRetentionPoliciesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Policies      []*Policy              `protobuf:"bytes,1,rep,name=policies,proto3" json:"policies,omitempty"` // in the new order
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReorderRetentionPoliciesResponse) Reset() {
+	*x = ReorderRetentionPoliciesResponse{}
+	mi := &file_api_policyserver_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReorderRetentionPoliciesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReorderRetentionPoliciesResponse) ProtoMessage() {}
+
+func (x *ReorderRetentionPoliciesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policyserver_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReorderRetentionPoliciesResponse.ProtoReflect.Descriptor instead.
+func (*ReorderRetentionPoliciesResponse) Descriptor() ([]byte, []int) {
+	return file_api_policyserver_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ReorderRetentionPoliciesResponse) GetPolicies() []*Policy {
+	if x != nil {
+		return x.Policies
+	}
+	return nil
 }
 
 var File_api_policyserver_proto protoreflect.FileDescriptor
@@ -1229,7 +1429,14 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\tdest_path\x18\x04 \x01(\tR\bdestPath\x12\x1d\n" +
 	"\n" +
 	"not_before\x18\x05 \x01(\x03R\tnotBefore\x12\x1b\n" +
-	"\tnot_after\x18\x06 \x01(\x03R\bnotAfter\"\xb3\x06\n" +
+	"\tnot_after\x18\x06 \x01(\x03R\bnotAfter\"\x9d\x01\n" +
+	"\rRetentionRule\x12\x1f\n" +
+	"\vbackup_type\x18\x01 \x01(\tR\n" +
+	"backupType\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
+	"\ainclude\x18\x03 \x03(\tR\ainclude\x12!\n" +
+	"\fkeep_seconds\x18\x04 \x01(\x03R\vkeepSeconds\x12\x1a\n" +
+	"\bpriority\x18\x05 \x01(\x05R\bpriority\"\xf5\x06\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\n" +
@@ -1253,7 +1460,8 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x05rules\x18\x13 \x03(\v2 .policyserverservice.RestoreRuleR\x05rules\x12\x12\n" +
 	"\x04mode\x18\x14 \x01(\tR\x04mode\x12\x1c\n" +
 	"\toverwrite\x18\x15 \x01(\bR\toverwrite\x12\x15\n" +
-	"\x06job_id\x18\x16 \x01(\tR\x05jobIdJ\x04\b\a\x10\bJ\x04\b\v\x10\fJ\x04\b\x12\x10\x13R\vdestinationR\bhostnameR\fsource_store\"\xbf\x04\n" +
+	"\x06job_id\x18\x16 \x01(\tR\x05jobId\x12@\n" +
+	"\tretention\x18\x17 \x01(\v2\".policyserverservice.RetentionRuleR\tretentionJ\x04\b\a\x10\bJ\x04\b\v\x10\fJ\x04\b\x12\x10\x13R\vdestinationR\bhostnameR\fsource_store\"\x81\x05\n" +
 	"\x13CreatePolicyRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12I\n" +
 	"\x0eclient_filters\x18\x02 \x01(\v2\".policyserverservice.ClientFiltersR\rclientFilters\x12H\n" +
@@ -1269,7 +1477,8 @@ const file_api_policyserver_proto_rawDesc = "" +
 	"\x11storage_policy_id\x18\f \x01(\tR\x0fstoragePolicyId\x126\n" +
 	"\x05rules\x18\x0e \x03(\v2 .policyserverservice.RestoreRuleR\x05rules\x12\x12\n" +
 	"\x04mode\x18\x0f \x01(\tR\x04mode\x12\x1c\n" +
-	"\toverwrite\x18\x10 \x01(\bR\toverwriteJ\x04\b\x06\x10\aJ\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\vdestinationR\bhostnameR\fsource_store\"\xbd\x03\n" +
+	"\toverwrite\x18\x10 \x01(\bR\toverwrite\x12@\n" +
+	"\tretention\x18\x11 \x01(\v2\".policyserverservice.RetentionRuleR\tretentionJ\x04\b\x06\x10\aJ\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\vdestinationR\bhostnameR\fsource_store\"\xff\x03\n" +
 	"\x13UpdatePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12I\n" +
@@ -1282,17 +1491,23 @@ const file_api_policyserver_proto_rawDesc = "" +
 	" \x01(\tR\x06config\x12;\n" +
 	"\vdisabled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"disabledAt\x12*\n" +
-	"\x11storage_policy_id\x18\f \x01(\tR\x0fstoragePolicyIdJ\x04\b\a\x10\bJ\x04\b\b\x10\tR\vdestinationR\bhostname\"%\n" +
+	"\x11storage_policy_id\x18\f \x01(\tR\x0fstoragePolicyId\x12@\n" +
+	"\tretention\x18\r \x01(\v2\".policyserverservice.RetentionRuleR\tretentionJ\x04\b\a\x10\bJ\x04\b\b\x10\tR\vdestinationR\bhostname\"%\n" +
 	"\x13DeletePolicyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x16\n" +
-	"\x14DeletePolicyResponse2\xd2\x04\n" +
+	"\x14DeletePolicyResponse\"3\n" +
+	"\x1fReorderRetentionPoliciesRequest\x12\x10\n" +
+	"\x03ids\x18\x01 \x03(\tR\x03ids\"[\n" +
+	" ReorderRetentionPoliciesResponse\x127\n" +
+	"\bpolicies\x18\x01 \x03(\v2\x1b.policyserverservice.PolicyR\bpolicies2\xdc\x05\n" +
 	"\rPolicyService\x12`\n" +
 	"\vGetPolicies\x12'.policyserverservice.GetPoliciesRequest\x1a(.policyserverservice.GetPoliciesResponse\x12c\n" +
 	"\fListPolicies\x12(.policyserverservice.ListPoliciesRequest\x1a).policyserverservice.ListPoliciesResponse\x12U\n" +
 	"\fCreatePolicy\x12(.policyserverservice.CreatePolicyRequest\x1a\x1b.policyserverservice.Policy\x12U\n" +
 	"\fUpdatePolicy\x12(.policyserverservice.UpdatePolicyRequest\x1a\x1b.policyserverservice.Policy\x12c\n" +
 	"\fDeletePolicy\x12(.policyserverservice.DeletePolicyRequest\x1a).policyserverservice.DeletePolicyResponse\x12g\n" +
-	"\x11GetNodeCertStatus\x12-.policyserverservice.GetNodeCertStatusRequest\x1a#.policyserverservice.NodeCertStatusB\tZ\a./protob\x06proto3"
+	"\x11GetNodeCertStatus\x12-.policyserverservice.GetNodeCertStatusRequest\x1a#.policyserverservice.NodeCertStatus\x12\x87\x01\n" +
+	"\x18ReorderRetentionPolicies\x124.policyserverservice.ReorderRetentionPoliciesRequest\x1a5.policyserverservice.ReorderRetentionPoliciesResponseB\tZ\a./protob\x06proto3"
 
 var (
 	file_api_policyserver_proto_rawDescOnce sync.Once
@@ -1306,63 +1521,72 @@ func file_api_policyserver_proto_rawDescGZIP() []byte {
 	return file_api_policyserver_proto_rawDescData
 }
 
-var file_api_policyserver_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_api_policyserver_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_api_policyserver_proto_goTypes = []any{
-	(*GetPoliciesRequest)(nil),       // 0: policyserverservice.GetPoliciesRequest
-	(*GetPoliciesResponse)(nil),      // 1: policyserverservice.GetPoliciesResponse
-	(*ListPoliciesRequest)(nil),      // 2: policyserverservice.ListPoliciesRequest
-	(*ListPoliciesResponse)(nil),     // 3: policyserverservice.ListPoliciesResponse
-	(*ClientFilters)(nil),            // 4: policyserverservice.ClientFilters
-	(*ObjectFilter)(nil),             // 5: policyserverservice.ObjectFilter
-	(*PolicyCheckin)(nil),            // 6: policyserverservice.PolicyCheckin
-	(*GetNodeCertStatusRequest)(nil), // 7: policyserverservice.GetNodeCertStatusRequest
-	(*NodeCertStatus)(nil),           // 8: policyserverservice.NodeCertStatus
-	(*RestoreRule)(nil),              // 9: policyserverservice.RestoreRule
-	(*Policy)(nil),                   // 10: policyserverservice.Policy
-	(*CreatePolicyRequest)(nil),      // 11: policyserverservice.CreatePolicyRequest
-	(*UpdatePolicyRequest)(nil),      // 12: policyserverservice.UpdatePolicyRequest
-	(*DeletePolicyRequest)(nil),      // 13: policyserverservice.DeletePolicyRequest
-	(*DeletePolicyResponse)(nil),     // 14: policyserverservice.DeletePolicyResponse
-	nil,                              // 15: policyserverservice.ClientFilters.LabelsEntry
-	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
+	(*GetPoliciesRequest)(nil),               // 0: policyserverservice.GetPoliciesRequest
+	(*GetPoliciesResponse)(nil),              // 1: policyserverservice.GetPoliciesResponse
+	(*ListPoliciesRequest)(nil),              // 2: policyserverservice.ListPoliciesRequest
+	(*ListPoliciesResponse)(nil),             // 3: policyserverservice.ListPoliciesResponse
+	(*ClientFilters)(nil),                    // 4: policyserverservice.ClientFilters
+	(*ObjectFilter)(nil),                     // 5: policyserverservice.ObjectFilter
+	(*PolicyCheckin)(nil),                    // 6: policyserverservice.PolicyCheckin
+	(*GetNodeCertStatusRequest)(nil),         // 7: policyserverservice.GetNodeCertStatusRequest
+	(*NodeCertStatus)(nil),                   // 8: policyserverservice.NodeCertStatus
+	(*RestoreRule)(nil),                      // 9: policyserverservice.RestoreRule
+	(*RetentionRule)(nil),                    // 10: policyserverservice.RetentionRule
+	(*Policy)(nil),                           // 11: policyserverservice.Policy
+	(*CreatePolicyRequest)(nil),              // 12: policyserverservice.CreatePolicyRequest
+	(*UpdatePolicyRequest)(nil),              // 13: policyserverservice.UpdatePolicyRequest
+	(*DeletePolicyRequest)(nil),              // 14: policyserverservice.DeletePolicyRequest
+	(*DeletePolicyResponse)(nil),             // 15: policyserverservice.DeletePolicyResponse
+	(*ReorderRetentionPoliciesRequest)(nil),  // 16: policyserverservice.ReorderRetentionPoliciesRequest
+	(*ReorderRetentionPoliciesResponse)(nil), // 17: policyserverservice.ReorderRetentionPoliciesResponse
+	nil,                                      // 18: policyserverservice.ClientFilters.LabelsEntry
+	(*timestamppb.Timestamp)(nil),            // 19: google.protobuf.Timestamp
 }
 var file_api_policyserver_proto_depIdxs = []int32{
-	10, // 0: policyserverservice.GetPoliciesResponse.policies:type_name -> policyserverservice.Policy
-	10, // 1: policyserverservice.ListPoliciesResponse.policies:type_name -> policyserverservice.Policy
-	15, // 2: policyserverservice.ClientFilters.labels:type_name -> policyserverservice.ClientFilters.LabelsEntry
-	16, // 3: policyserverservice.PolicyCheckin.last_seen_at:type_name -> google.protobuf.Timestamp
-	16, // 4: policyserverservice.NodeCertStatus.last_attempt_at:type_name -> google.protobuf.Timestamp
-	16, // 5: policyserverservice.Policy.created_at:type_name -> google.protobuf.Timestamp
-	16, // 6: policyserverservice.Policy.updated_at:type_name -> google.protobuf.Timestamp
+	11, // 0: policyserverservice.GetPoliciesResponse.policies:type_name -> policyserverservice.Policy
+	11, // 1: policyserverservice.ListPoliciesResponse.policies:type_name -> policyserverservice.Policy
+	18, // 2: policyserverservice.ClientFilters.labels:type_name -> policyserverservice.ClientFilters.LabelsEntry
+	19, // 3: policyserverservice.PolicyCheckin.last_seen_at:type_name -> google.protobuf.Timestamp
+	19, // 4: policyserverservice.NodeCertStatus.last_attempt_at:type_name -> google.protobuf.Timestamp
+	19, // 5: policyserverservice.Policy.created_at:type_name -> google.protobuf.Timestamp
+	19, // 6: policyserverservice.Policy.updated_at:type_name -> google.protobuf.Timestamp
 	5,  // 7: policyserverservice.Policy.object_filters:type_name -> policyserverservice.ObjectFilter
 	4,  // 8: policyserverservice.Policy.client_filters:type_name -> policyserverservice.ClientFilters
-	16, // 9: policyserverservice.Policy.disabled_at:type_name -> google.protobuf.Timestamp
+	19, // 9: policyserverservice.Policy.disabled_at:type_name -> google.protobuf.Timestamp
 	6,  // 10: policyserverservice.Policy.checkins:type_name -> policyserverservice.PolicyCheckin
 	9,  // 11: policyserverservice.Policy.rules:type_name -> policyserverservice.RestoreRule
-	4,  // 12: policyserverservice.CreatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
-	5,  // 13: policyserverservice.CreatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
-	16, // 14: policyserverservice.CreatePolicyRequest.disabled_at:type_name -> google.protobuf.Timestamp
-	9,  // 15: policyserverservice.CreatePolicyRequest.rules:type_name -> policyserverservice.RestoreRule
-	4,  // 16: policyserverservice.UpdatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
-	5,  // 17: policyserverservice.UpdatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
-	16, // 18: policyserverservice.UpdatePolicyRequest.disabled_at:type_name -> google.protobuf.Timestamp
-	0,  // 19: policyserverservice.PolicyService.GetPolicies:input_type -> policyserverservice.GetPoliciesRequest
-	2,  // 20: policyserverservice.PolicyService.ListPolicies:input_type -> policyserverservice.ListPoliciesRequest
-	11, // 21: policyserverservice.PolicyService.CreatePolicy:input_type -> policyserverservice.CreatePolicyRequest
-	12, // 22: policyserverservice.PolicyService.UpdatePolicy:input_type -> policyserverservice.UpdatePolicyRequest
-	13, // 23: policyserverservice.PolicyService.DeletePolicy:input_type -> policyserverservice.DeletePolicyRequest
-	7,  // 24: policyserverservice.PolicyService.GetNodeCertStatus:input_type -> policyserverservice.GetNodeCertStatusRequest
-	1,  // 25: policyserverservice.PolicyService.GetPolicies:output_type -> policyserverservice.GetPoliciesResponse
-	3,  // 26: policyserverservice.PolicyService.ListPolicies:output_type -> policyserverservice.ListPoliciesResponse
-	10, // 27: policyserverservice.PolicyService.CreatePolicy:output_type -> policyserverservice.Policy
-	10, // 28: policyserverservice.PolicyService.UpdatePolicy:output_type -> policyserverservice.Policy
-	14, // 29: policyserverservice.PolicyService.DeletePolicy:output_type -> policyserverservice.DeletePolicyResponse
-	8,  // 30: policyserverservice.PolicyService.GetNodeCertStatus:output_type -> policyserverservice.NodeCertStatus
-	25, // [25:31] is the sub-list for method output_type
-	19, // [19:25] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	10, // 12: policyserverservice.Policy.retention:type_name -> policyserverservice.RetentionRule
+	4,  // 13: policyserverservice.CreatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
+	5,  // 14: policyserverservice.CreatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
+	19, // 15: policyserverservice.CreatePolicyRequest.disabled_at:type_name -> google.protobuf.Timestamp
+	9,  // 16: policyserverservice.CreatePolicyRequest.rules:type_name -> policyserverservice.RestoreRule
+	10, // 17: policyserverservice.CreatePolicyRequest.retention:type_name -> policyserverservice.RetentionRule
+	4,  // 18: policyserverservice.UpdatePolicyRequest.client_filters:type_name -> policyserverservice.ClientFilters
+	5,  // 19: policyserverservice.UpdatePolicyRequest.object_filters:type_name -> policyserverservice.ObjectFilter
+	19, // 20: policyserverservice.UpdatePolicyRequest.disabled_at:type_name -> google.protobuf.Timestamp
+	10, // 21: policyserverservice.UpdatePolicyRequest.retention:type_name -> policyserverservice.RetentionRule
+	11, // 22: policyserverservice.ReorderRetentionPoliciesResponse.policies:type_name -> policyserverservice.Policy
+	0,  // 23: policyserverservice.PolicyService.GetPolicies:input_type -> policyserverservice.GetPoliciesRequest
+	2,  // 24: policyserverservice.PolicyService.ListPolicies:input_type -> policyserverservice.ListPoliciesRequest
+	12, // 25: policyserverservice.PolicyService.CreatePolicy:input_type -> policyserverservice.CreatePolicyRequest
+	13, // 26: policyserverservice.PolicyService.UpdatePolicy:input_type -> policyserverservice.UpdatePolicyRequest
+	14, // 27: policyserverservice.PolicyService.DeletePolicy:input_type -> policyserverservice.DeletePolicyRequest
+	7,  // 28: policyserverservice.PolicyService.GetNodeCertStatus:input_type -> policyserverservice.GetNodeCertStatusRequest
+	16, // 29: policyserverservice.PolicyService.ReorderRetentionPolicies:input_type -> policyserverservice.ReorderRetentionPoliciesRequest
+	1,  // 30: policyserverservice.PolicyService.GetPolicies:output_type -> policyserverservice.GetPoliciesResponse
+	3,  // 31: policyserverservice.PolicyService.ListPolicies:output_type -> policyserverservice.ListPoliciesResponse
+	11, // 32: policyserverservice.PolicyService.CreatePolicy:output_type -> policyserverservice.Policy
+	11, // 33: policyserverservice.PolicyService.UpdatePolicy:output_type -> policyserverservice.Policy
+	15, // 34: policyserverservice.PolicyService.DeletePolicy:output_type -> policyserverservice.DeletePolicyResponse
+	8,  // 35: policyserverservice.PolicyService.GetNodeCertStatus:output_type -> policyserverservice.NodeCertStatus
+	17, // 36: policyserverservice.PolicyService.ReorderRetentionPolicies:output_type -> policyserverservice.ReorderRetentionPoliciesResponse
+	30, // [30:37] is the sub-list for method output_type
+	23, // [23:30] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_api_policyserver_proto_init() }
@@ -1376,7 +1600,7 @@ func file_api_policyserver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_policyserver_proto_rawDesc), len(file_api_policyserver_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
