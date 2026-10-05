@@ -134,6 +134,25 @@ func TestRenderVectorConfig_UsesTextCodecSoLineIsJustTheMessage(t *testing.T) {
 	assert.NotContains(t, got, "codec: json")
 }
 
+func TestRenderVectorConfig_OverridesTimestampFromAppLogTime(t *testing.T) {
+	// Without this, Vector's file source stamps .timestamp with its own
+	// read time rather than the app's actual log time -- normally near
+	// identical, but they diverge (inconsistently across hosts/binaries)
+	// after any read lag: agent/Vector restart catch-up, or the disk
+	// buffer's when_full: block backpressure. Since api-server and the web
+	// UI both sort and display strictly by this timestamp
+	// (cmd/api-server/jobs.go, web/src/stores/jobs.js), a stale read-time
+	// stamp shows lines out of the order their own embedded "time" field
+	// (slog's default TimeKey) implies. Falls back to Vector's read time,
+	// same as web/src/utils/logLine.js's parseLogLine, whenever .message
+	// isn't JSON or its "time" field is missing/unparseable.
+	got, err := renderVectorConfig("/var/log/mp", "/var/lib/mp", "/var/lib/mp/certs", "log-gateway.internal", 9400, "test-node")
+	require.NoError(t, err)
+	assert.Contains(t, got, "is_string(parsed.time)")
+	assert.Contains(t, got, `parse_timestamp(parsed.time, "%+")`)
+	assert.Contains(t, got, ".timestamp = ts")
+}
+
 func TestHostnameFromBootstrapCert_ReadsCommonName(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeBootstrapCert(t, dir, "node-under-test")

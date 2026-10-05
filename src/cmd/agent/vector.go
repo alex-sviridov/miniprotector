@@ -63,6 +63,18 @@ transforms:
         .job_id = parsed.job_id
         .event = parsed.event
         .status = parsed.status
+        # Override Vector's own read-time .timestamp with the app's actual
+        # log time (slog's "time" field) wherever it parses -- otherwise
+        # ordering/display (both keyed on .timestamp downstream) reflect
+        # when Vector caught up reading the file, not when the event
+        # happened, and those diverge inconsistently across hosts/binaries
+        # after any read lag (restart catch-up, disk buffer backpressure).
+        if is_string(parsed.time) {
+          ts, ts_err = parse_timestamp(parsed.time, "%+")
+          if ts_err == null {
+            .timestamp = ts
+          }
+        }
       }
 
 sinks:

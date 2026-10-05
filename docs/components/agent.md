@@ -284,7 +284,16 @@ same source `certclient`'s `operating-refresh` already uses to know its own host
 sink's `encoding.codec: text` stores only each event's own log line (the app's slog JSON) as the
 shipped line text, since `binary`/`hostname`/`job_id`/`event`/`status` are already carried
 separately as Loki labels/structured metadata -- `codec: json` would instead wrap the whole Vector
-event, including those already-duplicated fields, into the stored line. See
+event, including those already-duplicated fields, into the stored line. The same remap step also
+overrides Vector's own `.timestamp` (which otherwise defaults to the moment Vector *read* the
+line) with the app's own `time` field parsed back out of that JSON, whenever it parses as a
+timestamp -- `api-server` and the web UI both sort and display log lines strictly by
+`.timestamp` (see [job-log-viewer](../superpowers/specs/2026-07-20-job-log-viewer-design.md)), so
+using Vector's read time there would show lines out of order any time a Vector process falls
+behind and catches up in a burst (restart, or the disk buffer's `when_full: block`
+backpressure), inconsistently across hosts/binaries. Falls back to Vector's read time whenever
+the line isn't JSON or `time` doesn't parse, same fallback `web/src/utils/logLine.js`'s
+`parseLogLine` already uses for malformed lines. See
 [Design: Fleet Log Aggregation](../superpowers/specs/2026-07-11-fleet-log-aggregation-design.md).
 
 ## Configuration Keys

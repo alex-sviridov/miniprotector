@@ -66,6 +66,22 @@ deletion that failed. See
 `docs/superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md` and the new
 `docs/protocols/jobstatus.md`.
 
+## 2026-08-23 — Job log lines ordered by app log time, not Vector read time
+
+Fixed job log lines occasionally appearing out of order in the web UI, with the displayed
+timestamp not matching the timestamp visible inside the log entry itself once expanded. Root
+cause: Vector's file source stamped each shipped line's `.timestamp` with the moment *it* read
+the line from disk, not the moment the app actually logged it (the `time` field slog's JSON
+handler already writes into every line) — and both `api-server` (`GET /jobs/{job_id}/logs`, the
+live tail) and the web UI sort and display strictly by that timestamp. Read time and log time are
+normally near-identical, but diverge — inconsistently across hosts and binaries — whenever a
+node's Vector process falls behind and catches up in a burst (an agent/Vector restart, or the
+disk buffer's `when_full: block` backpressure), which is what produced the visible reordering.
+`agent`'s Vector config (`cmd/agent/vector.go`) now parses the app's own `time` field back out of
+each line and overrides `.timestamp` with it, falling back to Vector's read time whenever a line
+isn't JSON or `time` doesn't parse — the same fallback the frontend's `parseLogLine` already uses
+for malformed lines.
+
 ## 2026-08-23 — E2E policy cleanup fixture
 
 Fixed a leaked e2e-test policy: `restore-verify.spec.js` created a verify-mode restore policy in
