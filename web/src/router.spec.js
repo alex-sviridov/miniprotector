@@ -10,6 +10,7 @@ const EXPECTED_NAMES = [
   'restore',
   'policies',
   'policy-detail',
+  'retention',
   'storage',
   'storage-detail',
   'jobs',

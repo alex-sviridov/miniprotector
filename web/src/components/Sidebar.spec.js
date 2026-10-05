@@ -12,6 +12,7 @@ function makeRouter() {
       { path: '/catalog', name: 'catalog', component: { template: '<div />' } },
       { path: '/restore', name: 'restore', component: { template: '<div />' } },
       { path: '/policies', name: 'policies', component: { template: '<div />' } },
+      { path: '/retention', name: 'retention', component: { template: '<div />' } },
       { path: '/storage', name: 'storage', component: { template: '<div />' } },
       { path: '/jobs', name: 'jobs', component: { template: '<div />' } },
     ],
@@ -41,6 +42,7 @@ describe('Sidebar', () => {
       { name: 'catalog' },
       { name: 'restore' },
       { name: 'policies' },
+      { name: 'retention' },
       { name: 'storage' },
       { name: 'jobs' },
     ])
@@ -50,7 +52,7 @@ describe('Sidebar', () => {
     const wrapper = mountSidebar()
     expect(wrapper.text()).toContain('Miniprotector')
     const links = wrapper.findAllComponents(RouterLinkStub)
-    expect(links).toHaveLength(6)
+    expect(links).toHaveLength(7)
     links.forEach((link) => {
       expect(link.find('svg').exists()).toBe(true)
     })
@@ -63,7 +65,7 @@ describe('Sidebar', () => {
 
     const wrapper = mountSidebar({ router })
     const links = wrapper.findAll('[data-test="nav-link"]')
-    expect(links).toHaveLength(6)
+    expect(links).toHaveLength(7)
 
     const activeLink = links[3]
     expect(activeLink.text()).toContain('Policies')
@@ -72,7 +74,7 @@ describe('Sidebar', () => {
     )
     expect(activeLink.classes()).not.toContain('pl-3')
 
-    const inactiveLinks = [links[0], links[1], links[2], links[4], links[5]]
+    const inactiveLinks = [links[0], links[1], links[2], links[4], links[5], links[6]]
     inactiveLinks.forEach((link) => {
       expect(link.classes()).toEqual(expect.arrayContaining(['text-slate-300', 'pl-3']))
       expect(link.classes()).not.toContain('bg-slate-800')

@@ -3,6 +3,7 @@ import IconClients from './icons/IconClients.vue'
 import IconCatalog from './icons/IconCatalog.vue'
 import IconRestore from './icons/IconRestore.vue'
 import IconPolicies from './icons/IconPolicies.vue'
+import IconRetention from './icons/IconRetention.vue'
 import IconStorage from './icons/IconStorage.vue'
 import IconJobs from './icons/IconJobs.vue'
 import { useRestoreCartStore } from '../stores/restoreCart'
@@ -14,6 +15,7 @@ const NAV_ITEMS = [
   { name: 'catalog', label: 'Catalog', icon: IconCatalog },
   { name: 'restore', label: 'Restore', icon: IconRestore },
   { name: 'policies', label: 'Policies', icon: IconPolicies },
+  { name: 'retention', label: 'Retention', icon: IconRetention },
   { name: 'storage', label: 'Storage', icon: IconStorage },
   { name: 'jobs', label: 'Jobs', icon: IconJobs },
 ]
