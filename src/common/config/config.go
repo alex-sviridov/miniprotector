@@ -110,6 +110,12 @@ type Config struct {
 	PolicyFetchIntervalSec           int
 	BackupWindowGraceSec             int
 	RetentionDefaultDays             int
+	StoreCleanupIntervalSec          int
+	StoreVacuumIntervalSec           int
+	StoreGCBatchSize                 int
+	StoreCleanupDryRun               bool
+	StoreIncompleteFileDataGraceSec  int
+	StoreDeletionLogRetentionSec     int
 	MaxConcurrentBackupJobs          int
 	LogGatewayHost                   string
 	LogGatewayPort                   int
@@ -169,6 +175,11 @@ func ParseConfig(configPath string) (*Config, error) {
 		PolicyFetchIntervalSec:           900,
 		BackupWindowGraceSec:             3600,
 		RetentionDefaultDays:             7,
+		StoreCleanupIntervalSec:          3600,
+		StoreVacuumIntervalSec:           86400,
+		StoreGCBatchSize:                 500,
+		StoreIncompleteFileDataGraceSec:  86400,
+		StoreDeletionLogRetentionSec:     2592000,
 		MaxConcurrentBackupJobs:          2,
 		LogGatewayPort:                   9400,
 		ClientManagerAdminAPIPort:        9501,
@@ -425,6 +436,38 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.RetentionDefaultDays = number
 			foundFields["RetentionDefaultDays"] = true
+		case "StoreCleanupIntervalSec", "StoreVacuumIntervalSec", "StoreIncompleteFileDataGraceSec", "StoreDeletionLogRetentionSec":
+			// 0 is meaningful for the two intervals (disables that loop) and
+			// harmless for the other two; only negatives are invalid.
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 0 {
+				return nil, fmt.Errorf("invalid %s value at line %d: %s", key, lineNum, value)
+			}
+			switch key {
+			case "StoreCleanupIntervalSec":
+				config.StoreCleanupIntervalSec = number
+			case "StoreVacuumIntervalSec":
+				config.StoreVacuumIntervalSec = number
+			case "StoreIncompleteFileDataGraceSec":
+				config.StoreIncompleteFileDataGraceSec = number
+			case "StoreDeletionLogRetentionSec":
+				config.StoreDeletionLogRetentionSec = number
+			}
+			foundFields[key] = true
+		case "StoreGCBatchSize":
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 1 {
+				return nil, fmt.Errorf("invalid StoreGCBatchSize value at line %d: %s", lineNum, value)
+			}
+			config.StoreGCBatchSize = number
+			foundFields["StoreGCBatchSize"] = true
+		case "StoreCleanupDryRun":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid StoreCleanupDryRun value at line %d: %s", lineNum, value)
+			}
+			config.StoreCleanupDryRun = b
+			foundFields["StoreCleanupDryRun"] = true
 		case "MaxConcurrentBackupJobs":
 			number, err := strconv.Atoi(value)
 			if err != nil {

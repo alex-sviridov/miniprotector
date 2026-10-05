@@ -719,3 +719,46 @@ func TestParseConfig_RetentionDefaultDaysParsesCorrectly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 30, conf.RetentionDefaultDays)
 }
+
+func parseStoreConf(t *testing.T, extra string) (*Config, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"+extra), 0o644))
+	return ParseConfig(path)
+}
+
+func TestParseConfig_StoreGCDefaults(t *testing.T) {
+	conf, err := parseStoreConf(t, "")
+	require.NoError(t, err)
+	assert.Equal(t, 3600, conf.StoreCleanupIntervalSec)
+	assert.Equal(t, 86400, conf.StoreVacuumIntervalSec)
+	assert.Equal(t, 500, conf.StoreGCBatchSize)
+	assert.False(t, conf.StoreCleanupDryRun)
+	assert.Equal(t, 86400, conf.StoreIncompleteFileDataGraceSec)
+	assert.Equal(t, 2592000, conf.StoreDeletionLogRetentionSec)
+}
+
+func TestParseConfig_StoreGCParsesEveryKey(t *testing.T) {
+	conf, err := parseStoreConf(t, "StoreCleanupIntervalSec=60\nStoreVacuumIntervalSec=0\nStoreGCBatchSize=50\nStoreCleanupDryRun=true\nStoreIncompleteFileDataGraceSec=7200\nStoreDeletionLogRetentionSec=3600\n")
+	require.NoError(t, err)
+	assert.Equal(t, 60, conf.StoreCleanupIntervalSec)
+	assert.Equal(t, 0, conf.StoreVacuumIntervalSec, "0 disables a loop")
+	assert.Equal(t, 50, conf.StoreGCBatchSize)
+	assert.True(t, conf.StoreCleanupDryRun)
+	assert.Equal(t, 7200, conf.StoreIncompleteFileDataGraceSec)
+	assert.Equal(t, 3600, conf.StoreDeletionLogRetentionSec)
+}
+
+func TestParseConfig_StoreGCRejectsInvalidValues(t *testing.T) {
+	for _, line := range []string{
+		"StoreCleanupIntervalSec=-1", "StoreCleanupIntervalSec=abc",
+		"StoreVacuumIntervalSec=-5",
+		"StoreGCBatchSize=0", "StoreGCBatchSize=-1",
+		"StoreCleanupDryRun=maybe",
+		"StoreIncompleteFileDataGraceSec=-1",
+		"StoreDeletionLogRetentionSec=-1",
+	} {
+		_, err := parseStoreConf(t, line+"\n")
+		assert.Error(t, err, line)
+	}
+}
