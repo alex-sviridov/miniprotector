@@ -11,6 +11,7 @@ func TestRoleRequirements_MatchesAuthorizationMatrix(t *testing.T) {
 	svc := pb.CatalogService_ServiceDesc.ServiceName
 	want := map[string][]string{
 		"/" + svc + "/SyncFileVersions":      {"store"},
+		"/" + svc + "/DeleteFileVersions":    {"store"},
 		"/" + svc + "/ListEntries":           {"control-plane"},
 		"/" + svc + "/ListClientFacets":      {"control-plane"},
 		"/" + svc + "/ListJobFacets":         {"control-plane"},

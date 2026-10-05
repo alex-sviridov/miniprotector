@@ -790,3 +790,45 @@ func TestSyncFileVersions_PersistsExpireAt(t *testing.T) {
 	assert.Equal(t, int64(1_700_000_000), *byObj["obj-1"].ExpireAt)
 	assert.Nil(t, byObj["obj-2"].ExpireAt)
 }
+
+func TestDeleteFileVersions_DeletesUnderPeerHostnameOnly(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
+		{StoreNode: "bwfs-a.internal", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a.internal", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b.internal", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+	}))
+
+	_, err := srv.DeleteFileVersions(fakeAuthContext(t, "bwfs-a.internal"), &pb.DeleteVersionsRequest{
+		Entries: []*pb.FileVersionRef{{JobId: "job-1", ObjectId: "obj-1"}},
+	})
+	require.NoError(t, err)
+
+	recs, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	var left []string
+	for _, r := range recs {
+		left = append(left, r.StoreNode+"/"+r.ObjectID)
+	}
+	assert.ElementsMatch(t, []string{"bwfs-a.internal/obj-2", "bwfs-b.internal/obj-1"}, left,
+		"another node's entry with the same ids must be untouched")
+}
+
+func TestDeleteFileVersions_IsIdempotent(t *testing.T) {
+	srv, _ := newTestCatalogServer(t)
+	req := &pb.DeleteVersionsRequest{Entries: []*pb.FileVersionRef{{JobId: "job-1", ObjectId: "never-synced"}}}
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	_, err := srv.DeleteFileVersions(ctx, req)
+	require.NoError(t, err)
+	_, err = srv.DeleteFileVersions(ctx, req)
+	require.NoError(t, err)
+}
+
+func TestDeleteFileVersions_NoPeerIdentityReturnsError(t *testing.T) {
+	srv, _ := newTestCatalogServer(t)
+	_, err := srv.DeleteFileVersions(context.Background(), &pb.DeleteVersionsRequest{
+		Entries: []*pb.FileVersionRef{{JobId: "j", ObjectId: "o"}},
+	})
+	require.Error(t, err)
+}

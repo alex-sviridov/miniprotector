@@ -565,3 +565,64 @@ func TestEnsureEntries_PersistsExpireAt(t *testing.T) {
 	assert.Equal(t, int64(1_700_000_000), *byObj["a"].ExpireAt)
 	assert.Nil(t, byObj["b"].ExpireAt)
 }
+
+func TestDeleteEntries_RemovesOnlyTheNamedEntriesOfThatStoreNode(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+	now := time.Now()
+	require.NoError(t, store.EnsureEntries(t.Context(), []Entry{
+		{StoreNode: "bwfs-a", JobID: "j1", ObjectID: "o1", StoreCreatedAt: now},
+		{StoreNode: "bwfs-a", JobID: "j1", ObjectID: "o2", StoreCreatedAt: now},
+		{StoreNode: "bwfs-a", JobID: "j2", ObjectID: "o1", StoreCreatedAt: now},
+		{StoreNode: "bwfs-b", JobID: "j1", ObjectID: "o1", StoreCreatedAt: now}, // same ids, other node
+	}))
+
+	n, err := store.DeleteEntries(t.Context(), "bwfs-a", []EntryRef{{JobID: "j1", ObjectID: "o1"}, {JobID: "j2", ObjectID: "o1"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(2), n)
+	recs, _, err := store.ListEntries(t.Context(), ListEntriesFilter{})
+	require.NoError(t, err)
+	var left []string
+	for _, r := range recs {
+		left = append(left, r.StoreNode+"/"+r.JobID+"/"+r.ObjectID)
+	}
+	assert.ElementsMatch(t, []string{"bwfs-a/j1/o2", "bwfs-b/j1/o1"}, left)
+}
+
+func TestDeleteEntries_UnknownEntriesAndEmptyBatchAreNoOps(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	n, err := store.DeleteEntries(t.Context(), "bwfs-a", []EntryRef{{JobID: "never", ObjectID: "synced"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n)
+
+	n, err = store.DeleteEntries(t.Context(), "bwfs-a", nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n)
+}
+
+func TestDeleteEntries_ManyRefsAreDeletedInOneCall(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+	var batch []Entry
+	var refs []EntryRef
+	for i := 0; i < 600; i++ { // more than one internal chunk
+		id := fmt.Sprintf("o%d", i)
+		batch = append(batch, Entry{StoreNode: "n", JobID: "j", ObjectID: id, StoreCreatedAt: time.Now()})
+		refs = append(refs, EntryRef{JobID: "j", ObjectID: id})
+	}
+	require.NoError(t, store.EnsureEntries(t.Context(), batch))
+
+	n, err := store.DeleteEntries(t.Context(), "n", refs)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(600), n)
+	count, err := store.Count(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count)
+}
