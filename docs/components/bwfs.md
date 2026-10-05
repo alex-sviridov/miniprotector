@@ -148,6 +148,7 @@ the same transaction. `catalogsync` replicates it so the catalog drops the versi
 | `StoreCleanupDryRun` | false | log what cleanup would delete, delete nothing |
 | `StoreIncompleteFileDataGraceSec` | 86400 | age after which online vacuum treats incomplete file data as abandoned |
 | `StoreDeletionLogRetentionSec` | 2592000 (30 days) | how long `catalogsync` has to consume deletions before they're pruned; `0` keeps them forever |
+| `grpc_window_bytes` | 0 (gRPC's dynamic default) | fixed HTTP/2 flow-control window in bytes (65536 – 1073741824), also read by `brfs` and `rwfs`; opt-in, see [performance tuning](../PERFORMANCE.md#grpc_window_bytes-config--http2-flow-control-window-off-by-default) |
 
 See [Backup Protocol](../protocols/backup.md) for the full RPC and lifecycle.
 

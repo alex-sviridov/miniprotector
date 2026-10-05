@@ -37,6 +37,7 @@ mpbench --bin-dir bin --files 500 --profile mixed --dup-ratio 0.3 \
 | `--window` | 0 | `--window` passed to `brfs`; `0` leaves `brfs`'s own default (see [brfs](brfs.md#sliding-window)) |
 | `--brfs-args` | | Extra arguments for `brfs`, space separated |
 | `--rwfs-args` | | Extra arguments for `rwfs restore`, space separated |
+| `--conf` | | Comma-separated `key=value` lines appended to the generated `local.conf`, e.g. `grpc_window_bytes=4194304,default_window=4`, so any config key can be tried |
 | `--sweep-window` | | Comma-separated `--window` values to compare, e.g. `1,4,8` (`0` = brfs default). Overrides `--window` |
 | `--sweep-streams` | | Comma-separated `--streams` values to compare, e.g. `2,4,8`. Overrides `--streams` |
 | `--sweep-rtt` | | Comma-separated `--rtt` values to compare, e.g. `0,20ms,100ms`. Overrides `--rtt` |
@@ -120,6 +121,7 @@ anywhere Go runs. It does not model jitter or loss; use `tc netem` for those.
 
 ## See Also
 
+- [Performance tuning](../PERFORMANCE.md) — what to adjust, with measurements from this tool
 - [brfs](brfs.md) — backup reader; the sliding window is what `--window` tunes
 - [bwfs](bwfs.md) — the storage server being driven
 - [rwfs](rwfs.md) — restore

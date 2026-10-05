@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — Performance tuning: stream and window defaults, opt-in gRPC window
+
+Using `mpbench` to look for the optimum, `default_window` is now 16 (the measured knee at 8 streams and
+50 ms RTT: −22% cold backup against window 4, nothing further at 32, no cost on a LAN), and the
+shipped demo config uses `default_streams=8`: at 50 ms RTT, 8 streams cut backup time by 42% against
+4 and by about 70% against 2 for small files, again with no cost on a LAN. `rwfs` used to hard-code 4
+streams for `verify` and `restore`; it now follows `default_streams` like `brfs` does. A new opt-in
+config key, `grpc_window_bytes`, fixes the gRPC flow-control window on `brfs`, `bwfs` and `rwfs`; it
+is off by default because the gain is small with several streams (−6% restore at 8 streams) and a
+window below the bandwidth-delay product is slower than gRPC's own dynamic sizing, but with one
+stream at 100 ms RTT a 4 MiB window cut restore by 24%. `mpbench` can now sweep window, streams and RTT
+in one command and set any config key (`--conf`). The new [performance tuning](docs/PERFORMANCE.md)
+page explains what to adjust and records the numbers, including an open finding: restore plateaus at
+about 12–13 MB/s at 50 ms RTT regardless of streams.
+
 ## 2026-10-05 — mpbench: end-to-end backup/restore benchmark
 
 New development tool `mpbench` runs the full cycle against the real `brfs`, `bwfs` and `rwfs`
@@ -19,7 +34,7 @@ one command and print a comparison table. It is a development aid, not part of t
 to `--window` chunks in flight, so a round trip is shared by the whole window instead of paid per
 chunk — what limited throughput on high-latency links and on incremental backups, where nearly every
 chunk is already stored and only hashes cross the wire. The default comes from the new `default_window`
-config key (8); the code's own default and `--window 1` are the previous one-chunk-at-a-time behavior.
+config key (16); the code's own default and `--window 1` are the previous one-chunk-at-a-time behavior.
 The window is static; sizing it automatically is in the backlog. The wire format is unchanged, but
 `bwfs` had to stop assuming chunks arrive in index order: it now rebuilds the file checksum in index
 order through a small bounded reorder buffer (memory scales with the window, not the file size) and

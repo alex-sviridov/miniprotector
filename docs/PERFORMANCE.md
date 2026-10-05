@@ -1,0 +1,154 @@
+# Performance tuning
+
+What can be adjusted to make backup and restore faster, what each knob does, and the values
+measured with [mpbench](components/mpbench.md). Defaults are chosen from those measurements; this
+page says when to move off them.
+
+## Why backup and restore are fast or slow
+
+- **Backup is a conversation.** For every chunk (64 KB) `brfs` asks `bwfs` "do you have this?", and
+  for a new chunk sends the data and waits for the confirmation. Each question costs a network round
+  trip, so on a link with latency the round trips, not the bandwidth, set the speed. Every file also
+  costs a few round trips of its own (announce the file, wait for the result).
+- **Restore is a stream.** `rwfs` asks for a file once and `bwfs` streams all its chunks back without
+  waiting, so restore is much less sensitive to latency. It still pays a round trip or more per file.
+- **On a fast network the limit moves to the machines:** hashing, writing chunk files and database
+  rows on the server. More streams or a larger window do nothing there.
+
+Rule of thumb: **latency makes things slow, parallelism hides it.** There are two kinds of
+parallelism, and they fix different problems.
+
+| Knob | Parallelism it adds | Fixes | Does nothing for |
+|---|---|---|---|
+| `--window` / `default_window` | chunks in flight **within one file**, per stream | big files, and runs where most chunks are already stored (only hashes cross the wire) | many small files (the window empties at every file boundary) |
+| `--streams` / `default_streams` | files in flight **at once** | many small files; also helps big files and restore | zero-latency links (no latency to hide) |
+
+## What to adjust
+
+### `--streams` (config `default_streams`) — many streams for small files
+
+Number of files `brfs` (backup) or `rwfs` (restore, verify) process concurrently. This is the knob
+for **small-file workloads**: each small file is one chunk, so the window never fills and each file
+costs about two round trips, regardless of window. More streams overlap those round trips.
+
+Measured at 50 ms RTT, mixed dataset (120 files, 59.8 MB):
+
+| streams | backup-cold | backup-warm | restore |
+|---|---|---|---|
+| 4 | 9.0 s | 5.8 s | 5.3 s |
+| 8 | 5.2 s (−42%) | 3.3 s (−42%) | 4.8 s (−11%) |
+| 16 | 4.6 s (−49%) | 3.0 s (−49%) | 4.7 s (−13%) |
+
+On 200 small files (1–32 KB) at 50 ms, 4 streams cut every phase by 49% and 8 streams by 73%
+against 2, close to linear. On a LAN (RTT 0) 4, 8 and 16 streams are the same within noise, so a higher value costs
+nothing there.
+
+- **Default:** `default_streams` is a required key in `local.conf`; the shipped demo config uses
+  **8**. `rwfs` now follows the same key (it used to hard-code 4); `--streams` overrides either tool.
+- **Raise it** for high-latency links and small files, up to about 16. Returns diminish quickly.
+- **Cost:** each stream is a gRPC stream and an open, locked source file; each is also a goroutine
+  on `bwfs`. Very high values mostly add contention.
+
+### `--window` (config `default_window`) — chunks in flight per stream
+
+How many chunks of one file a stream keeps in flight before waiting for replies (see
+[brfs sliding window](components/brfs.md#sliding-window)). `1` is the old stop-and-wait behaviour.
+
+Sizing: the window must cover the bandwidth-delay product, `RTT × throughput / 64 KB`. Measured at 8
+streams, 50 ms RTT, 200 Mbit/s cap:
+
+| window | backup-cold | backup-warm |
+|---|---|---|
+| 4 | 6.6 s | 3.95 s |
+| 8 | 5.4 s (−18%) | 3.5 s (−12%) |
+| 16 | 5.1 s (−22%) | 3.3 s (−16%) |
+| 32 | 5.2 s (−21%) | 3.2 s (−18%) |
+
+With one stream and no other parallelism the window is worth much more: at 50 ms RTT, `--window 8`
+cut a 60 MB cold backup from 54 s to 17 s and a warm (hash-only) backup from 32 s to 11 s.
+
+- **Default:** `default_window=16`, the knee in the measurements above. On a LAN, 8 vs 32 made no
+  difference (+1%).
+- **Raise it** for long, fast links (bandwidth × RTT large) and big files. **Lower it** (or use `1`)
+  to limit memory: chunks held are `streams × window × 64 KB` (8 × 16 × 64 KB = 8 MB).
+- A `bwfs` older than the sliding-window change requires `--window 1`.
+
+### `grpc_window_bytes` (config) — HTTP/2 flow-control window, off by default
+
+By default gRPC sizes its flow-control window dynamically. Setting `grpc_window_bytes` (in
+`local.conf`, applied by `brfs`, `bwfs` and `rwfs`) fixes it, in bytes (65536 – 1073741824, `0` = the
+default dynamic behaviour). It mostly helps **restore over a high-latency link with few streams**:
+one stream, 100 ms RTT, 28.7 MB restore: 3.23 s default, **2.44 s with 4 MiB (−24%)**.
+
+It is **off by default** because:
+
+- With more streams the gain is small: at 8 streams and 50 ms, any fixed size from 1 to 16 MiB gave
+  4.5 s against 4.8 s (−6%, near noise).
+- A fixed window smaller than the link's bandwidth-delay product is *slower* than the default (1 MiB
+  at 100 ms: 4.41 s against 3.23 s), and setting any value turns off gRPC's automatic sizing.
+
+Only set it after measuring: pick a value of at least `bandwidth × RTT` and confirm with
+`mpbench --conf grpc_window_bytes=<n>`.
+
+### Things that are not knobs (yet)
+
+- **Chunk size** is fixed at 64 KB (the protocol doc still says 512 KB; the code is authoritative).
+  Larger chunks would mean fewer round trips and fewer database rows; tracked as a possible change.
+- **Per-chunk server cost.** Even at zero latency, backup runs at about 12 MB/s against about 105
+  MB/s for restore; the cost is per-chunk work on the backup path, not the network. See
+  [issue #35](https://github.com/alex-sviridov/miniprotector/issues/35).
+- **Pipelining across files** would let one stream hide the per-file round trips that streams hide
+  today. See [issue #36](https://github.com/alex-sviridov/miniprotector/issues/36).
+- **Restore plateau (open finding).** At 50 ms RTT restore stops improving at about 12–13 MB/s
+  (about 4.7 s for 60 MB) from 8 streams up, whatever the window or `grpc_window_bytes`, while at
+  zero latency it takes 0.28 s. Something in the restore path still costs tens of round trips
+  that streams do not hide. The cause is not identified yet.
+
+## Net effect of the shipped defaults
+
+The code before the sliding window with the old shipped setting (4 streams, no window) against the
+current defaults (8 streams, window 16), same dataset and seed (120 files, 59.8 MB, `mixed`), median
+of 2 runs:
+
+| Network | Phase | Before | After | Change |
+|---|---|---|---|---|
+| 50 ms RTT, 200 Mbit/s | backup-cold | 28.0 s | 5.2 s | −82% |
+| | backup-warm | 16.7 s | 3.4 s | −80% |
+| | restore | 5.3 s | 4.8 s | −9% |
+| LAN (RTT 0) | backup-cold | 3.5 s | 3.7 s | +6% (within the ±6% run-to-run spread seen on a LAN) |
+| | backup-warm | 2.5 s | 2.6 s | +1% |
+| | restore | 0.32 s | 0.30 s | −6% |
+
+Bytes on the wire are unchanged: the gain is all latency hidden, none of it data saved.
+
+## How to measure your own link
+
+```bash
+make build mpbench
+# does latency matter here? compare a LAN profile with your link's RTT
+bin/mpbench --bin-dir bin --files 200 --profile small --sweep-rtt 0,20ms,80ms --window 16 --streams 8
+
+# how many streams? (small files are the stream-hungry case)
+bin/mpbench --bin-dir bin --files 200 --profile small --rtt 50ms --window 16 --sweep-streams 2,4,8,16
+
+# where is the window knee? (big files and warm backups are the window-hungry case)
+bin/mpbench --bin-dir bin --files 120 --profile mixed --rtt 50ms --bandwidth 200mbit --streams 8 --sweep-window 4,8,16,32
+
+# does a fixed gRPC window help restore on your link?
+bin/mpbench --bin-dir bin --files 6 --profile large --rtt 100ms --streams 1 --conf grpc_window_bytes=4194304
+```
+
+Use your real round-trip time (`ping`) for `--rtt` and your real bandwidth for `--bandwidth`; the
+datasets are synthetic, so treat results as relative, not absolute. See
+[mpbench](components/mpbench.md) for all options, and compare two builds with identical flags and the
+same `--seed`.
+
+## Quick reference
+
+| Symptom | Try |
+|---|---|
+| Slow backup of many small files over WAN | raise `default_streams` (8 → 16) |
+| Slow backup of big files, or warm backups, over WAN | raise `default_window` (16 → 32), check `--streams` |
+| Slow restore over a high-latency link with few streams | more streams first; then `grpc_window_bytes` ≥ bandwidth × RTT |
+| Backup slow even on a LAN | not network-bound; see issue #35 |
+| High memory on `brfs` | lower `default_window` or `default_streams` (`streams × window × 64 KB`) |

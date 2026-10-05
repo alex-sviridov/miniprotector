@@ -83,6 +83,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
 - **[Filesystem Backup Flow](docs/process/filesystem-backup.md)** - End-to-end walk-through of policy → agent → brfs → bwfs, including include/exclude filtering
 - **[Security Model](docs/SECURITY.md)** - mTLS, the two-tier bootstrap/operating credential model, and the revocation trust model
+- **[Performance tuning](docs/PERFORMANCE.md)** - what to adjust (streams, window, gRPC window) and measured values, with `mpbench`
 - **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
 - **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol

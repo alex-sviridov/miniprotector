@@ -19,7 +19,7 @@ brfs <source_folder> --destination <host:port>
 - `<source_folder>` - Directory to backup **(required)**
 - `--destination <host:port>` - Writer destination address **(required)**
 - `--streams <number>` - Number of concurrent streams *(default: config->default_streams)*
-- `--window <number>` - Max chunks in flight per stream; `1` sends one chunk at a time *(default: config->`default_window`, 8; built-in 1 if the config sets none)*
+- `--window <number>` - Max chunks in flight per stream; `1` sends one chunk at a time *(default: config->`default_window`, 16; built-in 1 if the config sets none)*
 - `--job-id <id>` - Backup job ID *(default: auto-generated UUID)*
 - `--include <patterns>` - Comma-separated glob patterns; only matching files are backed up *(default: `*`)*
 - `--exclude <patterns>` - Comma-separated glob patterns; matching files and directories are skipped *(default: none)*
@@ -63,7 +63,7 @@ and only hashes cross the wire. `--window 1` is the previous stop-and-wait behav
 
 Sizing: the window needs to cover the bandwidth-delay product, `RTT × throughput / chunk size`
 (chunks are 64 KB). On a LAN `1`–`2` is enough; across a WAN with tens of milliseconds of RTT,
-`8` or more helps, and a mostly-deduplicated backup (tiny hash-only requests) benefits from a
+`8`–`16` helps (the measured knee at 8 streams and 50 ms is about 16; see [performance tuning](../PERFORMANCE.md)), and a mostly-deduplicated backup (tiny hash-only requests) benefits from a
 larger window than one transferring new data. Past the knee a larger window only costs memory
 (`--streams × --window × 64 KB` of chunks held) and queueing delay. The window is per stream and
 within one file; it drains at the end of each file, so many tiny files see little gain. Set the

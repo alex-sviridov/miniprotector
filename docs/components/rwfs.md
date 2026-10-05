@@ -76,7 +76,7 @@ or stream error after retries). Per-file results and a summary are written via `
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--filter` | | Substring filter on file path |
-| `--streams` | 4 | Concurrent verification workers |
+| `--streams` | config `default_streams` (4 if unset) | Concurrent verification workers |
 | `--retries` | `RwfsRetries` config (default 3) | Max retry attempts per file on stream error |
 | `--quiet` | false | Suppress per-file success lines (warnings and summary always shown) |
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
@@ -179,7 +179,7 @@ reused regardless of it; it governs phase 2 (file content), as described above.
 |------|---------|--------------|
 | `--rules-stdin` | | **Required.** Read `{"rules":[...]}` from stdin -- same shape `verify --rules-stdin` uses. |
 | `--overwrite` | false | A pre-existing destination file is skipped when false, overwritten when true. Has no effect on directories (always reused) or on a non-file occupying a destination path (always a hard error). |
-| `--streams` | 4 | Concurrent file restore workers (phase 2 only; phase 1's directory creation is sequential) |
+| `--streams` | config `default_streams` (4 if unset) | Concurrent file restore workers (phase 2 only; phase 1's directory creation is sequential). Raising it hides per-file round trips on high-latency links; see [performance tuning](../PERFORMANCE.md) |
 | `--retries` | `RwfsRetries` config (default 3) | Max retry attempts per file on stream error |
 | `--quiet` | false | Suppress per-file resolved lines (warnings and summary always shown) |
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
