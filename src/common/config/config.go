@@ -109,6 +109,7 @@ type Config struct {
 	PolicyServerPort                 int
 	PolicyFetchIntervalSec           int
 	BackupWindowGraceSec             int
+	RetentionDefaultDays             int
 	MaxConcurrentBackupJobs          int
 	LogGatewayHost                   string
 	LogGatewayPort                   int
@@ -167,6 +168,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		PolicyServerPort:                 9300,
 		PolicyFetchIntervalSec:           900,
 		BackupWindowGraceSec:             3600,
+		RetentionDefaultDays:             7,
 		MaxConcurrentBackupJobs:          2,
 		LogGatewayPort:                   9400,
 		ClientManagerAdminAPIPort:        9501,
@@ -416,6 +418,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.BackupWindowGraceSec = number
 			foundFields["BackupWindowGraceSec"] = true
+		case "RetentionDefaultDays":
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 0 {
+				return nil, fmt.Errorf("invalid RetentionDefaultDays value at line %d: %s", lineNum, value)
+			}
+			config.RetentionDefaultDays = number
+			foundFields["RetentionDefaultDays"] = true
 		case "MaxConcurrentBackupJobs":
 			number, err := strconv.Atoi(value)
 			if err != nil {

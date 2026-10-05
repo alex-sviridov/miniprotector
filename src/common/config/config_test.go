@@ -701,3 +701,21 @@ func TestParseConfig_RwfsRetriesRejectsZeroOrNegative(t *testing.T) {
 	require.Error(t, err2)
 	assert.ErrorContains(t, err2, "must be positive")
 }
+
+func TestParseConfig_RetentionDefaultDaysDefaultsTo7(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 7, conf.RetentionDefaultDays)
+}
+
+func TestParseConfig_RetentionDefaultDaysParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRetentionDefaultDays=30\n"), 0o644))
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 30, conf.RetentionDefaultDays)
+}
