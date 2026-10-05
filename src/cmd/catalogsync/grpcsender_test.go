@@ -90,3 +90,16 @@ func TestGrpcSender_Send_RPCErrorPropagates(t *testing.T) {
 }
 
 var _ Sender = (*GrpcSender)(nil)
+
+func TestGrpcSender_Send_CarriesExpireAt(t *testing.T) {
+	fake := &fakeCatalogServer{}
+	sender := newTestGrpcSender(t, fake)
+	exp := int64(1_700_000_000)
+	require.NoError(t, sender.Send([]wfs.FileVersionRecord{
+		{Seq: 1, JobID: "j", ObjectID: "a", ExpireAt: &exp, CreatedAt: time.Now()},
+		{Seq: 2, JobID: "j", ObjectID: "b", CreatedAt: time.Now()},
+	}))
+	require.Len(t, fake.lastReq.Entries, 2)
+	assert.Equal(t, exp, fake.lastReq.Entries[0].ExpireAt)
+	assert.Equal(t, int64(0), fake.lastReq.Entries[1].ExpireAt)
+}

@@ -545,3 +545,23 @@ func TestSyncBatch_RollsBackEntriesIfDirectoriesInsertFails(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count, "entries insert must roll back when the directories insert fails")
 }
+
+func TestEnsureEntries_PersistsExpireAt(t *testing.T) {
+	store, err := New(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.EnsureEntries(t.Context(), []Entry{
+		{StoreNode: "n", JobID: "j", ObjectID: "a", ExpireAt: 1_700_000_000, StoreCreatedAt: time.Now()},
+		{StoreNode: "n", JobID: "j", ObjectID: "b", StoreCreatedAt: time.Now()},
+	}))
+	recs, _, err := store.ListEntries(t.Context(), ListEntriesFilter{})
+	require.NoError(t, err)
+	byObj := map[string]EntryRecord{}
+	for _, r := range recs {
+		byObj[r.ObjectID] = r
+	}
+	require.NotNil(t, byObj["a"].ExpireAt)
+	assert.Equal(t, int64(1_700_000_000), *byObj["a"].ExpireAt)
+	assert.Nil(t, byObj["b"].ExpireAt)
+}

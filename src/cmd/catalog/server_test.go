@@ -768,3 +768,25 @@ func TestSyncFileVersions_MalformedMetadataLogsError(t *testing.T) {
 	assert.Contains(t, logOutput, "job-1")
 	assert.Contains(t, logOutput, "obj-1")
 }
+
+func TestSyncFileVersions_PersistsExpireAt(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", ExpireAt: 1_700_000_000, CreatedAt: time.Now().Unix()},
+		{JobId: "job-1", ObjectId: "obj-2", CreatedAt: time.Now().Unix()},
+	}}
+	_, err := srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	recs, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	byObj := map[string]catalogstore.EntryRecord{}
+	for _, r := range recs {
+		byObj[r.ObjectID] = r
+	}
+	require.NotNil(t, byObj["obj-1"].ExpireAt)
+	assert.Equal(t, int64(1_700_000_000), *byObj["obj-1"].ExpireAt)
+	assert.Nil(t, byObj["obj-2"].ExpireAt)
+}

@@ -38,11 +38,16 @@ func NewGrpcSender(host string, port, timeoutSec int, certsDir string) (*GrpcSen
 func (s *GrpcSender) Send(batch []wfs.FileVersionRecord) error {
 	entries := make([]*pb.FileVersionEntry, len(batch))
 	for i, r := range batch {
+		var expire int64
+		if r.ExpireAt != nil {
+			expire = *r.ExpireAt
+		}
 		entries[i] = &pb.FileVersionEntry{
 			JobId:     r.JobID,
 			ObjectId:  r.ObjectID,
 			Metadata:  r.Metadata,
 			Ctime:     r.Ctime,
+			ExpireAt:  expire,
 			StoreSeq:  r.Seq,
 			CreatedAt: r.CreatedAt.Unix(),
 		}

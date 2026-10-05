@@ -48,6 +48,7 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 			ObjectID:        e.GetObjectId(),
 			Metadata:        e.GetMetadata(),
 			Ctime:           e.GetCtime(),
+			ExpireAt:        e.GetExpireAt(),
 			StoreSeq:        e.GetStoreSeq(),
 			StoreCreatedAt:  time.Unix(e.GetCreatedAt(), 0).UTC(),
 			SourceHost:      sourceHost,

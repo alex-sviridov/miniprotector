@@ -31,6 +31,7 @@ type Entry struct {
 	ObjectID        string
 	Metadata        []byte
 	Ctime           int64
+	ExpireAt        int64 // unix seconds; 0 = no expiry recorded / never expires
 	StoreSeq        int64
 	StoreCreatedAt  time.Time
 	SourceHost      string
@@ -53,12 +54,18 @@ func ensureEntries(db *gorm.DB, batch []Entry) error {
 	records := make([]EntryRecord, len(batch))
 	now := time.Now()
 	for i, e := range batch {
+		var expire *int64
+		if e.ExpireAt != 0 {
+			v := e.ExpireAt
+			expire = &v
+		}
 		records[i] = EntryRecord{
 			StoreNode:       e.StoreNode,
 			JobID:           e.JobID,
 			ObjectID:        e.ObjectID,
 			Metadata:        e.Metadata,
 			Ctime:           e.Ctime,
+			ExpireAt:        expire,
 			StoreSeq:        e.StoreSeq,
 			StoreCreatedAt:  e.StoreCreatedAt,
 			SourceHost:      e.SourceHost,
