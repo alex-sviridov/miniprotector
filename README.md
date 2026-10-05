@@ -71,6 +71,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[client-manager](docs/components/client-manager.md)** - Owns the enrolled-client list and mints enrollment tokens directly: descriptions, RBAC-bound attributes, SAN aliases, revoked status (control-plane component, runs on the CA host)
 - **[clientmanager-admin-api](docs/components/clientmanager-admin-api.md)** - CA-admin-equivalent gRPC writes (issue/revoke/description/attribute/SAN) onto client-manager's enrolled-client data, reachable via `api-server`
 - **[issuer](docs/components/issuer.md)** - Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares `client-manager`'s database (control-plane component, runs on the CA host)
+- **[mpbench](docs/components/mpbench.md)** - Development benchmark — runs the full backup → restore → verify cycle against the real `brfs`/`bwfs`/`rwfs` over an emulated network (RTT, bandwidth) and reports per-phase timings and wire bytes, for measuring the effect of protocol changes
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
 - **[policy-server](docs/components/policy-server.md)** - Serves backup policies filtered by a requesting client's hostname and attribute labels (control-plane component)

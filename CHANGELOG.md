@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — mpbench: end-to-end backup/restore benchmark
+
+New development tool `mpbench` runs the full cycle against the real `brfs`, `bwfs` and `rwfs`
+binaries — cold backup, warm (hash-only) backup, restore, then a byte-for-byte comparison of the
+restored tree — and reports per-phase time, throughput and wire bytes as a table and JSON. A
+built-in userspace proxy adds a configurable round-trip time and bandwidth cap, so latency-bound
+gains such as the `brfs` sliding window are visible without root or `tc`. Datasets are seeded and
+byte-identical between runs, and the JSON records the SHA-256 of the binaries used, so two builds can
+be compared fairly. It is a development aid, not part of the runtime topology.
+
 ## 2026-10-05 — Sliding window for brfs chunk transfer
 
 `brfs` no longer waits for a reply to every chunk before sending the next. Each stream now keeps up
