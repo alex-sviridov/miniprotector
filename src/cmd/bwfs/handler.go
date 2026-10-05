@@ -48,7 +48,41 @@ func newStreamHandler(ctx context.Context, logger *slog.Logger, store storage.Ba
 	return handler
 }
 
+// guardedStream releases the store operation guard (see
+// storage.BackupStore.BeginBackupOp) at the first Send, or when the handler
+// call returns, whichever comes first. Every handler finishes its store work
+// before it replies, so the guard only needs to cover that part; holding it
+// across a Send would let one client that has stopped reading keep a
+// scheduled cleanup/vacuum batch waiting -- and a waiting exclusive lock
+// blocks every other stream's next message too.
+type guardedStream struct {
+	pb.BackupService_ProcessBackupStreamServer
+	end func()
+}
+
+func (g *guardedStream) release() {
+	if g.end != nil {
+		g.end()
+		g.end = nil
+	}
+}
+
+func (g *guardedStream) Send(m *pb.FileResponse) error {
+	g.release()
+	return g.BackupService_ProcessBackupStreamServer.Send(m)
+}
+
+// guarded takes the store operation guard for one handler call and wraps
+// server so the guard is dropped before any reply goes out. The caller must
+// defer the returned stream's release.
+func (h *streamHandler) guarded(server pb.BackupService_ProcessBackupStreamServer) *guardedStream {
+	return &guardedStream{BackupService_ProcessBackupStreamServer: server, end: h.store.BeginBackupOp()}
+}
+
 func (h *streamHandler) handleRequest(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer, request *pb.FileRequest) error {
+	guarded := h.guarded(server)
+	defer guarded.release()
+	server = guarded
 	requestType := fmt.Sprintf("%T", request.RequestType)
 	handler, ok := h.handlerMap[requestType]
 	if !ok {
@@ -229,6 +263,9 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 }
 
 func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer) error {
+	guarded := h.guarded(server)
+	defer guarded.release()
+	server = guarded
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 
 	var buf [4]byte

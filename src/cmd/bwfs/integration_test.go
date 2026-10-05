@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
+	"lukechampine.com/blake3"
 	"net"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -39,9 +42,10 @@ const testCertsDir = "../../common/testdata/certs"
 
 // testEnv holds a live bwfs server + connected gRPC client for one test.
 type testEnv struct {
-	client  pb.BackupServiceClient
-	store   *backupServer
-	cleanup func()
+	client     pb.BackupServiceClient
+	store      *backupServer
+	cleanup    func()
+	storageDir string
 }
 
 func newTestEnvWithLogger(t *testing.T, logger *slog.Logger) *testEnv {
@@ -81,8 +85,9 @@ func newTestEnvWithLogger(t *testing.T, logger *slog.Logger) *testEnv {
 	require.NoError(t, err)
 
 	return &testEnv{
-		client: pb.NewBackupServiceClient(conn),
-		store:  srv,
+		client:     pb.NewBackupServiceClient(conn),
+		store:      srv,
+		storageDir: storageDir,
 		cleanup: func() {
 			conn.Close()
 			grpcSrv.GracefulStop()
@@ -910,4 +915,128 @@ func TestIntegration_ExpireAt_StoredForNewAndSkippedFiles(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s3.CloseSend())
 	assert.Nil(t, fileVersionExpireAt(t, env, "job-expiry-3", target.ID()))
+}
+
+// TestIntegration_ScheduledGC_NeverCorruptsConcurrentBackups runs cleanup and
+// vacuum back to back, as fast as possible, while backups are being taken --
+// the situation the store operation guard exists for. Each round backs up
+// files whose content is new that round (expired immediately) and then, in a
+// second job, the *same content under other names* plus the same files again
+// (permanent): the first job's chunks become orphans exactly while the second
+// job decides they "already exist" (dedup race) and while it re-observes
+// known files (known-file race). Whatever GC does, nothing a permanent
+// version references may be missing or damaged, and once everything has
+// settled nothing may be left over either.
+func TestIntegration_ScheduledGC_NeverCorruptsConcurrentBackups(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.cleanup()
+	store, ok := env.store.store.(*storagefs.Store)
+	require.True(t, ok)
+
+	stop := make(chan struct{})
+	gcDone := make(chan struct{})
+	go func() {
+		defer close(gcDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_, _ = store.CleanupExpired(context.Background(), time.Now(), 2, false)
+			_, _ = store.VacuumOnline(context.Background(), 2, time.Hour)
+		}
+	}()
+
+	const rounds = 25
+	root := t.TempDir()
+	backup := func(job string, expireAt int64, files []wfs.FileInfo) {
+		ctx := jobContext(job)
+		stream, err := env.client.ProcessBackupStream(ctx)
+		require.NoError(t, err)
+		var ids []string
+		for _, f := range files {
+			_, err := backupOneFileWithExpiry(ctx, t, stream, f, expireAt)
+			require.NoError(t, err)
+			ids = append(ids, f.ID())
+		}
+		require.NoError(t, stream.CloseSend())
+		_, err = stream.Recv()
+		require.ErrorIs(t, err, io.EOF)
+		resp, err := env.client.BackupCommit(ctx, &pb.BackupCommitRequest{FileListHash: commitHash(ids...)})
+		require.NoError(t, err)
+		require.True(t, resp.Success, "job %s must commit", job)
+	}
+	regular := func(dir string) []wfs.FileInfo {
+		all, err := wfs.Discover(dir, []string{"*"}, nil)
+		require.NoError(t, err)
+		var out []wfs.FileInfo
+		for _, f := range all {
+			if f.GetType() == 'f' && f.Size() > 0 {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+
+	for r := 0; r < rounds; r++ {
+		expDir := filepath.Join(root, fmt.Sprintf("exp-%d", r))
+		permDir := filepath.Join(root, fmt.Sprintf("perm-%d", r))
+		require.NoError(t, os.MkdirAll(expDir, 0o755))
+		require.NoError(t, os.MkdirAll(permDir, 0o755))
+		for k := 0; k < 3; k++ {
+			content := []byte(fmt.Sprintf("content-%d-%d, unique to this round", r, k))
+			require.NoError(t, os.WriteFile(filepath.Join(expDir, fmt.Sprintf("e%d.bin", k)), content, 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(permDir, fmt.Sprintf("p%d.bin", k)), content, 0o644))
+		}
+		expFiles := regular(expDir)
+		backup(fmt.Sprintf("exp-%d", r), time.Now().Unix()-10, expFiles)
+		backup(fmt.Sprintf("perm-%d", r), 0, append(regular(permDir), expFiles...))
+	}
+
+	close(stop)
+	<-gcDone
+
+	// Settle: one last cleanup + vacuum with nothing running.
+	_, err := store.CleanupExpired(context.Background(), time.Now(), 100, false)
+	require.NoError(t, err)
+	_, err = store.VacuumOnline(context.Background(), 100, time.Hour)
+	require.NoError(t, err)
+
+	// 1. Nothing a permanent version references is missing or damaged.
+	var permanent []storagefs.FileVersionRecord
+	require.NoError(t, store.RawDB().Where("expire_at IS NULL").Find(&permanent).Error)
+	require.Len(t, permanent, rounds*6, "every permanent version must have survived")
+	referenced := map[string]bool{}
+	for _, v := range permanent {
+		ok, err := store.FileDataExists(v.ObjectID)
+		require.NoError(t, err)
+		require.True(t, ok, "file data for %s was removed while a version still references it", v.ObjectID)
+		for hash, err := range store.FileDataChunks(v.ObjectID) {
+			require.NoError(t, err)
+			data, err := store.ReadChunk(hash)
+			require.NoError(t, err, "chunk %x of %s is missing", hash, v.ObjectID)
+			sum := blake3.Sum256(data)
+			require.Equal(t, hash, sum[:], "chunk content damaged")
+			referenced[hex.EncodeToString(hash)] = true
+		}
+	}
+
+	// 2. Nothing is left over: every chunk record and chunk file is
+	// referenced by a surviving version, and every expired version is gone.
+	var records []storagefs.ChunkRecord
+	require.NoError(t, store.RawDB().Find(&records).Error)
+	assert.Len(t, records, len(referenced), "chunk records leaked")
+	var onDisk int
+	chunksRoot := filepath.Join(env.storageDir, "chunks")
+	require.NoError(t, filepath.WalkDir(chunksRoot, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			onDisk++
+		}
+		return err
+	}))
+	assert.Equal(t, len(referenced), onDisk, "chunk files leaked")
+	var expired int64
+	require.NoError(t, store.RawDB().Model(&storagefs.FileVersionRecord{}).Where("expire_at IS NOT NULL").Count(&expired).Error)
+	assert.Equal(t, int64(0), expired)
 }

@@ -96,6 +96,7 @@ func main() {
 		}
 
 		go watchStaleJobs(signalCtx, backupServer, time.Duration(conf.JobTimeoutSec)*time.Second)
+		startStoreGC(signalCtx, logger, backupServer.store, gcSettingsFrom(conf))
 
 		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
 		if err != nil {
