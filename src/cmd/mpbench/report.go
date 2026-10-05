@@ -143,19 +143,40 @@ type ReportConfig struct {
 	Runs               int      `json:"runs"`
 }
 
+func configOf(a Args) ReportConfig {
+	return ReportConfig{
+		Files: a.Files, Profile: a.Profile, DupRatio: a.DupRatio, Seed: a.Seed,
+		RTTMillis: float64(a.RTT) / float64(time.Millisecond), BandwidthBytesPerS: a.Bandwidth,
+		Streams: a.Streams, Window: a.Window, BrfsArgs: a.BrfsArgs, RwfsArgs: a.RwfsArgs, Runs: a.Runs,
+	}
+}
+
 type ReportDataset struct {
 	Files int   `json:"files"`
 	Bytes int64 `json:"bytes"`
 }
 
+// VariantResult is the outcome of one swept configuration.
+type VariantResult struct {
+	Label   string
+	Args    Args
+	Runs    []RunResult
+	Summary []PhaseSummary
+}
+
+type VariantReport struct {
+	Label   string         `json:"label"`
+	Config  ReportConfig   `json:"config"`
+	Runs    []RunResult    `json:"runs"`
+	Summary []PhaseSummary `json:"summary"`
+}
+
 type Report struct {
 	Tool      string            `json:"tool"`
 	StartedAt time.Time         `json:"started_at"`
-	Config    ReportConfig      `json:"config"`
 	Dataset   ReportDataset     `json:"dataset"`
 	Binaries  map[string]string `json:"binaries_sha256"`
-	Runs      []RunResult       `json:"runs"`
-	Summary   []PhaseSummary    `json:"summary"`
+	Variants  []VariantReport   `json:"variants"`
 }
 
 func sha256File(path string) (string, error) {
@@ -173,7 +194,7 @@ func sha256File(path string) (string, error) {
 
 // BuildReport assembles the JSON record, including the SHA-256 of the three
 // binaries used so a comparison can show what was actually measured.
-func BuildReport(a *Args, started time.Time, runs []RunResult, sum []PhaseSummary) (Report, error) {
+func BuildReport(a *Args, started time.Time, variants []VariantResult) (Report, error) {
 	bins := map[string]string{}
 	for _, name := range []string{"brfs", "bwfs", "rwfs"} {
 		h, err := sha256File(filepath.Join(a.BinDir, name))
@@ -182,20 +203,13 @@ func BuildReport(a *Args, started time.Time, runs []RunResult, sum []PhaseSummar
 		}
 		bins[name] = h
 	}
-	rep := Report{
-		Tool:      "mpbench " + toolVersion,
-		StartedAt: started,
-		Config: ReportConfig{
-			Files: a.Files, Profile: a.Profile, DupRatio: a.DupRatio, Seed: a.Seed,
-			RTTMillis: float64(a.RTT) / float64(time.Millisecond), BandwidthBytesPerS: a.Bandwidth,
-			Streams: a.Streams, Window: a.Window, BrfsArgs: a.BrfsArgs, RwfsArgs: a.RwfsArgs, Runs: a.Runs,
-		},
-		Binaries: bins,
-		Runs:     runs,
-		Summary:  sum,
+	rep := Report{Tool: "mpbench " + toolVersion, StartedAt: started, Binaries: bins}
+	for _, v := range variants {
+		rep.Variants = append(rep.Variants, VariantReport{Label: v.Label, Config: configOf(v.Args), Runs: v.Runs, Summary: v.Summary})
 	}
-	if len(runs) > 0 {
-		rep.Dataset = ReportDataset{Files: runs[0].DatasetFiles, Bytes: runs[0].DatasetBytes}
+	if len(variants) > 0 && len(variants[0].Runs) > 0 {
+		r := variants[0].Runs[0]
+		rep.Dataset = ReportDataset{Files: r.DatasetFiles, Bytes: r.DatasetBytes}
 	}
 	return rep, nil
 }
@@ -206,4 +220,36 @@ func WriteJSON(path string, r Report) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// WriteComparison prints one row per phase and one column per variant with the
+// median wall time, and each later variant's change against the first. It
+// prints nothing for a single variant.
+func WriteComparison(w io.Writer, variants []VariantResult) {
+	if len(variants) < 2 {
+		return
+	}
+	fmt.Fprintf(w, "\ncomparison (median seconds, change vs %q):\n", variants[0].Label)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	header := "phase"
+	for _, v := range variants {
+		header += "\t" + v.Label
+	}
+	fmt.Fprintln(tw, header)
+	for i, base := range variants[0].Summary {
+		row := base.Name
+		for k, v := range variants {
+			if i >= len(v.Summary) {
+				row += "\t-"
+				continue
+			}
+			cell := fmt.Sprintf("%.2fs", v.Summary[i].MedianSeconds)
+			if k > 0 && base.MedianSeconds > 0 {
+				cell += fmt.Sprintf(" (%+.0f%%)", (v.Summary[i].MedianSeconds/base.MedianSeconds-1)*100)
+			}
+			row += "\t" + cell
+		}
+		fmt.Fprintln(tw, row)
+	}
+	tw.Flush()
 }

@@ -94,3 +94,25 @@ func TestParseBandwidth(t *testing.T) {
 		assert.Error(t, err, bad)
 	}
 }
+
+func TestParseArgs_SweepFlags(t *testing.T) {
+	a, err := parseArgs([]string{"--bin-dir", "/x", "--sweep-window", "1,4,8", "--sweep-streams", "2, 4", "--sweep-rtt", "10ms,50ms"}, io.Discard)
+	require.NoError(t, err)
+	assert.Equal(t, []int{1, 4, 8}, a.SweepWindows)
+	assert.Equal(t, []int{2, 4}, a.SweepStreams)
+	assert.Equal(t, []time.Duration{10 * time.Millisecond, 50 * time.Millisecond}, a.SweepRTTs)
+}
+
+func TestParseArgs_SweepRejectsBadLists(t *testing.T) {
+	for name, argv := range map[string][]string{
+		"non-numeric window": {"--bin-dir", "/x", "--sweep-window", "1,x"},
+		"zero streams":       {"--bin-dir", "/x", "--sweep-streams", "0,2"},
+		"negative window":    {"--bin-dir", "/x", "--sweep-window", "-1"},
+		"bad rtt":            {"--bin-dir", "/x", "--sweep-rtt", "fast"},
+		"negative rtt":       {"--bin-dir", "/x", "--sweep-rtt", "-5ms"},
+		"empty element":      {"--bin-dir", "/x", "--sweep-window", "1,,2"},
+	} {
+		_, err := parseArgs(argv, io.Discard)
+		assert.Error(t, err, name)
+	}
+}

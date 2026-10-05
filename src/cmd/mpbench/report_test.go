@@ -79,16 +79,41 @@ func TestWriteTable_ContainsPhasesAndHeader(t *testing.T) {
 	}
 }
 
+func variantOf(label string, a Args, runs ...RunResult) VariantResult {
+	return VariantResult{Label: label, Args: a, Runs: runs, Summary: Summarize(runs)}
+}
+
+func TestWriteComparison_ShowsDeltaVersusFirstVariant(t *testing.T) {
+	base := variantOf("window=1", Args{}, mkRun(1, 10, 4, 2))
+	fast := variantOf("window=8", Args{}, mkRun(1, 5, 1, 2))
+
+	var buf bytes.Buffer
+	WriteComparison(&buf, []VariantResult{base, fast})
+	out := buf.String()
+
+	for _, want := range []string{"window=1", "window=8", "backup-cold", "10.00s", "5.00s (-50%)", "1.00s (-75%)", "2.00s (+0%)"} {
+		assert.Contains(t, out, want)
+	}
+}
+
+func TestWriteComparison_SingleVariantPrintsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	WriteComparison(&buf, []VariantResult{variantOf("run", Args{}, mkRun(1, 1, 1, 1))})
+	assert.Empty(t, buf.String())
+}
+
 func TestBuildReportAndWriteJSON_RoundTrips(t *testing.T) {
 	bin := t.TempDir()
 	for _, n := range []string{"brfs", "bwfs", "rwfs"} {
 		require.NoError(t, os.WriteFile(filepath.Join(bin, n), []byte("binary "+n), 0o755))
 	}
-	a := &Args{BinDir: bin, Files: 10, Profile: "mixed", DupRatio: 0.3, Seed: 1, RTT: 50 * time.Millisecond,
-		Bandwidth: 12_500_000, Streams: 4, Window: 8, Runs: 2, BrfsArgs: []string{"--debug"}}
-	runs := []RunResult{mkRun(1, 2, 1, 4), mkRun(2, 3, 1, 5)}
+	a := &Args{BinDir: bin, Files: 10, Profile: "mixed", DupRatio: 0.3, Seed: 1, Runs: 2}
+	v1 := variantOf("window=1", Args{Files: 10, RTT: 50 * time.Millisecond, Bandwidth: 12_500_000, Streams: 4, Window: 1, Runs: 2, BrfsArgs: []string{"--debug"}},
+		mkRun(1, 2, 1, 4), mkRun(2, 3, 1, 5))
+	v8 := variantOf("window=8", Args{RTT: 50 * time.Millisecond, Streams: 4, Window: 8, Runs: 2},
+		mkRun(1, 1, 1, 4), mkRun(2, 1, 1, 5))
 
-	rep, err := BuildReport(a, time.Unix(1_700_000_000, 0), runs, Summarize(runs))
+	rep, err := BuildReport(a, time.Unix(1_700_000_000, 0), []VariantResult{v1, v8})
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "out.json")
 	require.NoError(t, WriteJSON(path, rep))
@@ -97,18 +122,23 @@ func TestBuildReportAndWriteJSON_RoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	var got Report
 	require.NoError(t, json.Unmarshal(raw, &got))
-	assert.Equal(t, 50.0, got.Config.RTTMillis)
-	assert.Equal(t, 8, got.Config.Window)
-	assert.Equal(t, []string{"--debug"}, got.Config.BrfsArgs)
 	assert.Equal(t, 10, got.Dataset.Files)
 	assert.Equal(t, int64(1_000_000), got.Dataset.Bytes)
 	assert.Len(t, got.Binaries, 3)
 	assert.Len(t, got.Binaries["brfs"], 64, "sha256 hex")
-	assert.Len(t, got.Runs, 2)
-	assert.Len(t, got.Summary, 3)
+
+	require.Len(t, got.Variants, 2)
+	assert.Equal(t, "window=1", got.Variants[0].Label)
+	assert.Equal(t, 50.0, got.Variants[0].Config.RTTMillis)
+	assert.Equal(t, 1, got.Variants[0].Config.Window)
+	assert.Equal(t, 8, got.Variants[1].Config.Window)
+	assert.Equal(t, []string{"--debug"}, got.Variants[0].Config.BrfsArgs)
+	assert.Equal(t, 10, got.Variants[0].Config.Files)
+	assert.Len(t, got.Variants[0].Runs, 2)
+	assert.Len(t, got.Variants[0].Summary, 3)
 }
 
 func TestBuildReport_MissingBinaryIsAnError(t *testing.T) {
-	_, err := BuildReport(&Args{BinDir: t.TempDir()}, time.Now(), nil, nil)
+	_, err := BuildReport(&Args{BinDir: t.TempDir()}, time.Now(), nil)
 	assert.Error(t, err)
 }

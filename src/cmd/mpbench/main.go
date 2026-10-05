@@ -36,28 +36,28 @@ func run(argv []string, stdout, stderr io.Writer) int {
 	logf := func(format string, v ...any) { fmt.Fprintf(stderr, format+"\n", v...) }
 
 	started := time.Now()
-	var runs []RunResult
-	for i := 1; i <= a.Runs; i++ {
-		logf("run %d/%d", i, a.Runs)
-		r, err := RunOnce(ctx, a, i, logf)
-		if err != nil {
-			fmt.Fprintf(stderr, "mpbench: run %d failed: %v\n", i, err)
-			return 1
+	variants := Variants(a)
+	var results []VariantResult
+	for vi, v := range variants {
+		var runs []RunResult
+		for i := 1; i <= v.Args.Runs; i++ {
+			logf("variant %d/%d [%s] run %d/%d", vi+1, len(variants), v.Label, i, v.Args.Runs)
+			r, err := RunOnce(ctx, &v.Args, i, logf)
+			if err != nil {
+				fmt.Fprintf(stderr, "mpbench: variant [%s] run %d failed: %v\n", v.Label, i, err)
+				return 1
+			}
+			runs = append(runs, *r)
 		}
-		runs = append(runs, *r)
+		sum := Summarize(runs)
+		WriteTable(stdout, tableHeader(&v.Args, v.Label, runs[0]), sum)
+		fmt.Fprintln(stdout)
+		results = append(results, VariantResult{Label: v.Label, Args: v.Args, Runs: runs, Summary: sum})
 	}
-
-	sum := Summarize(runs)
-	bw := "unlimited"
-	if a.Bandwidth > 0 {
-		bw = humanBytes(a.Bandwidth) + "/s"
-	}
-	header := fmt.Sprintf("dataset: %d files, %s (profile %s, dup %.2f, seed %d)   network: rtt %v, bandwidth %s   streams %d, window %d, runs %d",
-		runs[0].DatasetFiles, humanBytes(runs[0].DatasetBytes), a.Profile, a.DupRatio, a.Seed, a.RTT, bw, a.Streams, a.Window, a.Runs)
-	WriteTable(stdout, header, sum)
+	WriteComparison(stdout, results)
 
 	if a.JSONPath != "" {
-		rep, err := BuildReport(a, started, runs, sum)
+		rep, err := BuildReport(a, started, results)
 		if err == nil {
 			err = WriteJSON(a.JSONPath, rep)
 		}
@@ -68,4 +68,13 @@ func run(argv []string, stdout, stderr io.Writer) int {
 		logf("report written to %s", a.JSONPath)
 	}
 	return 0
+}
+
+func tableHeader(a *Args, label string, first RunResult) string {
+	bw := "unlimited"
+	if a.Bandwidth > 0 {
+		bw = humanBytes(a.Bandwidth) + "/s"
+	}
+	return fmt.Sprintf("[%s] dataset: %d files, %s (profile %s, dup %.2f, seed %d)   network: rtt %v, bandwidth %s   streams %d, window %d, runs %d",
+		label, first.DatasetFiles, humanBytes(first.DatasetBytes), a.Profile, a.DupRatio, a.Seed, a.RTT, bw, a.Streams, a.Window, a.Runs)
 }

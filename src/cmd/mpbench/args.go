@@ -25,6 +25,12 @@ type Args struct {
 	Runs      int
 	JSONPath  string
 	Keep      bool
+
+	// Sweeps run the full cycle once per value (or per combination); a swept
+	// dimension overrides its scalar flag.
+	SweepWindows []int
+	SweepStreams []int
+	SweepRTTs    []time.Duration
 }
 
 var validProfiles = map[string]bool{"small": true, "mixed": true, "large": true}
@@ -48,6 +54,10 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	fs.IntVar(&a.Runs, "runs", 3, "number of full cycles to run")
 	fs.StringVar(&a.JSONPath, "json", "", "also write the full report as JSON to this path")
 	fs.BoolVar(&a.Keep, "keep", false, "keep the work directory of each run")
+	var sweepWindow, sweepStreams, sweepRTT string
+	fs.StringVar(&sweepWindow, "sweep-window", "", "comma-separated --window values to compare, e.g. 1,4,8 (0 = brfs default)")
+	fs.StringVar(&sweepStreams, "sweep-streams", "", "comma-separated --streams values to compare, e.g. 2,4,8")
+	fs.StringVar(&sweepRTT, "sweep-rtt", "", "comma-separated --rtt values to compare, e.g. 0,20ms,100ms")
 	if err := fs.Parse(argv); err != nil {
 		return nil, err
 	}
@@ -57,6 +67,15 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 
 	var err error
 	if a.Bandwidth, err = parseBandwidth(bandwidth); err != nil {
+		return nil, err
+	}
+	if a.SweepWindows, err = parseIntList("--sweep-window", sweepWindow, 0); err != nil {
+		return nil, err
+	}
+	if a.SweepStreams, err = parseIntList("--sweep-streams", sweepStreams, 1); err != nil {
+		return nil, err
+	}
+	if a.SweepRTTs, err = parseDurationList("--sweep-rtt", sweepRTT); err != nil {
 		return nil, err
 	}
 	a.BrfsArgs = strings.Fields(brfsArgs)
@@ -108,4 +127,50 @@ func parseBandwidth(s string) (int64, error) {
 		return int64(n * u.mult), nil
 	}
 	return 0, fmt.Errorf("invalid bandwidth %q (use e.g. 100mbit, 1gbit, 10mbyte)", s)
+}
+
+func splitList(flagName, s string) ([]string, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, ",")
+	for i, p := range parts {
+		parts[i] = strings.TrimSpace(p)
+		if parts[i] == "" {
+			return nil, fmt.Errorf("%s: empty element in %q", flagName, s)
+		}
+	}
+	return parts, nil
+}
+
+func parseIntList(flagName, s string, min int) ([]int, error) {
+	parts, err := splitList(flagName, s)
+	if err != nil || parts == nil {
+		return nil, err
+	}
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < min {
+			return nil, fmt.Errorf("%s: %q must be an integer >= %d", flagName, p, min)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+func parseDurationList(flagName, s string) ([]time.Duration, error) {
+	parts, err := splitList(flagName, s)
+	if err != nil || parts == nil {
+		return nil, err
+	}
+	out := make([]time.Duration, 0, len(parts))
+	for _, p := range parts {
+		d, err := time.ParseDuration(p)
+		if err != nil || d < 0 {
+			return nil, fmt.Errorf("%s: %q must be a non-negative duration like 50ms", flagName, p)
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }

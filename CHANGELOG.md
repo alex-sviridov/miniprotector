@@ -10,7 +10,8 @@ restored tree — and reports per-phase time, throughput and wire bytes as a tab
 built-in userspace proxy adds a configurable round-trip time and bandwidth cap, so latency-bound
 gains such as the `brfs` sliding window are visible without root or `tc`. Datasets are seeded and
 byte-identical between runs, and the JSON records the SHA-256 of the binaries used, so two builds can
-be compared fairly. It is a development aid, not part of the runtime topology.
+be compared fairly. `--sweep-window`, `--sweep-streams` and `--sweep-rtt` run several configurations in
+one command and print a comparison table. It is a development aid, not part of the runtime topology.
 
 ## 2026-10-05 — Sliding window for brfs chunk transfer
 

@@ -37,6 +37,9 @@ mpbench --bin-dir bin --files 500 --profile mixed --dup-ratio 0.3 \
 | `--window` | 0 | `--window` passed to `brfs`; `0` leaves `brfs`'s own default (see [brfs](brfs.md#sliding-window)) |
 | `--brfs-args` | | Extra arguments for `brfs`, space separated |
 | `--rwfs-args` | | Extra arguments for `rwfs restore`, space separated |
+| `--sweep-window` | | Comma-separated `--window` values to compare, e.g. `1,4,8` (`0` = brfs default). Overrides `--window` |
+| `--sweep-streams` | | Comma-separated `--streams` values to compare, e.g. `2,4,8`. Overrides `--streams` |
+| `--sweep-rtt` | | Comma-separated `--rtt` values to compare, e.g. `0,20ms,100ms`. Overrides `--rtt` |
 | `--runs` | 3 | Number of full cycles; the report gives median, min and max |
 | `--json` | | Also write the full report to this path |
 | `--keep` | false | Keep each run's work directory (logs, store, restored tree) for inspection |
@@ -80,8 +83,8 @@ mpbench --bin-dir base/bin --files 300 --rtt 50ms --bandwidth 200mbit --seed 1 -
 mpbench --bin-dir new/bin  --files 300 --rtt 50ms --bandwidth 200mbit --seed 1 --json new.json
 ```
 
-Use **identical flags and the same `--seed`**, and compare the `summary` sections of the two JSON
-files. The JSON also records the SHA-256 of the three binaries used, so a comparison states exactly
+Use **identical flags and the same `--seed`**, and compare the `summary` sections of each variant in the two
+JSON files. The JSON also records the SHA-256 of the three binaries used, so a comparison states exactly
 what was measured. Extra flags reach the real binaries, so a tuning flag needs no rebuild:
 
 ```bash
@@ -91,6 +94,21 @@ mpbench --bin-dir bin --rtt 50ms --window 8 --json w8.json
 
 Run it with a non-zero `--rtt` when measuring anything latency-related: on loopback there is no
 latency to hide, so a window or pipelining change shows nothing.
+
+## Sweeps
+
+`--sweep-window`, `--sweep-streams` and `--sweep-rtt` run the full cycle once per value, or once per
+combination when several are given (nesting order: rtt, streams, window), all against the same dataset
+and the same binaries. Each variant gets its own table, followed by a comparison table: one row per
+phase, one column per variant, the median wall time and each later variant's change against the first.
+
+```bash
+mpbench --bin-dir bin --files 200 --profile small --rtt 50ms --window 8 --sweep-streams 2,4,8
+```
+
+The JSON has one entry per variant under `variants`, each with its own `config`, `runs` and `summary`.
+A sweep answers "where is the knee?" in one command; to compare two *builds*, run the tool once per
+build as described above.
 
 ## Network emulation
 
