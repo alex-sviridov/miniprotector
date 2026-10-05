@@ -21,8 +21,11 @@ type FileDataRecord struct {
 }
 
 type FileDataChunkRecord struct {
-	FileID    string `gorm:"primaryKey"`
-	ChunkHash string `gorm:"primaryKey"`
+	FileID string `gorm:"primaryKey"`
+	// ChunkHash is also indexed on its own: the primary key leads with
+	// file_id, so the "chunks no link references" anti-join (online vacuum)
+	// would otherwise scan the whole table every batch.
+	ChunkHash string `gorm:"primaryKey;index"`
 	Index     int64  `gorm:"primaryKey"`
 }
 
@@ -35,7 +38,7 @@ type FileVersionRecord struct {
 	Type       string // single char, from FileInfo.GetType() -- 'f', 'd', 'l', ...
 	Metadata   []byte
 	Ctime      int64
-	ExpireAt   *int64    // unix seconds; NULL = no expiry recorded / never expires
+	ExpireAt   *int64    `gorm:"index"` // unix seconds; NULL = no expiry recorded / never expires
 	CreatedAt  time.Time `gorm:"index:idx_file_version_object_created,priority:2"`
 }
 
@@ -46,3 +49,16 @@ type BackupJobRecord struct {
 	FinishedAt *time.Time
 	Status     string `gorm:"default:in_progress"`
 }
+
+// FileVersionDeletionRecord logs one deleted file version, written in the
+// same transaction as the delete itself (see deleteVersions). catalogsync
+// replicates the log so the catalog drops the version too; Seq is its
+// never-reused ordering key, like FileVersionRecord.Seq.
+type FileVersionDeletionRecord struct {
+	Seq       int64 `gorm:"primaryKey;autoIncrement"`
+	JobID     string
+	ObjectID  string
+	DeletedAt int64 `gorm:"index"` // unix seconds
+}
+
+func (FileVersionDeletionRecord) TableName() string { return "file_version_deletions" }

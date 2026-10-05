@@ -44,6 +44,7 @@ func openDB(basePath string) (*gorm.DB, error) {
 		&FileDataRecord{},
 		&FileDataChunkRecord{},
 		&FileVersionRecord{},
+		&FileVersionDeletionRecord{},
 		&BackupJobRecord{},
 	); err != nil {
 		sqlDB.Close()

@@ -113,3 +113,21 @@ func toStorageFileVersion(r *FileVersionRecord) *storage.FileVersion {
 		CreatedAt: r.CreatedAt,
 	}
 }
+
+// deleteVersions deletes the file_versions rows matching where inside tx and
+// records one file_version_deletions row per deleted version, so catalogsync
+// can tell the catalog. Every code path that removes a file version goes
+// through here -- a delete that skipped the log would leave a ghost version
+// in the catalog forever. Returns how many versions were deleted.
+func deleteVersions(tx *gorm.DB, where string, args ...any) (int64, error) {
+	logArgs := append([]any{time.Now().Unix()}, args...)
+	if err := tx.Exec(
+		"INSERT INTO file_version_deletions (job_id, object_id, deleted_at) "+
+			"SELECT job_id, object_id, ? FROM file_version_records WHERE "+where,
+		logArgs...,
+	).Error; err != nil {
+		return 0, fmt.Errorf("log version deletions: %w", err)
+	}
+	res := tx.Where(where, args...).Delete(&FileVersionRecord{})
+	return res.RowsAffected, res.Error
+}
