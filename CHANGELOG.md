@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — Retention policies and web UI
+
+Retention is now configurable. A new `retention` policy type holds one rule — which clients it
+applies to (the same host/label matching as every other policy), a backup type (`filesystem`), a
+path prefix, optional file-name globs, and how long to keep (`0` = forever) — and rules are
+evaluated in an explicit order where the first match wins. Order is managed by `policy-server`:
+a new rule is appended, edits keep its place, and a new `ReorderRetentionPolicies` RPC rewrites
+priorities from a complete ordered id list (rejecting an incomplete or stale one, so two operators
+can never silently clobber each other's rules). `agent` now feeds the rules that match its node into
+the per-job retention matrix introduced with expiry stamping, so `expire_at` reflects them instead of
+always being the 7-day default. `api-server` gained `POST /retention-policies`,
+`PUT /retention-policies/{id}` and `POST /retention-policies/reorder`, and the web UI a **Retention**
+page: rules in evaluation order, create/edit/delete, drag-and-drop or arrow reordering, and a fixed
+last row for the built-in default. Still nothing deletes data based on `expire_at`. See
+`docs/superpowers/specs/2026-10-05-retention-policies-design.md`.
+
 ## 2026-10-05 — Retention expiry stamping
 
 Every new file version now carries an `expire_at`, decided per file at backup time. When a backup

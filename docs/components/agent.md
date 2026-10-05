@@ -118,8 +118,11 @@ unconditionally is cut. `agent` logs the matrix once under the job's `job_id` as
 `retention_matrix` event, writes the same JSON to `<VarDir>/retention/<task>.json` (one file per
 task, overwritten each run) and appends `--retention-file <that path>` to the `brfs` args. If the
 file cannot be written the attempt fails with the usual backoff and `brfs` is not started. `brfs`
-applies the matrix per file; see [brfs](brfs.md#retention). Retention policies themselves don't
-exist yet, so today the matrix is always just the default row.
+applies the matrix per file; see [brfs](brfs.md#retention). The rules come from the cached `"retention"`-typed policies that target this node (`policy-server`
+has already matched their `client_filters`): those for `backup_type` `"filesystem"` that aren't
+disabled, sorted by ascending `priority` (ties by name), each becoming a row `{path prefix, include
+globs, keep}`; the built-in default is appended last. With no retention policies the matrix is just
+the default row. See [Policy Server](policy-server.md) for how rules are managed.
 
 A policy with an unparseable `rpo`, or no valid `backup_window` entry at all, contributes no tasks.
 A policy whose `destinations` is empty (its storage policy has no live checkins yet, or

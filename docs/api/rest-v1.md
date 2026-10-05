@@ -261,7 +261,7 @@ matching files of its own but does have matching descendants further down.
 
 Returns every policy, unfiltered by any client identity (unlike `policy-server`'s own `GetPolicies`
 RPC, which every mesh node calls and which is scoped to its own matching policies). Not paginated.
-Accepts an optional `?type=backup`, `?type=storage`, or `?type=restore` query parameter to restrict
+Accepts an optional `?type=backup`, `?type=storage`, `?type=restore`, or `?type=retention` query parameter to restrict
 the response to one policy type; omitted returns every type.
 
 ```json
@@ -297,7 +297,10 @@ recent check-in time (Unix seconds) -- not a full history, one entry per host. E
 host has polled yet. A restore/verify-typed policy also carries `"job_id"` (e.g.
 `"job_id": "restore:r1:1"`), generated synchronously at creation and stamped onto every later
 response for it -- a plain backup/storage policy never has one, and the field is omitted entirely
-rather than sent as `null` or empty.
+rather than sent as `null` or empty. A retention-typed policy carries its single rule as `"retention"`
+(`{"backup_type": "filesystem", "path": "/var/log", "include": ["*.log"], "keep_seconds": 2592000,
+"priority": 2}`, `include` omitted when empty), and `?type=retention` returns them in evaluation order
+(ascending `priority`); the field is omitted for every other type.
 
 ## `GET /api/v1/policies/{id}`
 
@@ -400,6 +403,42 @@ change. `400` on the same validation failures as `POST`. `404` if `id` doesn't m
 `client_filters` already must be) — omitting it (or sending `0`) clears it. Same known limitation as
 `PUT /api/v1/policies/{id}` above: the web UI's storage policy edit form doesn't read or send
 `disabled_at`, so an edit made through the UI always clears it.
+
+## `POST /api/v1/retention-policies`
+
+Creates a new `"retention"`-typed policy: one retention rule for the clients `client_filters`
+selects. Body:
+
+```json
+{
+  "name": "keep-logs",
+  "client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
+  "retention": {"backup_type": "filesystem", "path": "/var/log", "include": ["*.log"], "keep_seconds": 2592000}
+}
+```
+
+`retention.backup_type` must be `"filesystem"`; `path` an absolute, clean, slash-separated prefix
+without `..`; each `include` entry a valid glob without a `/` (file-name patterns only);
+`keep_seconds` non-negative, `0` meaning never expire. There is no `priority` input: the rule is
+appended after the existing ones and its server-assigned `priority` is returned in the response;
+use `POST /api/v1/retention-policies/reorder` to change order. Optional `disabled_at` (Unix seconds)
+behaves as for every other type. `201` with the created policy; `400` on a validation failure (no
+file is written).
+
+## `PUT /api/v1/retention-policies/{id}`
+
+Full replacement of an existing retention policy's editable fields (same body as `POST`); `priority`,
+`id`, `created_at` and `type` never change. `200` with the updated policy; `400` on the same
+validation failures as `POST`; `404` if `id` doesn't match any policy.
+
+## `POST /api/v1/retention-policies/reorder`
+
+Sets the evaluation order of retention policies. Body: `{"ids": ["<id>", ...]}` — **every**
+retention policy's id, exactly once, first-evaluated first. `policy-server` rewrites priorities
+`1..n` in that order and `200` returns `{"data": [...]}` — the policies in their new order. `400`
+if the list is missing a retention policy, names an unknown or non-retention id, or repeats one
+(nothing is changed), which is how a client whose view is stale learns to refetch. Delete a retention
+policy with `DELETE /api/v1/policies/{id}`.
 
 ## `POST /api/v1/restore`
 

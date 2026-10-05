@@ -133,6 +133,18 @@ no data — there's no read-only "guest" mode.
   re-fetches the policy). Edit and Delete buttons sit at the page level, outside the tabs; Edit opens
   `BackupPolicyFormModal` pre-filled with the policy's current values (both "Save" and "Run now" are
   available here). No separate `/policies/new` or `/policies/:id/edit` routes.
+- `/retention` — retention rules in evaluation order: position, name, which clients it applies to,
+  backup type, path (plus any file-name patterns), and how long to keep (`N days` / `Forever`), with
+  a fixed last row explaining the built-in default (7 days unless a node's `RetentionDefaultDays`
+  says otherwise). Rules are checked top to bottom and the first match decides retention; reorder by
+  dragging a row or with its up/down arrows, which sends the complete ordered id list to
+  `POST /retention-policies/reorder` — the list updates immediately and reverts (refetching, since the
+  rejection usually means another operator changed the set) with the error shown if the server
+  refuses. "New Retention Rule" and each row's Edit open `RetentionFormModal` (name, hostnames,
+  labels, backup type, path, optional file-name globs, keep in days or "Keep forever"; validation
+  mirrors `policy-server`'s — absolute path, no `..`, no `/` in a glob, whole days >= 1) and Delete
+  asks for confirmation. Its store is `stores/retentionPolicies.js`; form/display helpers live in
+  `utils/retentionRule.js`. See [Design: Retention Policies](../superpowers/specs/2026-10-05-retention-policies-design.md).
 - `/storage` — every storage policy (name, target hostname, port, storage type), with a "New Storage
   Policy" action opening `StorageEditModal` (fields: name, target hostname, port, storage type —
   `filesystem` only today — and, when `filesystem` is selected, a filesystem path) and clickable

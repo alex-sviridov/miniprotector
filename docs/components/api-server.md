@@ -87,6 +87,13 @@ fully type-agnostic, looking a policy up by `id` alone. `DELETE /policies/{id}` 
 type-specific behavior for storage policies: `policy-server` rejects the delete with `400` if the
 `id` names a storage policy still referenced by any backup policy.
 
+A `"retention"` policy (one retention rule, see [Policy Server](policy-server.md)) has its own
+endpoints too: `POST /retention-policies`, `PUT /retention-policies/{id}` (body `name`/
+`client_filters`/`retention: {backup_type, path, include, keep_seconds}`, no `priority`) and
+`POST /retention-policies/reorder` (the complete ordered `ids` list, forwarded to
+`ReorderRetentionPolicies`). `GET /policies?type=retention` returns them in evaluation order, each
+with its `retention` rule and server-assigned `priority`; delete is the shared `DELETE /policies/{id}`.
+
 `POST /policies/adhoc` creates a one-time backup policy from the same fields as an ordinary create
 (`name`/`client_filters`/`object_filters`/`storage_policy_id`) — `api-server` computes `backup_window`
 (every minute), `rpo`, and `disabled_at` itself from the `AdhocPolicyTimeoutSec` config value, so a
