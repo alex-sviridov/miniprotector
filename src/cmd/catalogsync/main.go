@@ -67,6 +67,7 @@ func main() {
 		defer closer.Close()
 	}
 	cursorFile := filepath.Join(arguments.StoragePath, "catalogsync.cursor")
+	deletionCursorFile := filepath.Join(arguments.StoragePath, "catalogsync-deletions.cursor")
 
 	cfg := syncConfig{
 		BatchSize:      conf.CatalogSyncBatchSize,
@@ -80,7 +81,7 @@ func main() {
 
 	logger.Info("catalogsync started", "storage_path", arguments.StoragePath, "batch_size", cfg.BatchSize)
 
-	if err := run(signalCtx, logger, replicaReader, sender, cursorFile, cfg); err != nil {
+	if err := run(signalCtx, logger, replicaReader, sender, cursorFile, deletionCursorFile, cfg); err != nil {
 		logger.Error("catalogsync exited with error", "error", err)
 		os.Exit(1)
 	}

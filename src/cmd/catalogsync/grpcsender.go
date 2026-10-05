@@ -62,6 +62,21 @@ func (s *GrpcSender) Send(batch []wfs.FileVersionRecord) error {
 	return nil
 }
 
+func (s *GrpcSender) SendDeletions(batch []wfs.FileVersionDeletionRecord) error {
+	entries := make([]*pb.FileVersionRef, len(batch))
+	for i, r := range batch {
+		entries[i] = &pb.FileVersionRef{JobId: r.JobID, ObjectId: r.ObjectID}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.timeoutSec)*time.Second)
+	defer cancel()
+
+	if _, err := s.client.DeleteFileVersions(ctx, &pb.DeleteVersionsRequest{Entries: entries}); err != nil {
+		return fmt.Errorf("DeleteFileVersions: %w", err)
+	}
+	return nil
+}
+
 func (s *GrpcSender) Close() error {
 	return s.conn.Close()
 }

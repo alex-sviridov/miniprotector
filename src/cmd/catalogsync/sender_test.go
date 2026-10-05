@@ -35,3 +35,17 @@ func TestLoggingSender_Send_EmptyBatchSucceeds(t *testing.T) {
 
 	assert.NoError(t, sender.Send(nil))
 }
+
+func TestLoggingSender_SendDeletions_LogsEveryRecordAndSucceeds(t *testing.T) {
+	var buf bytes.Buffer
+	sender := NewLoggingSender(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	require.NoError(t, sender.SendDeletions([]wfs.FileVersionDeletionRecord{
+		{Seq: 1, JobID: "job-1", ObjectID: "gone-1"},
+		{Seq: 2, JobID: "job-1", ObjectID: "gone-2"},
+	}))
+
+	assert.Contains(t, buf.String(), "gone-1")
+	assert.Contains(t, buf.String(), "gone-2")
+	assert.NoError(t, sender.SendDeletions(nil))
+}
