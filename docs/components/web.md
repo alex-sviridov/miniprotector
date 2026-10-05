@@ -163,7 +163,11 @@ no data — there's no read-only "guest" mode.
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
-- `/jobs/:job_id` — one job's log lines from the last 24h; each line is parsed from its underlying
+- `/jobs/:job_id` — one job's log lines from the last 24h (for a `cleanup:` / `vacuum:` job — `bwfs`'s
+  scheduled store maintenance — a banner above them summarizes the run from its finish line: versions
+  deleted and deletion-log entries pruned, or chunks/file data removed and bytes reclaimed, plus the
+  duration, "Dry run" for a cleanup that deleted nothing, or the error of a failed run;
+  restore/verify jobs have their own banner); each line is parsed from its underlying
   JSON via `LogLine.vue` into a level-colored `[LEVEL] time binary@hostname: message` summary, with
   the remaining fields (`job_id`, `event`, `status`, etc.) collapsed behind a click — a line that
   isn't valid JSON falls back to plain text

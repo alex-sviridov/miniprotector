@@ -18,7 +18,9 @@ cleanup/vacuum against concurrent backups reproduces that corruption without the
 (including a failed job's purged versions, previously left behind in the catalog) are logged in
 `bwfs` and replicated by `catalogsync` to a new `catalog.DeleteFileVersions` RPC, so the web UI never
 offers a version that no longer exists; an emptied directory may still appear in the catalog's
-directory list. Retention is plain `expire_at` semantics: a host that stops backing up loses its
+directory list. Every run appears as a job in the Jobs view (`cleanup:` / `vacuum:`, with start and finish
+statistics or the error, and a summary banner on the job page); hourly cleanups that find nothing expired
+are not listed. Retention is plain `expire_at` semantics: a host that stops backing up loses its
 backups once their retention passes. See
 `docs/superpowers/specs/2026-10-05-store-cleanup-vacuum-design.md`.
 

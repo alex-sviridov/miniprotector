@@ -99,8 +99,19 @@ While `bwfs server` runs, two background loops keep the store from only ever gro
 Both loops run in batches of `StoreGCBatchSize` rows (default 500), each batch one short
 transaction, so backups are paused for milliseconds, never for a whole run; the first run of each is
 one interval after startup, runs never overlap, a failure is logged and retried next tick (never
-fatal after startup), and an interval of `0` disables that loop. Each run logs one summary line
-(`event="store_cleanup"` / `"store_vacuum"`) with counts, bytes reclaimed and duration.
+fatal after startup), and an interval of `0` disables that loop.
+
+**Each run is a job in the Jobs view.** A run's `job_id` is `cleanup:<host>:<unix>` or
+`vacuum:<host>:<unix>` (the host keeps several stores' runs from colliding on the same second),
+logged with the same `event=start` / `event=finish` lines every other job uses — nothing more
+detailed than that. The finish line carries `status` (`success` / `failure`), `duration` and the
+run's statistics: cleanup `versions_expired`, `deletion_log_pruned` and `dry_run`; vacuum
+`incomplete_file_data_removed`, `orphaned_file_data_removed`, `orphaned_chunk_links_removed`,
+`orphaned_chunks_removed` and `bytes_reclaimed`. A failed run logs that line at Error level with
+`status=failure` and the `error` text. Vacuum is always a job (it runs daily, and "ran, reclaimed
+nothing" is worth seeing); cleanup is a job only when it has something to report — a cheap indexed
+count decides first, and an hourly run that finds nothing expired is just a Debug line, so it
+doesn't bury the jobs that matter. See [web](web.md) for how the job page shows them.
 `StoreCleanupDryRun=true` makes cleanup log how many versions it *would* delete without deleting
 anything — worth running first on an existing store.
 

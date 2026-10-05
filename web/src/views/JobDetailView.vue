@@ -9,7 +9,7 @@ import ConnectionStatus from '../components/ui/ConnectionStatus.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import LogLine from '../components/LogLine.vue'
 import { logKey, parseLogLine } from '../utils/logLine'
-import { formatBytes } from '../utils/format'
+import { formatBytes, formatDurationNs } from '../utils/format'
 
 const route = useRoute()
 const jobs = useJobsStore()
@@ -20,6 +20,47 @@ const kind = computed(() => {
   if (jobId.value.startsWith('verify:')) return 'verify'
   return null
 })
+
+// bwfs's scheduled store maintenance (cleanup/vacuum) is a job too: its own
+// event=finish line carries the statistics (or the error), so the banner
+// reads that line directly rather than a separate summary line.
+const maintenanceKind = computed(() => {
+  if (jobId.value.startsWith('cleanup:')) return 'cleanup'
+  if (jobId.value.startsWith('vacuum:')) return 'vacuum'
+  return null
+})
+
+const maintenanceFinish = computed(() => {
+  if (!maintenanceKind.value) return null
+  for (let i = jobs.logs.length - 1; i >= 0; i--) {
+    const parsed = parseLogLine(jobs.logs[i].line)
+    if (parsed.ok && parsed.fields.event === 'finish') return parsed.fields
+  }
+  return null
+})
+
+function plural(n, singular, pluralForm = `${singular}s`) {
+  return `${n} ${n === 1 ? singular : pluralForm}`
+}
+
+// maintenanceSummary renders one finished cleanup/vacuum run's finish-line
+// fields as a sentence; the failure case is handled by the template, which
+// shows the error text instead.
+const maintenanceSummary = computed(() => {
+  const f = maintenanceFinish.value
+  if (!f || f.status === 'failure') return ''
+  const took = ` (${formatDurationNs(f.duration)})`
+  if (maintenanceKind.value === 'cleanup') {
+    const n = f.versions_expired ?? 0
+    if (f.dry_run) return `Dry run — ${plural(n, 'version')} would be deleted, nothing was deleted${took}.`
+    const pruned = f.deletion_log_pruned ? `, ${plural(f.deletion_log_pruned, 'deletion-log entry', 'deletion-log entries')} pruned` : ''
+    return `Cleanup complete — ${plural(n, 'version')} deleted${pruned}${took}.`
+  }
+  const fileData = (f.incomplete_file_data_removed ?? 0) + (f.orphaned_file_data_removed ?? 0)
+  return `Vacuum complete — ${plural(f.orphaned_chunks_removed ?? 0, 'chunk')} removed, ${formatBytes(f.bytes_reclaimed ?? 0)} reclaimed, ${fileData} file data${took}.`
+})
+
+const maintenanceLabel = computed(() => (maintenanceKind.value === 'cleanup' ? 'Cleanup' : 'Vacuum'))
 
 // Scans newest-to-oldest for the last line whose parsed `msg` matches, and
 // picks the requested fields off it. Returns null if no such line has
@@ -94,6 +135,13 @@ function loadOlder() {
         ✅ Verify complete — {{ summary.verified }} file{{ summary.verified === 1 ? '' : 's' }} verified, {{ summary.warnings }} warning{{ summary.warnings === 1 ? '' : 's' }}.
       </span>
       <span v-else>✅ {{ kind === 'restore' ? 'Restore' : 'Verify' }} complete.</span>
+    </div>
+    <div v-if="maintenanceKind" data-test="maintenance-summary-banner" class="mb-4 rounded border px-3 py-2 text-sm">
+      <span v-if="!maintenanceFinish">⏳ {{ maintenanceLabel }} in progress.</span>
+      <span v-else-if="maintenanceFinish.status === 'failure'">
+        ❌ {{ maintenanceLabel }} failed — {{ maintenanceFinish.error }}
+      </span>
+      <span v-else>✅ {{ maintenanceSummary }}</span>
     </div>
     <div v-if="jobs.hasOlderLogs" class="mb-2">
       <BaseButton data-test="load-older" :disabled="jobs.logsOlderLoading" @click="loadOlder">

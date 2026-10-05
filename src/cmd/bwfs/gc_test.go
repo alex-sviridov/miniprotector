@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,20 +32,36 @@ func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard
 type spyStore struct {
 	storage.BackupStore
 	mu                        sync.Mutex
-	cleanups, vacuums, prunes int
+	cleanups, vacuums, prunes int // cleanups counts every CleanupExpired call, probes included
+	dryCalls                  int
 	dryRun                    bool
 	batch                     int
 	grace                     time.Duration
 	pruneOlderThan            time.Time
 	cleanupErr                error
+	vacuumErr                 error
+	expired                   int64 // versions CleanupExpired reports (default 3)
+	noExpired                 bool  // report 0 expired
 }
 
 func (s *spyStore) CleanupExpired(ctx context.Context, now time.Time, batch int, dryRun bool) (*storage.CleanupResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cleanups++
+	if dryRun {
+		s.dryCalls++
+	}
 	s.batch, s.dryRun = batch, dryRun
-	return &storage.CleanupResult{VersionsExpired: 3, DryRun: dryRun}, s.cleanupErr
+	n := int64(3)
+	if s.noExpired {
+		n = 0
+	} else if s.expired > 0 {
+		n = s.expired
+	}
+	if s.cleanupErr != nil && !dryRun {
+		return &storage.CleanupResult{DryRun: dryRun}, s.cleanupErr
+	}
+	return &storage.CleanupResult{VersionsExpired: n, DryRun: dryRun}, nil
 }
 
 func (s *spyStore) VacuumOnline(ctx context.Context, batch int, grace time.Duration) (*storage.VacuumResult, error) {
@@ -50,7 +69,10 @@ func (s *spyStore) VacuumOnline(ctx context.Context, batch int, grace time.Durat
 	defer s.mu.Unlock()
 	s.vacuums++
 	s.batch, s.grace = batch, grace
-	return &storage.VacuumResult{OrphanedChunksRemoved: 2, BytesReclaimed: 10}, nil
+	if s.vacuumErr != nil {
+		return &storage.VacuumResult{}, s.vacuumErr
+	}
+	return &storage.VacuumResult{OrphanedChunksRemoved: 2, OrphanedFileDataRemoved: 1, BytesReclaimed: 10}, nil
 }
 
 func (s *spyStore) PruneDeletionLog(ctx context.Context, olderThan time.Time) (int64, error) {
@@ -116,7 +138,7 @@ func TestStartStoreGC_RunsBothLoopsAtTheirOwnIntervals(t *testing.T) {
 	require.Eventually(t, func() bool { c, v, _ := spy.counts(); return v >= 1 && c >= 4 }, 3*time.Second, 5*time.Millisecond)
 	c, v, p := spy.counts()
 	assert.Greater(t, c, v, "cleanup is the frequent loop, vacuum the rare one")
-	assert.Equal(t, c, p, "the deletion log is pruned as part of each cleanup run")
+	assert.GreaterOrEqual(t, p, 1, "the deletion log is pruned as part of cleanup runs")
 	spy.mu.Lock()
 	assert.Equal(t, 25, spy.batch)
 	assert.Equal(t, 3*time.Hour, spy.grace)
@@ -141,7 +163,7 @@ func TestCleanupOnce_DryRunNeverPrunesTheLog(t *testing.T) {
 	cleanupOnce(context.Background(), quietLogger(), spy, gcSettings{BatchSize: 10, DryRun: true, DeletionLogRetention: time.Hour})
 
 	c, _, p := spy.counts()
-	assert.Equal(t, 1, c)
+	assert.Equal(t, 1, c, "a dry run is a single dry-run call, no separate probe")
 	assert.Equal(t, 0, p)
 	assert.True(t, spy.dryRun)
 }
@@ -225,4 +247,121 @@ func TestHandler_ReleasesStoreGuardBeforeSending(t *testing.T) {
 
 	close(stream.release)
 	require.NoError(t, <-handled)
+}
+
+// logLines parses the JSON log output into one map per line.
+func logLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, raw := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if raw == "" {
+			continue
+		}
+		var m map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &m))
+		out = append(out, m)
+	}
+	return out
+}
+
+func jsonLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+func byEvent(lines []map[string]any, event string) []map[string]any {
+	var out []map[string]any
+	for _, l := range lines {
+		if l["event"] == event {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func TestCleanupOnce_LogsAJobWithStartAndFinishStatistics(t *testing.T) {
+	var buf bytes.Buffer
+	spy := &spyStore{expired: 7}
+
+	cleanupOnce(context.Background(), jsonLogger(&buf), spy, gcSettings{BatchSize: 10, DeletionLogRetention: time.Hour})
+
+	lines := logLines(t, &buf)
+	starts, finishes := byEvent(lines, "start"), byEvent(lines, "finish")
+	require.Len(t, starts, 1)
+	require.Len(t, finishes, 1)
+	jobID, _ := starts[0]["job_id"].(string)
+	assert.Regexp(t, `^cleanup:[^:]+:\d+$`, jobID, "kind prefix, then host, then unix time")
+	assert.Equal(t, jobID, finishes[0]["job_id"])
+	assert.Equal(t, "success", finishes[0]["status"])
+	assert.Equal(t, float64(7), finishes[0]["versions_expired"])
+	assert.Equal(t, false, finishes[0]["dry_run"])
+	assert.Contains(t, finishes[0], "duration")
+}
+
+func TestCleanupOnce_NothingExpiredProducesNoJob(t *testing.T) {
+	var buf bytes.Buffer
+	spy := &spyStore{noExpired: true}
+
+	cleanupOnce(context.Background(), jsonLogger(&buf), spy, gcSettings{BatchSize: 10, DeletionLogRetention: time.Hour})
+
+	for _, l := range logLines(t, &buf) {
+		assert.NotContains(t, l, "job_id", "an hourly no-op run must not clutter the job list")
+		assert.NotContains(t, l, "event")
+	}
+	assert.Equal(t, 1, spy.dryCalls, "only the cheap probe ran, not a real cleanup")
+	_, _, prunes := spy.counts()
+	assert.Equal(t, 1, prunes, "the deletion log is still pruned")
+}
+
+func TestCleanupOnce_FailureFinishesTheJobWithTheError(t *testing.T) {
+	var buf bytes.Buffer
+	spy := &spyStore{cleanupErr: errors.New("database is locked")}
+
+	cleanupOnce(context.Background(), jsonLogger(&buf), spy, gcSettings{BatchSize: 10})
+
+	lines := logLines(t, &buf)
+	finishes := byEvent(lines, "finish")
+	require.Len(t, finishes, 1)
+	assert.Equal(t, "failure", finishes[0]["status"])
+	assert.Equal(t, "ERROR", finishes[0]["level"])
+	assert.Contains(t, finishes[0]["error"], "database is locked")
+	assert.Len(t, byEvent(lines, "start"), 1)
+}
+
+func TestCleanupOnce_DryRunJobSaysSoAndIsCountedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	spy := &spyStore{expired: 4}
+
+	cleanupOnce(context.Background(), jsonLogger(&buf), spy, gcSettings{BatchSize: 10, DryRun: true})
+
+	finishes := byEvent(logLines(t, &buf), "finish")
+	require.Len(t, finishes, 1)
+	assert.Equal(t, true, finishes[0]["dry_run"])
+	assert.Equal(t, float64(4), finishes[0]["versions_expired"], "the would-be count")
+}
+
+func TestVacuumOnce_LogsAJobWithStartAndFinishStatistics(t *testing.T) {
+	var buf bytes.Buffer
+
+	vacuumOnce(context.Background(), jsonLogger(&buf), &spyStore{}, gcSettings{BatchSize: 10})
+
+	lines := logLines(t, &buf)
+	starts, finishes := byEvent(lines, "start"), byEvent(lines, "finish")
+	require.Len(t, starts, 1)
+	require.Len(t, finishes, 1)
+	assert.Regexp(t, `^vacuum:[^:]+:\d+$`, starts[0]["job_id"])
+	assert.Equal(t, starts[0]["job_id"], finishes[0]["job_id"])
+	assert.Equal(t, "success", finishes[0]["status"])
+	assert.Equal(t, float64(2), finishes[0]["orphaned_chunks_removed"])
+	assert.Equal(t, float64(1), finishes[0]["orphaned_file_data_removed"])
+	assert.Equal(t, float64(10), finishes[0]["bytes_reclaimed"])
+}
+
+func TestVacuumOnce_RunsEvenWhenThereIsNothingToDoAndFailureFinishesTheJob(t *testing.T) {
+	var buf bytes.Buffer
+	vacuumOnce(context.Background(), jsonLogger(&buf), &spyStore{vacuumErr: errors.New("disk I/O error")}, gcSettings{BatchSize: 10})
+
+	finishes := byEvent(logLines(t, &buf), "finish")
+	require.Len(t, finishes, 1)
+	assert.Equal(t, "failure", finishes[0]["status"])
+	assert.Contains(t, finishes[0]["error"], "disk I/O error")
 }

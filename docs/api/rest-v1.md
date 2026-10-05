@@ -493,7 +493,7 @@ Query parameters (all optional):
 
 | Param | Type | Description |
 |-------|------|--------------|
-| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update`, `restore` |
+| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update`, `verify`, `restore`, `cleanup`, `vacuum` (the last two are `bwfs`'s scheduled store maintenance runs) |
 | `source_host` | string | Exact match on the job's start-line hostname. Must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
 | `state` | string | Exact match on the job's terminal status (e.g. `success`, `failure`); jobs still running never match, since they have no finish line yet |
 | `since` | int, unix seconds | Start of the query window, default `now - 24h` |

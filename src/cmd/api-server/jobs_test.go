@@ -782,3 +782,55 @@ func TestApplyFinish_DoesNotSetSourceHostForOtherKinds(t *testing.T) {
 	got := acc.ApplyFinish(jobEventLine{JobID: "operating-refresh:1752400500", Hostname: "web-01", Timestamp: 2000, Status: "success"})
 	assert.Empty(t, got.SourceHost)
 }
+
+func TestBinariesForKind_StoreMaintenanceJobsAreBwfsOnly(t *testing.T) {
+	assert.Equal(t, "bwfs", binariesForKind("cleanup"))
+	assert.Equal(t, "bwfs", binariesForKind("vacuum"))
+}
+
+func TestKindFromJobID_StoreMaintenanceJobs(t *testing.T) {
+	assert.Equal(t, "cleanup", kindFromJobID("cleanup:bwfs-east:1752400000"))
+	assert.Equal(t, "vacuum", kindFromJobID("vacuum:bwfs-east:1752400000"))
+}
+
+// A cleanup/vacuum run shows up in the Jobs list like any other job: paired
+// start/finish lines from the bwfs host, with the finish line's status as its
+// state, and selectable with ?kind=.
+func TestHandleListJobs_StoreMaintenanceKindsAreFilterableAndPaired(t *testing.T) {
+	for _, kind := range []string{"cleanup", "vacuum"} {
+		t.Run(kind, func(t *testing.T) {
+			jobID := kind + ":bwfs-east:1752400000"
+			fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+				`{binary=~"bwfs"} | event="start"`: {
+					{Stream: map[string]string{"hostname": "bwfs-east"}, Values: []lokiValue{
+						{Timestamp: 1752400000000000000, Metadata: map[string]string{"job_id": jobID}},
+					}},
+				},
+				`{binary=~"bwfs"} | event="finish"`: {
+					{Stream: map[string]string{"hostname": "bwfs-east"}, Values: []lokiValue{
+						{Timestamp: 1752400030000000000, Metadata: map[string]string{"job_id": jobID, "status": "success"}},
+					}},
+				},
+			}}
+			srv := newServer(nil, nil, nil, testLogger())
+			srv.loki = fake
+			mux := http.NewServeMux()
+			srv.registerRoutes(mux, "test-token")
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind="+kind, nil)
+			req.Header.Set("Authorization", "Bearer test-token")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			data := body["data"].([]any)
+			require.Len(t, data, 1)
+			job := data[0].(map[string]any)
+			assert.Equal(t, kind, job["kind"])
+			assert.Equal(t, "bwfs-east", job["source_host"])
+			assert.Equal(t, "success", job["state"])
+		})
+	}
+}

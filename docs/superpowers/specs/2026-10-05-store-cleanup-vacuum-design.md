@@ -108,8 +108,10 @@ The first run of each loop is one interval after startup (startup vacuum already
 ## Error handling and observability
 
 A failed run logs at Error and the loop continues on the next tick (never fatal after startup).
-Each run logs one summary line (`event="store_cleanup"` / `"store_vacuum"`) with counts, bytes
-reclaimed, duration and `dry_run`. Context cancellation (shutdown) stops between batches.
+Each run is a job in the Jobs view (`cleanup:<host>:<unix>` / `vacuum:<host>:<unix>`): an
+`event=start` line and an `event=finish` line carrying `status`, `duration` and the run's
+statistics, or the error (see the bwfs component doc). Cleanup is a job only when it has something
+to expire, so hourly no-op runs don't flood the list. Context cancellation (shutdown) stops between batches.
 
 ## Testing
 

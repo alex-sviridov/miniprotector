@@ -30,6 +30,11 @@ var validJobKinds = map[string]bool{
 	"policy-update":     true,
 	"verify":            true,
 	"restore":           true,
+	// bwfs's own scheduled store maintenance (cmd/bwfs/gc.go): one job per
+	// cleanup/vacuum run, logged by bwfs itself with the same start/finish
+	// events as every other job.
+	"cleanup": true,
+	"vacuum":  true,
 }
 
 // kindFromJobID derives a job's kind from its own id, per the prefix
@@ -56,6 +61,8 @@ func binariesForKind(kind string) string {
 		return "agent|policy-server"
 	case "bootstrap-refresh", "operating-refresh", "policy-update":
 		return "agent"
+	case "cleanup", "vacuum":
+		return "bwfs"
 	default:
 		return "agent|brfs|bwfs|policy-server"
 	}
@@ -278,7 +285,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	kind := q.Get("kind")
 	if kind != "" && !validJobKinds[kind] {
-		writeJSONError(w, http.StatusBadRequest, "kind must be one of backup, bootstrap-refresh, operating-refresh, policy-update, verify, restore")
+		writeJSONError(w, http.StatusBadRequest, "kind must be one of backup, bootstrap-refresh, operating-refresh, policy-update, verify, restore, cleanup, vacuum")
 		return
 	}
 	sourceHost := q.Get("source_host")
