@@ -25,6 +25,9 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 - Hashes are small (~32 bytes) → efficient to batch
 - Chunks are large (512KB) → individual sending avoids massive memory buffers
 
+**Why can several chunks be in flight on one stream?**
+- With one chunk at a time, every chunk costs a round trip; a client-side window of N chunks shares it. See [In-flight chunks](#in-flight-chunks-sliding-window)
+
 **Why dual integrity (BLAKE3 + CRC32)?**
 - **BLAKE3**: Ensures each chunk survives network transmission intact
 - **CRC32**: Verifies complete file assembly (correct order, no missing chunks)
@@ -123,6 +126,34 @@ commit (crash, network death):
 
 See [bwfs](../components/bwfs.md) for the schema and config key, and [brfs](../components/brfs.md)
 for the commit-with-retry behavior.
+
+### In-flight chunks (sliding window)
+
+`brfs --window N` lets a stream have up to N chunks in flight: it sends the `ChunkHash` for chunk
+*k+1* before it has seen the reply for chunk *k*, and sends a chunk's `ChunkData` when its
+`ChunkNeeded` reply arrives. **The wire format is unchanged**; what changes is what `bwfs` may
+assume about arrival order, and the contract is:
+
+- **Replies are in request order.** `bwfs` handles a stream's requests one at a time and answers
+  each in turn, so `brfs` matches the *n*-th reply to the *n*-th request that expects one. A
+  `ChunkNeeded` is owed for every `ChunkHash`; a `ChunkResult` for every `ChunkData`; after the last
+  chunk is accounted for the `FileProcessingResult` follows the reply to the request that completed
+  the file. `brfs` waits for that result before starting the next file on the stream, so only one
+  file is in flight per stream.
+- **Chunks are accounted for in arrival order, not index order.** A chunk `bwfs` already holds is
+  accounted for when its hash arrives; a new one when its data arrives. So with a window a stored
+  chunk can be accounted for ahead of an earlier chunk whose data is still in transit. `bwfs`
+  therefore folds each chunk's CRC32 into the whole-file CRC32 in index (byte-offset) order through a
+  reorder buffer, keeping only chunks that arrived ahead of a gap, and treats the file as complete
+  when the chunk flagged `eof` has been folded in — not when it merely arrives. Memory is bounded by
+  the window, never by file size; `bwfs` caps buffered chunks (`maxPendingChunks`, 1024) and rejects
+  a client that exceeds it.
+- **Index is a byte offset**, and each chunk is accounted for exactly once; a repeated or
+  already-passed index is an error. Identical chunks in one window (for example runs of zeros) are
+  fine — they are matched by position, and storing the same chunk twice is idempotent.
+
+A `bwfs` older than this change requires `--window 1`: it folds chunks in arrival order and would
+finalize a file early or compute the wrong file CRC.
 
 Note on the sequence diagram below: the `START_STREAM:jobId:streamId` step shown there is
 conceptual — in the actual gRPC transport this is the `job-id` metadata described above, attached

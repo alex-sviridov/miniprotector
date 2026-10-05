@@ -54,6 +54,15 @@ had. This matters for [agent](./agent.md#storage-policy-supervision), which supe
 server` process per storage policy targeting this node and routinely sends it `SIGTERM` (on its own
 shutdown, or when a storage policy is edited/removed).
 
+#### Chunk ordering within a file
+
+`brfs` may have several chunks of one file in flight (see
+[brfs sliding window](brfs.md#sliding-window)), so a chunk already stored can be accounted for ahead
+of an earlier chunk whose data has not arrived yet. Per file, `bwfs` folds chunk CRCs into the file
+checksum in index order through a small reorder buffer (`chunkOrder`): only chunks ahead of a gap are
+held, at most `maxPendingChunks` (1024) of them, and the file is finalized once the `eof` chunk has
+been folded in. See [Backup Protocol](../protocols/backup.md#in-flight-chunks-sliding-window).
+
 #### Backup Job Tracking & Completion Verification
 
 Every stream `bwfs` accepts must carry `job-id` gRPC metadata (sent by `brfs` — see

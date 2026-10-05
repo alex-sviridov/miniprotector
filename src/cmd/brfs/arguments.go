@@ -27,6 +27,7 @@ func splitPatterns(raw string) []string {
 var (
 	destination   string
 	streams       int
+	windowFlag    int
 	debug         bool
 	quiet         bool
 	jobIDFlag     string
@@ -41,12 +42,22 @@ type Arguments struct {
 	WriterHost    string
 	WriterPort    int
 	Streams       int
+	Window        int
 	Debug         bool
 	Quiet         bool
 	JobID         string
 	Include       []string
 	Exclude       []string
 	RetentionFile string
+}
+
+// windowDefault is the --window default: the configured default_window, or
+// the built-in defaultWindow when the config does not provide one.
+func windowDefault(conf *config.Config) int {
+	if conf.DefaultWindow < 1 {
+		return defaultWindow
+	}
+	return conf.DefaultWindow
 }
 
 // parseArguments uses Cobra to parse command line arguments
@@ -61,6 +72,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	// Add flags
 	cmd.Flags().StringVar(&destination, "destination", "", "Writer destination in format host:port")
 	cmd.Flags().IntVar(&streams, "streams", conf.DefaultStreams, "Number of streams")
+	cmd.Flags().IntVar(&windowFlag, "window", windowDefault(conf), "Max chunks in flight per stream (1 = send one chunk at a time)")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress stdout logging")
 	cmd.Flags().StringVar(&jobIDFlag, "job-id", "", "Backup job ID (auto-generated if omitted)")
@@ -101,11 +113,16 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		return nil, fmt.Errorf("streams error: %w", err)
 	}
 
+	if windowFlag < 1 {
+		return nil, fmt.Errorf("window error: must be at least 1, got %d", windowFlag)
+	}
+
 	return &Arguments{
 		SourceFolder:  validatedSourceFolder,
 		WriterHost:    host,
 		WriterPort:    port,
 		Streams:       streams,
+		Window:        windowFlag,
 		Debug:         debug,
 		Quiet:         quiet,
 		JobID:         jobIDFlag,

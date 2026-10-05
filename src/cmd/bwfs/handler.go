@@ -6,11 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"hash/crc32"
 	"log/slog"
 
-	"github.com/alex-sviridov/miniprotector/common/checksum"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/storage"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
@@ -21,15 +19,15 @@ import (
 type RequestHandlerFunc func(context.Context, pb.BackupService_ProcessBackupStreamServer, *pb.FileRequest) error
 
 type streamHandler struct {
-	config             *config.Config
-	store              storage.BackupStore
-	logger             *slog.Logger
-	jobID              string
-	currentFile        *filesystem.FileInfo
-	currentExpireAt    int64       // client-computed expiry for currentFile, from FileInfo.expire_at
-	fileChecksumHasher hash.Hash32 // incremental CRC32 over chunk checksums
-	EOF                bool
-	handlerMap         map[string]RequestHandlerFunc
+	config          *config.Config
+	store           storage.BackupStore
+	logger          *slog.Logger
+	jobID           string
+	currentFile     *filesystem.FileInfo
+	currentExpireAt int64       // client-computed expiry for currentFile, from FileInfo.expire_at
+	order           *chunkOrder // folds chunk CRCs into the file CRC32 in index order
+	EOF             bool
+	handlerMap      map[string]RequestHandlerFunc
 }
 
 func newStreamHandler(ctx context.Context, logger *slog.Logger, store storage.BackupStore, jobID string) *streamHandler {
@@ -103,7 +101,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 	}
 	h.currentFile = fileInfo
 	h.currentExpireAt = fi.GetExpireAt()
-	h.fileChecksumHasher = crc32.NewIEEE()
+	h.order = newChunkOrder()
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 	fileLogger.Debug("Received file metadata", "file_info", fmt.Sprintf("%s", h.currentFile))
 
@@ -149,7 +147,7 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		// Reset state before sending responses — fileWritten must not be called for skip-path
 		// files because no FileDataRecord was created and fileWritten would create a duplicate FileVersion.
 		fileID := fi.FileId
-		h.fileChecksumHasher = nil
+		h.order = nil
 		h.currentFile = nil
 		h.EOF = false
 		// brfs always calls getFileStatus after sendFileMetadata, so we must send both
@@ -199,9 +197,13 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 		}
 	} else {
 		needed = false
-		// Chunk already stored — feed its checksum into the running file hash.
+		// Chunk already stored — account for its checksum in the file hash.
 		// brfs sent the checksum alongside the hash so we don't need the data.
-		checksum.FeedChunk(h.fileChecksumHasher, chunk.Checksum)
+		// With a window it may arrive ahead of an earlier chunk whose data is
+		// still in flight; chunkOrder restores index order.
+		if err := h.order.add(chunk.Index, chunk.Size, chunk.Checksum, chunk.Eof); err != nil {
+			return err
+		}
 		// Must still link this chunk to the current file even though the data is
 		// already stored; without this the restore server can't find it later.
 		if err := h.store.LinkChunkToFileData(chunk.Hash, h.currentFile.ID(), chunk.Index); err != nil {
@@ -219,9 +221,7 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 			},
 		},
 	}
-	if chunk.Eof && !needed {
-		h.EOF = true
-	}
+	h.EOF = h.order.done
 	return server.Send(response)
 }
 
@@ -239,7 +239,9 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 		return err
 	}
 	// Compute CRC32 from the received data — the authoritative source for new chunks.
-	checksum.FeedChunk(h.fileChecksumHasher, crc32.ChecksumIEEE(chunk.Data))
+	if err := h.order.add(chunk.Index, int64(len(chunk.Data)), crc32.ChecksumIEEE(chunk.Data), chunk.Eof); err != nil {
+		return err
+	}
 	chunkLogger.Debug("Chunk written")
 
 	if err := h.store.LinkChunkToFileData(chunk.Hash, h.currentFile.ID(), chunk.Index); err != nil {
@@ -255,8 +257,8 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 			},
 		},
 	}
-	if chunk.Eof {
-		chunkLogger.Debug("EOF received")
+	if h.order.done {
+		chunkLogger.Debug("All chunks received")
 		h.EOF = true
 	}
 	return server.Send(response)
@@ -269,7 +271,7 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 
 	var buf [4]byte
-	binary.BigEndian.PutUint32(buf[:], h.fileChecksumHasher.Sum32())
+	binary.BigEndian.PutUint32(buf[:], h.order.sum32())
 	fileHash := buf[:]
 
 	if err := h.store.FinalizeFileData(h.currentFile.ID(), fileHash); err != nil {
@@ -298,7 +300,7 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 			},
 		},
 	})
-	h.fileChecksumHasher = nil
+	h.order = nil
 	h.currentFile = nil
 	h.EOF = false
 	return message

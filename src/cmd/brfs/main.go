@@ -73,6 +73,7 @@ func main() {
 		"writerHost", arguments.WriterHost,
 		"writerPort", arguments.WriterPort,
 		"streamsCount", arguments.Streams,
+		"window", arguments.Window,
 		"event", "start",
 	)
 
@@ -115,7 +116,7 @@ func main() {
 	logger.Info("Connected to server")
 
 	// Process files using shared gRPC connection
-	resultsCh := processFilesList(ctx, logger, client, filesList, arguments.Streams, st)
+	resultsCh := processFilesList(ctx, logger, client, filesList, arguments.Streams, arguments.Window, st)
 	for result := range resultsCh {
 		// Process each result as it arrives
 		filesBackupState[result.FileID] = result.Success

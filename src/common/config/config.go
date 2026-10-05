@@ -82,6 +82,7 @@ func ResolveVarDir(cfg *Config) (string, error) {
 type Config struct {
 	DefaultPort                      int
 	DefaultStreams                   int
+	DefaultWindow                    int // brfs: max in-flight chunks per stream (--window default)
 	LogDir                           string
 	ClientHashQueryBatchSize         int
 	ConnectionTimeOutSec             int
@@ -189,6 +190,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		RestoreCleanupIntervalSec:        300,
 		RestoreCleanupGracePeriodSec:     900,
 		RwfsRetries:                      3,
+		DefaultWindow:                    8,
 	}
 	foundFields := make(map[string]bool)
 
@@ -227,6 +229,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.DefaultStreams = streams
 			foundFields["default_streams"] = true
+		case "default_window":
+			window, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid default_window value at line %d: %s", lineNum, value)
+			}
+			if window <= 0 {
+				return nil, fmt.Errorf("default_window must be positive at line %d: %s", lineNum, value)
+			}
+			config.DefaultWindow = window
+			foundFields["default_window"] = true
 		case "log_dir":
 			config.LogDir = value
 			foundFields["log_dir"] = true

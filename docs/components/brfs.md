@@ -19,6 +19,7 @@ brfs <source_folder> --destination <host:port>
 - `<source_folder>` - Directory to backup **(required)**
 - `--destination <host:port>` - Writer destination address **(required)**
 - `--streams <number>` - Number of concurrent streams *(default: config->default_streams)*
+- `--window <number>` - Max chunks in flight per stream; `1` sends one chunk at a time *(default: config->`default_window`, 8; built-in 1 if the config sets none)*
 - `--job-id <id>` - Backup job ID *(default: auto-generated UUID)*
 - `--include <patterns>` - Comma-separated glob patterns; only matching files are backed up *(default: `*`)*
 - `--exclude <patterns>` - Comma-separated glob patterns; matching files and directories are skipped *(default: none)*
@@ -50,6 +51,32 @@ brfs /var/log --destination localhost:8080 --debug --streams 5
 `agent`'s policy-driven backup tasks (see [agent](./agent.md#policy-driven-backup-execution)) use
 the job-id convention `backup:<policy-name>:<slug-of-path>:<short-filter-id>:<unix-timestamp>` — useful when grepping
 `bwfs`'s job history for which policy produced a given run.
+
+## Sliding window
+
+Each stream keeps up to `--window` chunks in flight at once instead of waiting for a reply to every
+chunk before sending the next. A chunk occupies a window slot from the moment its hash is sent until
+`bwfs` either says it already has the chunk or confirms the chunk's data; the slot is then free for
+the next chunk. A round trip is thereby shared by the whole window rather than paid per chunk, which
+matters on high-latency links and for incremental backups, where almost every chunk is already stored
+and only hashes cross the wire. `--window 1` is the previous stop-and-wait behavior.
+
+Sizing: the window needs to cover the bandwidth-delay product, `RTT × throughput / chunk size`
+(chunks are 64 KB). On a LAN `1`–`2` is enough; across a WAN with tens of milliseconds of RTT,
+`8` or more helps, and a mostly-deduplicated backup (tiny hash-only requests) benefits from a
+larger window than one transferring new data. Past the knee a larger window only costs memory
+(`--streams × --window × 64 KB` of chunks held) and queueing delay. The window is per stream and
+within one file; it drains at the end of each file, so many tiny files see little gain. Set the
+site default with `default_window` in `local.conf`; `--window` overrides it per run.
+
+The window is static. Sizing it automatically from measured RTT and throughput is tracked in the
+[backlog](../../backlog.md#adaptive-brfs-window).
+
+Replies from `bwfs` arrive in the order requests were sent, so `brfs` matches them by position and
+treats any other reply as an error. A failed chunk fails its file; replies still in flight for it are
+discarded when the stream moves on to the next file. A stream that fails (for example a rejected
+connection) fails every file queued on it. `bwfs` rebuilds chunk order itself — see
+[Backup Protocol](../protocols/backup.md#in-flight-chunks-sliding-window).
 
 ## Filtering
 

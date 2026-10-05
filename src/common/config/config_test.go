@@ -762,3 +762,37 @@ func TestParseConfig_StoreGCRejectsInvalidValues(t *testing.T) {
 		assert.Error(t, err, line)
 	}
 }
+
+func TestParseConfig_DefaultWindowDefaultsTo8(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 8, conf.DefaultWindow)
+}
+
+func TestParseConfig_DefaultWindowParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ndefault_window=32\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 32, conf.DefaultWindow)
+}
+
+func TestParseConfig_DefaultWindowRejectsZeroOrNegative(t *testing.T) {
+	for _, v := range []string{"0", "-1", "abc"} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "local.conf")
+		content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ndefault_window=" + v + "\n"
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+		_, err := ParseConfig(path)
+		require.Error(t, err, v)
+	}
+}

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — Sliding window for brfs chunk transfer
+
+`brfs` no longer waits for a reply to every chunk before sending the next. Each stream now keeps up
+to `--window` chunks in flight, so a round trip is shared by the whole window instead of paid per
+chunk — what limited throughput on high-latency links and on incremental backups, where nearly every
+chunk is already stored and only hashes cross the wire. The default comes from the new `default_window`
+config key (8); the code's own default and `--window 1` are the previous one-chunk-at-a-time behavior.
+The window is static; sizing it automatically is in the backlog. The wire format is unchanged, but
+`bwfs` had to stop assuming chunks arrive in index order: it now rebuilds the file checksum in index
+order through a small bounded reorder buffer (memory scales with the window, not the file size) and
+finalizes a file only once its last chunk is folded in. A `bwfs` from before this change must be used
+with `--window 1`.
+
 ## 2026-10-05 — Storage server status on the storage policy page
 
 Every `bwfs server` now posts a status report to `api-server` once a minute — serving state, disk
