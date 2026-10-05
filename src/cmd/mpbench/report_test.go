@@ -33,7 +33,7 @@ func TestMedian(t *testing.T) {
 	assert.Zero(t, median(nil))
 }
 
-func run(idx int, cold, warm, restore float64) RunResult {
+func mkRun(idx int, cold, warm, restore float64) RunResult {
 	return RunResult{Index: idx, DatasetFiles: 10, DatasetBytes: 1_000_000, Phases: []PhaseResult{
 		newPhaseResult("backup-cold", cold, 1_000_000, 10, 1000, 100),
 		newPhaseResult("backup-warm", warm, 1_000_000, 10, 100, 100),
@@ -42,7 +42,7 @@ func run(idx int, cold, warm, restore float64) RunResult {
 }
 
 func TestSummarize_MedianMinMaxPerPhaseInRunOrder(t *testing.T) {
-	sum := Summarize([]RunResult{run(1, 3, 1, 2), run(2, 1, 1, 4), run(3, 2, 1, 6)})
+	sum := Summarize([]RunResult{mkRun(1, 3, 1, 2), mkRun(2, 1, 1, 4), mkRun(3, 2, 1, 6)})
 
 	require.Len(t, sum, 3)
 	assert.Equal(t, "backup-cold", sum[0].Name)
@@ -71,7 +71,7 @@ func TestHumanBytes(t *testing.T) {
 
 func TestWriteTable_ContainsPhasesAndHeader(t *testing.T) {
 	var buf bytes.Buffer
-	WriteTable(&buf, "dataset: 10 files", Summarize([]RunResult{run(1, 2, 1, 4)}))
+	WriteTable(&buf, "dataset: 10 files", Summarize([]RunResult{mkRun(1, 2, 1, 4)}))
 	out := buf.String()
 	assert.Contains(t, out, "dataset: 10 files")
 	for _, want := range []string{"phase", "backup-cold", "backup-warm", "restore", "MB/s", "wire up", "wire down"} {
@@ -86,7 +86,7 @@ func TestBuildReportAndWriteJSON_RoundTrips(t *testing.T) {
 	}
 	a := &Args{BinDir: bin, Files: 10, Profile: "mixed", DupRatio: 0.3, Seed: 1, RTT: 50 * time.Millisecond,
 		Bandwidth: 12_500_000, Streams: 4, Window: 8, Runs: 2, BrfsArgs: []string{"--debug"}}
-	runs := []RunResult{run(1, 2, 1, 4), run(2, 3, 1, 5)}
+	runs := []RunResult{mkRun(1, 2, 1, 4), mkRun(2, 3, 1, 5)}
 
 	rep, err := BuildReport(a, time.Unix(1_700_000_000, 0), runs, Summarize(runs))
 	require.NoError(t, err)
