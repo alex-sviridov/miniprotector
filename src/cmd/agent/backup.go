@@ -44,6 +44,7 @@ type cachedRetention struct {
 // cmd/policyclient directly -- Go forbids importing another command's
 // main package -- so these fields are duplicated here rather than shared.
 type cachedPolicy struct {
+	ID            string         `json:"id"`
 	Name          string         `json:"name"`
 	Type          string         `json:"type"`
 	ObjectFilters []ObjectFilter `json:"object_filters"`

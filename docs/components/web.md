@@ -128,7 +128,7 @@ no data — there's no read-only "guest" mode.
 - `/policies/:id` — one policy's full record, in two tabs built on a reusable `Tabs` component
   (`components/ui/Tabs.vue`, active tab synced to `?tab=details`/`?tab=checkins` so either can be
   linked directly): `Details` (the default — client filters, object filters, backup window) and
-  `Check-ins` (`components/policies/PolicyCheckins.vue` — every host that has received this policy
+  `Status` (`components/storage/StorageStatus.vue` — one card per reporting storage node: online/stale/offline badge, disk usage bar amber above 85% and red above 95%, active connections, in-progress jobs, uptime, last report; polled every 30s) and `Check-ins` (`components/policies/PolicyCheckins.vue` — every host that has received this policy
   from `policy-server`, each with its most recent check-in time, and a manual Refresh button that
   re-fetches the policy). Edit and Delete buttons sit at the page level, outside the tabs; Edit opens
   `BackupPolicyFormModal` pre-filled with the policy's current values (both "Save" and "Run now" are

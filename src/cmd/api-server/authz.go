@@ -9,7 +9,10 @@ import pb "github.com/alex-sviridov/miniprotector/api"
 // mirroring cmd/policy-server/authz.go's identical pattern.
 func roleRequirements() map[string][]string {
 	svc := pb.JobStatusService_ServiceDesc.ServiceName
+	storageSvc := pb.StorageStatusService_ServiceDesc.ServiceName
 	return map[string][]string{
 		"/" + svc + "/GetPolicyJobStatus": {"control-plane"},
+		// Posted by each bwfs server itself, enrolled with the "store" role.
+		"/" + storageSvc + "/ReportStorageStatus": {"store"},
 	}
 }

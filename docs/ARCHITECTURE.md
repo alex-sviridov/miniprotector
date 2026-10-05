@@ -17,7 +17,7 @@ A backup system with intelligent deduplication and integrity verification.
 | log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; gates on a valid operating certificate, forwards the push body unmodified | Implemented (agent bundles, configures, and supervises the Vector process that ships to it) |
 | clientmanager-api | Read-only gRPC daemon exposing `client-manager`'s enrolled-client data (`ListClients`/`GetClient`), sharing its SQLite file the same way `issuer` already does | Implemented |
 | clientmanager-admin-api | CA-admin-equivalent gRPC writes (issue/re-enroll/revoke/unrevoke/description/attribute/SAN) onto the same database, packaged in clientmanager-api's container | Implemented |
-| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate; also serves one inbound mTLS gRPC service, `JobStatusService`, polled by `policy-server`'s restore-cleanup sweep | Implemented |
+| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate; also serves two inbound mTLS gRPC services: `JobStatusService`, polled by `policy-server`'s restore-cleanup sweep, and `StorageStatusService`, into which every `bwfs` posts a status report each minute (kept in memory, shown on the storage policy page) | Implemented |
 | web | Static Vue frontend over `api-server`'s REST API — this system's first browser UI; served by nginx, no mTLS identity of its own | Implemented |
 
 ## Control Plane vs. Agents

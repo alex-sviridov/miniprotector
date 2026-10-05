@@ -197,6 +197,18 @@ for `bwfs` — see the [control plane setup](../../deploy/control-plane/README.m
 make build
 ```
 
+### Status reporting
+
+When started with `--policy-id <id>` (which `agent` always passes) and `api_server_host` is
+configured, `bwfs server` posts its status to `api-server` once a minute: serving state, disk
+total/used of the filesystem holding the store, open gRPC connections, in-progress backup jobs and
+uptime. It is best-effort — an unreachable `api-server` is logged once and retried next tick, and
+never affects backups. See [Storage Status Protocol](../protocols/storagestatus.md).
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--policy-id` | empty | Storage policy ID; empty disables status reporting |
+
 ## See Also
 
 - [brfs](./brfs.md) — Backup Reader for File System
@@ -204,4 +216,5 @@ make build
 - [backup protocol](../protocols/backup.md) — brfs → bwfs wire protocol
 - [list protocol](../protocols/list.md) — rwfs → bwfs list subprotocol
 - [restore protocol](../protocols/restore.md) — rwfs → bwfs restore/verify subprotocol
+- [storage status protocol](../protocols/storagestatus.md) — bwfs → api-server status reports
 - [Architecture](../ARCHITECTURE.md) — System overview

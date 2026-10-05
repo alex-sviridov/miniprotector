@@ -64,13 +64,14 @@ type server struct {
 	lokiTail           lokiTailer
 	wsTickets          *wsTicketStore
 	aggregator         *jobAggregator
+	storageStatus      *storageStatusStore
 	logger             *slog.Logger
 	adhocPolicyTimeout time.Duration
 	pb.UnimplementedJobStatusServiceServer
 }
 
 func newServer(cm clientManagerClient, catalog catalogQueryClient, policy policyServiceClient, logger *slog.Logger) *server {
-	return &server{clientManager: cm, catalog: catalog, policy: policy, logger: logger}
+	return &server{clientManager: cm, catalog: catalog, policy: policy, logger: logger, storageStatus: newStorageStatusStore()}
 }
 
 // registerRoutes wires up every REST endpoint, each individually wrapped
@@ -105,6 +106,7 @@ func (s *server) registerRoutes(mux *http.ServeMux, token string) {
 	mux.Handle("DELETE /api/v1/policies/{id}", bearer(s.handleDeletePolicy))
 	mux.Handle("POST /api/v1/storage-policies", bearer(s.handleCreateStoragePolicy))
 	mux.Handle("PUT /api/v1/storage-policies/{id}", bearer(s.handleUpdateStoragePolicy))
+	mux.Handle("GET /api/v1/storage-policies/{id}/status", bearer(s.handleGetStorageStatus))
 	mux.Handle("POST /api/v1/retention-policies", bearer(s.handleCreateRetentionPolicy))
 	mux.Handle("PUT /api/v1/retention-policies/{id}", bearer(s.handleUpdateRetentionPolicy))
 	mux.Handle("POST /api/v1/retention-policies/reorder", bearer(s.handleReorderRetentionPolicies))

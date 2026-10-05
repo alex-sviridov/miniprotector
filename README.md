@@ -89,6 +89,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[Issuer Protocol](docs/protocols/issuer.md)** - issuer operating-certificate minting protocol
 - **[Policy Server Protocol](docs/protocols/policy-server.md)** - policy-server's GetPolicies protocol
 - **[Job Status Protocol](docs/protocols/jobstatus.md)** - api-server's GetPolicyJobStatus protocol, polled by policy-server's restore-cleanup sweep
+- **[Storage Status Protocol](docs/protocols/storagestatus.md)** - bwfs → api-server status report (disk usage, active connections), shown on the storage policy page
 - **[Log Gateway Protocol](docs/protocols/log-gateway.md)** - log-gateway's mTLS-authenticated push-proxy protocol
 - **[Components](docs/components/)** - Individual component documentation
 

@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package storagestatusservice;
+
+option go_package = "./proto";
+
+import "google/protobuf/timestamp.proto";
+
+// StorageStatusService is the second inbound gRPC surface on api-server
+// (alongside JobStatusService, same mTLS port). Each bwfs server posts one
+// report a minute; api-server keeps only the latest per (policy_id, reporting
+// host) in memory and serves it to the web UI. Restricted to the "store" role.
+// The reporting host is taken from the verified mTLS peer certificate, never
+// from the payload.
+service StorageStatusService {
+  rpc ReportStorageStatus(ReportStorageStatusRequest) returns (ReportStorageStatusResponse);
+}
+
+message ReportStorageStatusRequest {
+  // ID of the storage policy this bwfs process serves (agent passes it via
+  // --policy-id).
+  string policy_id = 1;
+  int32 port = 2;
+  // "serving" while the process is up.
+  string status = 3;
+  // Total and used bytes of the filesystem holding the store root.
+  uint64 disk_total_bytes = 4;
+  uint64 disk_used_bytes = 5;
+  // Currently open gRPC client connections.
+  int32 active_connections = 6;
+  // Backup jobs with activity that have not yet been finalized.
+  int32 in_progress_jobs = 7;
+  int64 uptime_seconds = 8;
+  google.protobuf.Timestamp reported_at = 9;
+}
+
+message ReportStorageStatusResponse {}

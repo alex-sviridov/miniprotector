@@ -14,6 +14,7 @@ import (
 func TestStorageTasks_BuildsTaskFromFilesystemConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := writeCachedPolicies(t, dir, `[{
+		"id": "pol-east-1",
 		"name": "east-1-storage",
 		"type": "storage",
 		"port": 9400,
@@ -25,7 +26,7 @@ func TestStorageTasks_BuildsTaskFromFilesystemConfig(t *testing.T) {
 
 	assert.Equal(t, "storage:east-1-storage", tasks[0].ID)
 	assert.Equal(t, "bwfs-bin", tasks[0].Binary)
-	assert.Equal(t, []string{"/data/storage", "server", "--port", "9400"}, tasks[0].Args)
+	assert.Equal(t, []string{"/data/storage", "server", "--port", "9400", "--policy-id", "pol-east-1"}, tasks[0].Args)
 
 	assert.Equal(t, "storage:east-1-storage:catalogsync", tasks[1].ID)
 	assert.Equal(t, "catalogsync-bin", tasks[1].Binary)

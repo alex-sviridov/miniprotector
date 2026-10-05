@@ -163,7 +163,9 @@ A storage policy's `config` is opaque JSON to `policy-server`, but `agent` inter
 `{"backend": "filesystem", "root": "/data/storage"}`. Any other or missing `backend` value is
 skipped with a logged error (contributing neither task), the same fail-safe direction as an
 unparseable `rpo` or missing `backup_window` for backup tasks. A matching policy becomes two
-processes: `bwfs <root> server --port <port>` and `catalogsync <root>`.
+processes: `bwfs <root> server --port <port> --policy-id <policy-id>` and `catalogsync <root>`. The
+policy id lets `bwfs` report its status to `api-server` (see
+[Storage Status Protocol](../protocols/storagestatus.md)).
 
 A storage policy whose `disabled_at` has passed is skipped the same way, contributing neither the
 `bwfs` nor the `catalogsync` ensure-running task -- an already-running pair is stopped via the same
@@ -336,6 +338,7 @@ make agent
 
 ## See Also
 
+- [Storage Status Protocol](../protocols/storagestatus.md) — what `bwfs`'s `--policy-id` is for
 - [brfs](./brfs.md) — the binary backup tasks exec
 - [certclient](./certclient.md) — the binary both of `agent`'s credential-refresh policies exec
 - [issuer](./issuer.md) — what `operating-refresh` ultimately talks to

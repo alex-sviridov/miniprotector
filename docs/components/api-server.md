@@ -205,6 +205,13 @@ Ships as part of the combined control-plane `docker compose` stack — see
 make api-server
 ```
 
+## Storage status
+
+The same mTLS listener also serves `StorageStatusService.ReportStorageStatus`, role-gated to
+`store`: each `bwfs` posts a report a minute, kept in memory (latest per policy and reporting host,
+lost on restart) and served as `GET /api/v1/storage-policies/{id}/status` — the one REST endpoint
+with no backend gRPC call. See [Storage Status Protocol](../protocols/storagestatus.md).
+
 ## See Also
 
 - [clientmanager-api](./clientmanager-api.md) — one of the two backends this component reads from
@@ -212,6 +219,7 @@ make api-server
 - [catalog](./catalog.md) — the other backend
 - [REST API v1](../api/rest-v1.md)
 - [Job Status Protocol](../protocols/jobstatus.md) — the `JobStatusService` this component's gRPC listener serves
+- [Storage Status Protocol](../protocols/storagestatus.md) — the `StorageStatusService` on the same listener, fed by every `bwfs`
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
 - [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
 - [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)

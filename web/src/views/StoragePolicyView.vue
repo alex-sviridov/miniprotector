@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, computed, ref } from 'vue'
+import { onMounted, onUnmounted, computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useStoragePoliciesStore } from '../stores/storagePolicies'
 import { formatTimestamp } from '../utils/format'
@@ -10,6 +10,7 @@ import BaseButton from '../components/ui/BaseButton.vue'
 import Tabs from '../components/ui/Tabs.vue'
 import StorageEditModal from '../components/storage/StorageEditModal.vue'
 import PolicyCheckins from '../components/policies/PolicyCheckins.vue'
+import StorageStatus from '../components/storage/StorageStatus.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,16 +23,26 @@ const serverError = ref('')
 
 const TABS = [
   { key: 'details', label: 'Details' },
+  { key: 'status', label: 'Status' },
   { key: 'checkins', label: 'Check-ins' },
 ]
 
+// Storage nodes report once a minute; polling twice as often keeps the tab
+// within ~30s of the latest report without hammering api-server.
+const STATUS_POLL_MS = 30000
+let statusTimer = null
+
 onMounted(async () => {
+  storagePolicies.fetchStatus(id.value)
+  statusTimer = setInterval(() => storagePolicies.fetchStatus(id.value), STATUS_POLL_MS)
   try {
     await storagePolicies.fetchOne(id.value)
   } catch {
     // error already recorded on storagePolicies.error by the store
   }
 })
+
+onUnmounted(() => clearInterval(statusTimer))
 
 function parseConfig(configText) {
   try {
@@ -108,6 +119,14 @@ async function refreshCheckins() {
       <Tabs v-if="policy" :tabs="TABS">
         <template #details>
           <DetailList :rows="detailRows" />
+        </template>
+        <template #status>
+          <StorageStatus
+            :reports="storagePolicies.statusById[id]"
+            :loading="storagePolicies.statusLoading"
+            :error="storagePolicies.statusError"
+            @refresh="storagePolicies.fetchStatus(id)"
+          />
         </template>
         <template #checkins>
           <PolicyCheckins

@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — Storage server status on the storage policy page
+
+Every `bwfs server` now posts a status report to `api-server` once a minute — serving state, disk
+usage of the store's filesystem, open gRPC connections, in-progress backup jobs and uptime — and the
+storage policy page has a new **Status** tab showing one card per reporting node, with an
+online/stale/offline badge derived from the report's age. Reports travel over a new
+`StorageStatusService` on `api-server`'s existing mTLS port, role-gated to `store`, with the host taken
+from the certificate. `api-server` keeps only the latest report per policy and node in memory
+(refilled within a minute of a restart), so it gains no database. Reporting is best-effort and never
+affects backups. `agent` now passes `--policy-id` to `bwfs`; store nodes need `api_server_host` in
+their config, and are silently not reported without it.
+
 ## 2026-10-05 — Scheduled store cleanup and vacuum
 
 `bwfs` now maintains its own store. Two regular background loops run inside `bwfs server`:
