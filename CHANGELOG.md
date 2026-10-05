@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — Scheduled store cleanup and vacuum
+
+`bwfs` now maintains its own store. Two regular background loops run inside `bwfs server`:
+**cleanup** (hourly by default) deletes file versions whose `expire_at` has passed — never those
+of a job still running — and **vacuum** (daily by default) reclaims the file data, chunk records and
+chunk files nothing references any more. Intervals, batch size, a dry-run switch (`StoreCleanupDryRun`
+logs what would be deleted without deleting), the incomplete-file grace period and the deletion-log
+retention are all config keys (`Store*`), and an interval of `0` disables a loop. They are safe next
+to live backups: the old startup vacuum would have corrupted in-flight backups if simply scheduled
+(it could delete a chunk between a backup finding it present and linking it, or a file's data
+between a backup finding it known and recording its version), so backup handlers now run under a
+shared operation guard that each short cleanup/vacuum batch excludes; a stress test of back-to-back
+cleanup/vacuum against concurrent backups reproduces that corruption without the guard. Deletions
+(including a failed job's purged versions, previously left behind in the catalog) are logged in
+`bwfs` and replicated by `catalogsync` to a new `catalog.DeleteFileVersions` RPC, so the web UI never
+offers a version that no longer exists; an emptied directory may still appear in the catalog's
+directory list. Retention is plain `expire_at` semantics: a host that stops backing up loses its
+backups once their retention passes. See
+`docs/superpowers/specs/2026-10-05-store-cleanup-vacuum-design.md`.
+
 ## 2026-10-05 — Retention policies and web UI
 
 Retention is now configurable. A new `retention` policy type holds one rule — which clients it

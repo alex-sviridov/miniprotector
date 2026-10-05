@@ -133,6 +133,9 @@ to avoid this.
 - Sends chunked file data using the backup protocol, each file's metadata carrying an `expire_at`
   that `brfs` resolves from the per-job retention matrix `agent` hands it (`--retention-file`)
 - **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
+- **bwfs** also runs scheduled maintenance: **cleanup** deletes file versions past their `expire_at`
+  and **vacuum** reclaims the file data and chunks nothing references any more; deletions are
+  replicated to the catalog by `catalogsync`
 
 ## Restore/Verify Process
 

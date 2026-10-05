@@ -49,7 +49,13 @@ persisted keyed by `(store_node, job_id, object_id)`:
   "what's directly under this path" from `EntryRecord`'s `parent_directory` column alone isn't
   possible, since it only names a file's *immediate* directory, not every ancestor of it.
 - `expire_at` — the per-file retention expiry `brfs` stamped at backup time — is stored as received
-  (`0` on the wire becomes NULL). It is informational for now; nothing acts on it.
+  (`0` on the wire becomes NULL). The catalog never expires anything on its own; entries leave it
+  only through `DeleteFileVersions` below.
+- `DeleteFileVersions` is the delete path: `catalogsync` forwards each version `bwfs` deleted
+  (retention cleanup, or a failed job's purge), and `catalog` removes the matching entries under
+  the caller's own verified `store_node` — idempotent, an unknown entry is a no-op. The
+  `catalog_directories` rows are left alone, so a directory that lost all its files can still appear
+  in the directory list (a known limitation); entry listings never show a deleted version.
 - A batch containing an entry already stored for its `(store_node, job_id, object_id)` is a
   no-op for that entry (`ON CONFLICT DO NOTHING`) — safe for `catalogsync` to resend a batch it
   isn't sure was received.

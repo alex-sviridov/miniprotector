@@ -69,8 +69,23 @@ not guarantee.
 
 **Note:** file versions replicate as soon as they're written, regardless of their parent job's
 `backup_jobs.status`. If a job later fails, `bwfs` purges its local `file_versions` rows for that
-job, but a batch already sent to the catalog may reference them — reconciling that is the
-catalog's responsibility, not `catalogsync`'s.
+job, but a batch already sent to the catalog may reference them — which is why every version `bwfs`
+deletes (failed-job purge or retention cleanup) is also written to its `file_version_deletions`
+log, replicated as described below.
+
+### Deletions
+
+After each versions pass, `catalogsync` also reads `file_version_deletions` rows newer than a
+second, independent cursor (`catalogsync-deletions.cursor`, next to `catalogsync.cursor`) and sends
+them with `Sender.SendDeletions` (`DeleteFileVersions` on the catalog, see the
+[Catalog Sync Protocol](../protocols/catalog-sync.md#deletefileversions)). The same discipline as
+versions applies: the cursor advances only after a successful send, and a failed send backs off and
+retries from the unadvanced cursor; deletes are idempotent at the catalog, so a resend is harmless.
+Deletions are sent only after the versions send of the same pass succeeded, so a deletion can never
+overtake a version whose send hasn't been acknowledged (a retried send could otherwise re-create an
+entry the catalog had just dropped). A backlog drains without sleeping, as for versions. `bwfs`
+prunes deletion-log rows older than `StoreDeletionLogRetentionSec` (30 days by default), which is how
+long `catalogsync` can be down without the catalog keeping versions `bwfs` already deleted.
 
 ## Configuration Keys
 

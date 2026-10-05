@@ -62,8 +62,9 @@ because the `SEND_FILE`/`SKIP_FILE` decision follows immediately: a skipped (unc
 records a version for the job, so both the new-file and the skip path store the value on the
 `file_versions` row. `0` means none was sent (a hand-run `brfs` without `--retention-file`) or the
 matching rule says never expire; both are stored as NULL and neither is ever treated as expired.
-Node clocks are assumed synced, since `brfs`'s clock produces the absolute timestamp. Nothing acts
-on `expire_at` yet. See
+Node clocks are assumed synced, since `brfs`'s clock produces the absolute timestamp. `bwfs`'s
+scheduled cleanup deletes a version once its `expire_at` has passed (see
+[bwfs](../components/bwfs.md#scheduled-cleanup-and-vacuum)). See
 [Design: Retention Expiry Stamping](../superpowers/specs/2026-10-05-retention-expiry-stamping-design.md).
 
 ## **Backup Job Tracking & Completion Verification**

@@ -35,7 +35,7 @@ bwfs /home/user/backup server --port 8080 --debug
 | `--debug` | false | Enable debug logging |
 | `--quiet` | false | Suppress console logging |
 
-On startup, before accepting connections, the server runs a vacuum pass over the store
+On startup, before accepting connections, the server runs a full vacuum pass over the store
 (removes incomplete/orphaned `FileData`, orphaned chunk links, orphaned chunk records, and
 orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
@@ -76,9 +76,58 @@ A job starts `status=in_progress` and is only finalized (`success` or `failure`,
 Each `file_versions` row also carries a nullable `expire_at` (unix seconds) taken from the file's
 `FileInfo.expire_at`, stamped by `brfs` from its job's retention matrix, on both the new-file and
 already-known-file paths. NULL means no expiry was recorded or the file never expires — rows from
-before this column existed stay NULL — and nothing treats NULL as expired. Nothing deletes
-versions based on `expire_at` yet; chunk reclamation for versions removed later is the existing
-startup vacuum.
+before this column existed stay NULL — and nothing treats NULL as expired. The scheduled
+**cleanup** described next deletes versions whose `expire_at` has passed.
+
+#### Scheduled cleanup and vacuum
+
+While `bwfs server` runs, two background loops keep the store from only ever growing:
+
+- **Cleanup** (every `StoreCleanupIntervalSec`, default 3600) deletes expired file versions — a
+  real `expire_at` that has passed, belonging to a job that is **not** still `in_progress` (a
+  short retention must never delete versions out from under a running job, whose `BackupCommit`
+  would then fail its hash check). It is plain `expire_at` semantics: no version is protected for
+  being a host's most recent backup, so a host that stops backing up loses everything once its
+  retention passes. It also prunes the deletion log (below) past `StoreDeletionLogRetentionSec`.
+- **Vacuum** (every `StoreVacuumIntervalSec`, default 86400) reclaims what no version references
+  any more: file data with no version, chunk links with no file data, chunk records with no link,
+  and those chunks' files on disk (bytes reclaimed are logged). Incomplete file data is only
+  treated as abandoned after `StoreIncompleteFileDataGraceSec` (default 24 h) — unlike at startup, a
+  file may legitimately still be transferring. It never walks the chunk directory (stray and
+  crash-leftover files remain the startup vacuum's job).
+
+Both loops run in batches of `StoreGCBatchSize` rows (default 500), each batch one short
+transaction, so backups are paused for milliseconds, never for a whole run; the first run of each is
+one interval after startup, runs never overlap, a failure is logged and retried next tick (never
+fatal after startup), and an interval of `0` disables that loop. Each run logs one summary line
+(`event="store_cleanup"` / `"store_vacuum"`) with counts, bytes reclaimed and duration.
+`StoreCleanupDryRun=true` makes cleanup log how many versions it *would* delete without deleting
+anything — worth running first on an existing store.
+
+**Why this is safe next to live backups.** The startup vacuum assumes nothing is in flight; run
+periodically it would corrupt backups — it could delete a chunk between a backup deciding it
+"already exists" and linking it, remove a file's data between a backup finding it known and
+recording its version, or delete a just-stored chunk before its record is written. `bwfs` therefore
+guards the store: every backup-stream message handler runs under the shared side of an operation
+guard (released as soon as its store work is done, before it replies, so a client that has stopped
+reading can't hold it), and each cleanup/vacuum batch takes the exclusive side. Each of those
+invariants lives inside a single handler call, so a batch can neither start in the middle of one nor
+see it half done. A file in transfer between messages is protected by its own rows: its
+incomplete file data is never orphaned and its chunk links keep its chunks referenced.
+
+**Deletion log.** Every version delete — cleanup, and the purge of a failed or stale job's
+versions — also inserts a row into `file_version_deletions` (`job_id`, `object_id`, `deleted_at`) in
+the same transaction. `catalogsync` replicates it so the catalog drops the version too; see
+[catalogsync](catalogsync.md#deletions).
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `StoreCleanupIntervalSec` | 3600 | how often expired versions are deleted; `0` disables |
+| `StoreVacuumIntervalSec` | 86400 | how often unreferenced data and chunks are reclaimed; `0` disables |
+| `StoreGCBatchSize` | 500 | rows per batch (bounds how long backups can be paused) |
+| `StoreCleanupDryRun` | false | log what cleanup would delete, delete nothing |
+| `StoreIncompleteFileDataGraceSec` | 86400 | age after which online vacuum treats incomplete file data as abandoned |
+| `StoreDeletionLogRetentionSec` | 2592000 (30 days) | how long `catalogsync` has to consume deletions before they're pruned; `0` keeps them forever |
 
 See [Backup Protocol](../protocols/backup.md) for the full RPC and lifecycle.
 
