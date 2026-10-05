@@ -18,7 +18,13 @@ import (
 // sourceHost/path/objType are the caller's already-known values (from
 // filesystem.FileInfo's Source()/Path()/GetType() accessors at both
 // cmd/bwfs/handler.go call sites) -- never re-derived from objectID here.
-func (s *Store) EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64) error {
+// expireAt is the client-computed expiry (unix seconds); 0 means none
+// recorded or never expires, and is stored as NULL.
+func (s *Store) EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64, expireAt int64) error {
+	var expire *int64
+	if expireAt != 0 {
+		expire = &expireAt
+	}
 	record := FileVersionRecord{
 		JobID:      jobID,
 		ObjectID:   objectID,
@@ -27,6 +33,7 @@ func (s *Store) EnsureFileVersion(jobID, objectID, sourceHost, path, objType str
 		Type:       objType,
 		Metadata:   metadata,
 		Ctime:      ctime,
+		ExpireAt:   expire,
 		CreatedAt:  time.Now(),
 	}
 	return s.db.Clauses(clause.OnConflict{
@@ -105,4 +112,22 @@ func toStorageFileVersion(r *FileVersionRecord) *storage.FileVersion {
 		Ctime:     r.Ctime,
 		CreatedAt: r.CreatedAt,
 	}
+}
+
+// deleteVersions deletes the file_versions rows matching where inside tx and
+// records one file_version_deletions row per deleted version, so catalogsync
+// can tell the catalog. Every code path that removes a file version goes
+// through here -- a delete that skipped the log would leave a ghost version
+// in the catalog forever. Returns how many versions were deleted.
+func deleteVersions(tx *gorm.DB, where string, args ...any) (int64, error) {
+	logArgs := append([]any{time.Now().Unix()}, args...)
+	if err := tx.Exec(
+		"INSERT INTO file_version_deletions (job_id, object_id, deleted_at) "+
+			"SELECT job_id, object_id, ? FROM file_version_records WHERE "+where,
+		logArgs...,
+	).Error; err != nil {
+		return 0, fmt.Errorf("log version deletions: %w", err)
+	}
+	res := tx.Where(where, args...).Delete(&FileVersionRecord{})
+	return res.RowsAffected, res.Error
 }

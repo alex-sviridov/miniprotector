@@ -10,11 +10,12 @@ import (
 func TestRoleRequirements_MatchesAuthorizationMatrix(t *testing.T) {
 	svc := pb.PolicyService_ServiceDesc.ServiceName
 	want := map[string][]string{
-		"/" + svc + "/ListPolicies":      {"control-plane"},
-		"/" + svc + "/CreatePolicy":      {"control-plane"},
-		"/" + svc + "/UpdatePolicy":      {"control-plane"},
-		"/" + svc + "/DeletePolicy":      {"control-plane"},
-		"/" + svc + "/GetNodeCertStatus": {"control-plane"},
+		"/" + svc + "/ListPolicies":             {"control-plane"},
+		"/" + svc + "/CreatePolicy":             {"control-plane"},
+		"/" + svc + "/UpdatePolicy":             {"control-plane"},
+		"/" + svc + "/DeletePolicy":             {"control-plane"},
+		"/" + svc + "/GetNodeCertStatus":        {"control-plane"},
+		"/" + svc + "/ReorderRetentionPolicies": {"control-plane"},
 	}
 	assert.Equal(t, want, roleRequirements())
 }

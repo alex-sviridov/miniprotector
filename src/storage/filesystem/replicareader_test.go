@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,9 +14,9 @@ func TestOpenReplicaReader_FileVersionsSince_ReturnsNewRowsInOrder(t *testing.T)
 	require.NoError(t, err)
 	defer store.Close()
 
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-2", "hosta", "/path", "f", []byte("v2"), 100))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-3", "hosta", "/path", "f", []byte("v3"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100, 0))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-2", "hosta", "/path", "f", []byte("v2"), 100, 0))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-3", "hosta", "/path", "f", []byte("v3"), 100, 0))
 
 	reader, err := OpenReplicaReader(dir)
 	require.NoError(t, err)
@@ -39,7 +40,7 @@ func TestOpenReplicaReader_FileVersionsSince_EmptyWhenCaughtUp(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100, 0))
 
 	reader, err := OpenReplicaReader(dir)
 	require.NoError(t, err)
@@ -68,4 +69,30 @@ func TestOpenReplicaReader_CannotWrite(t *testing.T) {
 		"INSERT INTO file_version_records (object_id, job_id, ctime, created_at) VALUES ('x', 'y', 0, datetime('now'))",
 	).Error
 	assert.Error(t, err, "a mode=ro connection must reject writes")
+}
+
+func TestReplicaReader_FileVersionDeletionsSince(t *testing.T) {
+	dir := t.TempDir()
+	store, err := New(dir)
+	require.NoError(t, err)
+	require.NoError(t, store.RawDB().Create(&[]FileVersionDeletionRecord{
+		{JobID: "j", ObjectID: "a", DeletedAt: 1},
+		{JobID: "j", ObjectID: "b", DeletedAt: 2},
+		{JobID: "j", ObjectID: "c", DeletedAt: 3},
+	}).Error)
+	require.NoError(t, store.Close())
+
+	reader, err := OpenReplicaReader(dir)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	first, err := reader.FileVersionDeletionsSince(context.Background(), 0, 2)
+	require.NoError(t, err)
+	require.Len(t, first, 2)
+	assert.Equal(t, "a", first[0].ObjectID)
+
+	rest, err := reader.FileVersionDeletionsSince(context.Background(), first[1].Seq, 10)
+	require.NoError(t, err)
+	require.Len(t, rest, 1)
+	assert.Equal(t, "c", rest[0].ObjectID)
 }

@@ -295,4 +295,86 @@ describe('JobDetailView', () => {
       expect(text).toContain('1 warning')
     })
   })
+
+  describe('store maintenance (cleanup/vacuum) summary banner', () => {
+    function logLine(fields) {
+      return { timestamp: 1, hostname: 'bwfs-east', binary: 'bwfs', line: JSON.stringify(fields) }
+    }
+    const banner = (wrapper) => wrapper.get('[data-test="maintenance-summary-banner"]').text()
+
+    it('renders no maintenance banner for other job kinds', () => {
+      setJobId('backup:nightly:1752400000')
+      const { wrapper } = mountView({ logs: [] })
+      expect(wrapper.find('[data-test="maintenance-summary-banner"]').exists()).toBe(false)
+    })
+
+    it('shows in progress until the finish line arrives', () => {
+      setJobId('cleanup:bwfs-east:1752400000')
+      const { wrapper } = mountView({
+        logs: [logLine({ msg: 'store cleanup started', event: 'start', dry_run: false })],
+      })
+      expect(banner(wrapper)).toContain('Cleanup in progress')
+    })
+
+    it('summarizes a finished cleanup', () => {
+      setJobId('cleanup:bwfs-east:1752400000')
+      const { wrapper } = mountView({
+        logs: [
+          logLine({ msg: 'store cleanup started', event: 'start' }),
+          logLine({ msg: 'store cleanup completed', event: 'finish', status: 'success', dry_run: false, versions_expired: 1200, deletion_log_pruned: 30, duration: 2_500_000_000 }),
+        ],
+      })
+      const text = banner(wrapper)
+      expect(text).toContain('Cleanup complete')
+      expect(text).toContain('1200 versions deleted')
+      expect(text).toContain('30 deletion-log entries pruned')
+      expect(text).toContain('2.5 s')
+    })
+
+    it('says so when a cleanup was a dry run and deleted nothing', () => {
+      setJobId('cleanup:bwfs-east:1752400000')
+      const { wrapper } = mountView({
+        logs: [logLine({ msg: 'store cleanup completed', event: 'finish', status: 'success', dry_run: true, versions_expired: 1, deletion_log_pruned: 0, duration: 1_000_000 })],
+      })
+      const text = banner(wrapper)
+      expect(text).toContain('Dry run')
+      expect(text).toContain('1 version would be deleted')
+      expect(text).not.toContain('pruned')
+    })
+
+    it('summarizes a finished vacuum with what was reclaimed', () => {
+      setJobId('vacuum:bwfs-east:1752400000')
+      const { wrapper } = mountView({
+        logs: [
+          logLine({
+            msg: 'store vacuum completed', event: 'finish', status: 'success',
+            incomplete_file_data_removed: 1, orphaned_file_data_removed: 4, orphaned_chunk_links_removed: 9,
+            orphaned_chunks_removed: 7, bytes_reclaimed: 3_758_096_384, duration: 61_000_000_000,
+          }),
+        ],
+      })
+      const text = banner(wrapper)
+      expect(text).toContain('Vacuum complete')
+      expect(text).toContain('7 chunks removed')
+      expect(text).toContain('5 file data')
+      expect(text).toContain('3.5 GB')
+      expect(text).toContain('1 min 1 s')
+    })
+
+    it('shows the error for a failed run', () => {
+      setJobId('vacuum:bwfs-east:1752400000')
+      const { wrapper } = mountView({
+        logs: [logLine({ msg: 'store vacuum failed', level: 'ERROR', event: 'finish', status: 'failure', error: 'disk I/O error', duration: 1_000_000 })],
+      })
+      const text = banner(wrapper)
+      expect(text).toContain('Vacuum failed')
+      expect(text).toContain('disk I/O error')
+    })
+
+    it('does not use the restore/verify banner', () => {
+      setJobId('cleanup:bwfs-east:1752400000')
+      const { wrapper } = mountView({ logs: [] })
+      expect(wrapper.find('[data-test="restore-summary-banner"]').exists()).toBe(false)
+    })
+  })
 })

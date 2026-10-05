@@ -6,6 +6,7 @@ option go_package = "./proto";
 
 service CatalogService {
   rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
+  rpc DeleteFileVersions(DeleteVersionsRequest) returns (DeleteVersionsResponse);
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
@@ -21,6 +22,7 @@ message FileVersionEntry {
   int64  ctime      = 4;
   int64  store_seq  = 5; // bwfs's local file_versions.seq — informational only
   int64  created_at = 6; // unix seconds; bwfs's original recording time
+  int64  expire_at  = 7; // unix seconds; 0 = no expiry recorded / never expires
 }
 
 message SyncRequest {
@@ -28,6 +30,20 @@ message SyncRequest {
 }
 
 message SyncResponse {} // empty ack — GrpcSender only checks error/nil
+
+// A file version bwfs has deleted (expired by retention cleanup, or purged
+// with a failed backup job). Identified the same way entries are: the sending
+// node is the verified mTLS peer, so (job_id, object_id) is unambiguous.
+message FileVersionRef {
+  string job_id    = 1;
+  string object_id = 2;
+}
+
+message DeleteVersionsRequest {
+  repeated FileVersionRef entries = 1;
+}
+
+message DeleteVersionsResponse {} // empty ack; deleting an entry the catalog never had is not an error
 
 message ListEntriesRequest {
   string store_host     = 1; // exact match against the sending bwfs node's identity; empty = all

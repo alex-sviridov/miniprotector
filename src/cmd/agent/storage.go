@@ -87,7 +87,7 @@ func storageTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, bwfsBinary
 			storageTask{
 				ID:     storageTaskID(p.Name),
 				Binary: bwfsBinary,
-				Args:   []string{cfg.Root, "server", "--port", strconv.Itoa(int(p.Port))},
+				Args:   []string{cfg.Root, "server", "--port", strconv.Itoa(int(p.Port)), "--policy-id", p.ID},
 			},
 			storageTask{
 				ID:     catalogsyncTaskID(p.Name),

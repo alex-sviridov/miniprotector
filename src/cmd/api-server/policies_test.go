@@ -39,6 +39,10 @@ type fakePolicyServiceClient struct {
 	certStatusResp    *pb.NodeCertStatus
 	certStatusErr     error
 	lastCertStatusReq *pb.GetNodeCertStatusRequest
+
+	reorderResp    *pb.ReorderRetentionPoliciesResponse
+	reorderErr     error
+	lastReorderReq *pb.ReorderRetentionPoliciesRequest
 }
 
 func (f *fakePolicyServiceClient) ListPolicies(ctx context.Context, in *pb.ListPoliciesRequest, opts ...grpc.CallOption) (*pb.ListPoliciesResponse, error) {
@@ -64,6 +68,11 @@ func (f *fakePolicyServiceClient) DeletePolicy(ctx context.Context, in *pb.Delet
 func (f *fakePolicyServiceClient) GetNodeCertStatus(ctx context.Context, in *pb.GetNodeCertStatusRequest, opts ...grpc.CallOption) (*pb.NodeCertStatus, error) {
 	f.lastCertStatusReq = in
 	return f.certStatusResp, f.certStatusErr
+}
+
+func (f *fakePolicyServiceClient) ReorderRetentionPolicies(ctx context.Context, in *pb.ReorderRetentionPoliciesRequest, opts ...grpc.CallOption) (*pb.ReorderRetentionPoliciesResponse, error) {
+	f.lastReorderReq = in
+	return f.reorderResp, f.reorderErr
 }
 
 func TestHandleListPolicies_ReturnsDataEnvelope(t *testing.T) {
@@ -1126,4 +1135,148 @@ func TestHandleCreateRestore_InvalidModeReturns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Nil(t, fake.lastCreateReq)
+}
+
+func retentionRequest(t *testing.T, srv *server, method, target, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandleListPolicies_RetentionDTOCarriesRule(t *testing.T) {
+	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{Policies: []*pb.Policy{{
+		Id: "r1", Name: "keep-logs", Type: "retention",
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{"web-*"}},
+		Retention:     &pb.RetentionRule{BackupType: "filesystem", Path: "/var/log", Include: []string{"*.log"}, KeepSeconds: 86400, Priority: 2},
+	}}}}
+	rec := retentionRequest(t, newServer(nil, nil, fake, testLogger()), http.MethodGet, "/api/v1/policies?type=retention", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "retention", fake.lastListReq.GetType())
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Data, 1)
+	assert.Equal(t, map[string]any{
+		"backup_type": "filesystem", "path": "/var/log", "include": []any{"*.log"},
+		"keep_seconds": float64(86400), "priority": float64(2),
+	}, body.Data[0]["retention"])
+}
+
+func TestHandleListPolicies_NonRetentionDTOHasNoRetentionKey(t *testing.T) {
+	fake := &fakePolicyServiceClient{listResp: &pb.ListPoliciesResponse{Policies: []*pb.Policy{{Id: "b1", Name: "n", Type: "backup"}}}}
+	rec := retentionRequest(t, newServer(nil, nil, fake, testLogger()), http.MethodGet, "/api/v1/policies", "")
+	assert.NotContains(t, rec.Body.String(), `"retention"`)
+}
+
+func TestHandleCreateRetentionPolicy_ForwardsRuleAndReturns201(t *testing.T) {
+	fake := &fakePolicyServiceClient{createResp: &pb.Policy{
+		Id: "r1", Name: "keep-logs", Type: "retention",
+		Retention: &pb.RetentionRule{BackupType: "filesystem", Path: "/var/log", KeepSeconds: 86400, Priority: 1},
+	}}
+	rec := retentionRequest(t, newServer(nil, nil, fake, testLogger()), http.MethodPost, "/api/v1/retention-policies", `{
+		"name": "keep-logs",
+		"client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
+		"retention": {"backup_type": "filesystem", "path": "/var/log", "include": ["*.log"], "keep_seconds": 86400, "priority": 99},
+		"disabled_at": 1900000000
+	}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	req := fake.lastCreateReq
+	require.NotNil(t, req)
+	assert.Equal(t, "retention", req.GetType())
+	assert.Equal(t, "keep-logs", req.GetName())
+	assert.Equal(t, []string{"web-*"}, req.GetClientFilters().GetHostnames())
+	assert.Equal(t, map[string]string{"env": "prod"}, req.GetClientFilters().GetLabels())
+	assert.Equal(t, "filesystem", req.GetRetention().GetBackupType())
+	assert.Equal(t, "/var/log", req.GetRetention().GetPath())
+	assert.Equal(t, []string{"*.log"}, req.GetRetention().GetInclude())
+	assert.Equal(t, int64(86400), req.GetRetention().GetKeepSeconds())
+	assert.Equal(t, int64(1900000000), req.GetDisabledAt().GetSeconds())
+	assert.Equal(t, int32(0), req.GetRetention().GetPriority(), "priority is server-managed and must never be forwarded")
+	assert.Contains(t, rec.Body.String(), `"priority":1`)
+}
+
+func TestHandleCreateRetentionPolicy_MalformedJSONAndBackendErrorsReturn400(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	rec := retentionRequest(t, srv, http.MethodPost, "/api/v1/retention-policies", "not json")
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastCreateReq)
+
+	fake.createErr = status.Error(codes.InvalidArgument, "path must be absolute")
+	rec = retentionRequest(t, srv, http.MethodPost, "/api/v1/retention-policies", `{"name":"x","retention":{"backup_type":"filesystem","path":"rel"}}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "path must be absolute")
+}
+
+func TestHandleUpdateRetentionPolicy_ForwardsIDAndRule(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateResp: &pb.Policy{Id: "r1", Name: "n", Type: "retention", Retention: &pb.RetentionRule{BackupType: "filesystem", Path: "/a"}}}
+	rec := retentionRequest(t, newServer(nil, nil, fake, testLogger()), http.MethodPut, "/api/v1/retention-policies/r1", `{
+		"name": "n", "client_filters": {"hostnames": ["*"]},
+		"retention": {"backup_type": "filesystem", "path": "/a", "keep_seconds": 0}
+	}`)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "r1", fake.lastUpdateReq.GetId())
+	assert.Equal(t, "/a", fake.lastUpdateReq.GetRetention().GetPath())
+	assert.Equal(t, int64(0), fake.lastUpdateReq.GetRetention().GetKeepSeconds())
+}
+
+func TestHandleUpdateRetentionPolicy_NotFoundReturns404(t *testing.T) {
+	fake := &fakePolicyServiceClient{updateErr: status.Error(codes.NotFound, "policy \"ghost\" not found")}
+	rec := retentionRequest(t, newServer(nil, nil, fake, testLogger()), http.MethodPut, "/api/v1/retention-policies/ghost", `{"name":"n","retention":{"backup_type":"filesystem","path":"/a"}}`)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleReorderRetentionPolicies_ForwardsIDsAndReturnsNewOrder(t *testing.T) {
+	fake := &fakePolicyServiceClient{reorderResp: &pb.ReorderRetentionPoliciesResponse{Policies: []*pb.Policy{
+		{Id: "b", Name: "b", Type: "retention", Retention: &pb.RetentionRule{Priority: 1}},
+		{Id: "a", Name: "a", Type: "retention", Retention: &pb.RetentionRule{Priority: 2}},
+	}}}
+	rec := retentionRequest(t, newServer(nil, nil, fake, testLogger()), http.MethodPost, "/api/v1/retention-policies/reorder", `{"ids": ["b", "a"]}`)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"b", "a"}, fake.lastReorderReq.GetIds())
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Data, 2)
+	assert.Equal(t, "b", body.Data[0]["id"])
+	assert.Equal(t, "a", body.Data[1]["id"])
+}
+
+func TestHandleReorderRetentionPolicies_BadBodyAndBackendRejection(t *testing.T) {
+	fake := &fakePolicyServiceClient{}
+	srv := newServer(nil, nil, fake, testLogger())
+	rec := retentionRequest(t, srv, http.MethodPost, "/api/v1/retention-policies/reorder", "nope")
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Nil(t, fake.lastReorderReq)
+
+	fake.reorderErr = status.Error(codes.InvalidArgument, "ids must list every retention policy exactly once")
+	rec = retentionRequest(t, srv, http.MethodPost, "/api/v1/retention-policies/reorder", `{"ids":["a"]}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestRetentionRoutes_RequireBearerToken(t *testing.T) {
+	srv := newServer(nil, nil, &fakePolicyServiceClient{}, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+	for _, tc := range []struct{ method, target string }{
+		{http.MethodPost, "/api/v1/retention-policies"},
+		{http.MethodPut, "/api/v1/retention-policies/x"},
+		{http.MethodPost, "/api/v1/retention-policies/reorder"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.target, strings.NewReader("{}"))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, tc.method+" "+tc.target)
+	}
 }

@@ -2,6 +2,110 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-05 — Performance tuning: stream and window defaults, opt-in gRPC window
+
+Using `mpbench` to look for the optimum, `default_window` is now 16 (the measured knee at 8 streams and
+50 ms RTT: −22% cold backup against window 4, nothing further at 32, no cost on a LAN), and the
+shipped demo config uses `default_streams=8`: at 50 ms RTT, 8 streams cut backup time by 42% against
+4 and by about 70% against 2 for small files, again with no cost on a LAN. `rwfs` used to hard-code 4
+streams for `verify` and `restore`; it now follows `default_streams` like `brfs` does. A new opt-in
+config key, `grpc_window_bytes`, fixes the gRPC flow-control window on `brfs`, `bwfs` and `rwfs`; it
+is off by default because the gain is small with several streams (−6% restore at 8 streams) and a
+window below the bandwidth-delay product is slower than gRPC's own dynamic sizing, but with one
+stream at 100 ms RTT a 4 MiB window cut restore by 24%. `mpbench` can now sweep window, streams and RTT
+in one command and set any config key (`--conf`). The new [performance tuning](docs/PERFORMANCE.md)
+page explains what to adjust and records the numbers, including an open finding: restore plateaus at
+about 12–13 MB/s at 50 ms RTT regardless of streams.
+
+## 2026-10-05 — mpbench: end-to-end backup/restore benchmark
+
+New development tool `mpbench` runs the full cycle against the real `brfs`, `bwfs` and `rwfs`
+binaries — cold backup, warm (hash-only) backup, restore, then a byte-for-byte comparison of the
+restored tree — and reports per-phase time, throughput and wire bytes as a table and JSON. A
+built-in userspace proxy adds a configurable round-trip time and bandwidth cap, so latency-bound
+gains such as the `brfs` sliding window are visible without root or `tc`. Datasets are seeded and
+byte-identical between runs, and the JSON records the SHA-256 of the binaries used, so two builds can
+be compared fairly. `--sweep-window`, `--sweep-streams` and `--sweep-rtt` run several configurations in
+one command and print a comparison table. It is a development aid, not part of the runtime topology.
+
+## 2026-10-05 — Sliding window for brfs chunk transfer
+
+`brfs` no longer waits for a reply to every chunk before sending the next. Each stream now keeps up
+to `--window` chunks in flight, so a round trip is shared by the whole window instead of paid per
+chunk — what limited throughput on high-latency links and on incremental backups, where nearly every
+chunk is already stored and only hashes cross the wire. The default comes from the new `default_window`
+config key (16); the code's own default and `--window 1` are the previous one-chunk-at-a-time behavior.
+The window is static; sizing it automatically is in the backlog. The wire format is unchanged, but
+`bwfs` had to stop assuming chunks arrive in index order: it now rebuilds the file checksum in index
+order through a small bounded reorder buffer (memory scales with the window, not the file size) and
+finalizes a file only once its last chunk is folded in. A `bwfs` from before this change must be used
+with `--window 1`.
+
+## 2026-10-05 — Storage server status on the storage policy page
+
+Every `bwfs server` now posts a status report to `api-server` once a minute — serving state, disk
+usage of the store's filesystem, open gRPC connections, in-progress backup jobs and uptime — and the
+storage policy page has a new **Status** tab showing one card per reporting node, with an
+online/stale/offline badge derived from the report's age. Reports travel over a new
+`StorageStatusService` on `api-server`'s existing mTLS port, role-gated to `store`, with the host taken
+from the certificate. `api-server` keeps only the latest report per policy and node in memory
+(refilled within a minute of a restart), so it gains no database. Reporting is best-effort and never
+affects backups. `agent` now passes `--policy-id` to `bwfs`; store nodes need `api_server_host` in
+their config, and are silently not reported without it.
+
+## 2026-10-05 — Scheduled store cleanup and vacuum
+
+`bwfs` now maintains its own store. Two regular background loops run inside `bwfs server`:
+**cleanup** (hourly by default) deletes file versions whose `expire_at` has passed — never those
+of a job still running — and **vacuum** (daily by default) reclaims the file data, chunk records and
+chunk files nothing references any more. Intervals, batch size, a dry-run switch (`StoreCleanupDryRun`
+logs what would be deleted without deleting), the incomplete-file grace period and the deletion-log
+retention are all config keys (`Store*`), and an interval of `0` disables a loop. They are safe next
+to live backups: the old startup vacuum would have corrupted in-flight backups if simply scheduled
+(it could delete a chunk between a backup finding it present and linking it, or a file's data
+between a backup finding it known and recording its version), so backup handlers now run under a
+shared operation guard that each short cleanup/vacuum batch excludes; a stress test of back-to-back
+cleanup/vacuum against concurrent backups reproduces that corruption without the guard. Deletions
+(including a failed job's purged versions, previously left behind in the catalog) are logged in
+`bwfs` and replicated by `catalogsync` to a new `catalog.DeleteFileVersions` RPC, so the web UI never
+offers a version that no longer exists; an emptied directory may still appear in the catalog's
+directory list. Every run appears as a job in the Jobs view (`cleanup:` / `vacuum:`, with start and finish
+statistics or the error, and a summary banner on the job page); hourly cleanups that find nothing expired
+are not listed. Retention is plain `expire_at` semantics: a host that stops backing up loses its
+backups once their retention passes. See
+`docs/superpowers/specs/2026-10-05-store-cleanup-vacuum-design.md`.
+
+## 2026-10-05 — Retention policies and web UI
+
+Retention is now configurable. A new `retention` policy type holds one rule — which clients it
+applies to (the same host/label matching as every other policy), a backup type (`filesystem`), a
+path prefix, optional file-name globs, and how long to keep (`0` = forever) — and rules are
+evaluated in an explicit order where the first match wins. Order is managed by `policy-server`:
+a new rule is appended, edits keep its place, and a new `ReorderRetentionPolicies` RPC rewrites
+priorities from a complete ordered id list (rejecting an incomplete or stale one, so two operators
+can never silently clobber each other's rules). `agent` now feeds the rules that match its node into
+the per-job retention matrix introduced with expiry stamping, so `expire_at` reflects them instead of
+always being the 7-day default. `api-server` gained `POST /retention-policies`,
+`PUT /retention-policies/{id}` and `POST /retention-policies/reorder`, and the web UI a **Retention**
+page: rules in evaluation order, create/edit/delete, drag-and-drop or arrow reordering, and a fixed
+last row for the built-in default. Still nothing deletes data based on `expire_at`. See
+`docs/superpowers/specs/2026-10-05-retention-policies-design.md`.
+
+## 2026-10-05 — Retention expiry stamping
+
+Every new file version now carries an `expire_at`, decided per file at backup time. When a backup
+task is due, `agent` resolves a retention rule matrix for the job (today just the built-in default,
+`RetentionDefaultDays`, 7), logs it as a `retention_matrix` event under the job's id and hands it to
+`brfs` via `--retention-file`; `brfs` evaluates it per file (first matching rule wins, path prefix
+plus optional glob) and sends `expire_at` with the file's metadata, `bwfs` stores it on
+`file_versions`, and `catalogsync` replicates it to the catalog. Nothing deletes anything yet: this
+lays the data foundation for retention policies (separate, ordered, matched by host/attributes like
+backup policies) and a later cleanup process. Versions recorded before this change keep a NULL
+`expire_at`, which is never treated as expired. Also fixed a stale `ListFiles` call in `bwfs`'s
+integration test that kept the package's integration tests from compiling. See
+`docs/superpowers/specs/2026-10-05-retention-expiry-stamping-design.md` and the new "Retention
+Expiry" section of `docs/protocols/backup.md`.
+
 ## 2026-08-28 — Agent reliability/readability/performance refactor
 
 Unified `agent`'s two independently-written process supervisors (for its bundled Vector process and

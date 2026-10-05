@@ -18,13 +18,14 @@ import (
 // role restriction on any RPC this server registers. The register
 // callback receives the bare *grpc.Server so callers can register any
 // service (backup, restore, …) without this package importing
-// service-specific proto packages.
-func StartServer(ctx context.Context, logger *slog.Logger, port int, certsDir string, roleRequirements map[string][]string, register func(*grpc.Server)) error {
+// service-specific proto packages. opts are extra grpc.ServerOptions
+// (e.g. a stats handler) appended after the defaults.
+func StartServer(ctx context.Context, logger *slog.Logger, port int, certsDir string, roleRequirements map[string][]string, register func(*grpc.Server), opts ...grpc.ServerOption) error {
 	creds, err := mtls.LoadServerCredentials(certsDir)
 	if err != nil {
 		return fmt.Errorf("failed to load server credentials: %w", err)
 	}
-	return StartServerWithCredentials(ctx, logger, port, creds, roleRequirements, register)
+	return StartServerWithCredentials(ctx, logger, port, creds, roleRequirements, register, opts...)
 }
 
 // StartServerWithCredentials is StartServer, parameterized on already-built
@@ -32,7 +33,7 @@ func StartServer(ctx context.Context, logger *slog.Logger, port int, certsDir st
 // identity -- used by callers presenting a different credential requirement
 // (issuer, which requires bootstrap/issuer-caller peer certs rather than the
 // default operating-tier check; see mtls.LoadIssuerServerCredentials).
-func StartServerWithCredentials(ctx context.Context, logger *slog.Logger, port int, creds credentials.TransportCredentials, roleRequirements map[string][]string, register func(*grpc.Server)) error {
+func StartServerWithCredentials(ctx context.Context, logger *slog.Logger, port int, creds credentials.TransportCredentials, roleRequirements map[string][]string, register func(*grpc.Server), opts ...grpc.ServerOption) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -41,11 +42,11 @@ func StartServerWithCredentials(ctx context.Context, logger *slog.Logger, port i
 	logger.Info("Server starting", "port", port)
 
 	unaryInterceptor, streamInterceptor := mtls.RequireRoles(roleRequirements)
-	grpcServer := grpc.NewServer(
+	grpcServer := grpc.NewServer(append([]grpc.ServerOption{
 		grpc.Creds(creds),
 		grpc.ChainUnaryInterceptor(unaryInterceptor),
 		grpc.ChainStreamInterceptor(streamInterceptor),
-	)
+	}, append(windowServerOptions(), opts...)...)...)
 	register(grpcServer)
 
 	logger.Info("Server ready, accepting connections")

@@ -28,11 +28,23 @@ type ObjectFilter struct {
 	Exclude []string `json:"exclude,omitempty"`
 }
 
+// cachedRetention mirrors policyclient's on-disk RetentionRule
+// (cmd/policyclient/fetch.go), duplicated for the same reason as
+// ObjectFilter above.
+type cachedRetention struct {
+	BackupType  string   `json:"backup_type"`
+	Path        string   `json:"path"`
+	Include     []string `json:"include,omitempty"`
+	KeepSeconds int64    `json:"keep_seconds"`
+	Priority    int32    `json:"priority"`
+}
+
 // cachedPolicy mirrors the subset of policyclient's on-disk CachedPolicy
 // schema (cmd/policyclient/fetch.go) that agent needs. agent can't import
 // cmd/policyclient directly -- Go forbids importing another command's
 // main package -- so these fields are duplicated here rather than shared.
 type cachedPolicy struct {
+	ID            string         `json:"id"`
 	Name          string         `json:"name"`
 	Type          string         `json:"type"`
 	ObjectFilters []ObjectFilter `json:"object_filters"`
@@ -51,6 +63,9 @@ type cachedPolicy struct {
 	// policy-server at CreatePolicy time and used verbatim as the
 	// dispatched rwfs exec's --job-id -- see restore.go's restoreTasks.
 	JobID string `json:"job_id,omitempty"`
+	// "retention" policy only, nil for every other type -- see
+	// retention.go's retentionRulesFrom, the consumer.
+	Retention *cachedRetention `json:"retention,omitempty"`
 	// DisabledAt is used by both backup and storage policies -- see backup.go's
 	// backupTasks and storage.go's storageTasks, which both skip policies with
 	// disabled_at in the past.
@@ -197,6 +212,11 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 // that could be built for it, so skipping entirely (rather than running
 // on a guess) is the fail-safe choice.
 //
+// Each task carries a Prepare hook that resolves the job's retention matrix
+// when the task is actually due (see retention.go) and supplies brfs's
+// --retention-file argument, so nothing is written per tick for tasks that
+// aren't running.
+//
 // A policy whose Destinations is empty (its storage policy has no live
 // checkins yet, or storage_policy_id is dangling) contributes no task for
 // any of its object filters -- rather than exec'ing brfs with an empty
@@ -205,8 +225,9 @@ func backupJobID(policyName, path, filterID string, now time.Time) string {
 // and would-be job id so the gap is visible without needing to reproduce a
 // misdirected backup first. Only Destinations[0] is ever used -- retrying
 // the rest of the list on failure is future work.
-func backupTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, conf *config.Config) []Policy {
+func backupTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, conf *config.Config, retentionDir string) []Policy {
 	grace := time.Duration(conf.BackupWindowGraceSec) * time.Second
+	rules := retentionRulesFrom(cachedPolicies)
 
 	var tasks []Policy
 	for _, p := range cachedPolicies {
@@ -256,6 +277,9 @@ func backupTasks(cachedPolicies []cachedPolicy, logger *slog.Logger, conf *confi
 				JobID:      jobID,
 				Args:       args,
 				Background: true,
+				Prepare: func(l *slog.Logger) ([]string, error) {
+					return prepareRetention(l, conf, retentionDir, backupTaskID(policyName, filter.Path, filter.ID), jobID, filter.Path, rules)
+				},
 				Due: func(s PolicyState, now time.Time) bool {
 					return windowOpen(schedules, now, grace) && rpoElapsed(s, now, rpo)
 				},

@@ -16,6 +16,9 @@ type Arguments struct {
 	Port  int
 	Debug bool
 	Quiet bool
+	// PolicyID is the storage policy this server serves, passed by agent;
+	// empty disables status reporting.
+	PolicyID string
 	// list flags
 	ServerName     string // source hostname filter, from positional, may be empty
 	PathFilter     string // path prefix filter, from positional, may be empty
@@ -50,6 +53,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	}
 	serverCmd.Flags().IntVar(&args.Port, "port", conf.DefaultPort, "Port to listen on")
 	serverCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
+	serverCmd.Flags().StringVar(&args.PolicyID, "policy-id", "", "Storage policy ID, enables status reporting to api-server")
 	serverCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Enable quiet mode")
 
 	// list subcommand

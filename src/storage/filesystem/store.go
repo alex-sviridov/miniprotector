@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"gorm.io/gorm"
@@ -15,6 +16,10 @@ type Store struct {
 	basePath string
 	db       *gorm.DB
 	lockFile *os.File
+
+	// opGuard separates backup-stream operations (shared) from cleanup/vacuum
+	// batches (exclusive); see BeginBackupOp and gc.go.
+	opGuard sync.RWMutex
 }
 
 func New(basePath string) (*Store, error) {

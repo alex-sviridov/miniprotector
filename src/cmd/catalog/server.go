@@ -48,6 +48,7 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 			ObjectID:        e.GetObjectId(),
 			Metadata:        e.GetMetadata(),
 			Ctime:           e.GetCtime(),
+			ExpireAt:        e.GetExpireAt(),
 			StoreSeq:        e.GetStoreSeq(),
 			StoreCreatedAt:  time.Unix(e.GetCreatedAt(), 0).UTC(),
 			SourceHost:      sourceHost,
@@ -70,6 +71,30 @@ func (s *catalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncReques
 
 	s.logger.Info("SyncFileVersions: batch persisted", "store_node", storeNode, "count", len(batch))
 	return &pb.SyncResponse{}, nil
+}
+
+// DeleteFileVersions is the other half of replication: catalogsync tells the
+// catalog which versions bwfs has deleted (retention cleanup, a failed job's
+// purge) so the web UI never offers a version that no longer exists. As with
+// SyncFileVersions the node is the CA-verified mTLS peer, never a request
+// field, so one node can only ever delete its own entries. Idempotent.
+func (s *catalogServer) DeleteFileVersions(ctx context.Context, req *pb.DeleteVersionsRequest) (*pb.DeleteVersionsResponse, error) {
+	storeNode, err := mtls.PeerHostname(ctx)
+	if err != nil {
+		s.logger.Error("DeleteFileVersions: could not determine peer identity", "error", err)
+		return nil, err
+	}
+	refs := make([]catalogstore.EntryRef, len(req.GetEntries()))
+	for i, e := range req.GetEntries() {
+		refs[i] = catalogstore.EntryRef{JobID: e.GetJobId(), ObjectID: e.GetObjectId()}
+	}
+	deleted, err := s.store.DeleteEntries(ctx, storeNode, refs)
+	if err != nil {
+		s.logger.Error("DeleteFileVersions: delete failed", "error", err, "count", len(refs))
+		return nil, err
+	}
+	s.logger.Info("DeleteFileVersions: batch applied", "store_node", storeNode, "requested", len(refs), "deleted", deleted)
+	return &pb.DeleteVersionsResponse{}, nil
 }
 
 // decodeDirectoryAncestors walks parentDir's ancestor chain via splitPath

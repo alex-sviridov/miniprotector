@@ -107,6 +107,23 @@ On `agent serve` shutdown (`SIGTERM`), in-flight backup execs are terminated cle
 orphaned — the resulting `bwfs` job simply never completes, the same outcome already assigned to a
 crashed `brfs`.
 
+### Retention matrix
+
+Each backup task has a `Prepare` hook that runs just before its `brfs` exec (so only when the
+task is actually due, not every tick) and resolves that job's retention matrix: the ordered
+retention rules that can apply to this job's root path, with the built-in default last (`/`, no
+glob, `RetentionDefaultDays`, default 7). Rules that cannot overlap the job root are dropped, the
+rest rewritten relative to the root, and everything after a rule that covers the whole root
+unconditionally is cut. `agent` logs the matrix once under the job's `job_id` as a structured
+`retention_matrix` event, writes the same JSON to `<VarDir>/retention/<task>.json` (one file per
+task, overwritten each run) and appends `--retention-file <that path>` to the `brfs` args. If the
+file cannot be written the attempt fails with the usual backoff and `brfs` is not started. `brfs`
+applies the matrix per file; see [brfs](brfs.md#retention). The rules come from the cached `"retention"`-typed policies that target this node (`policy-server`
+has already matched their `client_filters`): those for `backup_type` `"filesystem"` that aren't
+disabled, sorted by ascending `priority` (ties by name), each becoming a row `{path prefix, include
+globs, keep}`; the built-in default is appended last. With no retention policies the matrix is just
+the default row. See [Policy Server](policy-server.md) for how rules are managed.
+
 A policy with an unparseable `rpo`, or no valid `backup_window` entry at all, contributes no tasks.
 A policy whose `destinations` is empty (its storage policy has no live checkins yet, or
 `storage_policy_id` is dangling) likewise contributes no task, for any of its object filters — rather
@@ -146,7 +163,9 @@ A storage policy's `config` is opaque JSON to `policy-server`, but `agent` inter
 `{"backend": "filesystem", "root": "/data/storage"}`. Any other or missing `backend` value is
 skipped with a logged error (contributing neither task), the same fail-safe direction as an
 unparseable `rpo` or missing `backup_window` for backup tasks. A matching policy becomes two
-processes: `bwfs <root> server --port <port>` and `catalogsync <root>`.
+processes: `bwfs <root> server --port <port> --policy-id <policy-id>` and `catalogsync <root>`. The
+policy id lets `bwfs` report its status to `api-server` (see
+[Storage Status Protocol](../protocols/storagestatus.md)).
 
 A storage policy whose `disabled_at` has passed is skipped the same way, contributing neither the
 `bwfs` nor the `catalogsync` ensure-running task -- an already-running pair is stopped via the same
@@ -306,6 +325,7 @@ the line isn't JSON or `time` doesn't parse, same fallback `web/src/utils/logLin
 | `OperatingCertFetchIntervalSec` | 900 (15 minutes) | How often the `operating-refresh` policy runs `certclient operating-refresh` |
 | `PolicyFetchIntervalSec` | 900 (15 minutes) | How often the `policy-update` policy runs `policyclient fetch` |
 | `BackupWindowGraceSec` | 3600 (1 hour) | How long after a `backup_window` cron trigger a backup task's window stays "open" |
+| `RetentionDefaultDays` | 7 | Keep duration of the built-in default retention rule, which applies to every file no other rule matches; `0` means never expire |
 | `MaxConcurrentBackupJobs` | 2 | Upper bound on simultaneously in-flight `brfs` execs launched by backup tasks |
 | `BootstrapCertTTLSec` | 7776000 (90 days) | Intended requested validity for the bootstrap credential. Parsed and defaulted by `common/config`, but not yet consumed by any request path — `certclient bootstrap`/`renew` don't currently pass a requested TTL to the CA, so actual bootstrap credential lifetime is governed entirely by the CA provisioner's own claims today |
 | `log_gateway_host` / `log_gateway_port` | none / 9400 | Where agent's supervised Vector process pushes logs, via `log-gateway` |
@@ -318,6 +338,7 @@ make agent
 
 ## See Also
 
+- [Storage Status Protocol](../protocols/storagestatus.md) — what `bwfs`'s `--policy-id` is for
 - [brfs](./brfs.md) — the binary backup tasks exec
 - [certclient](./certclient.md) — the binary both of `agent`'s credential-refresh policies exec
 - [issuer](./issuer.md) — what `operating-refresh` ultimately talks to

@@ -11,10 +11,11 @@ import pb "github.com/alex-sviridov/miniprotector/api"
 func roleRequirements() map[string][]string {
 	svc := pb.PolicyService_ServiceDesc.ServiceName
 	return map[string][]string{
-		"/" + svc + "/ListPolicies":      {"control-plane"},
-		"/" + svc + "/CreatePolicy":      {"control-plane"},
-		"/" + svc + "/UpdatePolicy":      {"control-plane"},
-		"/" + svc + "/DeletePolicy":      {"control-plane"},
-		"/" + svc + "/GetNodeCertStatus": {"control-plane"},
+		"/" + svc + "/ListPolicies":             {"control-plane"},
+		"/" + svc + "/CreatePolicy":             {"control-plane"},
+		"/" + svc + "/UpdatePolicy":             {"control-plane"},
+		"/" + svc + "/DeletePolicy":             {"control-plane"},
+		"/" + svc + "/GetNodeCertStatus":        {"control-plane"},
+		"/" + svc + "/ReorderRetentionPolicies": {"control-plane"},
 	}
 }

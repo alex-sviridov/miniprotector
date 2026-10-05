@@ -35,7 +35,7 @@ bwfs /home/user/backup server --port 8080 --debug
 | `--debug` | false | Enable debug logging |
 | `--quiet` | false | Suppress console logging |
 
-On startup, before accepting connections, the server runs a vacuum pass over the store
+On startup, before accepting connections, the server runs a full vacuum pass over the store
 (removes incomplete/orphaned `FileData`, orphaned chunk links, orphaned chunk records, and
 orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
@@ -53,6 +53,15 @@ rather than killing it mid-stream — the same behavior every other gRPC server 
 had. This matters for [agent](./agent.md#storage-policy-supervision), which supervises a `bwfs
 server` process per storage policy targeting this node and routinely sends it `SIGTERM` (on its own
 shutdown, or when a storage policy is edited/removed).
+
+#### Chunk ordering within a file
+
+`brfs` may have several chunks of one file in flight (see
+[brfs sliding window](brfs.md#sliding-window)), so a chunk already stored can be accounted for ahead
+of an earlier chunk whose data has not arrived yet. Per file, `bwfs` folds chunk CRCs into the file
+checksum in index order through a small reorder buffer (`chunkOrder`): only chunks ahead of a gap are
+held, at most `maxPendingChunks` (1024) of them, and the file is finalized once the `eof` chunk has
+been folded in. See [Backup Protocol](../protocols/backup.md#in-flight-chunks-sliding-window).
 
 #### Backup Job Tracking & Completion Verification
 
@@ -72,6 +81,74 @@ A job starts `status=in_progress` and is only finalized (`success` or `failure`,
    key (default 30 seconds).
 3. On startup, `bwfs` fails any job left `in_progress` by a previous, uncleanly-terminated process,
    before accepting new connections.
+
+Each `file_versions` row also carries a nullable `expire_at` (unix seconds) taken from the file's
+`FileInfo.expire_at`, stamped by `brfs` from its job's retention matrix, on both the new-file and
+already-known-file paths. NULL means no expiry was recorded or the file never expires — rows from
+before this column existed stay NULL — and nothing treats NULL as expired. The scheduled
+**cleanup** described next deletes versions whose `expire_at` has passed.
+
+#### Scheduled cleanup and vacuum
+
+While `bwfs server` runs, two background loops keep the store from only ever growing:
+
+- **Cleanup** (every `StoreCleanupIntervalSec`, default 3600) deletes expired file versions — a
+  real `expire_at` that has passed, belonging to a job that is **not** still `in_progress` (a
+  short retention must never delete versions out from under a running job, whose `BackupCommit`
+  would then fail its hash check). It is plain `expire_at` semantics: no version is protected for
+  being a host's most recent backup, so a host that stops backing up loses everything once its
+  retention passes. It also prunes the deletion log (below) past `StoreDeletionLogRetentionSec`.
+- **Vacuum** (every `StoreVacuumIntervalSec`, default 86400) reclaims what no version references
+  any more: file data with no version, chunk links with no file data, chunk records with no link,
+  and those chunks' files on disk (bytes reclaimed are logged). Incomplete file data is only
+  treated as abandoned after `StoreIncompleteFileDataGraceSec` (default 24 h) — unlike at startup, a
+  file may legitimately still be transferring. It never walks the chunk directory (stray and
+  crash-leftover files remain the startup vacuum's job).
+
+Both loops run in batches of `StoreGCBatchSize` rows (default 500), each batch one short
+transaction, so backups are paused for milliseconds, never for a whole run; the first run of each is
+one interval after startup, runs never overlap, a failure is logged and retried next tick (never
+fatal after startup), and an interval of `0` disables that loop.
+
+**Each run is a job in the Jobs view.** A run's `job_id` is `cleanup:<host>:<unix>` or
+`vacuum:<host>:<unix>` (the host keeps several stores' runs from colliding on the same second),
+logged with the same `event=start` / `event=finish` lines every other job uses — nothing more
+detailed than that. The finish line carries `status` (`success` / `failure`), `duration` and the
+run's statistics: cleanup `versions_expired`, `deletion_log_pruned` and `dry_run`; vacuum
+`incomplete_file_data_removed`, `orphaned_file_data_removed`, `orphaned_chunk_links_removed`,
+`orphaned_chunks_removed` and `bytes_reclaimed`. A failed run logs that line at Error level with
+`status=failure` and the `error` text. Vacuum is always a job (it runs daily, and "ran, reclaimed
+nothing" is worth seeing); cleanup is a job only when it has something to report — a cheap indexed
+count decides first, and an hourly run that finds nothing expired is just a Debug line, so it
+doesn't bury the jobs that matter. See [web](web.md) for how the job page shows them.
+`StoreCleanupDryRun=true` makes cleanup log how many versions it *would* delete without deleting
+anything — worth running first on an existing store.
+
+**Why this is safe next to live backups.** The startup vacuum assumes nothing is in flight; run
+periodically it would corrupt backups — it could delete a chunk between a backup deciding it
+"already exists" and linking it, remove a file's data between a backup finding it known and
+recording its version, or delete a just-stored chunk before its record is written. `bwfs` therefore
+guards the store: every backup-stream message handler runs under the shared side of an operation
+guard (released as soon as its store work is done, before it replies, so a client that has stopped
+reading can't hold it), and each cleanup/vacuum batch takes the exclusive side. Each of those
+invariants lives inside a single handler call, so a batch can neither start in the middle of one nor
+see it half done. A file in transfer between messages is protected by its own rows: its
+incomplete file data is never orphaned and its chunk links keep its chunks referenced.
+
+**Deletion log.** Every version delete — cleanup, and the purge of a failed or stale job's
+versions — also inserts a row into `file_version_deletions` (`job_id`, `object_id`, `deleted_at`) in
+the same transaction. `catalogsync` replicates it so the catalog drops the version too; see
+[catalogsync](catalogsync.md#deletions).
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `StoreCleanupIntervalSec` | 3600 | how often expired versions are deleted; `0` disables |
+| `StoreVacuumIntervalSec` | 86400 | how often unreferenced data and chunks are reclaimed; `0` disables |
+| `StoreGCBatchSize` | 500 | rows per batch (bounds how long backups can be paused) |
+| `StoreCleanupDryRun` | false | log what cleanup would delete, delete nothing |
+| `StoreIncompleteFileDataGraceSec` | 86400 | age after which online vacuum treats incomplete file data as abandoned |
+| `StoreDeletionLogRetentionSec` | 2592000 (30 days) | how long `catalogsync` has to consume deletions before they're pruned; `0` keeps them forever |
+| `grpc_window_bytes` | 0 (gRPC's dynamic default) | fixed HTTP/2 flow-control window in bytes (65536 – 1073741824), also read by `brfs` and `rwfs`; opt-in, see [performance tuning](../PERFORMANCE.md#grpc_window_bytes-config--http2-flow-control-window-off-by-default) |
 
 See [Backup Protocol](../protocols/backup.md) for the full RPC and lifecycle.
 
@@ -130,6 +207,18 @@ for `bwfs` — see the [control plane setup](../../deploy/control-plane/README.m
 make build
 ```
 
+### Status reporting
+
+When started with `--policy-id <id>` (which `agent` always passes) and `api_server_host` is
+configured, `bwfs server` posts its status to `api-server` once a minute: serving state, disk
+total/used of the filesystem holding the store, open gRPC connections, in-progress backup jobs and
+uptime. It is best-effort — an unreachable `api-server` is logged once and retried next tick, and
+never affects backups. See [Storage Status Protocol](../protocols/storagestatus.md).
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--policy-id` | empty | Storage policy ID; empty disables status reporting |
+
 ## See Also
 
 - [brfs](./brfs.md) — Backup Reader for File System
@@ -137,4 +226,5 @@ make build
 - [backup protocol](../protocols/backup.md) — brfs → bwfs wire protocol
 - [list protocol](../protocols/list.md) — rwfs → bwfs list subprotocol
 - [restore protocol](../protocols/restore.md) — rwfs → bwfs restore/verify subprotocol
+- [storage status protocol](../protocols/storagestatus.md) — bwfs → api-server status reports
 - [Architecture](../ARCHITECTURE.md) — System overview

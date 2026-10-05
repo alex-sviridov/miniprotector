@@ -46,6 +46,19 @@ func (r *ReplicaReader) FileVersionsSince(ctx context.Context, cursor int64, lim
 	return records, err
 }
 
+// FileVersionDeletionsSince returns up to limit file_version_deletions rows
+// with seq greater than cursor, ascending -- catalogsync's second
+// replication cursor, for telling the catalog which versions are gone.
+func (r *ReplicaReader) FileVersionDeletionsSince(ctx context.Context, cursor int64, limit int) ([]FileVersionDeletionRecord, error) {
+	var records []FileVersionDeletionRecord
+	err := r.db.WithContext(ctx).
+		Where("seq > ?", cursor).
+		Order("seq ASC").
+		Limit(limit).
+		Find(&records).Error
+	return records, err
+}
+
 func (r *ReplicaReader) Close() error {
 	sqlDB, err := r.db.DB()
 	if err != nil {

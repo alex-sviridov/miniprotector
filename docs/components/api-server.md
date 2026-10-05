@@ -87,6 +87,13 @@ fully type-agnostic, looking a policy up by `id` alone. `DELETE /policies/{id}` 
 type-specific behavior for storage policies: `policy-server` rejects the delete with `400` if the
 `id` names a storage policy still referenced by any backup policy.
 
+A `"retention"` policy (one retention rule, see [Policy Server](policy-server.md)) has its own
+endpoints too: `POST /retention-policies`, `PUT /retention-policies/{id}` (body `name`/
+`client_filters`/`retention: {backup_type, path, include, keep_seconds}`, no `priority`) and
+`POST /retention-policies/reorder` (the complete ordered `ids` list, forwarded to
+`ReorderRetentionPolicies`). `GET /policies?type=retention` returns them in evaluation order, each
+with its `retention` rule and server-assigned `priority`; delete is the shared `DELETE /policies/{id}`.
+
 `POST /policies/adhoc` creates a one-time backup policy from the same fields as an ordinary create
 (`name`/`client_filters`/`object_filters`/`storage_policy_id`) — `api-server` computes `backup_window`
 (every minute), `rpo`, and `disabled_at` itself from the `AdhocPolicyTimeoutSec` config value, so a
@@ -198,6 +205,13 @@ Ships as part of the combined control-plane `docker compose` stack — see
 make api-server
 ```
 
+## Storage status
+
+The same mTLS listener also serves `StorageStatusService.ReportStorageStatus`, role-gated to
+`store`: each `bwfs` posts a report a minute, kept in memory (latest per policy and reporting host,
+lost on restart) and served as `GET /api/v1/storage-policies/{id}/status` — the one REST endpoint
+with no backend gRPC call. See [Storage Status Protocol](../protocols/storagestatus.md).
+
 ## See Also
 
 - [clientmanager-api](./clientmanager-api.md) — one of the two backends this component reads from
@@ -205,6 +219,7 @@ make api-server
 - [catalog](./catalog.md) — the other backend
 - [REST API v1](../api/rest-v1.md)
 - [Job Status Protocol](../protocols/jobstatus.md) — the `JobStatusService` this component's gRPC listener serves
+- [Storage Status Protocol](../protocols/storagestatus.md) — the `StorageStatusService` on the same listener, fed by every `bwfs`
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
 - [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
 - [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)

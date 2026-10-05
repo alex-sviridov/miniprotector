@@ -10,6 +10,9 @@ export const useStoragePoliciesStore = defineStore('storagePolicies', {
     error: null,
     checkinsLoading: false,
     checkinsError: null,
+    statusById: {},
+    statusLoading: false,
+    statusError: null,
   }),
   actions: {
     async fetchAll() {
@@ -46,6 +49,17 @@ export const useStoragePoliciesStore = defineStore('storagePolicies', {
           return policy
         },
         { loadingKey: 'checkinsLoading', errorKey: 'checkinsError' }
+      )
+    },
+    async fetchStatus(id) {
+      return withRequest(
+        this,
+        async () => {
+          const body = await apiFetch(`/storage-policies/${encodeURIComponent(id)}/status`)
+          this.statusById[id] = body.reports
+          return body.reports
+        },
+        { loadingKey: 'statusLoading', errorKey: 'statusError', rethrow: false }
       )
     },
     async create(input) {

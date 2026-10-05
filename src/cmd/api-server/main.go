@@ -119,6 +119,7 @@ func main() {
 	go func() {
 		if err := connection.StartServer(signalCtx, logger, arguments.JobStatusPort, certsDir, roleRequirements(), func(s *grpc.Server) {
 			pb.RegisterJobStatusServiceServer(s, srv)
+			pb.RegisterStorageStatusServiceServer(s, newStorageStatusServer(srv.storageStatus))
 		}); err != nil {
 			logger.Error("job-status server failed", "error", err)
 		}

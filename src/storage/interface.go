@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"iter"
 	"time"
@@ -36,7 +37,7 @@ type BackupStore interface {
 	MarkChunkCorrupted(chunkHash []byte) error
 
 	// FileVersion operations - create metadata version for each backup
-	EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64) error
+	EnsureFileVersion(jobID, objectID, sourceHost, path, objType string, metadata []byte, ctime int64, expireAt int64) error
 	RemoveFileVersion(jobID, objectID string) error
 
 	// Backup job operations - track discrete backup runs (one brfs invocation each).
@@ -58,7 +59,22 @@ type BackupStore interface {
 	Close() error
 
 	// Cleanup operations
-	Vacuum() (*VacuumResult, error) // Remove orphaned FileData and Chunks
+	Vacuum() (*VacuumResult, error) // Remove orphaned FileData and Chunks (startup only: assumes nothing is in flight)
+
+	// BeginBackupOp marks one backup-stream message as being handled and
+	// returns the function that ends it. CleanupExpired/VacuumOnline run
+	// their batches only while no backup operation is in progress, which is
+	// what makes it safe to run them while backups are active.
+	BeginBackupOp() (end func())
+	// CleanupExpired deletes file versions whose expire_at has passed (never
+	// those of an in_progress job; never a NULL expire_at), in bounded
+	// batches. With dryRun it only counts them.
+	CleanupExpired(ctx context.Context, now time.Time, batchSize int, dryRun bool) (*CleanupResult, error)
+	// VacuumOnline is Vacuum for a live store: bounded batches, no disk walk,
+	// incomplete file data only after incompleteGrace.
+	VacuumOnline(ctx context.Context, batchSize int, incompleteGrace time.Duration) (*VacuumResult, error)
+	// PruneDeletionLog drops deletion-log rows older than olderThan.
+	PruneDeletionLog(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // FileData represents file content information (immutable once created)
@@ -105,4 +121,10 @@ type VacuumResult struct {
 	OrphanedChunksRemoved     int64 // Chunks with no FileData references
 	BytesReclaimed            int64 // Storage space freed
 	IncompleteFileData        int64 // FileData with CRC32=0 (optional cleanup)
+}
+
+// CleanupResult reports what CleanupExpired did (or, with DryRun, would do).
+type CleanupResult struct {
+	VersionsExpired int64
+	DryRun          bool
 }

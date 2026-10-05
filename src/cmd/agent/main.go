@@ -89,7 +89,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	catalogsyncBinary := resolveExecPath("catalogsync")
 	storageMgr := newStorageManager(logger)
 
-	derivedFunc := newDerivedFunc(policiesCachePath, logger, conf, bwfsBinary, catalogsyncBinary)
+	derivedFunc := newDerivedFunc(policiesCachePath, filepath.Join(varDir, "retention"), logger, conf, bwfsBinary, catalogsyncBinary)
 
 	hostname, err := hostnameFromBootstrapCert(certsDir)
 	if err != nil {
@@ -143,7 +143,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 // since that's a real operator-actionable signal that was previously
 // completely silent -- pruning and storage supervision both freeze on a
 // persistently unreadable cache with nothing in agent.log to show it.
-func newDerivedFunc(policiesCachePath string, logger *slog.Logger, conf *config.Config, bwfsBinary, catalogsyncBinary string) func() ([]Policy, []storageTask, bool) {
+func newDerivedFunc(policiesCachePath, retentionDir string, logger *slog.Logger, conf *config.Config, bwfsBinary, catalogsyncBinary string) func() ([]Policy, []storageTask, bool) {
 	return func() ([]Policy, []storageTask, bool) {
 		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
 		if !ok {
@@ -154,7 +154,7 @@ func newDerivedFunc(policiesCachePath string, logger *slog.Logger, conf *config.
 			}
 			return policies(conf), nil, false
 		}
-		allPolicies := append(policies(conf), backupTasks(cachedPolicies, logger, conf)...)
+		allPolicies := append(policies(conf), backupTasks(cachedPolicies, logger, conf, retentionDir)...)
 		allPolicies = append(allPolicies, restoreTasks(cachedPolicies, logger)...)
 		storageTaskList := storageTasks(cachedPolicies, logger, bwfsBinary, catalogsyncBinary)
 		return allPolicies, storageTaskList, true
@@ -169,7 +169,7 @@ func listPolicies(conf *config.Config, cachePath, policiesCachePath string) int 
 	// table, matching this command's existing read-only, no-noise character.
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cachedPolicies, _ := readCachedPolicies(policiesCachePath)
-	allPolicies := append(policies(conf), backupTasks(cachedPolicies, silentLogger, conf)...)
+	allPolicies := append(policies(conf), backupTasks(cachedPolicies, silentLogger, conf, "")...)
 	allPolicies = append(allPolicies, restoreTasks(cachedPolicies, silentLogger)...)
 	bwfsBinary := resolveExecPath("bwfs")
 	catalogsyncBinary := resolveExecPath("catalogsync")

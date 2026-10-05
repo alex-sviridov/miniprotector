@@ -701,3 +701,129 @@ func TestParseConfig_RwfsRetriesRejectsZeroOrNegative(t *testing.T) {
 	require.Error(t, err2)
 	assert.ErrorContains(t, err2, "must be positive")
 }
+
+func TestParseConfig_RetentionDefaultDaysDefaultsTo7(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 7, conf.RetentionDefaultDays)
+}
+
+func TestParseConfig_RetentionDefaultDaysParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRetentionDefaultDays=30\n"), 0o644))
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 30, conf.RetentionDefaultDays)
+}
+
+func parseStoreConf(t *testing.T, extra string) (*Config, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"+extra), 0o644))
+	return ParseConfig(path)
+}
+
+func TestParseConfig_StoreGCDefaults(t *testing.T) {
+	conf, err := parseStoreConf(t, "")
+	require.NoError(t, err)
+	assert.Equal(t, 3600, conf.StoreCleanupIntervalSec)
+	assert.Equal(t, 86400, conf.StoreVacuumIntervalSec)
+	assert.Equal(t, 500, conf.StoreGCBatchSize)
+	assert.False(t, conf.StoreCleanupDryRun)
+	assert.Equal(t, 86400, conf.StoreIncompleteFileDataGraceSec)
+	assert.Equal(t, 2592000, conf.StoreDeletionLogRetentionSec)
+}
+
+func TestParseConfig_StoreGCParsesEveryKey(t *testing.T) {
+	conf, err := parseStoreConf(t, "StoreCleanupIntervalSec=60\nStoreVacuumIntervalSec=0\nStoreGCBatchSize=50\nStoreCleanupDryRun=true\nStoreIncompleteFileDataGraceSec=7200\nStoreDeletionLogRetentionSec=3600\n")
+	require.NoError(t, err)
+	assert.Equal(t, 60, conf.StoreCleanupIntervalSec)
+	assert.Equal(t, 0, conf.StoreVacuumIntervalSec, "0 disables a loop")
+	assert.Equal(t, 50, conf.StoreGCBatchSize)
+	assert.True(t, conf.StoreCleanupDryRun)
+	assert.Equal(t, 7200, conf.StoreIncompleteFileDataGraceSec)
+	assert.Equal(t, 3600, conf.StoreDeletionLogRetentionSec)
+}
+
+func TestParseConfig_StoreGCRejectsInvalidValues(t *testing.T) {
+	for _, line := range []string{
+		"StoreCleanupIntervalSec=-1", "StoreCleanupIntervalSec=abc",
+		"StoreVacuumIntervalSec=-5",
+		"StoreGCBatchSize=0", "StoreGCBatchSize=-1",
+		"StoreCleanupDryRun=maybe",
+		"StoreIncompleteFileDataGraceSec=-1",
+		"StoreDeletionLogRetentionSec=-1",
+	} {
+		_, err := parseStoreConf(t, line+"\n")
+		assert.Error(t, err, line)
+	}
+}
+
+func TestParseConfig_DefaultWindowDefaultsTo16(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 16, conf.DefaultWindow)
+}
+
+func TestParseConfig_DefaultWindowParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ndefault_window=32\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 32, conf.DefaultWindow)
+}
+
+func TestParseConfig_DefaultWindowRejectsZeroOrNegative(t *testing.T) {
+	for _, v := range []string{"0", "-1", "abc"} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "local.conf")
+		content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ndefault_window=" + v + "\n"
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+		_, err := ParseConfig(path)
+		require.Error(t, err, v)
+	}
+}
+
+func TestParseConfig_GrpcWindowBytesDefaultsToZero(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 0, conf.GrpcWindowBytes)
+}
+
+func TestParseConfig_GrpcWindowBytesParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ngrpc_window_bytes=4194304\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 4194304, conf.GrpcWindowBytes)
+}
+
+func TestParseConfig_GrpcWindowBytesRejectsOutOfRange(t *testing.T) {
+	for _, v := range []string{"-1", "1024", "65535", "1073741825", "abc"} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "local.conf")
+		require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ngrpc_window_bytes="+v+"\n"), 0o644))
+
+		_, err := ParseConfig(path)
+		require.Error(t, err, v)
+	}
+}

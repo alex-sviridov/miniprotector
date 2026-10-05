@@ -15,6 +15,7 @@ type EntryRecord struct {
 	ObjectID       string `gorm:"uniqueIndex:idx_store_job_object"`
 	Metadata       []byte
 	Ctime          int64
+	ExpireAt       *int64 // unix seconds; NULL = no expiry recorded / never expires
 	StoreSeq       int64
 	StoreCreatedAt time.Time
 	// SourceHost is the real originating (backed-up) host, decoded from

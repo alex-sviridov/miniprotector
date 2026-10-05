@@ -38,11 +38,16 @@ func NewGrpcSender(host string, port, timeoutSec int, certsDir string) (*GrpcSen
 func (s *GrpcSender) Send(batch []wfs.FileVersionRecord) error {
 	entries := make([]*pb.FileVersionEntry, len(batch))
 	for i, r := range batch {
+		var expire int64
+		if r.ExpireAt != nil {
+			expire = *r.ExpireAt
+		}
 		entries[i] = &pb.FileVersionEntry{
 			JobId:     r.JobID,
 			ObjectId:  r.ObjectID,
 			Metadata:  r.Metadata,
 			Ctime:     r.Ctime,
+			ExpireAt:  expire,
 			StoreSeq:  r.Seq,
 			CreatedAt: r.CreatedAt.Unix(),
 		}
@@ -53,6 +58,21 @@ func (s *GrpcSender) Send(batch []wfs.FileVersionRecord) error {
 
 	if _, err := s.client.SyncFileVersions(ctx, &pb.SyncRequest{Entries: entries}); err != nil {
 		return fmt.Errorf("SyncFileVersions: %w", err)
+	}
+	return nil
+}
+
+func (s *GrpcSender) SendDeletions(batch []wfs.FileVersionDeletionRecord) error {
+	entries := make([]*pb.FileVersionRef, len(batch))
+	for i, r := range batch {
+		entries[i] = &pb.FileVersionRef{JobId: r.JobID, ObjectId: r.ObjectID}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.timeoutSec)*time.Second)
+	defer cancel()
+
+	if _, err := s.client.DeleteFileVersions(ctx, &pb.DeleteVersionsRequest{Entries: entries}); err != nil {
+		return fmt.Errorf("DeleteFileVersions: %w", err)
 	}
 	return nil
 }

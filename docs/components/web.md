@@ -128,11 +128,23 @@ no data — there's no read-only "guest" mode.
 - `/policies/:id` — one policy's full record, in two tabs built on a reusable `Tabs` component
   (`components/ui/Tabs.vue`, active tab synced to `?tab=details`/`?tab=checkins` so either can be
   linked directly): `Details` (the default — client filters, object filters, backup window) and
-  `Check-ins` (`components/policies/PolicyCheckins.vue` — every host that has received this policy
+  `Status` (`components/storage/StorageStatus.vue` — one card per reporting storage node: online/stale/offline badge, disk usage bar amber above 85% and red above 95%, active connections, in-progress jobs, uptime, last report; polled every 30s) and `Check-ins` (`components/policies/PolicyCheckins.vue` — every host that has received this policy
   from `policy-server`, each with its most recent check-in time, and a manual Refresh button that
   re-fetches the policy). Edit and Delete buttons sit at the page level, outside the tabs; Edit opens
   `BackupPolicyFormModal` pre-filled with the policy's current values (both "Save" and "Run now" are
   available here). No separate `/policies/new` or `/policies/:id/edit` routes.
+- `/retention` — retention rules in evaluation order: position, name, which clients it applies to,
+  backup type, path (plus any file-name patterns), and how long to keep (`N days` / `Forever`), with
+  a fixed last row explaining the built-in default (7 days unless a node's `RetentionDefaultDays`
+  says otherwise). Rules are checked top to bottom and the first match decides retention; reorder by
+  dragging a row or with its up/down arrows, which sends the complete ordered id list to
+  `POST /retention-policies/reorder` — the list updates immediately and reverts (refetching, since the
+  rejection usually means another operator changed the set) with the error shown if the server
+  refuses. "New Retention Rule" and each row's Edit open `RetentionFormModal` (name, hostnames,
+  labels, backup type, path, optional file-name globs, keep in days or "Keep forever"; validation
+  mirrors `policy-server`'s — absolute path, no `..`, no `/` in a glob, whole days >= 1) and Delete
+  asks for confirmation. Its store is `stores/retentionPolicies.js`; form/display helpers live in
+  `utils/retentionRule.js`. See [Design: Retention Policies](../superpowers/specs/2026-10-05-retention-policies-design.md).
 - `/storage` — every storage policy (name, target hostname, port, storage type), with a "New Storage
   Policy" action opening `StorageEditModal` (fields: name, target hostname, port, storage type —
   `filesystem` only today — and, when `filesystem` is selected, a filesystem path) and clickable
@@ -151,7 +163,11 @@ no data — there's no read-only "guest" mode.
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
-- `/jobs/:job_id` — one job's log lines from the last 24h; each line is parsed from its underlying
+- `/jobs/:job_id` — one job's log lines from the last 24h (for a `cleanup:` / `vacuum:` job — `bwfs`'s
+  scheduled store maintenance — a banner above them summarizes the run from its finish line: versions
+  deleted and deletion-log entries pruned, or chunks/file data removed and bytes reclaimed, plus the
+  duration, "Dry run" for a cleanup that deleted nothing, or the error of a failed run;
+  restore/verify jobs have their own banner); each line is parsed from its underlying
   JSON via `LogLine.vue` into a level-colored `[LEVEL] time binary@hostname: message` summary, with
   the remaining fields (`job_id`, `event`, `status`, etc.) collapsed behind a click — a line that
   isn't valid JSON falls back to plain text

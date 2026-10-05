@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"hash/crc32"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -131,9 +132,14 @@ func restoreAndVerifyCRC(t *testing.T, client pb.RestoreServiceClient, fileUUID 
 // listLatestFileUUID returns the file_uuid for the latest version of a file by path.
 func listLatestFileUUID(t *testing.T, client pb.ListServiceClient, path string) string {
 	t.Helper()
-	resp, err := client.ListFiles(context.Background(), &pb.ListRequest{})
+	stream, err := client.ListFiles(context.Background(), &pb.ListRequest{})
 	require.NoError(t, err)
-	for _, row := range resp.Rows {
+	for {
+		row, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
 		if row.Path == path {
 			return row.FileUuid
 		}

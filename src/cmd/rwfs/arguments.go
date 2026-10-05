@@ -28,6 +28,18 @@ type Arguments struct {
 	bwfsTarget     string
 }
 
+// fallbackStreams is the --streams default when the config does not provide one.
+const fallbackStreams = 4
+
+// streamsDefault is the --streams default: the configured default_streams (the
+// same setting brfs uses), or fallbackStreams when the config has none.
+func streamsDefault(conf *config.Config) int {
+	if conf.DefaultStreams < 1 {
+		return fallbackStreams
+	}
+	return conf.DefaultStreams
+}
+
 func parseArguments(conf *config.Config) (*Arguments, error) {
 	args := &Arguments{}
 
@@ -73,7 +85,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	verifyCmd.Flags().StringVar(&args.Filter, "filter", "", "Filter by text in file path")
 	verifyCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
 	verifyCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Suppress per-file success lines (warnings and summary always shown)")
-	verifyCmd.Flags().IntVar(&args.Streams, "streams", 4, "Number of concurrent verification workers")
+	verifyCmd.Flags().IntVar(&args.Streams, "streams", streamsDefault(conf), "Number of concurrent verification workers")
 	verifyCmd.Flags().IntVar(&args.Retries, "retries", conf.RwfsRetries, "Max retry attempts per file on stream error")
 	verifyCmd.Flags().BoolVar(&args.RulesStdin, "rules-stdin", false, "Read {\"rules\":[{host,path,include}]} from stdin and verify only matching files")
 	verifyCmd.Flags().StringVar(&args.JobID, "job-id", "", "Correlation ID for this invocation's logs (auto-generated if omitted); sent to bwfs as job-id metadata")
@@ -94,7 +106,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 	}
 	restoreCmd.Flags().BoolVar(&args.RulesStdin, "rules-stdin", false, "Read {\"rules\":[{host,path,include,dest_path}]} from stdin (required)")
 	restoreCmd.Flags().BoolVar(&args.Overwrite, "overwrite", false, "Whether to overwrite existing destination files")
-	restoreCmd.Flags().IntVar(&args.Streams, "streams", 4, "Number of concurrent file restore workers")
+	restoreCmd.Flags().IntVar(&args.Streams, "streams", streamsDefault(conf), "Number of concurrent file restore workers")
 	restoreCmd.Flags().IntVar(&args.Retries, "retries", conf.RwfsRetries, "Max retry attempts per file on stream error")
 	restoreCmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
 	restoreCmd.Flags().BoolVar(&args.Quiet, "quiet", false, "Suppress per-file resolved lines (warnings and summary always shown)")

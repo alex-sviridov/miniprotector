@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	CatalogService_SyncFileVersions_FullMethodName      = "/catalogservice.CatalogService/SyncFileVersions"
+	CatalogService_DeleteFileVersions_FullMethodName    = "/catalogservice.CatalogService/DeleteFileVersions"
 	CatalogService_ListEntries_FullMethodName           = "/catalogservice.CatalogService/ListEntries"
 	CatalogService_ListClientFacets_FullMethodName      = "/catalogservice.CatalogService/ListClientFacets"
 	CatalogService_ListJobFacets_FullMethodName         = "/catalogservice.CatalogService/ListJobFacets"
@@ -33,6 +34,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type CatalogServiceClient interface {
 	SyncFileVersions(ctx context.Context, in *SyncRequest, opts ...grpc.CallOption) (*SyncResponse, error)
+	DeleteFileVersions(ctx context.Context, in *DeleteVersionsRequest, opts ...grpc.CallOption) (*DeleteVersionsResponse, error)
 	ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error)
 	ListClientFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error)
 	ListJobFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error)
@@ -53,6 +55,16 @@ func (c *catalogServiceClient) SyncFileVersions(ctx context.Context, in *SyncReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SyncResponse)
 	err := c.cc.Invoke(ctx, CatalogService_SyncFileVersions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) DeleteFileVersions(ctx context.Context, in *DeleteVersionsRequest, opts ...grpc.CallOption) (*DeleteVersionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteVersionsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_DeleteFileVersions_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +136,7 @@ func (c *catalogServiceClient) ListDirectoryChildren(ctx context.Context, in *Li
 // for forward compatibility.
 type CatalogServiceServer interface {
 	SyncFileVersions(context.Context, *SyncRequest) (*SyncResponse, error)
+	DeleteFileVersions(context.Context, *DeleteVersionsRequest) (*DeleteVersionsResponse, error)
 	ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error)
 	ListClientFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error)
 	ListJobFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error)
@@ -142,6 +155,9 @@ type UnimplementedCatalogServiceServer struct{}
 
 func (UnimplementedCatalogServiceServer) SyncFileVersions(context.Context, *SyncRequest) (*SyncResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SyncFileVersions not implemented")
+}
+func (UnimplementedCatalogServiceServer) DeleteFileVersions(context.Context, *DeleteVersionsRequest) (*DeleteVersionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteFileVersions not implemented")
 }
 func (UnimplementedCatalogServiceServer) ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEntries not implemented")
@@ -196,6 +212,24 @@ func _CatalogService_SyncFileVersions_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(CatalogServiceServer).SyncFileVersions(ctx, req.(*SyncRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_DeleteFileVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteVersionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).DeleteFileVersions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_DeleteFileVersions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).DeleteFileVersions(ctx, req.(*DeleteVersionsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -318,6 +352,10 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SyncFileVersions",
 			Handler:    _CatalogService_SyncFileVersions_Handler,
+		},
+		{
+			MethodName: "DeleteFileVersions",
+			Handler:    _CatalogService_DeleteFileVersions_Handler,
 		},
 		{
 			MethodName: "ListEntries",

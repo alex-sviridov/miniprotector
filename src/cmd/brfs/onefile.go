@@ -3,10 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"log/slog"
 	"time"
@@ -14,12 +12,11 @@ import (
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
-	"github.com/alex-sviridov/miniprotector/workload"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 )
 
 // processOneFile handles the complete backup lifecycle for one file
-func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) error {
+func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, rd *responseReader, file filesystem.FileInfo, expireAt int64, window int) error {
 
 	conf := config.GetConfigFromContext(ctx)
 	logger.Debug("Started file processing")
@@ -33,7 +30,7 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 	defer fileLock.Unlock()
 
 	// Send file info and get server response
-	fileResponse, err := sendFileMetadata(ctx, logger, stream, file)
+	fileResponse, err := sendFileMetadata(ctx, logger, stream, rd, file, expireAt)
 	if err != nil {
 		return fmt.Errorf("failed to get file needed response: %w", err)
 	}
@@ -46,32 +43,14 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 
 	var fileHash []byte
 	if fileResponse.Needed {
-		fileChecksumHasher := crc32.NewIEEE()
-		var buf [4]byte
-		for chunk, err := range file.ChunkIterator() {
-			if err != nil {
-				return fmt.Errorf("failed to read chunk: %w", err)
-			}
-			binary.BigEndian.PutUint32(buf[:], chunk.Checksum())
-			fileChecksumHasher.Write(buf[:])
-			chunkResponse, err := sendChunkMetadata(ctx, logger, stream, chunk)
-			if err != nil {
-				return fmt.Errorf("failed to get chunk needed response: %w", err)
-			}
-			logger.Debug("Chunk", "chunk_hash", hex.EncodeToString(chunk.Hash()), "needed", chunkResponse.Needed)
-			if chunkResponse.Needed {
-				// TODO: Transmission retry
-				if err := sendChunkData(ctx, logger, stream, chunk); err != nil {
-					return fmt.Errorf("failed to send chunk data: %w", err)
-				}
-			}
+		var err error
+		fileHash, err = transferChunks(ctx, logger, stream, rd, file, window)
+		if err != nil {
+			return err
 		}
-		binary.BigEndian.PutUint32(buf[:], fileChecksumHasher.Sum32())
-		fileHash = make([]byte, 4)
-		copy(fileHash, buf[:])
 	}
 
-	result, err := getFileStatus(ctx, logger, stream, file.ID())
+	result, err := getFileStatus(ctx, logger, rd, file.ID())
 	if err != nil {
 		return fmt.Errorf("failed to get file status: %w", err)
 	}
@@ -86,47 +65,8 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 	return nil
 }
 
-func sendChunkData(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, chunk workload.Chunk) error {
-	conf := config.GetConfigFromContext(ctx)
-	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
-
-	logger = logger.With(slog.String("chunk_hash", hex.EncodeToString(chunk.Hash())))
-
-	logger.Debug("Sending chunk data")
-
-	request := &pb.FileRequest{
-		RequestType: &pb.FileRequest_ChunkData{
-			ChunkData: &pb.ChunkData{
-				Hash:  chunk.Hash(),
-				Index: int64(chunk.Index()),
-				Data:  chunk.Data(),
-				Eof:   chunk.IsEOF(),
-			},
-		},
-	}
-
-	if err := stream.Send(request); err != nil {
-		return fmt.Errorf("failed to send chunk data: %w", err)
-	}
-
-	result, err := connection.WaitForResponse(ctx, logger, stream, connection.ChunkResult(chunk.Hash()), timeout)
-	if err != nil {
-		return err
-	}
-
-	chunkResult := result.(*pb.ChunkResult)
-	if !chunkResult.Success {
-		return fmt.Errorf("chunk transmission failed")
-	}
-
-	return nil
-}
-
-func getFileStatus(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, expectedFileId string) (*pb.FileProcessingResult, error) {
-	conf := config.GetConfigFromContext(ctx)
-	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
-
-	result, err := connection.WaitForResponse(ctx, logger, stream, connection.FileResult(expectedFileId), timeout)
+func getFileStatus(ctx context.Context, logger *slog.Logger, rd *responseReader, expectedFileId string) (*pb.FileProcessingResult, error) {
+	result, err := rd.wait(ctx, logger, connection.FileResult(expectedFileId))
 	if err != nil {
 		return nil, err
 	}
@@ -140,10 +80,7 @@ func getFileStatus(ctx context.Context, logger *slog.Logger, stream pb.BackupSer
 }
 
 // sendFileMetadata sends metadata for one file
-func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, file filesystem.FileInfo) (*pb.FileNeeded, error) {
-	conf := config.GetConfigFromContext(ctx)
-	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
-
+func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, rd *responseReader, file filesystem.FileInfo, expireAt int64) (*pb.FileNeeded, error) {
 	encoded, err := file.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode file info: %w", err)
@@ -154,6 +91,7 @@ func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.Backup
 			FileInfo: &pb.FileInfo{
 				FileId:     file.ID(),
 				Attributes: encoded,
+				ExpireAt:   expireAt,
 			},
 		},
 	}
@@ -162,43 +100,10 @@ func sendFileMetadata(ctx context.Context, logger *slog.Logger, stream pb.Backup
 		return nil, fmt.Errorf("failed to send file info: %w", err)
 	}
 
-	result, err := connection.WaitForResponse(ctx, logger, stream, connection.FileNeeded(file.ID()), timeout)
+	result, err := rd.wait(ctx, logger, connection.FileNeeded(file.ID()))
 	if err != nil {
 		return nil, err
 	}
 
 	return result.(*pb.FileNeeded), nil
-}
-
-// sendChunkMetadata sends metadata for one chunk
-func sendChunkMetadata(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, chunk workload.Chunk) (*pb.ChunkNeeded, error) {
-	conf := config.GetConfigFromContext(ctx)
-	timeout := time.Duration(conf.ConnectionTimeOutSec) * time.Second
-
-	logger = logger.With(slog.String("chunk_hash", hex.EncodeToString(chunk.Hash())))
-
-	logger.Debug("Sending chunk metadata")
-
-	request := &pb.FileRequest{
-		RequestType: &pb.FileRequest_ChunkHash{
-			ChunkHash: &pb.ChunkHash{
-				Hash:     chunk.Hash(),
-				Index:    int64(chunk.Index()),
-				Size:     int64(len(chunk.Data())),
-				Eof:      chunk.IsEOF(),
-				Checksum: chunk.Checksum(),
-			},
-		},
-	}
-
-	if err := stream.Send(request); err != nil {
-		return nil, fmt.Errorf("failed to send chunk info: %w", err)
-	}
-
-	result, err := connection.WaitForResponse(ctx, logger, stream, connection.ChunkNeeded(chunk.Hash()), timeout)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.(*pb.ChunkNeeded), nil
 }

@@ -9,6 +9,7 @@ rather than by `catalogsync` — see [ListEntries](#listentries) below.
 ```protobuf
 service CatalogService {
   rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
+  rpc DeleteFileVersions(DeleteVersionsRequest) returns (DeleteVersionsResponse);
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
@@ -33,6 +34,7 @@ message FileVersionEntry {
   int64  ctime      = 4;
   int64  store_seq  = 5; // bwfs's local file_versions.seq — informational only
   int64  created_at = 6; // unix seconds; bwfs's original recording time
+  int64  expire_at  = 7; // unix seconds; 0 = no expiry recorded / never expires
 }
 
 message SyncRequest {
@@ -41,6 +43,39 @@ message SyncRequest {
 
 message SyncResponse {} // empty ack
 ```
+
+`expire_at` is the per-file retention expiry `brfs` stamped at backup time (see
+[Backup Protocol](backup.md#retention-expiry-expire_at)). `catalogsync` forwards it from
+`file_versions.expire_at` (NULL becomes `0`) and `catalog` stores `0` as NULL again, so the
+catalog can show it. The catalog does not expire anything itself: when `bwfs` deletes a version
+(see below) it tells the catalog, so the two never disagree.
+
+## DeleteFileVersions
+
+`catalogsync` → `catalog`, role `store` (like `SyncFileVersions`). Tells the catalog which file
+versions `bwfs` has deleted — expired by its scheduled cleanup, or purged with a failed backup job —
+so the web UI never offers a version that no longer exists.
+
+```protobuf
+message FileVersionRef {
+  string job_id    = 1;
+  string object_id = 2;
+}
+
+message DeleteVersionsRequest {
+  repeated FileVersionRef entries = 1;
+}
+
+message DeleteVersionsResponse {} // empty ack
+```
+
+As with `SyncFileVersions`, the sending node is the CA-verified mTLS peer, never a request field:
+`catalog` deletes only entries stored under that peer's own `store_node`, so one node can never
+delete another's entries even when `job_id`/`object_id` collide. The call is idempotent — an entry
+the catalog never had (the version was deleted before `catalogsync` replicated it) or has already
+dropped is simply not counted — which is what makes `catalogsync`'s at-least-once retries safe. One
+unary call per batch, all-or-nothing, like `SyncFileVersions`. Directory rows
+(`catalog_directories`) are not pruned: a directory whose last file was deleted may remain listed.
 
 ## Identity
 

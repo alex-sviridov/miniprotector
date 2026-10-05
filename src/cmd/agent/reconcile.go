@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"os"
@@ -163,6 +164,20 @@ func isBackupPolicy(p Policy) bool {
 // kinds.
 func isRestorePolicy(p Policy) bool {
 	return strings.HasPrefix(p.ID, "restore:") || strings.HasPrefix(p.ID, "verify:")
+}
+
+// execWithPrepare runs p.Prepare (if any) and then execute with the combined
+// args; a Prepare failure is the attempt's error and nothing is exec'd.
+func execWithPrepare(ctx context.Context, logger *slog.Logger, execute runner, p Policy) error {
+	args := p.Args
+	if p.Prepare != nil {
+		extra, err := p.Prepare(logger)
+		if err != nil {
+			return fmt.Errorf("prepare %s: %w", p.ID, err)
+		}
+		args = append(append([]string(nil), p.Args...), extra...)
+	}
+	return execute(ctx, p.Binary, args, p.Stdin)
 }
 
 // logExecStart logs that agent is about to dispatch p's exec. Called
@@ -344,7 +359,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 					defer rs.clearInFlight(p.ID)
 					logExecStart(rs.logger, p)
 					start := time.Now()
-					attemptErr := execute(ctx, p.Binary, p.Args, p.Stdin)
+					attemptErr := execWithPrepare(ctx, rs.logger, execute, p)
 					logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 					rs.recordOutcome(p.ID, attemptErr, time.Now())
 					if attemptErr == nil && onSuccess != nil {
@@ -356,7 +371,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 
 			logExecStart(rs.logger, p)
 			start := time.Now()
-			attemptErr := execute(ctx, p.Binary, p.Args, p.Stdin)
+			attemptErr := execWithPrepare(ctx, rs.logger, execute, p)
 			logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 			rs.recordOutcome(p.ID, attemptErr, now)
 			if attemptErr == nil && onSuccess != nil {

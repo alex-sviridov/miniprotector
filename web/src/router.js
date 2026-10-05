@@ -11,6 +11,7 @@ export const router = createRouter({
     { path: '/restore', name: 'restore', component: () => import('./views/RestoreView.vue') },
     { path: '/policies', name: 'policies', component: () => import('./views/BackupPoliciesView.vue') },
     { path: '/policies/:id', name: 'policy-detail', component: () => import('./views/BackupPolicyView.vue') },
+    { path: '/retention', name: 'retention', component: () => import('./views/RetentionView.vue') },
     { path: '/storage', name: 'storage', component: () => import('./views/StorageView.vue') },
     { path: '/storage/:id', name: 'storage-detail', component: () => import('./views/StoragePolicyView.vue') },
     { path: '/jobs', name: 'jobs', component: () => import('./views/JobsListView.vue') },

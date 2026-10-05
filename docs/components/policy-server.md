@@ -51,10 +51,10 @@ are opaque strings, stored and returned verbatim for a future consumer to interp
 
 A policy's type is derived from the name of the immediate subfolder its file lives in under
 `$MP_CONFIG_PATH/policies/` — `policies/backup/*.json` are type `"backup"`, `policies/storage/*.json`
-are type `"storage"`, and `policies/restore/*.json` are type `"restore"`. Type is never read from or
+are type `"storage"`, `policies/restore/*.json` are type `"restore"`, and `policies/retention/*.json` are type `"retention"`. Type is never read from or
 written to the on-disk policy JSON itself; it's purely a function of file location, computed at load
 time the same way `policy-server` already computes each policy's `id`. Each type is a distinct Go
-type internally (`BackupPolicy`, `StoragePolicy`, `RestorePolicy`) implementing a shared `Policy`
+type internally (`BackupPolicy`, `StoragePolicy`, `RestorePolicy`, `RetentionPolicy`) implementing a shared `Policy`
 interface, with its own on-disk schema, validation,
 and wire conversion — adding a further type means writing one more such type and registering its
 parser, not changing `policy-server`'s directory-walking or RPC-handling code. A `*.json` sitting
@@ -62,9 +62,9 @@ directly under `policies/`, outside any type subfolder, is skipped and logged �
 don't block the rest" treatment applied to a malformed file. **A subfolder name that isn't a
 registered type is also skipped and logged**, the same way — there's no schema to load an
 unrecognized type's file into, so it can no longer be loaded generically the way an earlier design
-allowed. `CreatePolicy` requires a `type` (`"backup"`, `"storage"`, or `"restore"`) and writes into the matching
+allowed. `CreatePolicy` requires a `type` (`"backup"`, `"storage"`, `"restore"`, or `"retention"`) and writes into the matching
 `policies/<type>/`, creating that subdirectory if missing; a request that sets fields belonging to
-the other type is rejected. `ListPolicies` additionally accepts an optional `type` filter — `"backup"`, `"storage"`, or `"restore"` restricts
+the other type is rejected. `ListPolicies` additionally accepts an optional `type` filter — `"backup"`, `"storage"`, `"restore"`, or `"retention"` restricts
 the response to that type; empty returns every type, unchanged from before this filter existed. See
 [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
 and [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
@@ -84,6 +84,19 @@ to this type; see
 [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md),
 which is the first actual consumer of `storage`-typed policies. See
 [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
+
+A `"retention"` policy is one retention rule: how long file versions under a `path` prefix are kept
+(`keep_seconds`, `0` = never expire), for one `backup_type` (`"filesystem"` today), optionally
+narrowed by basename `include` globs, for the nodes its `client_filters` select. Its `priority` is
+managed by `policy-server` itself — `CreatePolicy` appends, `UpdatePolicy` preserves, and the
+`ReorderRetentionPolicies` RPC (complete ordered id list in, priorities `1..n` out, rejected if the
+list is incomplete or stale) is the only way to change it; `ListPolicies(type="retention")` returns
+the rules in evaluation order. `agent` turns the rules that match its node into the retention matrix
+for each backup job (see [agent](agent.md#retention-matrix)). Priority is stored in the policy file
+(`policies/retention/<name>.json`: `metadata`, `client_filters`, `backup_type`, `path`, `include`,
+`keep_seconds`, `priority`), so an operator hand-editing files sees and can set it directly. See
+[Policy Server Protocol](../protocols/policy-server.md) and
+[Design: Retention Policies](../superpowers/specs/2026-10-05-retention-policies-design.md).
 
 A `"restore"` policy is a one-shot directive: `client_filters` targets the node that will execute
 the restore, `storage_policy_id` (required, references an existing `"storage"`-typed policy's `id`

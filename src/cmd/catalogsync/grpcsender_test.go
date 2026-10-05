@@ -19,8 +19,17 @@ import (
 
 type fakeCatalogServer struct {
 	pb.UnimplementedCatalogServiceServer
-	lastReq *pb.SyncRequest
-	err     error
+	lastReq    *pb.SyncRequest
+	lastDelReq *pb.DeleteVersionsRequest
+	err        error
+}
+
+func (f *fakeCatalogServer) DeleteFileVersions(ctx context.Context, req *pb.DeleteVersionsRequest) (*pb.DeleteVersionsResponse, error) {
+	f.lastDelReq = req
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &pb.DeleteVersionsResponse{}, nil
 }
 
 func (f *fakeCatalogServer) SyncFileVersions(ctx context.Context, req *pb.SyncRequest) (*pb.SyncResponse, error) {
@@ -90,3 +99,38 @@ func TestGrpcSender_Send_RPCErrorPropagates(t *testing.T) {
 }
 
 var _ Sender = (*GrpcSender)(nil)
+
+func TestGrpcSender_Send_CarriesExpireAt(t *testing.T) {
+	fake := &fakeCatalogServer{}
+	sender := newTestGrpcSender(t, fake)
+	exp := int64(1_700_000_000)
+	require.NoError(t, sender.Send([]wfs.FileVersionRecord{
+		{Seq: 1, JobID: "j", ObjectID: "a", ExpireAt: &exp, CreatedAt: time.Now()},
+		{Seq: 2, JobID: "j", ObjectID: "b", CreatedAt: time.Now()},
+	}))
+	require.Len(t, fake.lastReq.Entries, 2)
+	assert.Equal(t, exp, fake.lastReq.Entries[0].ExpireAt)
+	assert.Equal(t, int64(0), fake.lastReq.Entries[1].ExpireAt)
+}
+
+func TestGrpcSender_SendDeletions_ConvertsBatchToSingleRequest(t *testing.T) {
+	fake := &fakeCatalogServer{}
+	sender := newTestGrpcSender(t, fake)
+
+	require.NoError(t, sender.SendDeletions([]wfs.FileVersionDeletionRecord{
+		{Seq: 1, JobID: "job-1", ObjectID: "obj-1"},
+		{Seq: 2, JobID: "job-2", ObjectID: "obj-2"},
+	}))
+
+	require.NotNil(t, fake.lastDelReq)
+	require.Len(t, fake.lastDelReq.Entries, 2)
+	assert.Equal(t, "job-1", fake.lastDelReq.Entries[0].JobId)
+	assert.Equal(t, "obj-2", fake.lastDelReq.Entries[1].ObjectId)
+}
+
+func TestGrpcSender_SendDeletions_PropagatesErrors(t *testing.T) {
+	fake := &fakeCatalogServer{err: errors.New("catalog down")}
+	sender := newTestGrpcSender(t, fake)
+
+	assert.Error(t, sender.SendDeletions([]wfs.FileVersionDeletionRecord{{Seq: 1, JobID: "j", ObjectID: "o"}}))
+}

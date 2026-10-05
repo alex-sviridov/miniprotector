@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -31,6 +32,7 @@ type Entry struct {
 	ObjectID        string
 	Metadata        []byte
 	Ctime           int64
+	ExpireAt        int64 // unix seconds; 0 = no expiry recorded / never expires
 	StoreSeq        int64
 	StoreCreatedAt  time.Time
 	SourceHost      string
@@ -53,12 +55,18 @@ func ensureEntries(db *gorm.DB, batch []Entry) error {
 	records := make([]EntryRecord, len(batch))
 	now := time.Now()
 	for i, e := range batch {
+		var expire *int64
+		if e.ExpireAt != 0 {
+			v := e.ExpireAt
+			expire = &v
+		}
 		records[i] = EntryRecord{
 			StoreNode:       e.StoreNode,
 			JobID:           e.JobID,
 			ObjectID:        e.ObjectID,
 			Metadata:        e.Metadata,
 			Ctime:           e.Ctime,
+			ExpireAt:        expire,
 			StoreSeq:        e.StoreSeq,
 			StoreCreatedAt:  e.StoreCreatedAt,
 			SourceHost:      e.SourceHost,
@@ -119,6 +127,48 @@ func (s *Store) SyncBatch(ctx context.Context, entries []Entry, directories []Di
 		}
 		return nil
 	})
+}
+
+// EntryRef names one replicated entry within a single store node's
+// namespace: JobID/ObjectID are only unique per node, so deletion always
+// pairs refs with the storeNode they came from.
+type EntryRef struct {
+	JobID    string
+	ObjectID string
+}
+
+// deleteChunk bounds how many refs one DELETE statement carries (two bind
+// variables each), well under SQLite's variable limit.
+const deleteChunk = 200
+
+// DeleteEntries removes the named entries of storeNode -- the catalog side of
+// bwfs deleting a file version (retention cleanup, or a failed job's purge).
+// Idempotent: an entry the catalog never had (deleted before catalogsync
+// ever replicated it) or has already dropped is simply not counted. Returns
+// how many entries were removed. Directory rows are deliberately left in
+// place; see docs/components/catalog.md.
+func (s *Store) DeleteEntries(ctx context.Context, storeNode string, refs []EntryRef) (int64, error) {
+	var deleted int64
+	err := s.writeDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for start := 0; start < len(refs); start += deleteChunk {
+			end := min(start+deleteChunk, len(refs))
+			conds := make([]string, 0, end-start)
+			args := make([]any, 0, 2*(end-start))
+			for _, r := range refs[start:end] {
+				conds = append(conds, "(job_id = ? AND object_id = ?)")
+				args = append(args, r.JobID, r.ObjectID)
+			}
+			res := tx.Where("store_node = ?", storeNode).
+				Where(strings.Join(conds, " OR "), args...).
+				Delete(&EntryRecord{})
+			if res.Error != nil {
+				return res.Error
+			}
+			deleted += res.RowsAffected
+		}
+		return nil
+	})
+	return deleted, err
 }
 
 // DirectoryChild is one directory returned by ListDirectoryChildren: a

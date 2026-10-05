@@ -17,7 +17,7 @@ A backup system with intelligent deduplication and integrity verification.
 | log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; gates on a valid operating certificate, forwards the push body unmodified | Implemented (agent bundles, configures, and supervises the Vector process that ships to it) |
 | clientmanager-api | Read-only gRPC daemon exposing `client-manager`'s enrolled-client data (`ListClients`/`GetClient`), sharing its SQLite file the same way `issuer` already does | Implemented |
 | clientmanager-admin-api | CA-admin-equivalent gRPC writes (issue/re-enroll/revoke/unrevoke/description/attribute/SAN) onto the same database, packaged in clientmanager-api's container | Implemented |
-| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate; also serves one inbound mTLS gRPC service, `JobStatusService`, polled by `policy-server`'s restore-cleanup sweep | Implemented |
+| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate; also serves two inbound mTLS gRPC services: `JobStatusService`, polled by `policy-server`'s restore-cleanup sweep, and `StorageStatusService`, into which every `bwfs` posts a status report each minute (kept in memory, shown on the storage policy page) | Implemented |
 | web | Static Vue frontend over `api-server`'s REST API — this system's first browser UI; served by nginx, no mTLS identity of its own | Implemented |
 
 ## Control Plane vs. Agents
@@ -130,8 +130,12 @@ to avoid this.
 
 - **brfs** reads files from the source filesystem
 - Connects to **bwfs** via network or Unix socket, authenticated with mutual TLS
-- Sends chunked file data using the backup protocol
+- Sends chunked file data using the backup protocol, each file's metadata carrying an `expire_at`
+  that `brfs` resolves from the per-job retention matrix `agent` hands it (`--retention-file`)
 - **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
+- **bwfs** also runs scheduled maintenance: **cleanup** deletes file versions past their `expire_at`
+  and **vacuum** reclaims the file data and chunks nothing references any more; deletions are
+  replicated to the catalog by `catalogsync`
 
 ## Restore/Verify Process
 

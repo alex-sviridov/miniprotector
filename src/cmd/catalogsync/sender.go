@@ -13,6 +13,10 @@ import (
 // happens.
 type Sender interface {
 	Send(batch []wfs.FileVersionRecord) error
+	// SendDeletions tells the catalog which file versions bwfs has deleted
+	// (retention cleanup, or a failed job's purge). Deleting an entry the
+	// catalog never had is not an error, so retries are always safe.
+	SendDeletions(batch []wfs.FileVersionDeletionRecord) error
 }
 
 // LoggingSender logs every batch it's given and always succeeds — a
@@ -31,5 +35,13 @@ func (s *LoggingSender) Send(batch []wfs.FileVersionRecord) error {
 		s.logger.Info("catalog replication entry", "job_id", r.JobID, "object_id", r.ObjectID, "seq", r.Seq)
 	}
 	s.logger.Info("catalog replication batch sent", "count", len(batch))
+	return nil
+}
+
+func (s *LoggingSender) SendDeletions(batch []wfs.FileVersionDeletionRecord) error {
+	for _, r := range batch {
+		s.logger.Info("catalog deletion entry", "job_id", r.JobID, "object_id", r.ObjectID, "seq", r.Seq)
+	}
+	s.logger.Info("catalog deletion batch sent", "count", len(batch))
 	return nil
 }

@@ -20,6 +20,7 @@ message FileRequest {
 message FileInfo {
   string file_id = 1; // hostname:fullpath:mtime
   bytes attributes = 2;
+  int64 expire_at = 3; // unix seconds; 0 = no expiry recorded / never expires
 }
 
 message ChunkHash {

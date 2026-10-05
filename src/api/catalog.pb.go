@@ -29,6 +29,7 @@ type FileVersionEntry struct {
 	Ctime         int64                  `protobuf:"varint,4,opt,name=ctime,proto3" json:"ctime,omitempty"`
 	StoreSeq      int64                  `protobuf:"varint,5,opt,name=store_seq,json=storeSeq,proto3" json:"store_seq,omitempty"`    // bwfs's local file_versions.seq — informational only
 	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // unix seconds; bwfs's original recording time
+	ExpireAt      int64                  `protobuf:"varint,7,opt,name=expire_at,json=expireAt,proto3" json:"expire_at,omitempty"`    // unix seconds; 0 = no expiry recorded / never expires
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -101,6 +102,13 @@ func (x *FileVersionEntry) GetStoreSeq() int64 {
 func (x *FileVersionEntry) GetCreatedAt() int64 {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *FileVersionEntry) GetExpireAt() int64 {
+	if x != nil {
+		return x.ExpireAt
 	}
 	return 0
 }
@@ -185,6 +193,141 @@ func (*SyncResponse) Descriptor() ([]byte, []int) {
 	return file_api_catalog_proto_rawDescGZIP(), []int{2}
 }
 
+// A file version bwfs has deleted (expired by retention cleanup, or purged
+// with a failed backup job). Identified the same way entries are: the sending
+// node is the verified mTLS peer, so (job_id, object_id) is unambiguous.
+type FileVersionRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	ObjectId      string                 `protobuf:"bytes,2,opt,name=object_id,json=objectId,proto3" json:"object_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileVersionRef) Reset() {
+	*x = FileVersionRef{}
+	mi := &file_api_catalog_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileVersionRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileVersionRef) ProtoMessage() {}
+
+func (x *FileVersionRef) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileVersionRef.ProtoReflect.Descriptor instead.
+func (*FileVersionRef) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *FileVersionRef) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *FileVersionRef) GetObjectId() string {
+	if x != nil {
+		return x.ObjectId
+	}
+	return ""
+}
+
+type DeleteVersionsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entries       []*FileVersionRef      `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteVersionsRequest) Reset() {
+	*x = DeleteVersionsRequest{}
+	mi := &file_api_catalog_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteVersionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteVersionsRequest) ProtoMessage() {}
+
+func (x *DeleteVersionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteVersionsRequest.ProtoReflect.Descriptor instead.
+func (*DeleteVersionsRequest) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *DeleteVersionsRequest) GetEntries() []*FileVersionRef {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+type DeleteVersionsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteVersionsResponse) Reset() {
+	*x = DeleteVersionsResponse{}
+	mi := &file_api_catalog_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteVersionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteVersionsResponse) ProtoMessage() {}
+
+func (x *DeleteVersionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_catalog_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteVersionsResponse.ProtoReflect.Descriptor instead.
+func (*DeleteVersionsResponse) Descriptor() ([]byte, []int) {
+	return file_api_catalog_proto_rawDescGZIP(), []int{5}
+}
+
 type ListEntriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	StoreHost     string                 `protobuf:"bytes,1,opt,name=store_host,json=storeHost,proto3" json:"store_host,omitempty"`              // exact match against the sending bwfs node's identity; empty = all
@@ -206,7 +349,7 @@ type ListEntriesRequest struct {
 
 func (x *ListEntriesRequest) Reset() {
 	*x = ListEntriesRequest{}
-	mi := &file_api_catalog_proto_msgTypes[3]
+	mi := &file_api_catalog_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -218,7 +361,7 @@ func (x *ListEntriesRequest) String() string {
 func (*ListEntriesRequest) ProtoMessage() {}
 
 func (x *ListEntriesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[3]
+	mi := &file_api_catalog_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -231,7 +374,7 @@ func (x *ListEntriesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEntriesRequest.ProtoReflect.Descriptor instead.
 func (*ListEntriesRequest) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{3}
+	return file_api_catalog_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListEntriesRequest) GetStoreHost() string {
@@ -314,7 +457,7 @@ type ListEntriesResponse struct {
 
 func (x *ListEntriesResponse) Reset() {
 	*x = ListEntriesResponse{}
-	mi := &file_api_catalog_proto_msgTypes[4]
+	mi := &file_api_catalog_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -326,7 +469,7 @@ func (x *ListEntriesResponse) String() string {
 func (*ListEntriesResponse) ProtoMessage() {}
 
 func (x *ListEntriesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[4]
+	mi := &file_api_catalog_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -339,7 +482,7 @@ func (x *ListEntriesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEntriesResponse.ProtoReflect.Descriptor instead.
 func (*ListEntriesResponse) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{4}
+	return file_api_catalog_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListEntriesResponse) GetEntries() []*Entry {
@@ -381,7 +524,7 @@ type Entry struct {
 
 func (x *Entry) Reset() {
 	*x = Entry{}
-	mi := &file_api_catalog_proto_msgTypes[5]
+	mi := &file_api_catalog_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -393,7 +536,7 @@ func (x *Entry) String() string {
 func (*Entry) ProtoMessage() {}
 
 func (x *Entry) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[5]
+	mi := &file_api_catalog_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -406,7 +549,7 @@ func (x *Entry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Entry.ProtoReflect.Descriptor instead.
 func (*Entry) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{5}
+	return file_api_catalog_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Entry) GetId() int64 {
@@ -532,7 +675,7 @@ type Facet struct {
 
 func (x *Facet) Reset() {
 	*x = Facet{}
-	mi := &file_api_catalog_proto_msgTypes[6]
+	mi := &file_api_catalog_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -544,7 +687,7 @@ func (x *Facet) String() string {
 func (*Facet) ProtoMessage() {}
 
 func (x *Facet) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[6]
+	mi := &file_api_catalog_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -557,7 +700,7 @@ func (x *Facet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Facet.ProtoReflect.Descriptor instead.
 func (*Facet) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{6}
+	return file_api_catalog_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Facet) GetName() string {
@@ -595,7 +738,7 @@ type ListFacetsRequest struct {
 
 func (x *ListFacetsRequest) Reset() {
 	*x = ListFacetsRequest{}
-	mi := &file_api_catalog_proto_msgTypes[7]
+	mi := &file_api_catalog_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -607,7 +750,7 @@ func (x *ListFacetsRequest) String() string {
 func (*ListFacetsRequest) ProtoMessage() {}
 
 func (x *ListFacetsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[7]
+	mi := &file_api_catalog_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -620,7 +763,7 @@ func (x *ListFacetsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFacetsRequest.ProtoReflect.Descriptor instead.
 func (*ListFacetsRequest) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{7}
+	return file_api_catalog_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListFacetsRequest) GetReceivedAfter() int64 {
@@ -674,7 +817,7 @@ type ListFacetsResponse struct {
 
 func (x *ListFacetsResponse) Reset() {
 	*x = ListFacetsResponse{}
-	mi := &file_api_catalog_proto_msgTypes[8]
+	mi := &file_api_catalog_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -686,7 +829,7 @@ func (x *ListFacetsResponse) String() string {
 func (*ListFacetsResponse) ProtoMessage() {}
 
 func (x *ListFacetsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[8]
+	mi := &file_api_catalog_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -699,7 +842,7 @@ func (x *ListFacetsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFacetsResponse.ProtoReflect.Descriptor instead.
 func (*ListFacetsResponse) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{8}
+	return file_api_catalog_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListFacetsResponse) GetFacets() []*Facet {
@@ -722,7 +865,7 @@ type ListDirectoryChildrenRequest struct {
 
 func (x *ListDirectoryChildrenRequest) Reset() {
 	*x = ListDirectoryChildrenRequest{}
-	mi := &file_api_catalog_proto_msgTypes[9]
+	mi := &file_api_catalog_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -734,7 +877,7 @@ func (x *ListDirectoryChildrenRequest) String() string {
 func (*ListDirectoryChildrenRequest) ProtoMessage() {}
 
 func (x *ListDirectoryChildrenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[9]
+	mi := &file_api_catalog_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -747,7 +890,7 @@ func (x *ListDirectoryChildrenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDirectoryChildrenRequest.ProtoReflect.Descriptor instead.
 func (*ListDirectoryChildrenRequest) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{9}
+	return file_api_catalog_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListDirectoryChildrenRequest) GetParentPath() string {
@@ -798,7 +941,7 @@ type DirectoryChild struct {
 
 func (x *DirectoryChild) Reset() {
 	*x = DirectoryChild{}
-	mi := &file_api_catalog_proto_msgTypes[10]
+	mi := &file_api_catalog_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -810,7 +953,7 @@ func (x *DirectoryChild) String() string {
 func (*DirectoryChild) ProtoMessage() {}
 
 func (x *DirectoryChild) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[10]
+	mi := &file_api_catalog_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -823,7 +966,7 @@ func (x *DirectoryChild) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DirectoryChild.ProtoReflect.Descriptor instead.
 func (*DirectoryChild) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{10}
+	return file_api_catalog_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DirectoryChild) GetPath() string {
@@ -870,7 +1013,7 @@ type ListDirectoryChildrenResponse struct {
 
 func (x *ListDirectoryChildrenResponse) Reset() {
 	*x = ListDirectoryChildrenResponse{}
-	mi := &file_api_catalog_proto_msgTypes[11]
+	mi := &file_api_catalog_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -882,7 +1025,7 @@ func (x *ListDirectoryChildrenResponse) String() string {
 func (*ListDirectoryChildrenResponse) ProtoMessage() {}
 
 func (x *ListDirectoryChildrenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_catalog_proto_msgTypes[11]
+	mi := &file_api_catalog_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -895,7 +1038,7 @@ func (x *ListDirectoryChildrenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDirectoryChildrenResponse.ProtoReflect.Descriptor instead.
 func (*ListDirectoryChildrenResponse) Descriptor() ([]byte, []int) {
-	return file_api_catalog_proto_rawDescGZIP(), []int{11}
+	return file_api_catalog_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListDirectoryChildrenResponse) GetChildren() []*DirectoryChild {
@@ -909,7 +1052,7 @@ var File_api_catalog_proto protoreflect.FileDescriptor
 
 const file_api_catalog_proto_rawDesc = "" +
 	"\n" +
-	"\x11api/catalog.proto\x12\x0ecatalogservice\"\xb4\x01\n" +
+	"\x11api/catalog.proto\x12\x0ecatalogservice\"\xd1\x01\n" +
 	"\x10FileVersionEntry\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1b\n" +
 	"\tobject_id\x18\x02 \x01(\tR\bobjectId\x12\x1a\n" +
@@ -917,10 +1060,17 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\x05ctime\x18\x04 \x01(\x03R\x05ctime\x12\x1b\n" +
 	"\tstore_seq\x18\x05 \x01(\x03R\bstoreSeq\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"I\n" +
+	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12\x1b\n" +
+	"\texpire_at\x18\a \x01(\x03R\bexpireAt\"I\n" +
 	"\vSyncRequest\x12:\n" +
 	"\aentries\x18\x01 \x03(\v2 .catalogservice.FileVersionEntryR\aentries\"\x0e\n" +
-	"\fSyncResponse\"\xea\x02\n" +
+	"\fSyncResponse\"D\n" +
+	"\x0eFileVersionRef\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1b\n" +
+	"\tobject_id\x18\x02 \x01(\tR\bobjectId\"Q\n" +
+	"\x15DeleteVersionsRequest\x128\n" +
+	"\aentries\x18\x01 \x03(\v2\x1e.catalogservice.FileVersionRefR\aentries\"\x18\n" +
+	"\x16DeleteVersionsResponse\"\xea\x02\n" +
 	"\x12ListEntriesRequest\x12\x1d\n" +
 	"\n" +
 	"store_host\x18\x01 \x01(\tR\tstoreHost\x12\x18\n" +
@@ -987,9 +1137,10 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\tlast_seen\x18\x04 \x01(\x03R\blastSeen\x12!\n" +
 	"\fhas_children\x18\x05 \x01(\bR\vhasChildren\"[\n" +
 	"\x1dListDirectoryChildrenResponse\x12:\n" +
-	"\bchildren\x18\x01 \x03(\v2\x1e.catalogservice.DirectoryChildR\bchildren2\x98\x05\n" +
+	"\bchildren\x18\x01 \x03(\v2\x1e.catalogservice.DirectoryChildR\bchildren2\xfd\x05\n" +
 	"\x0eCatalogService\x12M\n" +
-	"\x10SyncFileVersions\x12\x1b.catalogservice.SyncRequest\x1a\x1c.catalogservice.SyncResponse\x12V\n" +
+	"\x10SyncFileVersions\x12\x1b.catalogservice.SyncRequest\x1a\x1c.catalogservice.SyncResponse\x12c\n" +
+	"\x12DeleteFileVersions\x12%.catalogservice.DeleteVersionsRequest\x1a&.catalogservice.DeleteVersionsResponse\x12V\n" +
 	"\vListEntries\x12\".catalogservice.ListEntriesRequest\x1a#.catalogservice.ListEntriesResponse\x12Y\n" +
 	"\x10ListClientFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12V\n" +
 	"\rListJobFacets\x12!.catalogservice.ListFacetsRequest\x1a\".catalogservice.ListFacetsResponse\x12\\\n" +
@@ -1009,45 +1160,51 @@ func file_api_catalog_proto_rawDescGZIP() []byte {
 	return file_api_catalog_proto_rawDescData
 }
 
-var file_api_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_api_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_api_catalog_proto_goTypes = []any{
 	(*FileVersionEntry)(nil),              // 0: catalogservice.FileVersionEntry
 	(*SyncRequest)(nil),                   // 1: catalogservice.SyncRequest
 	(*SyncResponse)(nil),                  // 2: catalogservice.SyncResponse
-	(*ListEntriesRequest)(nil),            // 3: catalogservice.ListEntriesRequest
-	(*ListEntriesResponse)(nil),           // 4: catalogservice.ListEntriesResponse
-	(*Entry)(nil),                         // 5: catalogservice.Entry
-	(*Facet)(nil),                         // 6: catalogservice.Facet
-	(*ListFacetsRequest)(nil),             // 7: catalogservice.ListFacetsRequest
-	(*ListFacetsResponse)(nil),            // 8: catalogservice.ListFacetsResponse
-	(*ListDirectoryChildrenRequest)(nil),  // 9: catalogservice.ListDirectoryChildrenRequest
-	(*DirectoryChild)(nil),                // 10: catalogservice.DirectoryChild
-	(*ListDirectoryChildrenResponse)(nil), // 11: catalogservice.ListDirectoryChildrenResponse
+	(*FileVersionRef)(nil),                // 3: catalogservice.FileVersionRef
+	(*DeleteVersionsRequest)(nil),         // 4: catalogservice.DeleteVersionsRequest
+	(*DeleteVersionsResponse)(nil),        // 5: catalogservice.DeleteVersionsResponse
+	(*ListEntriesRequest)(nil),            // 6: catalogservice.ListEntriesRequest
+	(*ListEntriesResponse)(nil),           // 7: catalogservice.ListEntriesResponse
+	(*Entry)(nil),                         // 8: catalogservice.Entry
+	(*Facet)(nil),                         // 9: catalogservice.Facet
+	(*ListFacetsRequest)(nil),             // 10: catalogservice.ListFacetsRequest
+	(*ListFacetsResponse)(nil),            // 11: catalogservice.ListFacetsResponse
+	(*ListDirectoryChildrenRequest)(nil),  // 12: catalogservice.ListDirectoryChildrenRequest
+	(*DirectoryChild)(nil),                // 13: catalogservice.DirectoryChild
+	(*ListDirectoryChildrenResponse)(nil), // 14: catalogservice.ListDirectoryChildrenResponse
 }
 var file_api_catalog_proto_depIdxs = []int32{
 	0,  // 0: catalogservice.SyncRequest.entries:type_name -> catalogservice.FileVersionEntry
-	5,  // 1: catalogservice.ListEntriesResponse.entries:type_name -> catalogservice.Entry
-	6,  // 2: catalogservice.ListFacetsResponse.facets:type_name -> catalogservice.Facet
-	10, // 3: catalogservice.ListDirectoryChildrenResponse.children:type_name -> catalogservice.DirectoryChild
-	1,  // 4: catalogservice.CatalogService.SyncFileVersions:input_type -> catalogservice.SyncRequest
-	3,  // 5: catalogservice.CatalogService.ListEntries:input_type -> catalogservice.ListEntriesRequest
-	7,  // 6: catalogservice.CatalogService.ListClientFacets:input_type -> catalogservice.ListFacetsRequest
-	7,  // 7: catalogservice.CatalogService.ListJobFacets:input_type -> catalogservice.ListFacetsRequest
-	7,  // 8: catalogservice.CatalogService.ListDirectoryFacets:input_type -> catalogservice.ListFacetsRequest
-	7,  // 9: catalogservice.CatalogService.ListStoreFacets:input_type -> catalogservice.ListFacetsRequest
-	9,  // 10: catalogservice.CatalogService.ListDirectoryChildren:input_type -> catalogservice.ListDirectoryChildrenRequest
-	2,  // 11: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
-	4,  // 12: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
-	8,  // 13: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
-	8,  // 14: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
-	8,  // 15: catalogservice.CatalogService.ListDirectoryFacets:output_type -> catalogservice.ListFacetsResponse
-	8,  // 16: catalogservice.CatalogService.ListStoreFacets:output_type -> catalogservice.ListFacetsResponse
-	11, // 17: catalogservice.CatalogService.ListDirectoryChildren:output_type -> catalogservice.ListDirectoryChildrenResponse
-	11, // [11:18] is the sub-list for method output_type
-	4,  // [4:11] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	3,  // 1: catalogservice.DeleteVersionsRequest.entries:type_name -> catalogservice.FileVersionRef
+	8,  // 2: catalogservice.ListEntriesResponse.entries:type_name -> catalogservice.Entry
+	9,  // 3: catalogservice.ListFacetsResponse.facets:type_name -> catalogservice.Facet
+	13, // 4: catalogservice.ListDirectoryChildrenResponse.children:type_name -> catalogservice.DirectoryChild
+	1,  // 5: catalogservice.CatalogService.SyncFileVersions:input_type -> catalogservice.SyncRequest
+	4,  // 6: catalogservice.CatalogService.DeleteFileVersions:input_type -> catalogservice.DeleteVersionsRequest
+	6,  // 7: catalogservice.CatalogService.ListEntries:input_type -> catalogservice.ListEntriesRequest
+	10, // 8: catalogservice.CatalogService.ListClientFacets:input_type -> catalogservice.ListFacetsRequest
+	10, // 9: catalogservice.CatalogService.ListJobFacets:input_type -> catalogservice.ListFacetsRequest
+	10, // 10: catalogservice.CatalogService.ListDirectoryFacets:input_type -> catalogservice.ListFacetsRequest
+	10, // 11: catalogservice.CatalogService.ListStoreFacets:input_type -> catalogservice.ListFacetsRequest
+	12, // 12: catalogservice.CatalogService.ListDirectoryChildren:input_type -> catalogservice.ListDirectoryChildrenRequest
+	2,  // 13: catalogservice.CatalogService.SyncFileVersions:output_type -> catalogservice.SyncResponse
+	5,  // 14: catalogservice.CatalogService.DeleteFileVersions:output_type -> catalogservice.DeleteVersionsResponse
+	7,  // 15: catalogservice.CatalogService.ListEntries:output_type -> catalogservice.ListEntriesResponse
+	11, // 16: catalogservice.CatalogService.ListClientFacets:output_type -> catalogservice.ListFacetsResponse
+	11, // 17: catalogservice.CatalogService.ListJobFacets:output_type -> catalogservice.ListFacetsResponse
+	11, // 18: catalogservice.CatalogService.ListDirectoryFacets:output_type -> catalogservice.ListFacetsResponse
+	11, // 19: catalogservice.CatalogService.ListStoreFacets:output_type -> catalogservice.ListFacetsResponse
+	14, // 20: catalogservice.CatalogService.ListDirectoryChildren:output_type -> catalogservice.ListDirectoryChildrenResponse
+	13, // [13:21] is the sub-list for method output_type
+	5,  // [5:13] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_api_catalog_proto_init() }
@@ -1061,7 +1218,7 @@ func file_api_catalog_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_catalog_proto_rawDesc), len(file_api_catalog_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

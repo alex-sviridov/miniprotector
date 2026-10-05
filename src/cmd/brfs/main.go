@@ -13,6 +13,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/retention"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
 
 	"os/signal"
@@ -45,6 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
+	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
 
 	// Get arguments
 	arguments, err := parseArguments(conf)
@@ -72,8 +74,21 @@ func main() {
 		"writerHost", arguments.WriterHost,
 		"writerPort", arguments.WriterPort,
 		"streamsCount", arguments.Streams,
+		"window", arguments.Window,
 		"event", "start",
 	)
+
+	// Load the retention matrix before touching the network: a job must not
+	// silently run without the retention it was told to apply.
+	var st *stamper
+	if arguments.RetentionFile != "" {
+		matcher, err := retention.LoadFile(arguments.RetentionFile)
+		if err != nil {
+			logger.Error("Retention file unusable, refusing to run unprotected", "path", arguments.RetentionFile, "error", err)
+			os.Exit(1)
+		}
+		st = &stamper{m: matcher, root: arguments.SourceFolder}
+	}
 
 	// Get files list
 	filesList, err := filesystem.Discover(arguments.SourceFolder, arguments.Include, arguments.Exclude)
@@ -102,7 +117,7 @@ func main() {
 	logger.Info("Connected to server")
 
 	// Process files using shared gRPC connection
-	resultsCh := processFilesList(ctx, logger, client, filesList, arguments.Streams)
+	resultsCh := processFilesList(ctx, logger, client, filesList, arguments.Streams, arguments.Window, st)
 	for result := range resultsCh {
 		// Process each result as it arrives
 		filesBackupState[result.FileID] = result.Success

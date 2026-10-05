@@ -34,6 +34,7 @@ func main() {
 	}
 
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
+	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
 
 	arguments, err := parseArguments(conf)
 	if err != nil {
@@ -96,6 +97,7 @@ func main() {
 		}
 
 		go watchStaleJobs(signalCtx, backupServer, time.Duration(conf.JobTimeoutSec)*time.Second)
+		startStoreGC(signalCtx, logger, backupServer.store, gcSettingsFrom(conf))
 
 		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
 		if err != nil {
@@ -119,11 +121,20 @@ func main() {
 			os.Exit(1)
 		}
 
+		connCounter := &connCounter{}
+		startStatusReporter(signalCtx, logger, conf, certsDir, statusSource{
+			policyID: arguments.PolicyID,
+			port:     arguments.Port,
+			root:     arguments.StoragePath,
+			conns:    connCounter,
+			jobs:     backupServer.liveness,
+		})
+
 		if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
 			pb.RegisterBackupServiceServer(s, backupServer)
 			pb.RegisterListServiceServer(s, listSrv)
 			pb.RegisterRestoreServiceServer(s, restoreSrv)
-		}); err != nil {
+		}, grpc.StatsHandler(connCounter)); err != nil {
 			logger.Error("Server failed", "error", err)
 			os.Exit(1)
 		}

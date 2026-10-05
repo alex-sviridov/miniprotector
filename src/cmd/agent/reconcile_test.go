@@ -34,6 +34,7 @@ type fakeRunner struct {
 	calls     int
 	failN     int
 	lastStdin []byte
+	lastArgs  []string
 }
 
 func (f *fakeRunner) run(ctx context.Context, binary string, args []string, stdin []byte) error {
@@ -41,6 +42,7 @@ func (f *fakeRunner) run(ctx context.Context, binary string, args []string, stdi
 	defer f.mu.Unlock()
 	f.calls++
 	f.lastStdin = stdin
+	f.lastArgs = args
 	if f.failN > 0 {
 		f.failN--
 		return errors.New("simulated failure")
@@ -466,7 +468,7 @@ func TestRun_DisabledPolicyPrunedViaBackupTasks(t *testing.T) {
 
 	err := run(ctx, testLogger(), stateCachePath, 10*time.Millisecond, fr.run,
 		func() ([]Policy, []storageTask, bool) {
-			return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf), nil, true
+			return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf, t.TempDir()), nil, true
 		}, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
@@ -762,4 +764,36 @@ func TestRun_NilOnSuccessIsSafe(t *testing.T) {
 
 	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	assert.NoError(t, err, "run must not panic when onSuccess is nil")
+}
+
+func TestExecWithPrepare_AppendsPreparedArgsWithoutMutatingPolicyArgs(t *testing.T) {
+	fr := &fakeRunner{}
+	p := Policy{ID: "t", Binary: "brfs", Args: []string{"/data", "--job-id", "j"},
+		Prepare: func(*slog.Logger) ([]string, error) { return []string{"--retention-file", "/x.json"}, nil }}
+
+	require.NoError(t, execWithPrepare(context.Background(), testLogger(), fr.run, p))
+
+	assert.Equal(t, []string{"/data", "--job-id", "j", "--retention-file", "/x.json"}, fr.lastArgs)
+	assert.Equal(t, []string{"/data", "--job-id", "j"}, p.Args)
+}
+
+func TestExecWithPrepare_PrepareErrorFailsTheAttemptWithoutExec(t *testing.T) {
+	fr := &fakeRunner{}
+	p := Policy{ID: "t", Binary: "brfs",
+		Prepare: func(*slog.Logger) ([]string, error) { return nil, errors.New("disk full") }}
+
+	err := execWithPrepare(context.Background(), testLogger(), fr.run, p)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disk full")
+	assert.Equal(t, 0, fr.callCount(), "execute must not run when Prepare fails")
+}
+
+func TestExecWithPrepare_NoPrepareRunsPolicyArgsAsIs(t *testing.T) {
+	fr := &fakeRunner{}
+	p := Policy{ID: "t", Binary: "certclient", Args: []string{"renew"}}
+
+	require.NoError(t, execWithPrepare(context.Background(), testLogger(), fr.run, p))
+
+	assert.Equal(t, []string{"renew"}, fr.lastArgs)
 }
