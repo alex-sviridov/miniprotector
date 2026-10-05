@@ -123,6 +123,7 @@ type FileInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"` // hostname:fullpath:mtime
 	Attributes    []byte                 `protobuf:"bytes,2,opt,name=attributes,proto3" json:"attributes,omitempty"`
+	ExpireAt      int64                  `protobuf:"varint,3,opt,name=expire_at,json=expireAt,proto3" json:"expire_at,omitempty"` // unix seconds; 0 = no expiry recorded / never expires
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -169,6 +170,13 @@ func (x *FileInfo) GetAttributes() []byte {
 		return x.Attributes
 	}
 	return nil
+}
+
+func (x *FileInfo) GetExpireAt() int64 {
+	if x != nil {
+		return x.ExpireAt
+	}
+	return 0
 }
 
 type ChunkHash struct {
@@ -744,12 +752,13 @@ const file_api_backup_proto_rawDesc = "" +
 	"chunk_hash\x18\x03 \x01(\v2\x18.backupservice.ChunkHashH\x00R\tchunkHash\x129\n" +
 	"\n" +
 	"chunk_data\x18\x04 \x01(\v2\x18.backupservice.ChunkDataH\x00R\tchunkDataB\x0e\n" +
-	"\frequest_type\"C\n" +
+	"\frequest_type\"`\n" +
 	"\bFileInfo\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x1e\n" +
 	"\n" +
 	"attributes\x18\x02 \x01(\fR\n" +
-	"attributes\"w\n" +
+	"attributes\x12\x1b\n" +
+	"\texpire_at\x18\x03 \x01(\x03R\bexpireAt\"w\n" +
 	"\tChunkHash\x12\x12\n" +
 	"\x04hash\x18\x01 \x01(\fR\x04hash\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x03R\x05index\x12\x12\n" +

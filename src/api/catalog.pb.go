@@ -29,6 +29,7 @@ type FileVersionEntry struct {
 	Ctime         int64                  `protobuf:"varint,4,opt,name=ctime,proto3" json:"ctime,omitempty"`
 	StoreSeq      int64                  `protobuf:"varint,5,opt,name=store_seq,json=storeSeq,proto3" json:"store_seq,omitempty"`    // bwfs's local file_versions.seq — informational only
 	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // unix seconds; bwfs's original recording time
+	ExpireAt      int64                  `protobuf:"varint,7,opt,name=expire_at,json=expireAt,proto3" json:"expire_at,omitempty"`    // unix seconds; 0 = no expiry recorded / never expires
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -101,6 +102,13 @@ func (x *FileVersionEntry) GetStoreSeq() int64 {
 func (x *FileVersionEntry) GetCreatedAt() int64 {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *FileVersionEntry) GetExpireAt() int64 {
+	if x != nil {
+		return x.ExpireAt
 	}
 	return 0
 }
@@ -909,7 +917,7 @@ var File_api_catalog_proto protoreflect.FileDescriptor
 
 const file_api_catalog_proto_rawDesc = "" +
 	"\n" +
-	"\x11api/catalog.proto\x12\x0ecatalogservice\"\xb4\x01\n" +
+	"\x11api/catalog.proto\x12\x0ecatalogservice\"\xd1\x01\n" +
 	"\x10FileVersionEntry\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1b\n" +
 	"\tobject_id\x18\x02 \x01(\tR\bobjectId\x12\x1a\n" +
@@ -917,7 +925,8 @@ const file_api_catalog_proto_rawDesc = "" +
 	"\x05ctime\x18\x04 \x01(\x03R\x05ctime\x12\x1b\n" +
 	"\tstore_seq\x18\x05 \x01(\x03R\bstoreSeq\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"I\n" +
+	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12\x1b\n" +
+	"\texpire_at\x18\a \x01(\x03R\bexpireAt\"I\n" +
 	"\vSyncRequest\x12:\n" +
 	"\aentries\x18\x01 \x03(\v2 .catalogservice.FileVersionEntryR\aentries\"\x0e\n" +
 	"\fSyncResponse\"\xea\x02\n" +

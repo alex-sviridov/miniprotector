@@ -21,6 +21,7 @@ message FileVersionEntry {
   int64  ctime      = 4;
   int64  store_seq  = 5; // bwfs's local file_versions.seq — informational only
   int64  created_at = 6; // unix seconds; bwfs's original recording time
+  int64  expire_at  = 7; // unix seconds; 0 = no expiry recorded / never expires
 }
 
 message SyncRequest {
