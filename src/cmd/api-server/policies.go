@@ -36,6 +36,17 @@ type ruleDTO struct {
 	NotAfter  int64  `json:"not_after,omitempty"`
 }
 
+// retentionDTO is a "retention" policy's single rule. Priority is
+// server-assigned and read-only over REST: it appears in responses (the list
+// is returned in evaluation order) but is never accepted on input.
+type retentionDTO struct {
+	BackupType  string   `json:"backup_type"`
+	Path        string   `json:"path"`
+	Include     []string `json:"include,omitempty"`
+	KeepSeconds int64    `json:"keep_seconds"`
+	Priority    int32    `json:"priority"`
+}
+
 type policyDTO struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
@@ -55,6 +66,8 @@ type policyDTO struct {
 	Overwrite       bool              `json:"overwrite,omitempty"`
 	DisabledAt      int64             `json:"disabled_at,omitempty"`
 	Checkins        []checkinDTO      `json:"checkins"`
+	// Retention is only ever set on a retention-typed policy.
+	Retention *retentionDTO `json:"retention,omitempty"`
 	// JobID is only ever set on a restore/verify-typed policy -- policy-server
 	// generates it synchronously at creation time (restorePolicyJobID,
 	// cmd/policy-server/write.go) and stamps it onto the Policy message
@@ -101,6 +114,15 @@ func toPolicyDTO(p *pb.Policy) policyDTO {
 	}
 	if p.GetDisabledAt() != nil {
 		dto.DisabledAt = p.GetDisabledAt().AsTime().Unix()
+	}
+	if r := p.GetRetention(); r != nil {
+		dto.Retention = &retentionDTO{
+			BackupType:  r.GetBackupType(),
+			Path:        r.GetPath(),
+			Include:     r.GetInclude(),
+			KeepSeconds: r.GetKeepSeconds(),
+			Priority:    r.GetPriority(),
+		}
 	}
 	return dto
 }
@@ -324,6 +346,105 @@ func (s *server) handleUpdateStoragePolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, toPolicyDTO(resp))
+}
+
+// retentionInput is the writable part of a retention rule. There is
+// deliberately no priority field: position changes only through the reorder
+// endpoint, and a priority sent here would be ignored by policy-server anyway.
+type retentionInput struct {
+	BackupType  string   `json:"backup_type"`
+	Path        string   `json:"path"`
+	Include     []string `json:"include,omitempty"`
+	KeepSeconds int64    `json:"keep_seconds"`
+}
+
+type retentionPolicyInput struct {
+	Name          string           `json:"name"`
+	ClientFilters clientFiltersDTO `json:"client_filters"`
+	Retention     retentionInput   `json:"retention"`
+	DisabledAt    int64            `json:"disabled_at,omitempty"`
+}
+
+func decodeRetentionPolicyInput(r *http.Request) (retentionPolicyInput, error) {
+	var in retentionPolicyInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		return retentionPolicyInput{}, err
+	}
+	return in, nil
+}
+
+func toProtoRetentionInput(in retentionInput) *pb.RetentionRule {
+	return &pb.RetentionRule{BackupType: in.BackupType, Path: in.Path, Include: in.Include, KeepSeconds: in.KeepSeconds}
+}
+
+func (s *server) handleCreateRetentionPolicy(w http.ResponseWriter, r *http.Request) {
+	in, err := decodeRetentionPolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.CreatePolicy(r.Context(), &pb.CreatePolicyRequest{
+		Name:          in.Name,
+		Type:          "retention",
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Retention:     toProtoRetentionInput(in.Retention),
+		DisabledAt:    disabledAtToProto(in.DisabledAt),
+	})
+	if err != nil {
+		s.logger.Error("handleCreateRetentionPolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toPolicyDTO(resp))
+}
+
+func (s *server) handleUpdateRetentionPolicy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	in, err := decodeRetentionPolicyInput(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.UpdatePolicy(r.Context(), &pb.UpdatePolicyRequest{
+		Id:            id,
+		Name:          in.Name,
+		ClientFilters: toProtoClientFiltersInput(in.ClientFilters),
+		Retention:     toProtoRetentionInput(in.Retention),
+		DisabledAt:    disabledAtToProto(in.DisabledAt),
+	})
+	if err != nil {
+		s.logger.Error("handleUpdateRetentionPolicy: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toPolicyDTO(resp))
+}
+
+type reorderRetentionInput struct {
+	IDs []string `json:"ids"`
+}
+
+// handleReorderRetentionPolicies sets the evaluation order of every
+// retention policy. ids must be the complete list; policy-server rejects a
+// stale or partial one with InvalidArgument (HTTP 400), so a client whose
+// view predates another operator's change refetches rather than clobbering.
+func (s *server) handleReorderRetentionPolicies(w http.ResponseWriter, r *http.Request) {
+	var in reorderRetentionInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	resp, err := s.policy.ReorderRetentionPolicies(r.Context(), &pb.ReorderRetentionPoliciesRequest{Ids: in.IDs})
+	if err != nil {
+		s.logger.Error("handleReorderRetentionPolicies: backend call failed", "error", err)
+		writeGRPCError(w, err)
+		return
+	}
+	policies := make([]policyDTO, len(resp.GetPolicies()))
+	for i, p := range resp.GetPolicies() {
+		policies[i] = toPolicyDTO(p)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": policies})
 }
 
 type restorePolicyInput struct {

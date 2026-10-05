@@ -52,6 +52,7 @@ type policyServiceClient interface {
 	UpdatePolicy(ctx context.Context, in *pb.UpdatePolicyRequest, opts ...grpc.CallOption) (*pb.Policy, error)
 	DeletePolicy(ctx context.Context, in *pb.DeletePolicyRequest, opts ...grpc.CallOption) (*pb.DeletePolicyResponse, error)
 	GetNodeCertStatus(ctx context.Context, in *pb.GetNodeCertStatusRequest, opts ...grpc.CallOption) (*pb.NodeCertStatus, error)
+	ReorderRetentionPolicies(ctx context.Context, in *pb.ReorderRetentionPoliciesRequest, opts ...grpc.CallOption) (*pb.ReorderRetentionPoliciesResponse, error)
 }
 
 type server struct {
@@ -104,6 +105,9 @@ func (s *server) registerRoutes(mux *http.ServeMux, token string) {
 	mux.Handle("DELETE /api/v1/policies/{id}", bearer(s.handleDeletePolicy))
 	mux.Handle("POST /api/v1/storage-policies", bearer(s.handleCreateStoragePolicy))
 	mux.Handle("PUT /api/v1/storage-policies/{id}", bearer(s.handleUpdateStoragePolicy))
+	mux.Handle("POST /api/v1/retention-policies", bearer(s.handleCreateRetentionPolicy))
+	mux.Handle("PUT /api/v1/retention-policies/{id}", bearer(s.handleUpdateRetentionPolicy))
+	mux.Handle("POST /api/v1/retention-policies/reorder", bearer(s.handleReorderRetentionPolicies))
 	mux.Handle("POST /api/v1/restore", bearer(s.handleCreateRestore))
 	mux.Handle("POST /api/v1/ws-tickets", bearer(s.handleIssueWSTicket))
 	mux.Handle("GET /api/v1/jobs", bearer(s.handleListJobs))
