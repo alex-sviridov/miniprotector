@@ -214,6 +214,45 @@ success (`file written` / `file skipped, already exists`) is logged at `Debug` l
 fixed default permission (`0o644`, directories use `0o755`) -- real captured-permission restore is
 still unbuilt, for both files and directories.
 
+### Write contract
+
+Phase 2 never writes into a destination file directly. See [Design: rwfs Write-Path
+Tuning](../superpowers/specs/2026-10-06-rwfs-write-tuning-design.md) for the measurements behind it.
+
+- **Temp files.** Content goes to a hidden `.<name>.mptmp-<8 hex>` file in the destination directory
+  (same filesystem, so the final rename is atomic). On Linux the file is preallocated with
+  `fallocate`, so a full disk fails the file up front with `ENOSPC` instead of mid-stream (a
+  filesystem without `fallocate` falls back to a plain truncate), and writeback is started
+  (`sync_file_range`) as each buffer is written.
+- **Batched durable commit.** Verified temp files are committed in batches, every
+  `restore_commit_files` files or `restore_commit_bytes` bytes, and once more at the end of the run.
+  A commit fsyncs each file, drops its page cache, renames it over the destination, then fsyncs each
+  parent directory once. A file appears under its final name only once it is durable, and
+  `files_written` / `bytes_written` count only committed files.
+- **`--overwrite`** replaces the destination atomically by rename. The old file is never destroyed
+  before the new content has been fully received and verified, so a failed or interrupted restore
+  leaves the old file intact.
+- **Mode.** A replaced file takes the standard `0o644` mode; previously an overwritten file kept its
+  old mode.
+- **Crashes.** After a crash only `.mptmp-*` files can be left behind, never a torn file under a final
+  name. The next `rwfs restore` removes stale `.mptmp-*` files from the destination directories it
+  touches, so skip-existing stays trustworthy. On any failure the run aborts and the uncommitted
+  temp files are removed; already committed files stay.
+- **Windows** uses a plain truncate for sizing and has no writeback, cache-drop or directory-sync
+  hooks (file `Sync` maps to `FlushFileBuffers`).
+
+Tuning keys (config only, no flags):
+
+| Key | Default | Range | Meaning |
+|-----|---------|-------|---------|
+| `restore_commit_files` | `64` | 0-1024 | Files per commit batch. Pending files keep their descriptors open, hence the cap. `0` = commit after every file |
+| `restore_commit_bytes` | `67108864` (64 MiB) | >= 0 | Bytes per commit batch. `0` = commit after every file |
+
+The temp-file contract is not free: measured against the previous direct-write restore, it costs about
+7-8% on small and mixed trees and nothing visible on large files. Committing after every file
+(`restore_commit_files=0` or `1`) is 20-50% slower than the defaults; see [performance
+tuning](../PERFORMANCE.md#restore-write-tuning).
+
 ## Transport Security
 
 Connections to `bwfs` (`list`, `verify`, and `restore` -- all three dial through the same `connection.Connect`) are mutually authenticated TLS. `rwfs` loads
@@ -235,4 +274,5 @@ make build
 - [brfs](./brfs.md) — Backup Reader for File System
 - [list protocol](../protocols/list.md) — gRPC protocol `rwfs` uses to query `bwfs`
 - [restore protocol](../protocols/restore.md) — gRPC protocol `rwfs verify` uses to verify stored files
+- [Design: rwfs Write-Path Tuning](../superpowers/specs/2026-10-06-rwfs-write-tuning-design.md) — restore write contract and measurements
 - [Architecture](../ARCHITECTURE.md) — System overview
