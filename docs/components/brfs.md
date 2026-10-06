@@ -93,6 +93,24 @@ discarded when the stream moves on to the next file. A stream that fails (for ex
 connection) fails every file queued on it. `bwfs` rebuilds chunk order itself — see
 [Backup Protocol](../protocols/backup.md#in-flight-chunks-sliding-window).
 
+## Statistics
+
+The closing `Backup finished` log line carries the job's totals, so a deduplication ratio is visible
+without querying the store:
+
+| Field | Meaning |
+|-------|---------|
+| `bytes.read` | chunk bytes read from disk, for files the server asked for |
+| `bytes.sent` | chunk bytes the server did not already have, so were transmitted |
+| `bytes.deduplicated` | `bytes.read - bytes.sent` |
+| `dedup_ratio` | `bytes.read / bytes.sent`; `1.00` means nothing was already stored, `0.00` when nothing was sent |
+| `files.sent` / `files.unchanged` | files whose chunks were offered vs. files the server already had |
+| `bytes.unchanged` | size of the unchanged files; they are never read, so not in `bytes.read` |
+
+`bytes.sent` counts chunk payload before gRPC framing or compression. The counters are plain integer
+adds on the stream goroutine already handling the file, summed in `main` from the per-file results, so
+there are no locks or atomics on the hot path and no protocol change.
+
 ## Filtering
 
 A pattern with no `/` matches a file's basename at any depth (`*.tmp` excludes every `.tmp` file

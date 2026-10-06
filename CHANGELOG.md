@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — Backup and restore statistics
+
+`brfs` now ends a job with its totals on the `Backup finished` line: bytes read, bytes actually sent,
+bytes deduplicated, the deduplication ratio, and how many files were sent or already unchanged. `rwfs
+restore` adds the duration and throughput to `restore complete`. Everything is derived from replies the
+protocol already carries, counted with plain per-file integers summed once at the end, so there is no
+protocol change and no measurable cost on the transfer path.
+
 ## 2026-10-06 — Content-defined chunking (FastCDC)
 
 `brfs` used to cut every file into fixed 64 KB chunks, so inserting a few bytes at the front of a file

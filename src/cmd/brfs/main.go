@@ -118,7 +118,9 @@ func main() {
 
 	// Process files using shared gRPC connection
 	resultsCh := processFilesList(ctx, logger, client, filesList, arguments.Streams, arguments.Window, st)
+	var total jobStats
 	for result := range resultsCh {
+		total.add(result.Stats)
 		// Process each result as it arrives
 		filesBackupState[result.FileID] = result.Success
 	}
@@ -143,6 +145,13 @@ func main() {
 		"state", state,
 		"count.success", successCount,
 		"count.failed", failedCount,
+		"files.sent", total.filesSent,
+		"files.unchanged", total.filesUnchanged,
+		"bytes.unchanged", total.bytesUnchanged,
+		"bytes.read", total.bytesRead,
+		"bytes.sent", total.bytesSent,
+		"bytes.deduplicated", total.bytesRead-total.bytesSent,
+		"dedup_ratio", fmt.Sprintf("%.2f", total.dedupRatio()),
 	)
 
 	if len(filesList) == 0 {
