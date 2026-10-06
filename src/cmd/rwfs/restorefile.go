@@ -85,8 +85,8 @@ type restoreFileResult struct {
 // once verified, is handed to q, which renames it into place at its next
 // checkpoint -- so the destination only ever holds a complete, durable
 // file, and an `--overwrite` never destroys the old file early. Any
-// failure removes the temp file. writeRestoreFile does no logging itself -- see
-// restoreFileContent's per-result handling (restore.go).
+// failure removes the temp file. writeRestoreFile does no logging itself --
+// see restoreFileContent's per-result handling (restore.go).
 func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f restoreFile, overwrite bool, q *commitQueue) restoreFileResult {
 	base := restoreFileResult{Source: f.Source, Path: f.Path, DestPath: f.DestPath}
 
@@ -218,9 +218,9 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 // times on a retryable (network/RPC-facing) failure, sharing withRetry's
 // backoff with verifyFileWithRetry (retry.go) so the two commands can't
 // drift apart. A retry is safe with no extra cleanup: writeRestoreFile's
-// own defer already removes any partial destination file before
+// own defer already removes any partial temp file before
 // returning on failure, so each attempt starts from a clean slate (fresh
-// stat, open, truncate). A non-retryable failure (integrity mismatch,
+// stat, temp file, preallocate). A non-retryable failure (integrity mismatch,
 // pre-existing directory, local disk error) surfaces on the first
 // attempt with no backoff wait.
 func writeRestoreFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int, q *commitQueue) restoreFileResult {
