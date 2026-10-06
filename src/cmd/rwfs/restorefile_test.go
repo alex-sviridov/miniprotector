@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -108,7 +109,7 @@ func TestWriteRestoreFile_WritesFileContent(t *testing.T) {
 	client := dialRestoreClient(t, &realRestoreServer{store: store})
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -128,7 +129,7 @@ func TestWriteRestoreFile_SkipsWhenExistsAndNotOverwrite(t *testing.T) {
 	destPath := t.TempDir() + "/a.txt"
 	require.NoError(t, os.WriteFile(destPath, []byte("original"), 0o644))
 
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "does-not-matter", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -152,7 +153,7 @@ func TestWriteRestoreFile_OverwritesWhenExistsAndOverwriteTrue(t *testing.T) {
 	destPath := t.TempDir() + "/a.txt"
 	require.NoError(t, os.WriteFile(destPath, []byte("stale content, longer than the replacement"), 0o644))
 
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, true)
 
@@ -171,7 +172,7 @@ func TestWriteRestoreFile_DirectoryAtDestinationIsHardError(t *testing.T) {
 	destPath := t.TempDir() + "/a-directory"
 	require.NoError(t, os.Mkdir(destPath, 0o755))
 
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "does-not-matter", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -185,7 +186,7 @@ func TestWriteRestoreFile_BlakeMismatchAbortsAndRemovesPartialFile(t *testing.T)
 	client := dialRestoreClient(t, &hashMismatchRestoreServer{})
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -194,13 +195,15 @@ func TestWriteRestoreFile_BlakeMismatchAbortsAndRemovesPartialFile(t *testing.T)
 	assert.False(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a BLAKE3 mismatch must remove the partial file")
+	entries, _ := os.ReadDir(filepath.Dir(destPath))
+	assert.Empty(t, entries, "no temp file may remain")
 }
 
 func TestWriteRestoreFile_CRCMismatchAbortsAndRemovesPartialFile(t *testing.T) {
 	client := dialRestoreClient(t, &crcMismatchRestoreServer{})
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -209,6 +212,8 @@ func TestWriteRestoreFile_CRCMismatchAbortsAndRemovesPartialFile(t *testing.T) {
 	assert.False(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a CRC32 mismatch must remove the partial file")
+	entries, _ := os.ReadDir(filepath.Dir(destPath))
+	assert.Empty(t, entries, "no temp file may remain")
 }
 
 func TestWriteRestoreFile_StreamErrorReturnsErrorAndCreatesNoFile(t *testing.T) {
@@ -216,7 +221,7 @@ func TestWriteRestoreFile_StreamErrorReturnsErrorAndCreatesNoFile(t *testing.T) 
 	client := dialRestoreClient(t, restoreSrv)
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -235,7 +240,7 @@ func TestWriteRestoreFile_MissingParentDirectoryIsHardError(t *testing.T) {
 	client := dialRestoreClient(t, &realRestoreServer{store: store})
 
 	destPath := t.TempDir() + "/missing-parent/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -287,7 +292,7 @@ func TestWriteRestoreFileWithRetry_RecoversAfterTransientFailures(t *testing.T) 
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+	result := writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
 		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false, 3)
 
@@ -308,7 +313,7 @@ func TestWriteRestoreFileWithRetry_ExhaustsRetriesAndReturnsFinalError(t *testin
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+	result := writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false, 3)
 
@@ -326,7 +331,7 @@ func TestWriteRestoreFileWithRetry_IntegrityMismatchNeverRetries(t *testing.T) {
 	destPath := t.TempDir() + "/a.txt"
 
 	start := time.Now()
-	result := writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+	result := writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false, 3)
 	elapsed := time.Since(start)
@@ -345,7 +350,7 @@ func TestWriteRestoreFileWithRetry_BacksOffBetweenAttempts(t *testing.T) {
 	destPath := t.TempDir() + "/a.txt"
 
 	start := time.Now()
-	writeRestoreFileWithRetry(context.Background(), logger, client, restoreFile{
+	writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false, 3)
 	elapsed := time.Since(start)
@@ -361,4 +366,113 @@ func TestWriteRestoreFileWithRetry_BacksOffBetweenAttempts(t *testing.T) {
 func blake3Sum(data []byte) []byte {
 	sum := blake3.Sum256(data)
 	return sum[:]
+}
+
+// writeRestoreFileNow runs writeRestoreFile and then a final checkpoint, so
+// tests that assert on the finished destination see the committed file.
+func writeRestoreFileNow(ctx context.Context, client pb.RestoreServiceClient, f restoreFile, overwrite bool) restoreFileResult {
+	q := newCommitQueue(commitLimits{Files: 1000, Bytes: 1 << 40}, defaultCommitHooks())
+	r := writeRestoreFile(ctx, client, f, overwrite, q)
+	if r.Err != nil {
+		q.Abort()
+		return r
+	}
+	if err := q.Flush(); err != nil {
+		r.Err = err
+	}
+	return r
+}
+
+func writeRestoreFileWithRetryNow(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int) restoreFileResult {
+	q := newCommitQueue(commitLimits{Files: 1000, Bytes: 1 << 40}, defaultCommitHooks())
+	r := writeRestoreFileWithRetry(ctx, logger, client, f, overwrite, maxRetries, q)
+	if r.Err != nil {
+		q.Abort()
+		return r
+	}
+	if err := q.Flush(); err != nil {
+		r.Err = err
+	}
+	return r
+}
+
+func TestWriteRestoreFile_FileAppearsOnlyAfterCommit(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFileChunks(t, store, "hosta", "/data/a.txt", "job1", 1000, [][]byte{[]byte("hello")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "a.txt")
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 40}, defaultCommitHooks())
+
+	r := writeRestoreFile(context.Background(), client, restoreFile{FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: dest}, false, q)
+	require.NoError(t, r.Err)
+
+	assert.NoFileExists(t, dest, "not visible before the checkpoint")
+	entries, _ := os.ReadDir(dir)
+	require.Len(t, entries, 1)
+	assert.True(t, isTempName(entries[0].Name()), entries[0].Name())
+
+	require.NoError(t, q.Flush())
+	got, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(got))
+	entries, _ = os.ReadDir(dir)
+	assert.Len(t, entries, 1, "temp file is gone after the rename")
+}
+
+func TestWriteRestoreFile_OverwriteKeepsOldContentUntilCommit(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFileChunks(t, store, "hosta", "/data/a.txt", "job1", 1000, [][]byte{[]byte("new content")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	dest := filepath.Join(t.TempDir(), "a.txt")
+	require.NoError(t, os.WriteFile(dest, []byte("old content"), 0o644))
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 40}, defaultCommitHooks())
+
+	r := writeRestoreFile(context.Background(), client, restoreFile{FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: dest}, true, q)
+	require.NoError(t, r.Err)
+	got, _ := os.ReadFile(dest)
+	assert.Equal(t, "old content", string(got), "old file untouched until the checkpoint")
+
+	require.NoError(t, q.Flush())
+	got, _ = os.ReadFile(dest)
+	assert.Equal(t, "new content", string(got))
+}
+
+func TestWriteRestoreFile_FailedOverwriteKeepsOldFileAndLeavesNoTemp(t *testing.T) {
+	client := dialRestoreClient(t, &hashMismatchRestoreServer{})
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "a.txt")
+	require.NoError(t, os.WriteFile(dest, []byte("precious"), 0o644))
+
+	r := writeRestoreFileNow(context.Background(), client, restoreFile{FileUUID: "x", Source: "h", Path: "/a.txt", DestPath: dest}, true)
+	require.Error(t, r.Err)
+
+	got, _ := os.ReadFile(dest)
+	assert.Equal(t, "precious", string(got))
+	entries, _ := os.ReadDir(dir)
+	assert.Len(t, entries, 1, "partial temp file removed")
+}
+
+func TestWriteRestoreFile_AbortedQueueRemovesTempAndFails(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFileChunks(t, store, "hosta", "/data/a.txt", "job1", 1000, [][]byte{[]byte("hello")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	dir := t.TempDir()
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 40}, defaultCommitHooks())
+	q.Abort()
+
+	r := writeRestoreFile(context.Background(), client, restoreFile{FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: filepath.Join(dir, "a.txt")}, false, q)
+	require.Error(t, r.Err)
+	assert.False(t, r.Retryable, "an aborted run is not retried")
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries)
 }

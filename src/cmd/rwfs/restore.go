@@ -186,7 +186,9 @@ func createRestoreDirectoryStructure(logger *slog.Logger, dirs []restoreDirector
 // only once phase 1 has fully succeeded -- a file's destination directory
 // must already exist. On failure, no summary line is logged, mirroring
 // createRestoreDirectoryStructure's existing convention; the triggering
-// file's own logged error carries the diagnostic.
+// file's own logged error carries the diagnostic. Files are written to temp
+// files and committed (fsync + rename + directory fsync) in batches by a
+// commitQueue; the summary counts only committed files.
 func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, files []restoreFile, overwrite bool, streams, retries int) error {
 	if len(files) == 0 {
 		return nil
@@ -196,6 +198,13 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 		return fmt.Errorf("multiple resolved files share destination %s (%s:%s and %s:%s) -- refusing to restore, concurrent writers would corrupt it",
 			dup.destPath, dup.firstSource, dup.firstPath, dup.secondSource, dup.secondPath)
 	}
+
+	sweepStaleTemp(logger, destDirs(files))
+
+	q := newCommitQueue(restoreCommit, defaultCommitHooks())
+	// Removes whatever is still pending on any early or failed exit; a
+	// no-op after the final successful Flush below.
+	defer q.Abort()
 
 	logger.Info("restoring file content")
 
@@ -215,12 +224,11 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 	}()
 
 	resultCh := runWorkerPool(writeCtx, streams, workCh, func(ctx context.Context, f restoreFile) restoreFileResult {
-		return writeRestoreFileWithRetry(ctx, logger, client, f, overwrite, retries)
+		return writeRestoreFileWithRetry(ctx, logger, client, f, overwrite, retries, q)
 	})
 
 	var firstErr error
-	filesWritten, skipped := 0, 0
-	var bytesWritten int64
+	skipped := 0
 	for result := range resultCh {
 		switch {
 		case result.Err != nil && firstErr == nil:
@@ -240,8 +248,6 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 			logger.Debug("file skipped, already exists",
 				"source", result.Source, "path", result.Path, "dest_path", result.DestPath)
 		default:
-			filesWritten++
-			bytesWritten += result.Bytes
 			logger.Debug("file written",
 				"source", result.Source, "path", result.Path, "dest_path", result.DestPath, "bytes", result.Bytes)
 		}
@@ -250,7 +256,12 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 	if firstErr != nil {
 		return firstErr
 	}
-	logger.Info("restore complete", "files_written", filesWritten, "bytes_written", bytesWritten, "skipped", skipped)
+	if err := q.Flush(); err != nil {
+		logger.Error("failed to commit restored files", "reason", err)
+		return fmt.Errorf("commit restored files: %w", err)
+	}
+	committedFiles, committedBytes := q.Stats()
+	logger.Info("restore complete", "files_written", committedFiles, "bytes_written", committedBytes, "skipped", skipped)
 	return nil
 }
 

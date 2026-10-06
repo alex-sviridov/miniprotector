@@ -31,6 +31,24 @@ const (
 	restoreWriteBufferSize = 1 << 20 // 1MB
 )
 
+// writebackWriter forwards writes to f and, after each, asks the kernel to
+// start writing that range back (osStartWriteback), so dirty pages drain
+// while the stream is still arriving instead of piling up for the fsync.
+// bufio hands it ~1MB writes, so this is one syscall per MB, not per chunk.
+type writebackWriter struct {
+	f   *os.File
+	off int64
+}
+
+func (w *writebackWriter) Write(p []byte) (int, error) {
+	n, err := w.f.Write(p)
+	if n > 0 {
+		osStartWriteback(w.f, w.off, int64(n))
+		w.off += int64(n)
+	}
+	return n, err
+}
+
 // restoreFile is one file phase 2 must fetch and write to its
 // (dest_path-renamed) destination.
 type restoreFile struct {
@@ -63,11 +81,13 @@ type restoreFileResult struct {
 // as verifyFile (verify.go) does. A pre-existing destination file is
 // skipped (not an error) when overwrite is false; a pre-existing
 // directory at the destination is always a hard error, regardless of
-// overwrite. On any failure, a partially-written destination file is
-// removed (best-effort) so a corrupt/incomplete file never looks
-// restored. writeRestoreFile does no logging itself -- see
+// overwrite. Content goes to a hidden temp file beside the destination and,
+// once verified, is handed to q, which renames it into place at its next
+// checkpoint -- so the destination only ever holds a complete, durable
+// file, and an `--overwrite` never destroys the old file early. Any
+// failure removes the temp file. writeRestoreFile does no logging itself -- see
 // restoreFileContent's per-result handling (restore.go).
-func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f restoreFile, overwrite bool) restoreFileResult {
+func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f restoreFile, overwrite bool, q *commitQueue) restoreFileResult {
 	base := restoreFileResult{Source: f.Source, Path: f.Path, DestPath: f.DestPath}
 
 	info, statErr := os.Stat(f.DestPath)
@@ -83,8 +103,8 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		return base
 	}
 	// Falls through here in exactly two cases: the file exists and
-	// overwrite is true (will truncate below), or it doesn't exist at all
-	// (will create below) -- both proceed identically via O_CREATE|O_TRUNC.
+	// overwrite is true (it is replaced at commit), or it doesn't exist at
+	// all (will be created via a temp file below).
 
 	ctx, touch, _, _, stop := withStallWatchdog(parent, streamIdleTimeout)
 	defer stop()
@@ -110,28 +130,27 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		return base
 	}
 
-	out, err := os.OpenFile(f.DestPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, defaultRestoreFilePerm)
+	out, err := createTempFile(f.DestPath)
 	if err != nil {
 		base.Err = err
 		return base
 	}
-	success := false
-	closed := false
+	// Until the queue owns the file, any early return closes and removes
+	// the temp file -- the real destination is never touched.
+	owned := false
 	defer func() {
-		if !closed {
+		if !owned {
 			out.Close() // Windows disallows removing a file that's still open -- close before remove.
-		}
-		if !success {
-			os.Remove(f.DestPath)
+			os.Remove(out.Name())
 		}
 	}()
 
-	if err := out.Truncate(meta.Size); err != nil {
-		base.Err = err
+	if err := osPreallocate(out, meta.Size); err != nil {
+		base.Err = fmt.Errorf("preallocate: %w", err)
 		return base
 	}
 
-	bufw := bufio.NewWriterSize(out, restoreWriteBufferSize)
+	bufw := bufio.NewWriterSize(&writebackWriter{f: out}, restoreWriteBufferSize)
 	hasher := crc32.NewIEEE()
 	var written int64
 
@@ -181,14 +200,16 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		return base
 	}
 
-	closeErr := out.Close()
-	closed = true
-	if closeErr != nil {
-		base.Err = fmt.Errorf("write error: close: %w", closeErr)
+	// Verified. From here the queue owns the open file and its temp path:
+	// it commits them at the next checkpoint, or removes them on a failed
+	// checkpoint or an aborted run. A queue error is local (not
+	// network-facing), so it is never retried.
+	owned = true
+	if err := q.Add(pendingFile{File: out, TmpPath: out.Name(), DestPath: f.DestPath, Bytes: written}); err != nil {
+		base.Err = fmt.Errorf("commit error: %w", err)
 		return base
 	}
 
-	success = true
 	base.Bytes = written
 	return base
 }
@@ -202,9 +223,9 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 // stat, open, truncate). A non-retryable failure (integrity mismatch,
 // pre-existing directory, local disk error) surfaces on the first
 // attempt with no backoff wait.
-func writeRestoreFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int) restoreFileResult {
+func writeRestoreFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int, q *commitQueue) restoreFileResult {
 	return withRetry(ctx, logger.With("source", f.Source, "path", f.Path, "dest_path", f.DestPath), maxRetries,
-		func(ctx context.Context) restoreFileResult { return writeRestoreFile(ctx, client, f, overwrite) },
+		func(ctx context.Context) restoreFileResult { return writeRestoreFile(ctx, client, f, overwrite, q) },
 		func(r restoreFileResult) bool { return r.Err != nil && r.Retryable },
 		func(r restoreFileResult) string { return r.Err.Error() },
 	)
