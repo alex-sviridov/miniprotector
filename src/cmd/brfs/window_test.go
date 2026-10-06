@@ -182,7 +182,7 @@ func randChunks(t *testing.T, n int) [][]byte {
 	t.Helper()
 	out := make([][]byte, n)
 	for i := range out {
-		out[i] = make([]byte, filesystem.ChunkSize)
+		out[i] = make([]byte, filesystem.NormalChunkSize)
 		_, err := rand.Read(out[i])
 		require.NoError(t, err)
 	}
