@@ -38,13 +38,8 @@ func New(basePath string) (*Store, error) {
 
 // newWithOptions is New with pack options; tests use it for small segments.
 func newWithOptions(basePath string, opts pack.Options) (*Store, error) {
-	// Stores written before pack segments kept one file per chunk under
-	// chunks/. There is no migration: refuse loudly instead of serving a store
-	// whose chunks we cannot see.
-	if _, err := os.Stat(filepath.Join(basePath, "chunks")); err == nil {
-		return nil, fmt.Errorf("store at %s uses the legacy chunks/ layout, which is no longer supported", basePath)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("check for legacy chunks dir: %w", err)
+	if err := rejectLegacy(basePath); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(basePath, 0o755); err != nil {
 		return nil, fmt.Errorf("create store dir: %w", err)
@@ -78,11 +73,26 @@ func newWithOptions(basePath string, opts pack.Options) (*Store, error) {
 // SQLite WAL mode allows concurrent readers with no blocking. It opens no pack
 // log: reading a chunk needs only the segment directory.
 func NewReadOnly(basePath string) (*Store, error) {
+	if err := rejectLegacy(basePath); err != nil {
+		return nil, err
+	}
 	db, err := openDB(basePath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	return &Store{basePath: basePath, db: db, pending: newPending()}, nil
+}
+
+// rejectLegacy fails for stores written before pack segments, which kept one
+// file per chunk under chunks/. There is no migration: refuse loudly instead
+// of serving a store whose chunks we cannot see.
+func rejectLegacy(basePath string) error {
+	if _, err := os.Stat(filepath.Join(basePath, "chunks")); err == nil {
+		return fmt.Errorf("store at %s uses the legacy chunks/ layout, which is no longer supported", basePath)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("check for legacy chunks dir: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) packDir() string { return filepath.Join(s.basePath, "packs") }

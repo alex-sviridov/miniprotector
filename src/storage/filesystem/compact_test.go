@@ -288,3 +288,117 @@ func TestVacuum_RemovesStraySegmentsAndCompactsAtStartup(t *testing.T) {
 	assert.Equal(t, fixedChunk("k"), got)
 	requireAllRowsReadable(t, s)
 }
+
+// TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact runs backups the
+// way bwfs handlers do (each call under BeginBackupOp) next to a vacuum loop
+// that compacts, with a tiny flush threshold so flushes interleave with
+// everything. Files without a version become garbage, giving compaction work.
+func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
+	setFlushThreshold(t, 2*chunkLen)
+	s := newSmallStore(t, 8)
+	const (
+		kept     = 4
+		garbage  = 8
+		perFile  = 20
+		vacBatch = 3
+	)
+
+	op := func(fn func() error) error {
+		end := s.BeginBackupOp()
+		defer end()
+		return fn()
+	}
+	backup := func(fileID string, withVersion bool) error {
+		job := "job-" + fileID
+		if err := op(func() error { return s.EnsureBackupJob(job, "hosta") }); err != nil {
+			return err
+		}
+		if err := op(func() error { return s.CreateFileData(fileID, perFile*chunkLen) }); err != nil {
+			return err
+		}
+		for i := 0; i < perFile; i++ {
+			data := fixedChunk(fmt.Sprintf("%s-%d", fileID, i))
+			if err := op(func() error {
+				h := makeChunk(t, data)
+				if err := s.StoreChunk(h, data); err != nil {
+					return err
+				}
+				return s.LinkChunkToFileData(h, fileID, int64(i))
+			}); err != nil {
+				return err
+			}
+		}
+		return op(func() error {
+			if err := s.FinalizeFileData(fileID, []byte{1}); err != nil || !withVersion {
+				return err
+			}
+			return s.EnsureFileVersion(job, fileID, "hosta", "/"+fileID, "f", nil, 1, 0)
+		})
+	}
+
+	var segmentsReclaimed int64
+	stop := make(chan struct{})
+	vacDone := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				vacDone <- nil
+				return
+			default:
+			}
+			res, err := s.VacuumOnline(context.Background(), vacBatch, time.Hour)
+			if err != nil {
+				vacDone <- err
+				return
+			}
+			segmentsReclaimed += res.SegmentsRemoved + res.SegmentsCompacted
+		}
+	}()
+
+	errs := make(chan error, kept+garbage)
+	for g := 0; g < kept+garbage; g++ {
+		go func() {
+			if g < kept {
+				errs <- backup(fmt.Sprintf("keep%d", g), true)
+			} else {
+				errs <- backup(fmt.Sprintf("junk%d", g), false)
+			}
+		}()
+	}
+	for g := 0; g < kept+garbage; g++ {
+		require.NoError(t, <-errs)
+	}
+	close(stop)
+	require.NoError(t, <-vacDone)
+
+	res, err := s.VacuumOnline(context.Background(), vacBatch, time.Hour)
+	require.NoError(t, err)
+	segmentsReclaimed += res.SegmentsRemoved + res.SegmentsCompacted
+	assert.Positive(t, segmentsReclaimed, "the garbage must have given compaction something to do")
+
+	var dangling int64
+	require.NoError(t, s.RawDB().Model(&FileDataChunkRecord{}).
+		Where("chunk_hash NOT IN (SELECT hash FROM chunk_records)").Count(&dangling).Error)
+	assert.Zero(t, dangling, "every link has a chunk row")
+	requireAllRowsReadable(t, s)
+
+	for g := 0; g < kept; g++ {
+		fileID := fmt.Sprintf("keep%d", g)
+		fd, err := s.FileData(fileID)
+		require.NoError(t, err, "completed file %s must survive", fileID)
+		var links int64
+		require.NoError(t, s.RawDB().Model(&FileDataChunkRecord{}).Where("file_id = ?", fileID).Count(&links).Error)
+		assert.Equal(t, int64(perFile), links)
+		assert.Equal(t, perFile, fd.ChunkCount)
+		i := 0
+		for hash, err := range s.FileDataChunks(fileID) {
+			require.NoError(t, err)
+			got, err := s.ReadChunk(hash)
+			require.NoError(t, err)
+			assert.Equal(t, fixedChunk(fmt.Sprintf("%s-%d", fileID, i)), got)
+			i++
+		}
+		assert.Equal(t, perFile, i)
+	}
+}

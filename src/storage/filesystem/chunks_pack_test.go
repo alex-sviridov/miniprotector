@@ -136,50 +136,82 @@ func TestPack_RowsAndLinksAreCommittedOnlyAtFinalize(t *testing.T) {
 	assert.Equal(t, 1, fd.ChunkCount)
 }
 
+// TestPack_CrashLeavesNoDanglingRows emulates power loss: after the crash
+// the unflushed tail of the active segment is gone, entirely or partway
+// through a record. Copying the directory alone would keep those bytes (they
+// are in the page cache), so the copy's segment is truncated by hand.
 func TestPack_CrashLeavesNoDanglingRows(t *testing.T) {
-	s := newTestStore(t)
-	require.NoError(t, s.CreateFileData("A", 2))
-	for i, c := range []string{"a-0", "a-1"} {
-		h := makeChunk(t, []byte(c))
-		require.NoError(t, s.StoreChunk(h, []byte(c)))
-		require.NoError(t, s.LinkChunkToFileData(h, "A", int64(i)))
+	for _, tc := range []struct {
+		name string
+		keep int64 // bytes of the unflushed tail that survive
+	}{
+		{"whole unflushed tail lost", 0},
+		{"torn inside the unflushed record", pack.HeaderSize + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			require.NoError(t, s.CreateFileData("A", 2))
+			var aChunks [][]byte
+			for i, c := range []string{"a-0", "a-1"} {
+				h := makeChunk(t, []byte(c))
+				require.NoError(t, s.StoreChunk(h, []byte(c)))
+				require.NoError(t, s.LinkChunkToFileData(h, "A", int64(i)))
+				aChunks = append(aChunks, h)
+			}
+			require.NoError(t, s.FinalizeFileData("A", []byte{9}))
+			active := int64(s.log.ActiveSegment())
+			durable := segmentSize(t, s.basePath, active)
+
+			require.NoError(t, s.CreateFileData("B", 2))
+			var unflushed [][]byte
+			for i, c := range []string{"b-0 unflushed", "b-1 unflushed"} {
+				h := makeChunk(t, []byte(c))
+				require.NoError(t, s.StoreChunk(h, []byte(c)))
+				require.NoError(t, s.LinkChunkToFileData(h, "B", int64(i)))
+				unflushed = append(unflushed, h)
+			}
+			require.Greater(t, segmentSize(t, s.basePath, active), durable+tc.keep)
+
+			crashed := t.TempDir()
+			copyDir(t, s.basePath, crashed)
+			require.NoError(t, os.Truncate(filepath.Join(crashed, "packs", segmentName(active)), durable+tc.keep))
+			// The flock is per open file description, so the copy's lock file is free.
+			re, err := New(crashed)
+			require.NoError(t, err)
+			t.Cleanup(func() { re.Close() })
+
+			ok, err := re.FileDataExists("A")
+			require.NoError(t, err)
+			assert.True(t, ok, "finalized file survives the crash")
+			var got int
+			for hash, err := range re.FileDataChunks("A") {
+				require.NoError(t, err)
+				_, err := re.ReadChunk(hash)
+				require.NoError(t, err)
+				got++
+			}
+			assert.Equal(t, len(aChunks), got)
+
+			for _, h := range unflushed {
+				assert.ErrorIs(t, re.ChunkExists(h), storage.ErrChunkNotFound)
+			}
+			ok, err = re.FileDataExists("B")
+			require.NoError(t, err)
+			assert.False(t, ok)
+			requireAllRowsReadable(t, re)
+			var dangling int64
+			require.NoError(t, re.RawDB().Model(&FileDataChunkRecord{}).
+				Where("chunk_hash NOT IN (SELECT hash FROM chunk_records)").Count(&dangling).Error)
+			assert.Zero(t, dangling, "no link may reference a chunk without a row")
+		})
 	}
-	require.NoError(t, s.FinalizeFileData("A", []byte{9}))
+}
 
-	require.NoError(t, s.CreateFileData("B", 1))
-	unflushed := makeChunk(t, []byte("b-0"))
-	require.NoError(t, s.StoreChunk(unflushed, []byte("b-0")))
-	require.NoError(t, s.LinkChunkToFileData(unflushed, "B", 0))
-
-	crashed := t.TempDir()
-	copyDir(t, s.basePath, crashed)
-	// The flock is per open file description, so the copy's lock file is free.
-	re, err := New(crashed)
+func segmentSize(t *testing.T, base string, id int64) int64 {
+	t.Helper()
+	info, err := os.Stat(filepath.Join(base, "packs", segmentName(id)))
 	require.NoError(t, err)
-	t.Cleanup(func() { re.Close() })
-
-	ok, err := re.FileDataExists("A")
-	require.NoError(t, err)
-	assert.True(t, ok, "finalized file survives the crash")
-	for hash, err := range re.FileDataChunks("A") {
-		require.NoError(t, err)
-		_, err := re.ReadChunk(hash)
-		require.NoError(t, err)
-	}
-
-	assert.ErrorIs(t, re.ChunkExists(unflushed), storage.ErrChunkNotFound)
-	ok, err = re.FileDataExists("B")
-	require.NoError(t, err)
-	assert.False(t, ok)
-
-	var rows []ChunkRecord
-	require.NoError(t, re.RawDB().Find(&rows).Error)
-	for _, r := range rows {
-		hash, err := hex.DecodeString(r.Hash)
-		require.NoError(t, err)
-		_, err = re.ReadChunk(hash)
-		require.NoError(t, err, "row %s points at missing or damaged bytes", r.Hash)
-	}
+	return info.Size()
 }
 
 func TestPack_SizeTriggerFlushesWithoutFinalize(t *testing.T) {
@@ -401,4 +433,38 @@ func TestPack_VacuumOnlineFlushesFirstSoPendingLinksProtectChunks(t *testing.T) 
 	assert.NoError(t, s.ChunkExists(h))
 	assert.Equal(t, int64(1), countRows(t, s, &ChunkRecord{}))
 	assert.Equal(t, int64(1), countRows(t, s, &FileDataChunkRecord{}))
+}
+
+func TestPack_InvalidRowLocationReadsAsMissingAndStoreChunkRepairsIt(t *testing.T) {
+	s := newTestStore(t)
+	data := []byte("chunk whose row got damaged")
+	hash := makeChunk(t, data)
+	require.NoError(t, s.StoreChunk(hash, data))
+	require.NoError(t, s.flush())
+	require.NoError(t, s.RawDB().Model(&ChunkRecord{}).Where("hash = ?", hex.EncodeToString(hash)).
+		Update("segment", 0).Error)
+
+	// The backup stream asks "do you have it?": the answer must be "no", so
+	// the client sends the data, not an error that fails the stream.
+	assert.ErrorIs(t, s.ChunkExists(hash), storage.ErrChunkNotFound)
+
+	require.NoError(t, s.StoreChunk(hash, data))
+	require.NoError(t, s.flush())
+	assert.NoError(t, s.ChunkExists(hash))
+	got, err := s.ReadChunk(hash)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+	assert.Equal(t, int64(1), countRows(t, s, &ChunkRecord{}))
+}
+
+func TestPack_NewReadOnlyRejectsLegacyStore(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "chunks"), 0o755))
+
+	_, err = NewReadOnly(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy")
 }

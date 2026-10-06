@@ -124,11 +124,17 @@ func (s *Store) flush() error {
 		})
 	}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		// DoNothing: a chunk row may already exist (a racing duplicate append
-		// was re-added after an earlier flush; the existing row points at
-		// durable bytes too) and links are idempotent.
+		// A chunk row may already exist: a racing duplicate append was
+		// re-added after an earlier flush, or StoreChunk re-appended a chunk
+		// whose row held an invalid location. Overwriting the location is
+		// right in both cases, since the new bytes were just fsynced; the
+		// bytes the old row pointed at become dead space. Links are
+		// idempotent, so they just skip duplicates.
 		if len(rows) > 0 {
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "hash"}},
+				DoUpdates: clause.AssignmentColumns([]string{"size", "segment", "offset"}),
+			}).
 				CreateInBatches(rows, insertBatchSize).Error; err != nil {
 				return fmt.Errorf("insert chunk rows: %w", err)
 			}

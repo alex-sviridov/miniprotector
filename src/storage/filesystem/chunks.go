@@ -47,8 +47,15 @@ func rowLocation(rec ChunkRecord) (pack.Location, error) {
 	return pack.Location{Segment: uint32(rec.Segment), Offset: rec.Offset, Size: uint32(rec.Size)}, nil
 }
 
+// ChunkExists reports storage.ErrChunkNotFound for an unknown chunk, and also
+// for one whose row holds an impossible location: the client then sends the
+// data again and StoreChunk repairs the row, instead of the whole backup
+// stream failing on one damaged row.
 func (s *Store) ChunkExists(chunkHash []byte) error {
 	_, ok, err := s.locate(hex.EncodeToString(chunkHash))
+	if errors.Is(err, pack.ErrCorrupt) {
+		return storage.ErrChunkNotFound
+	}
 	if err != nil {
 		return err
 	}
@@ -72,7 +79,9 @@ func (s *Store) StoreChunk(chunkHash []byte, data []byte) error {
 
 	hexHash := hex.EncodeToString(chunkHash)
 	_, known, err := s.locate(hexHash)
-	if err != nil {
+	// A row with an invalid location counts as unknown: append the chunk
+	// again; the flush overwrites the row with the new location.
+	if err != nil && !errors.Is(err, pack.ErrCorrupt) {
 		return err
 	}
 	if known {
