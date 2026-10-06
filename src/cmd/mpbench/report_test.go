@@ -57,6 +57,20 @@ func TestSummarize_MedianMinMaxPerPhaseInRunOrder(t *testing.T) {
 	assert.Equal(t, 4.0, sum[2].MedianSeconds)
 }
 
+func TestSummarize_MemoryMedianAndMax(t *testing.T) {
+	mk := func(client, server int64) RunResult {
+		r := mkRun(1, 1, 1, 1)
+		r.Phases[0].ClientRSS, r.Phases[0].ServerRSS = client, server
+		return r
+	}
+	sum := Summarize([]RunResult{mk(100, 10), mk(300, 50), mk(200, 30)})
+
+	assert.Equal(t, int64(200), sum[0].MedianClientRSS)
+	assert.Equal(t, int64(300), sum[0].MaxClientRSS)
+	assert.Equal(t, int64(30), sum[0].MedianServerRSS)
+	assert.Equal(t, int64(50), sum[0].MaxServerRSS)
+}
+
 func TestSummarize_NoRuns(t *testing.T) {
 	assert.Empty(t, Summarize(nil))
 }
@@ -74,9 +88,25 @@ func TestWriteTable_ContainsPhasesAndHeader(t *testing.T) {
 	WriteTable(&buf, "dataset: 10 files", Summarize([]RunResult{mkRun(1, 2, 1, 4)}))
 	out := buf.String()
 	assert.Contains(t, out, "dataset: 10 files")
-	for _, want := range []string{"phase", "backup-cold", "backup-warm", "restore", "MB/s", "wire up", "wire down"} {
+	for _, want := range []string{"phase", "backup-cold", "backup-warm", "restore", "MB/s", "wire up", "wire down", "client RSS", "server RSS"} {
 		assert.Contains(t, out, want)
 	}
+}
+
+func TestWriteTable_ShowsMemoryAsMedianSlashMax(t *testing.T) {
+	r := mkRun(1, 1, 1, 1)
+	r.Phases[0].ClientRSS, r.Phases[0].ServerRSS = 142_300_000, 20_000_000
+	var buf bytes.Buffer
+	WriteTable(&buf, "h", Summarize([]RunResult{r}))
+	assert.Contains(t, buf.String(), "142.3 MB / 142.3 MB")
+	assert.Contains(t, buf.String(), "20.0 MB / 20.0 MB")
+}
+
+func TestWriteTable_UnmeasuredMemoryIsADash(t *testing.T) {
+	var buf bytes.Buffer
+	WriteTable(&buf, "h", Summarize([]RunResult{mkRun(1, 1, 1, 1)}))
+	assert.Contains(t, buf.String(), "-")
+	assert.NotContains(t, buf.String(), "0 B / 0 B")
 }
 
 func variantOf(label string, a Args, runs ...RunResult) VariantResult {

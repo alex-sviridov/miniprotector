@@ -68,13 +68,21 @@ Every run uses a fresh temporary directory, a fresh store and a freshly generate
 ## Reading the output
 
 ```
-phase        median s  min s  max s  MB/s  files/s  wire up  wire down
+phase        median s  min s  max s  MB/s  files/s  wire up  wire down  client RSS med/max  server RSS med/max
 ```
 
 `MB/s` and `files/s` are the dataset's logical size and file count divided by the phase's wall time.
 `wire up` is bytes from the client to `bwfs`, `wire down` the reverse, counted by the proxy for that
 phase only. Wire bytes show protocol-overhead changes (for example compression) that wall time alone
 can hide: a change that moves less data but is not faster shows up here.
+
+`client RSS` and `server RSS` are the peak resident memory of the client (`brfs` or `rwfs`) and of `bwfs`
+during that phase, as median / max across `--runs`. The client figure is the child's `ru_maxrss`; the
+server figure is `VmHWM` from `/proc`, reset (`clear_refs`) before each phase so a phase reports its own
+peak and not the running maximum. It is a coarse measure (peak RSS includes memory the Go runtime keeps
+after it is no longer live), so compare builds by ratio rather than reading absolute numbers. A `-` means
+it could not be read. The proxy's own memory is not counted. Memory is in the JSON too
+(`client_rss_bytes`, `server_rss_bytes` per run; `median_*` and `max_*` in the summary) and is Linux-only.
 
 ## Comparing two builds
 
@@ -116,7 +124,8 @@ build as described above.
 A userspace TCP proxy between the clients and `bwfs`. It delays each direction by half of `--rtt`
 using a timestamped queue — blocks that arrive together leave together — so it models propagation
 delay without serializing a stream, which would hide exactly the pipelining gains being measured.
-`--bandwidth` is a per-direction cap. TLS passes through untouched. It needs no root and works
+`--bandwidth` is a per-direction cap, paced per block with a small burst allowance (5 ms) so timer
+overshoot is carried forward; an earlier pacer discarded it and delivered only ~57% of the cap. TLS passes through untouched. It needs no root and works
 anywhere Go runs. It does not model jitter or loss; use `tc netem` for those.
 
 ## See Also

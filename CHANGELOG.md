@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — mpbench: peak memory per phase
+
+`mpbench` now reports peak resident memory next to wall time: for each phase, the client (`brfs`/`rwfs`)
+and `bwfs`, as median and max across runs, in the table and the JSON. The client figure comes from the
+child's `ru_maxrss`; the server figure is `VmHWM` reset before each phase, so each phase gets its own
+peak. It is deliberately coarse, enough to see how a change moves memory (for example a larger window
+or more streams) without a profiler. Timing is unchanged against the previous build at identical flags.
+
+## 2026-10-06 — mpbench: bandwidth cap delivered only ~57% of its rate
+
+The "restore plateau" recorded in the performance guide (restore stuck at 12–13 MB/s at 50 ms RTT
+whatever the streams or window) was a benchmark artifact, not a restore-path problem. `mpbench`'s
+proxy paced a capped link by forgetting its sleep overshoot after every block, so a 25 MB/s cap
+delivered about 14 MB/s; a plain TCP copy through the proxy showed the same, and uncapped restore
+scaled normally. The pacer now carries the overshoot forward and delivers the configured rate, with a
+regression test. Capped results change: restore at 8 streams, 50 ms, 200 Mbit/s goes from 4.7 s to
+3.1 s, a fixed `grpc_window_bytes` of 4 MiB now shows −12% restore at 8 streams (was −6%), and backup
+is within noise because it is latency-bound. The tables in the performance guide were re-measured and
+the open finding was replaced by a note. No change to `brfs`, `bwfs` or `rwfs`.
+
 ## 2026-10-05 — Performance tuning: stream and window defaults, opt-in gRPC window
 
 Using `mpbench` to look for the optimum, `default_window` is now 16 (the measured knee at 8 streams and

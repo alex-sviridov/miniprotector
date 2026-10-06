@@ -120,6 +120,32 @@ func TestProxy_BandwidthCapBoundsThroughput(t *testing.T) {
 	assert.Less(t, elapsed, 1500*time.Millisecond)
 }
 
+// A bulk transfer must run at the configured rate, not a fraction of it: the
+// pacer used to forfeit its sleep overshoot on every block and delivered only
+// about 57% of the cap, which made capped benchmarks look bandwidth-starved.
+func TestProxy_BandwidthCapIsDeliveredAtFullRate(t *testing.T) {
+	const bw = 20_000_000 // 20 MB/s per direction
+	const n = 10_000_000  // ideal: 0.5 s
+	p := startProxy(t, ProxySpec{Bandwidth: bw})
+	c, err := net.Dial("tcp", p.Addr())
+	require.NoError(t, err)
+	defer c.Close()
+
+	start := time.Now()
+	go func() {
+		buf := make([]byte, 64*1024)
+		for sent := 0; sent < n; sent += len(buf) {
+			c.Write(buf)
+		}
+	}()
+	_, err = io.ReadFull(c, make([]byte, n/64/1024*64*1024))
+	require.NoError(t, err)
+	elapsed := time.Since(start)
+
+	ideal := time.Duration(float64(n) / bw * float64(time.Second))
+	assert.Less(t, elapsed, ideal*125/100, "delivered well below the configured rate")
+}
+
 func TestProxy_CountsBytesPerDirectionAndResets(t *testing.T) {
 	p := startProxy(t, ProxySpec{})
 	c, err := net.Dial("tcp", p.Addr())
