@@ -136,3 +136,16 @@ func TestCompareTrees_ReportsMissingExtraAndModified(t *testing.T) {
 	assert.Contains(t, err.Error(), "unexpected: only-dst.txt")
 	assert.Contains(t, err.Error(), "differs: sub/mod.txt")
 }
+
+func TestGenerate_SparseProfileIsMostlyHole(t *testing.T) {
+	ds := gen(t, DatasetSpec{Files: 3, Profile: "sparse", Seed: 1})
+	for _, f := range ds.Files {
+		assert.GreaterOrEqual(t, f.Size, int64(4<<20), f.Rel)
+		assert.LessOrEqual(t, f.Size, int64(16<<20), f.Rel)
+		st, err := os.Stat(filepath.Join(ds.Root, f.Rel))
+		require.NoError(t, err)
+		assert.Equal(t, f.Size, st.Size())
+	}
+	again := gen(t, DatasetSpec{Files: 3, Profile: "sparse", Seed: 1})
+	require.NoError(t, CompareTrees(ds.Root, again.Root))
+}
