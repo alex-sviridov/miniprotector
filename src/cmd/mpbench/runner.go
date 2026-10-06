@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -66,6 +67,7 @@ func freePort() (int, error) {
 
 // proc is a long-running child process (bwfs).
 type proc struct {
+	pid    int
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -86,7 +88,7 @@ func startProc(ctx context.Context, bin string, args, env []string, logPath stri
 		logFile.Close()
 		return nil, err
 	}
-	p := &proc{cancel: cancel, done: make(chan struct{})}
+	p := &proc{pid: cmd.Process.Pid, cancel: cancel, done: make(chan struct{})}
 	go func() {
 		cmd.Wait()
 		logFile.Close()
@@ -127,8 +129,9 @@ func tail(b []byte, n int) string {
 }
 
 // runTool runs a short-lived client binary to completion, keeping its output
-// in logPath and returning its tail on failure.
-func runTool(ctx context.Context, logPath, bin string, args, env []string, stdin string) error {
+// in logPath and returning its tail on failure. On success it also returns the
+// child's peak resident set size in bytes.
+func runTool(ctx context.Context, logPath, bin string, args, env []string, stdin string) (int64, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(os.Environ(), env...)
 	if stdin != "" {
@@ -137,9 +140,13 @@ func runTool(ctx context.Context, logPath, bin string, args, env []string, stdin
 	out, err := cmd.CombinedOutput()
 	_ = os.WriteFile(logPath, out, 0o644)
 	if err != nil {
-		return fmt.Errorf("%s failed: %w\n%s", filepath.Base(bin), err, tail(out, 2000))
+		return 0, fmt.Errorf("%s failed: %w\n%s", filepath.Base(bin), err, tail(out, 2000))
 	}
-	return nil
+	var rss int64
+	if ru, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage); ok {
+		rss = int64(ru.Maxrss) * 1024 // kilobytes on Linux
+	}
+	return rss, nil
 }
 
 // RunOnce performs one full cycle in a fresh work directory and store:
@@ -205,24 +212,33 @@ func RunOnce(ctx context.Context, a *Args, idx int, logf func(string, ...any)) (
 	dest := "localhost:" + strconv.Itoa(px.Port())
 
 	res := &RunResult{Index: idx, DatasetFiles: len(ds.Files), DatasetBytes: ds.TotalBytes}
-	measure := func(name string, fn func() error) error {
+	resetWarned := false
+	measure := func(name string, fn func() (int64, error)) error {
 		px.ResetCounters()
+		if err := resetPeakRSS(bw.pid); err != nil && !resetWarned {
+			resetWarned = true
+			logf("warning: cannot reset bwfs peak RSS (%v); server memory will be cumulative", err)
+		}
 		start := time.Now()
-		if err := fn(); err != nil {
+		clientRSS, err := fn()
+		if err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 		secs := time.Since(start).Seconds()
 		up, down := px.Counters()
 		p := newPhaseResult(name, secs, ds.TotalBytes, len(ds.Files), up, down)
+		p.ClientRSS = clientRSS
+		p.ServerRSS, _ = peakRSS(bw.pid) // 0 (shown as "-") if unreadable
 		res.Phases = append(res.Phases, p)
-		logf("%s: %.2fs, %.2f MB/s, wire up %s down %s", name, p.Seconds, p.MBPerSec, humanBytes(up), humanBytes(down))
+		logf("%s: %.2fs, %.2f MB/s, wire up %s down %s, RSS client %s server %s", name, p.Seconds, p.MBPerSec,
+			humanBytes(up), humanBytes(down), humanBytes(p.ClientRSS), humanBytes(p.ServerRSS))
 		return nil
 	}
 
 	brfs := filepath.Join(a.BinDir, "brfs")
 	rwfs := filepath.Join(a.BinDir, "rwfs")
 
-	if err := measure(phaseBackupCold, func() error {
+	if err := measure(phaseBackupCold, func() (int64, error) {
 		return runTool(ctx, filepath.Join(work, "brfs-cold.log"), brfs, brfsArgs(a, src, dest), env, "")
 	}); err != nil {
 		return nil, err
@@ -231,13 +247,13 @@ func RunOnce(ctx context.Context, a *Args, idx int, logf func(string, ...any)) (
 	if err := ds.Touch(); err != nil {
 		return nil, fmt.Errorf("touch: %w", err)
 	}
-	if err := measure(phaseBackupWarm, func() error {
+	if err := measure(phaseBackupWarm, func() (int64, error) {
 		return runTool(ctx, filepath.Join(work, "brfs-warm.log"), brfs, brfsArgs(a, src, dest), env, "")
 	}); err != nil {
 		return nil, err
 	}
 
-	if err := measure(phaseRestore, func() error {
+	if err := measure(phaseRestore, func() (int64, error) {
 		return runTool(ctx, filepath.Join(work, "rwfs.log"), rwfs, rwfsArgs(a, dest), env, restoreRules(src, restored))
 	}); err != nil {
 		return nil, err

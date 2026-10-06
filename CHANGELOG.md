@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — mpbench: peak memory per phase
+
+`mpbench` now reports peak resident memory next to wall time: for each phase, the client (`brfs`/`rwfs`)
+and `bwfs`, as median and max across runs, in the table and the JSON. The client figure comes from the
+child's `ru_maxrss`; the server figure is `VmHWM` reset before each phase, so each phase gets its own
+peak. It is deliberately coarse, enough to see how a change moves memory (for example a larger window
+or more streams) without a profiler. Timing is unchanged against the previous build at identical flags.
+
 ## 2026-10-06 — mpbench: bandwidth cap delivered only ~57% of its rate
 
 The "restore plateau" recorded in the performance guide (restore stuck at 12–13 MB/s at 50 ms RTT

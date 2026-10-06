@@ -21,8 +21,10 @@ type PhaseResult struct {
 	Files        int     `json:"files"`
 	MBPerSec     float64 `json:"mb_per_s"`
 	FilesPerSec  float64 `json:"files_per_s"`
-	WireUp       int64   `json:"wire_up_bytes"`   // client -> server
-	WireDown     int64   `json:"wire_down_bytes"` // server -> client
+	WireUp       int64   `json:"wire_up_bytes"`    // client -> server
+	WireDown     int64   `json:"wire_down_bytes"`  // server -> client
+	ClientRSS    int64   `json:"client_rss_bytes"` // peak RSS of brfs/rwfs for this phase
+	ServerRSS    int64   `json:"server_rss_bytes"` // peak RSS of bwfs during this phase
 }
 
 type RunResult struct {
@@ -52,6 +54,10 @@ type PhaseSummary struct {
 	MedianFilesPerSec float64 `json:"median_files_per_s"`
 	MedianWireUp      int64   `json:"median_wire_up_bytes"`
 	MedianWireDown    int64   `json:"median_wire_down_bytes"`
+	MedianClientRSS   int64   `json:"median_client_rss_bytes"`
+	MaxClientRSS      int64   `json:"max_client_rss_bytes"`
+	MedianServerRSS   int64   `json:"median_server_rss_bytes"`
+	MaxServerRSS      int64   `json:"max_server_rss_bytes"`
 }
 
 func median(xs []float64) float64 {
@@ -66,6 +72,23 @@ func median(xs []float64) float64 {
 	return (s[len(s)/2-1] + s[len(s)/2]) / 2
 }
 
+func maxOf(xs []float64) float64 {
+	m := 0.0
+	for _, x := range xs {
+		m = max(m, x)
+	}
+	return m
+}
+
+// memCell formats "median / max" of a peak-RSS metric, or "-" when it was not
+// measured.
+func memCell(median, max int64) string {
+	if max == 0 {
+		return "-"
+	}
+	return humanBytes(median) + " / " + humanBytes(max)
+}
+
 // Summarize reduces the runs to one summary per phase, in the first run's
 // phase order.
 func Summarize(runs []RunResult) []PhaseSummary {
@@ -74,7 +97,7 @@ func Summarize(runs []RunResult) []PhaseSummary {
 	}
 	var out []PhaseSummary
 	for i, first := range runs[0].Phases {
-		var secs, mb, fps, up, down []float64
+		var secs, mb, fps, up, down, crss, srss []float64
 		for _, r := range runs {
 			if i >= len(r.Phases) {
 				continue
@@ -85,6 +108,8 @@ func Summarize(runs []RunResult) []PhaseSummary {
 			fps = append(fps, p.FilesPerSec)
 			up = append(up, float64(p.WireUp))
 			down = append(down, float64(p.WireDown))
+			crss = append(crss, float64(p.ClientRSS))
+			srss = append(srss, float64(p.ServerRSS))
 		}
 		sortedSecs := append([]float64(nil), secs...)
 		sort.Float64s(sortedSecs)
@@ -99,6 +124,10 @@ func Summarize(runs []RunResult) []PhaseSummary {
 			MedianFilesPerSec: median(fps),
 			MedianWireUp:      int64(median(up)),
 			MedianWireDown:    int64(median(down)),
+			MedianClientRSS:   int64(median(crss)),
+			MaxClientRSS:      int64(maxOf(crss)),
+			MedianServerRSS:   int64(median(srss)),
+			MaxServerRSS:      int64(maxOf(srss)),
 		})
 	}
 	return out
@@ -120,11 +149,12 @@ func humanBytes(n int64) string {
 func WriteTable(w io.Writer, header string, s []PhaseSummary) {
 	fmt.Fprintln(w, header)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "phase\tmedian s\tmin s\tmax s\tMB/s\tfiles/s\twire up\twire down")
+	fmt.Fprintln(tw, "phase\tmedian s\tmin s\tmax s\tMB/s\tfiles/s\twire up\twire down\tclient RSS med/max\tserver RSS med/max")
 	for _, p := range s {
-		fmt.Fprintf(tw, "%s\t%.2f\t%.2f\t%.2f\t%.2f\t%.1f\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%.2f\t%.2f\t%.2f\t%.2f\t%.1f\t%s\t%s\t%s\t%s\n",
 			p.Name, p.MedianSeconds, p.MinSeconds, p.MaxSeconds, p.MedianMBPerSec, p.MedianFilesPerSec,
-			humanBytes(p.MedianWireUp), humanBytes(p.MedianWireDown))
+			humanBytes(p.MedianWireUp), humanBytes(p.MedianWireDown),
+			memCell(p.MedianClientRSS, p.MaxClientRSS), memCell(p.MedianServerRSS, p.MaxServerRSS))
 	}
 	tw.Flush()
 }

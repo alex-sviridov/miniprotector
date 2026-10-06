@@ -41,6 +41,8 @@ func TestIntegration_FullCycle(t *testing.T) {
 	for _, p := range res.Phases {
 		assert.Positive(t, p.Seconds, p.Name)
 		assert.Positive(t, p.WireUp+p.WireDown, p.Name)
+		assert.Positive(t, p.ClientRSS, p.Name)
+		assert.Positive(t, p.ServerRSS, p.Name)
 	}
 	assert.Less(t, warm.WireUp*3, cold.WireUp, "warm backup sends hashes only, cold sends data")
 	assert.Greater(t, restore.WireDown, restore.WireUp, "restore is mostly server to client")
