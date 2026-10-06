@@ -67,6 +67,7 @@ type commitQueue struct {
 	pending        []pendingFile
 	pendingBytes   int64
 	aborted        bool
+	err            error // latched error from first failed flush (first error wins)
 	committedFiles int
 	committedBytes int64
 }
@@ -89,6 +90,13 @@ func discard(ps []pendingFile) {
 // error, which may concern other files in the same batch.
 func (q *commitQueue) Add(p pendingFile) error {
 	q.mu.Lock()
+	// If a previous flush failed, return the latched error
+	if q.err != nil {
+		q.mu.Unlock()
+		discard([]pendingFile{p})
+		return q.err
+	}
+	// If explicitly aborted (no prior flush error), return errCommitAborted
 	if q.aborted {
 		q.mu.Unlock()
 		discard([]pendingFile{p})
@@ -111,6 +119,11 @@ func (q *commitQueue) Flush() error {
 	defer q.flushMu.Unlock()
 
 	q.mu.Lock()
+	// If a previous flush failed, return the latched error
+	if q.err != nil {
+		defer q.mu.Unlock()
+		return q.err
+	}
 	batch := q.pending
 	q.pending = nil
 	q.pendingBytes = 0
@@ -130,12 +143,26 @@ func (q *commitQueue) commit(batch []pendingFile) error {
 	for _, p := range batch {
 		if err := q.hooks.Sync(p.File); err != nil {
 			discard(batch)
-			return fmt.Errorf("fsync %s: %w", p.DestPath, err)
+			commitErr := fmt.Errorf("fsync %s: %w", p.DestPath, err)
+			q.mu.Lock()
+			if q.err == nil {
+				q.err = commitErr
+				q.aborted = true
+			}
+			q.mu.Unlock()
+			return commitErr
 		}
 		q.hooks.DropCache(p.File)
 		if err := p.File.Close(); err != nil {
 			discard(batch)
-			return fmt.Errorf("close %s: %w", p.DestPath, err)
+			commitErr := fmt.Errorf("close %s: %w", p.DestPath, err)
+			q.mu.Lock()
+			if q.err == nil {
+				q.err = commitErr
+				q.aborted = true
+			}
+			q.mu.Unlock()
+			return commitErr
 		}
 	}
 
@@ -143,7 +170,14 @@ func (q *commitQueue) commit(batch []pendingFile) error {
 	for i, p := range batch {
 		if err := q.hooks.Rename(p.TmpPath, p.DestPath); err != nil {
 			discard(batch[i:])
-			return fmt.Errorf("rename into place %s: %w", p.DestPath, err)
+			commitErr := fmt.Errorf("rename into place %s: %w", p.DestPath, err)
+			q.mu.Lock()
+			if q.err == nil {
+				q.err = commitErr
+				q.aborted = true
+			}
+			q.mu.Unlock()
+			return commitErr
 		}
 		dirs[filepath.Dir(p.DestPath)] = struct{}{}
 	}
@@ -155,7 +189,14 @@ func (q *commitQueue) commit(batch []pendingFile) error {
 	sort.Strings(sorted)
 	for _, d := range sorted {
 		if err := q.hooks.SyncDir(d); err != nil {
-			return fmt.Errorf("fsync directory %s: %w", d, err)
+			commitErr := fmt.Errorf("fsync directory %s: %w", d, err)
+			q.mu.Lock()
+			if q.err == nil {
+				q.err = commitErr
+				q.aborted = true
+			}
+			q.mu.Unlock()
+			return commitErr
 		}
 	}
 
@@ -172,8 +213,12 @@ func (q *commitQueue) commit(batch []pendingFile) error {
 
 // Abort removes every pending temp file and makes later Adds fail with
 // errCommitAborted (removing their temp files). Safe to call after a final
-// successful Flush: nothing is pending then.
+// successful Flush: nothing is pending then. Takes flushMu first to ensure
+// any in-flight Flush completes before we proceed.
 func (q *commitQueue) Abort() {
+	q.flushMu.Lock()
+	defer q.flushMu.Unlock()
+
 	q.mu.Lock()
 	q.aborted = true
 	batch := q.pending

@@ -183,3 +183,70 @@ func TestCommitQueue_ConcurrentAddsCommitEverything(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	assert.Len(t, entries, 20)
 }
+
+func TestCommitQueue_SyncFailureRemovesWholeBatch(t *testing.T) {
+	dir := t.TempDir()
+	hooks := recordingHooks(&eventLog{})
+	syncCount := 0
+	hooks.Sync = func(f *os.File) error {
+		syncCount++
+		if syncCount == 1 {
+			return os.ErrPermission
+		}
+		return nil
+	}
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 30}, hooks)
+	require.NoError(t, q.Add(newPending(t, dir, "a", "1")))
+	require.NoError(t, q.Add(newPending(t, dir, "b", "2")))
+
+	err := q.Flush()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrPermission)
+	// Both temp files should be cleaned up (never renamed)
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries, "no temp files or final files after sync failure")
+}
+
+func TestCommitQueue_FailedFlushLatchesError(t *testing.T) {
+	dir := t.TempDir()
+	hooks := recordingHooks(&eventLog{})
+	callCount := 0
+	hooks.Sync = func(f *os.File) error {
+		callCount++
+		if callCount == 1 {
+			return os.ErrPermission
+		}
+		return nil
+	}
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 30}, hooks)
+	require.NoError(t, q.Add(newPending(t, dir, "a", "1")))
+
+	err := q.Flush()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrPermission)
+
+	// Later Add returns the latched error and removes its temp file
+	err = q.Add(newPending(t, dir, "b", "2"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrPermission)
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries, "no temp files left after failed add")
+
+	// Later Flush also returns the latched error
+	err = q.Flush()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrPermission)
+}
+
+func TestCommitQueue_AbortOnFreshQueueThenAdd(t *testing.T) {
+	dir := t.TempDir()
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 30}, recordingHooks(&eventLog{}))
+
+	q.Abort()
+	// After Abort on a fresh queue, Add returns errCommitAborted
+	err := q.Add(newPending(t, dir, "a", "1"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCommitAborted)
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries, "temp file cleaned up after aborted add")
+}
