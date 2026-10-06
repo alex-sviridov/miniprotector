@@ -2,8 +2,11 @@ package filesystem
 
 import (
 	"bytes"
+	"fmt"
 	mrand "math/rand"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/alex-sviridov/miniprotector/workload"
@@ -106,4 +109,67 @@ func TestCDC_YieldedDataSurvivesIteratorAdvancing(t *testing.T) {
 		held = append(held, c.Data()) // deliberately not copied: iterator must hand over owned data
 	}
 	assert.Equal(t, data, bytes.Join(held, nil))
+}
+
+func reassemble(path string) ([]byte, error) {
+	var out bytes.Buffer
+	for c, err := range (FileInfo{path: path}).ChunkIterator() {
+		if err != nil {
+			return nil, err
+		}
+		out.Write(c.Data())
+	}
+	return out.Bytes(), nil
+}
+
+// Guards against scan-buffer sharing bugs: pooled buffers must never leak
+// between files read sequentially or concurrently.
+func TestCDC_PooledBuffersAcrossFiles(t *testing.T) {
+	const nFiles = 6
+	dir := t.TempDir()
+	type tf struct {
+		path string
+		data []byte
+	}
+	mk := func(seed int64, n int) tf {
+		p := filepath.Join(dir, fmt.Sprintf("f%d", seed))
+		d := seededBytes(seed, n)
+		require.NoError(t, os.WriteFile(p, d, 0o600))
+		return tf{p, d}
+	}
+
+	var files []tf
+	for i := 0; i < nFiles; i++ {
+		files = append(files, mk(int64(100+i), MaxChunkSize*(i%3+1)+i*7919+1))
+	}
+
+	for _, f := range files {
+		got, err := reassemble(f.path)
+		require.NoError(t, err)
+		assert.True(t, bytes.Equal(f.data, got), "sequential %s", f.path)
+	}
+
+	const goroutines = 8
+	errs := make(chan error, goroutines*nFiles)
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := range files {
+				f := files[(i+g)%nFiles]
+				got, err := reassemble(f.path)
+				if err != nil {
+					errs <- err
+				} else if !bytes.Equal(f.data, got) {
+					errs <- fmt.Errorf("goroutine %d: %s did not reassemble", g, f.path)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }

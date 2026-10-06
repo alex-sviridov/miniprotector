@@ -5,6 +5,7 @@ import (
 	"hash/crc32"
 	"io"
 	"iter"
+	"sync"
 
 	chunkers "github.com/PlakarKorp/go-cdc-chunkers"
 	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/fastcdc"
@@ -23,6 +24,14 @@ const (
 	// "fastcdc" alone is the library's legacy variant; the versioned name is the current one.
 	cdcAlgorithm = "fastcdc-v1.0.0"
 )
+
+// scanBufPool holds the chunker scan buffers (MaxChunkSize each). Without it
+// every file read would allocate 2×MaxSize. Buffers are returned when the
+// iterator ends; chunks are copied before being yielded so nothing aliases them.
+var scanBufPool = sync.Pool{New: func() any {
+	b := make([]byte, MaxChunkSize)
+	return &b
+}}
 
 type Chunk struct {
 	hash     []byte // blake3 hash for dedup
@@ -98,11 +107,14 @@ func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 		}
 		fileSize := fileInfo.Size()
 
-		chunker, err := chunkers.NewChunker(cdcAlgorithm, file, &chunkers.ChunkerOpts{
+		bufp := scanBufPool.Get().(*[]byte)
+		defer scanBufPool.Put(bufp)
+
+		chunker, err := chunkers.NewChunkerBuffer(cdcAlgorithm, file, &chunkers.ChunkerOpts{
 			MinSize:    MinChunkSize,
 			NormalSize: NormalChunkSize,
 			MaxSize:    MaxChunkSize,
-		})
+		}, *bufp)
 		if err != nil {
 			yield(nil, err)
 			return

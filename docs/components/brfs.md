@@ -80,7 +80,7 @@ Sizing: the window needs to cover the bandwidth-delay product, `RTT × throughpu
 (chunks average 64 KB). On a LAN `1`–`2` is enough; across a WAN with tens of milliseconds of RTT,
 `8`–`16` helps (the measured knee at 8 streams and 50 ms is about 16; see [performance tuning](../PERFORMANCE.md)), and a mostly-deduplicated backup (tiny hash-only requests) benefits from a
 larger window than one transferring new data. Past the knee a larger window only costs memory
-(typically `--streams × --window × 64 KB` of chunks held, worst case 256 KB per slot) and queueing delay. The window is per stream and
+(typically `--streams × --window × 64 KB` of chunks held, worst case 256 KB per slot, plus one pooled 256 KB chunker scan buffer per stream reading a file) and queueing delay. The window is per stream and
 within one file; it drains at the end of each file, so many tiny files see little gain. Set the
 site default with `default_window` in `local.conf`; `--window` overrides it per run.
 

@@ -32,10 +32,13 @@ type DatasetSpec struct {
 	DupRatio float64
 	Seed     uint64
 	// Shift prefixes each non-sparse file with 1..4095 random bytes so pooled
-	// blocks sit off 64KB alignment. It does not apply to the sparse profile.
+	// blocks sit off block alignment (the --dup-block-kb grid, default 64KB).
+	// It does not apply to the sparse profile.
 	Shift bool
 	// DupBlock is the size in bytes of the duplicated blocks (and of the pool's
-	// blocks); 0 means blockSize. It does not apply to the sparse profile.
+	// blocks); 0 means blockSize. Sparse files do not use duplicate
+	// blocks, but the pool is still generated, so a sparse dataset can differ
+	// between values of this flag.
 	DupBlock int64
 }
 

@@ -11,7 +11,7 @@ the chunks around an edit change. Chunk size, offsets and hashes are carried on 
 before, so there is no protocol or store change and existing backups restore as usual; old fixed-size
 chunks simply do not deduplicate against new ones, so the first backup after upgrading re-uploads data.
 The window memory bound is now worst case `streams × window × 256 KB` (32 MB at 8 × 16), typically
-64 KB per slot. `mpbench` gains `--shift` (a short random prefix per file, so duplicates sit off
+64 KB per slot, plus one pooled 256 KB chunker scan buffer per stream reading a file. `mpbench` gains `--shift` (a short random prefix per file, so duplicates sit off
 alignment) and `--dup-block-kb` (size of the duplicated blocks), because its default 64 KB duplicate
 unit equals the average chunk and hides the benefit.
 
@@ -23,7 +23,7 @@ before and 144.9 MB now (about 6% more on the wire, edge chunks no longer dedup)
 8.8 s. Default `mixed` data with 64 KB duplicate blocks, where almost no chunk fits inside a duplicate:
 79.5 MB before and 109.8 MB now (that dataset is the artifact described above, not a typical tree).
 `small` files and the 20 ms RTT run are unchanged within noise (cold backup 4.07 s both, restore 1.10 s
-and 1.07 s); `large` with the default 64 KB duplicate blocks ran 10.6 s both and sent 157.8 MB before
+and 1.07 s); `large` with the default 64 KB duplicate blocks (`--dup-ratio 0.3`) ran 10.6 s both and sent 157.8 MB before
 against 219.7 MB now, for the same reason. Restore is unchanged or slightly faster throughout. Client
 peak memory is a few MB higher (about 54 to 60 MB on `mixed`).
 
