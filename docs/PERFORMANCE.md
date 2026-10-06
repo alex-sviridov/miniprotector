@@ -121,8 +121,10 @@ design](superpowers/specs/2026-10-06-rwfs-write-tuning-design.md) for the full n
 - **Chunk size** is content-defined (FastCDC): 16 KB minimum, 64 KB average, 256 KB maximum, set by
   constants in `src/workload/filesystem/chunker.go`, not by a flag. A larger average chunk size would mean fewer
   round trips and fewer database rows; tracked as a possible change.
-- **Per-chunk server cost.** Even at zero latency, backup runs at about 12 MB/s against about 105
-  MB/s for restore; the cost is per-chunk work on the backup path, not the network. See
+- **Per-chunk server cost.** Before pack segments, even at zero latency backup ran at about 12 MB/s
+  against about 105 MB/s for restore; the cost was per-chunk work on the backup path (a file, a directory
+  check and two fsynced database commits per chunk), not the network. Pack segments removed most of it, see
+  [Storage pack segments](#storage-pack-segments). See also
   [issue #35](https://github.com/alex-sviridov/miniprotector/issues/35).
 - **Pipelining across files** would let one stream hide the per-file round trips that streams hide
   today. See [issue #36](https://github.com/alex-sviridov/miniprotector/issues/36).
@@ -143,6 +145,26 @@ of 2 runs (numbers re-measured after the `mpbench` bandwidth-cap fix, see below)
 | | restore | 0.31 s | 0.26 s | −16% |
 
 Bytes on the wire are unchanged: the gain is all latency hidden, none of it data saved.
+
+## Storage pack segments
+
+`bwfs` now appends chunks to large segment files and commits index rows once per file instead of once per
+chunk (see [bwfs](components/bwfs.md#storage-layout)). Same dataset and seed on both sides (500 files,
+172.3 MB, `mixed`, dup ratio 0.3, 4 streams, LAN with no emulated delay, ext4 on a virtual SSD), median of 3
+runs, baseline built from the tree just before the change:
+
+| Phase | Before | After | Change |
+|---|---|---|---|
+| backup-cold | 12.00 s (14.4 MB/s) | 5.35 s (32.2 MB/s) | −55% |
+| backup-warm | 7.72 s | 4.60 s | −40% |
+| restore | 0.96 s (180 MB/s) | 1.17 s (147 MB/s) | +22% (slower) |
+
+Server memory is unchanged (about 45-70 MB RSS). Backup got faster because the per-chunk file creation and
+the two fsynced database commits per chunk are gone: durability is paid once per file. Restore got slower
+because every chunk read is now verified against its BLAKE3 hash and looked up in the index first; the old
+path trusted whatever the file contained. That is a deliberate trade, reliability before speed: a flipped bit
+is now caught on read instead of restored. The restore is still above 140 MB/s on this machine. Wire bytes
+are unchanged. Remeasure with the command under [How to measure your own link](#how-to-measure-your-own-link).
 
 ## A note on the bandwidth cap
 

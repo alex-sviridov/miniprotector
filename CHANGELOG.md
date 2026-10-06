@@ -15,7 +15,7 @@ torn segment tail, and an fsync failure fails requests until restart. Vacuum now
 break with no migration: a store with a `chunks/` directory is rejected and a fresh store must be started.
 Linux only.
 
-Benchmark: see docs/PERFORMANCE.md
+Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.35 s, backup-warm 7.7 s to 4.6 s, restore 0.96 s to 1.17 s (slower, because reads are now hash-verified). See docs/PERFORMANCE.md.
 
 ## 2026-10-06 — Backup and restore statistics
 
