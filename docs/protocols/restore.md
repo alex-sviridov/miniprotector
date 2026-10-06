@@ -71,8 +71,8 @@ the only legitimate caller. See
 | Chunk file missing or unreadable | gRPC `Internal` (stream terminates) |
 | Send error (network) | stream terminates; client retries entire `RestoreFile` call |
 
-On a chunk-read failure, bwfs also marks that chunk corrupted server-side (removes any
-leftover chunk file, deletes its DB records, and invalidates the `FileData` of every file
+On a chunk-read failure, bwfs also marks that chunk corrupted server-side (deletes its
+DB records, and invalidates the `FileData` of every file
 that referenced it) before returning the `Internal` error — see the [backup
 protocol](./backup.md)'s "How does the system recover from a corrupted chunk?" section for
 the full recovery rationale. A `restore` or `verify` run doubles as the trigger for this

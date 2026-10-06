@@ -132,7 +132,7 @@ to avoid this.
 - Connects to **bwfs** via network or Unix socket, authenticated with mutual TLS
 - Sends chunked file data using the backup protocol, each file's metadata carrying an `expire_at`
   that `brfs` resolves from the per-job retention matrix `agent` hands it (`--retention-file`)
-- **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
+- **bwfs** stores needed chunks in append-only pack segments on the backup filesystem (group-commit fsync at file finalize) and records metadata and the chunk index in SQLite
 - **bwfs** also runs scheduled maintenance: **cleanup** deletes file versions past their `expire_at`
   and **vacuum** reclaims the file data and chunks nothing references any more; deletions are
   replicated to the catalog by `catalogsync`

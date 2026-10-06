@@ -36,8 +36,9 @@ bwfs /home/user/backup server --port 8080 --debug
 | `--quiet` | false | Suppress console logging |
 
 On startup, before accepting connections, the server runs a full vacuum pass over the store
-(removes incomplete/orphaned `FileData`, orphaned chunk links, orphaned chunk records, and
-orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
+(removes incomplete/orphaned `FileData`, orphaned chunk links and orphaned chunk records, then
+compacts and removes pack segments, see [Storage layout](#storage-layout)) and logs the results
+(`segments_removed`, `segments_compacted`, `bytes_reclaimed`). A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
 
 Opening the store also runs a one-time backfill of the `source_host`/`path`/`mtime` columns on
@@ -190,7 +191,7 @@ Provides file reconstruction via server-streaming gRPC RPC. Given a `file_uuid` 
 
 **Lookup semantics:** The handler first queries `file_data_records` by the `file_uuid` (column `uuid`) to obtain the `file_id` (fs:// path reference — the natural key, distinct from `file_uuid`), then uses that `file_id` to query `file_data_chunk_records` in index order. The file must be finalized (with a non-NULL checksum) before restore is allowed.
 
-**Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.Internal` when a database error occurs or a chunk file cannot be read from disk — a chunk-read failure also marks that chunk corrupted server-side (see [backup protocol](../protocols/backup.md)) so it heals on the next backup. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
+**Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.Internal` when a database error occurs or a chunk cannot be read or fails hash verification — a chunk-read failure also marks that chunk corrupted server-side (see [backup protocol](../protocols/backup.md)) so it heals on the next backup. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
 
 ## Transport Security
 
@@ -201,11 +202,67 @@ by that CA is trusted — there's no additional per-client allowlist. Missing or
 are a fatal startup error; there is no plaintext fallback. Cert issuance itself is out of scope
 for `bwfs` — see the [control plane setup](../../deploy/control-plane/README.md) for how certs are provisioned today.
 
+## Storage layout
+
+Chunk bytes live in append-only **pack segments**, not one file per chunk:
+
+```
+<storage_path>/packs/0000000001.pack      # 10-digit segment id, rotated at 256 MiB
+<storage_path>/<sqlite database>          # metadata and the chunk index
+```
+
+A segment is the 8-byte magic `MPKSEG01` followed by records back to back; each record is
+`MPKR | data length (uint32 LE) | BLAKE3-256 of data | data` (40-byte header, data up to 16 MiB).
+`chunk_records` carries each chunk's `segment` and `offset`, so a read is one `pread`. This
+replaces roughly one file and inode per 64 KB chunk (about 16M files per TB) with a handful of
+large files. The package is `src/storage/pack`; `src/storage/filesystem` owns the SQLite index.
+
+A store written by the previous layout (it has a `chunks/` directory) is rejected at open with
+an error. There is no migration: start a fresh store.
+
+### Durability contract
+
+- Acknowledging a chunk to `brfs` happens **before** its bytes are fsynced. Durability is paid
+  once per barrier (group commit), not per chunk.
+- The barrier is file finalize. `FinalizeFileData` fsyncs the active segment, then commits all
+  pending chunk rows and links in one SQLite transaction, and only then sets the file's checksum.
+  A file is therefore "complete" (skippable by later backups) only after its bytes are durable and
+  indexed. Other barriers: 32 MiB of unflushed chunk bytes, vacuum, marking a chunk corrupt, and
+  `Close`.
+- Index rows only ever point at durable bytes. New rows are held in memory until after the fsync.
+  A crash leaves at worst unindexed dead bytes in a segment, never a row pointing at missing data.
+- An fsync failure is sticky: the log refuses further writes (the kernel may have dropped the dirty
+  pages, so a retry could falsely succeed). Requests fail; restarting the server recovers.
+- After each sync `posix_fadvise(DONTNEED)` is applied to the synced range so backup writes do not
+  evict the page cache.
+
+### Recovery and verified reads
+
+- On open the **last** segment is scanned record by record, checking each BLAKE3 hash; a torn or
+  corrupt tail is truncated at the first bad record (earlier segments were fsynced when sealed). A
+  last segment that is only a partial magic (crash during creation) is recreated. A bad magic on a
+  segment that holds data refuses to open the store.
+- Every read verifies the record header and BLAKE3 hash. A mismatch at restore or verify marks the
+  chunk corrupt exactly as before (rows dropped, dependent `FileData` invalidated, healed by the next
+  backup); the bytes stay behind as dead space. A read that finds its segment gone (compaction moved
+  the chunk) re-locates the chunk once and retries.
+
+### Vacuum and compaction
+
+Vacuum first deletes orphan rows; deleted chunks become dead space inside segments. It then
+reclaims that space per sealed segment: a segment with no live records is removed, and one that is
+under 50% live is **compacted** (live records are read hash-verified, appended to the active
+segment, synced, and their rows repointed in bounded batches; then the emptied segment is
+removed). The active segment is never compacted or removed, and a crash during compaction leaves at
+worst duplicate dead bytes. The result and the log line carry `segments_removed`,
+`segments_compacted` (a compacted segment counts only as compacted) and `bytes_reclaimed`, which is
+the physical size of removed segments minus the bytes copied during compaction.
+
 ## Platform-specific code
 
-Writing is split per OS so it can be tuned independently: `src/storage/filesystem/writer_{linux,windows}.go`
-(`writeChunkFile`: temp write + rename), `storelock_{linux,windows}.go` (exclusive store lock;
-`flock` vs `LockFileEx`) and `src/cmd/bwfs/diskspace_{linux,windows}.go` (disk usage for status reports).
+Chunk storage is Linux only (`src/storage/pack`, which uses `posix_fadvise`). The exclusive store
+lock is `src/storage/filesystem/storelock_linux.go` (`flock`); disk usage for status reports is
+`src/cmd/bwfs/diskspace_{linux,windows}.go`.
 
 ## Building
 

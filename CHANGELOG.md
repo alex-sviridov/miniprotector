@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — Chunk storage in pack segments
+
+`bwfs` stored every chunk as its own file (`chunks/aa/bb/<hash>`), never fsynced it, trusted it on read and
+paid several filesystem operations plus two SQLite commits per chunk. Chunks now go into append-only pack
+segments (`packs/NNNNNNNNNN.pack`, 256 MiB) indexed in SQLite by segment and offset, which means far fewer
+files and inodes (about 16M per TB before). Durability is paid once per file (group commit): a file becomes
+complete only after its chunk bytes are fsynced and its rows committed in one transaction, so a crash leaves
+dead bytes but never an index row pointing at missing data. Reads verify the BLAKE3 hash, opening recovers a
+torn segment tail, and an fsync failure fails requests until restart. Vacuum now also compacts segments under
+50% live and removes dead ones (new log fields `segments_removed`, `segments_compacted`). This is a format
+break with no migration: a store with a `chunks/` directory is rejected and a fresh store must be started.
+Linux only.
+
+Benchmark: see docs/PERFORMANCE.md
+
 ## 2026-10-06 — Backup and restore statistics
 
 `brfs` now ends a job with its totals on the `Backup finished` line: bytes read, bytes actually sent,
