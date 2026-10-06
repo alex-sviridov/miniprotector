@@ -62,7 +62,7 @@ type SegmentInfo struct {
 }
 
 func segmentPath(dir string, id uint32) string {
-	return filepath.Join(dir, fmt.Sprintf("%08d.pack", id))
+	return filepath.Join(dir, fmt.Sprintf("%010d.pack", id))
 }
 
 // encodeHeader builds the 40-byte record header.
@@ -86,8 +86,8 @@ func Read(dir string, loc Location, hash [32]byte) ([]byte, error) {
 	}
 	defer f.Close()
 
-	if loc.Size > maxRecordSize {
-		return nil, fmt.Errorf("%w: size %d too large", ErrCorrupt, loc.Size)
+	if loc.Size > maxRecordSize || loc.Offset < 0 {
+		return nil, fmt.Errorf("%w: bad location %+v", ErrCorrupt, loc)
 	}
 	buf := make([]byte, HeaderSize+int(loc.Size))
 	if _, err := f.ReadAt(buf, loc.Offset); err != nil {

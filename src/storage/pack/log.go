@@ -11,6 +11,8 @@ import (
 	"lukechampine.com/blake3"
 )
 
+var errLogClosed = errors.New("pack: log is closed")
+
 // Options configures a Log.
 type Options struct {
 	SegmentSize int64 // 0 means 256 MiB
@@ -66,7 +68,10 @@ func Open(dir string, opts Options) (*Log, error) {
 		return nil, err
 	}
 	if len(segs) == 0 {
-		return l, l.createSegment(1)
+		if err := l.createSegment(1); err != nil {
+			return nil, err
+		}
+		return l, nil
 	}
 	last := segs[len(segs)-1].ID
 	f, size, err := recoverSegment(dir, last, l.syncFile)
@@ -74,12 +79,15 @@ func Open(dir string, opts Options) (*Log, error) {
 		return nil, err
 	}
 	if f == nil {
-		// The header was bad or short: the crash happened while the segment
-		// was being created, so no record in it was ever acknowledged.
+		// The file is no bigger than the magic: the crash happened while the
+		// segment was being created, so no record in it was ever acknowledged.
 		if err := os.Remove(segmentPath(dir, last)); err != nil {
 			return nil, err
 		}
-		return l, l.createSegment(last)
+		if err := l.createSegment(last); err != nil {
+			return nil, err
+		}
+		return l, nil
 	}
 	l.active, l.activeID, l.size = f, last, size
 	return l, nil
@@ -111,8 +119,14 @@ func (l *Log) createSegment(id uint32) error {
 
 // recoverSegment scans a segment from the start, verifying every record, and
 // truncates the file after the last good one. It returns a nil file when the
-// segment header itself is bad. Earlier segments were fsynced when sealed, so
-// only the last one can hold a torn tail.
+// segment is no bigger than its magic (crash while it was being created).
+// Earlier segments were fsynced when sealed, so only the last one can hold a
+// torn tail.
+//
+// Only a damaged tail (short read, bad record magic, absurd length, hash
+// mismatch) is treated as a crash artifact and cut off. Any other read error,
+// or a bad segment magic on a file that holds data, is returned instead:
+// truncating then could destroy good records.
 func recoverSegment(dir string, id uint32, syncFile func(*os.File) error) (*os.File, int64, error) {
 	f, err := os.OpenFile(segmentPath(dir, id), os.O_RDWR, 0)
 	if err != nil {
@@ -123,18 +137,32 @@ func recoverSegment(dir string, id uint32, syncFile func(*os.File) error) (*os.F
 		return nil, 0, err
 	}
 
-	r := bufio.NewReaderSize(f, 1<<20)
-	magic := make([]byte, segmentMagicSize)
-	if _, err := io.ReadFull(r, magic); err != nil || string(magic) != segmentMagic {
+	info, err := f.Stat()
+	if err != nil {
+		return fail(err)
+	}
+	if info.Size() <= int64(segmentMagicSize) {
 		f.Close()
 		return nil, 0, nil
+	}
+
+	r := bufio.NewReaderSize(f, 1<<20)
+	magic := make([]byte, segmentMagicSize)
+	if _, err := io.ReadFull(r, magic); err != nil {
+		return fail(err)
+	}
+	if string(magic) != segmentMagic {
+		return fail(fmt.Errorf("%w: segment %d has a bad magic", ErrCorrupt, id))
 	}
 
 	valid := int64(segmentMagicSize)
 	header := make([]byte, HeaderSize)
 	for {
 		if _, err := io.ReadFull(r, header); err != nil {
-			break
+			if isShortRead(err) {
+				break
+			}
+			return fail(err)
 		}
 		length := leUint32(header[4:8])
 		if string(header[:4]) != recordMagic || length > maxRecordSize {
@@ -142,7 +170,10 @@ func recoverSegment(dir string, id uint32, syncFile func(*os.File) error) (*os.F
 		}
 		data := make([]byte, length)
 		if _, err := io.ReadFull(r, data); err != nil {
-			break
+			if isShortRead(err) {
+				break
+			}
+			return fail(err)
 		}
 		if string(header[8:]) != string(sumBytes(data)) {
 			break
@@ -150,10 +181,6 @@ func recoverSegment(dir string, id uint32, syncFile func(*os.File) error) (*os.F
 		valid += HeaderSize + int64(length)
 	}
 
-	info, err := f.Stat()
-	if err != nil {
-		return fail(err)
-	}
 	if info.Size() != valid {
 		if err := f.Truncate(valid); err != nil {
 			return fail(err)
@@ -163,6 +190,11 @@ func recoverSegment(dir string, id uint32, syncFile func(*os.File) error) (*os.F
 		}
 	}
 	return f, valid, nil
+}
+
+// isShortRead reports whether err just means the file ended mid-record.
+func isShortRead(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func sumBytes(data []byte) []byte {
@@ -181,7 +213,7 @@ func (l *Log) Append(hash [32]byte, data []byte) (Location, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
-		return Location{}, errors.New("pack: log is closed")
+		return Location{}, errLogClosed
 	}
 	if l.err != nil {
 		return Location{}, l.err
@@ -198,7 +230,9 @@ func (l *Log) Append(hash [32]byte, data []byte) (Location, error) {
 
 	rec := append(encodeHeader(hash, len(data)), data...)
 	if _, err := l.active.WriteAt(rec, l.size); err != nil {
-		// size is not advanced, so the next append overwrites the partial bytes.
+		// Not sticky: size is not advanced, so partial bytes are overwritten by the
+		// next append or truncated by recovery; writeback errors surface at fsync,
+		// which is sticky.
 		return Location{}, fmt.Errorf("pack: write: %w", err)
 	}
 	loc := Location{Segment: l.activeID, Offset: l.size, Size: uint32(len(data))}
@@ -214,8 +248,12 @@ func (l *Log) rotate() error {
 	if err := l.syncFile(l.active); err != nil {
 		return fmt.Errorf("pack: sync sealed segment: %w", err)
 	}
-	l.sealed = append(l.sealed, l.active)
-	return l.createSegment(l.activeID + 1)
+	old := l.active
+	if err := l.createSegment(l.activeID + 1); err != nil {
+		return err // old is still l.active; Close will close it
+	}
+	l.sealed = append(l.sealed, old)
+	return nil
 }
 
 // ActiveSegment returns the ID of the segment currently being appended to.
@@ -233,6 +271,10 @@ func (l *Log) Sync() error {
 	defer l.syncMu.Unlock()
 
 	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return errLogClosed
+	}
 	if l.err != nil {
 		defer l.mu.Unlock()
 		return l.err

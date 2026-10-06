@@ -311,3 +311,66 @@ func TestRotationSyncFailureIsSticky(t *testing.T) {
 		t.Errorf("Sync after failed rotation = %v, want %v", err, boom)
 	}
 }
+
+func TestOpenRefusesBadMagicOnNonEmptySegment(t *testing.T) {
+	dir := t.TempDir()
+	l := openLog(t, dir, 0)
+	appendData(t, l, []byte("precious"))
+	if err := l.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+
+	path := segmentPath(dir, 1)
+	raw, _ := os.ReadFile(path)
+	raw[0] ^= 0xff // rotted magic, but the file still holds data
+	os.WriteFile(path, raw, 0o644)
+
+	l, err := Open(dir, Options{})
+	if !errors.Is(err, ErrCorrupt) || l != nil {
+		t.Fatalf("Open = %v, %v; want nil log and ErrCorrupt", l, err)
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(after, raw) {
+		t.Error("Open modified a segment it refused to recover")
+	}
+}
+
+func TestOpenReturnsNilLogOnError(t *testing.T) {
+	dir := t.TempDir()
+	// A directory where the first segment should be makes creation fail.
+	if err := os.Mkdir(segmentPath(dir, 1), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := Open(dir, Options{}); err == nil || l != nil {
+		t.Fatalf("Open = %v, %v; want nil, error", l, err)
+	}
+}
+
+func TestCloseAfterFailedRotation(t *testing.T) {
+	dir := t.TempDir()
+	l := openLog(t, dir, int64(segmentMagicSize)+HeaderSize+10)
+	appendData(t, l, []byte("0123456789"))
+	// Block creation of segment 2 so rotate fails after sealing segment 1.
+	os.WriteFile(segmentPath(dir, 2), nil, 0o644)
+
+	if _, err := l.Append([32]byte{}, []byte("abcdefghij")); err == nil {
+		t.Fatal("Append should fail when the next segment cannot be created")
+	}
+	if err := l.Close(); err != nil {
+		t.Errorf("Close after failed rotation = %v, want nil (no double close)", err)
+	}
+}
+
+func TestSyncAfterCloseIsNotSticky(t *testing.T) {
+	l := openLog(t, t.TempDir(), 0)
+	l.Close()
+	errAppend := func() error { _, err := l.Append([32]byte{}, []byte("x")); return err }()
+	errSync := l.Sync()
+	if errSync == nil || errAppend == nil || errSync.Error() != errAppend.Error() {
+		t.Errorf("Sync = %v, Append = %v; want the same closed error", errSync, errAppend)
+	}
+	if l.err != nil {
+		t.Errorf("closed log set a sticky error: %v", l.err)
+	}
+}

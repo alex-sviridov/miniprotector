@@ -73,7 +73,7 @@ func TestReadErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
-	path := filepath.Join(dir, "00000001.pack")
+	path := segmentPath(dir, 1)
 
 	t.Run("wrong expected hash", func(t *testing.T) {
 		if _, err := Read(dir, loc, [32]byte{1}); !errors.Is(err, ErrCorrupt) {
@@ -85,7 +85,7 @@ func TestReadErrors(t *testing.T) {
 		raw, _ := os.ReadFile(path)
 		raw[loc.Offset+HeaderSize] ^= 0xff
 		bad := t.TempDir()
-		os.WriteFile(filepath.Join(bad, "00000001.pack"), raw, 0o644)
+		os.WriteFile(segmentPath(bad, 1), raw, 0o644)
 		if _, err := Read(bad, loc, hash); !errors.Is(err, ErrCorrupt) {
 			t.Errorf("err = %v, want ErrCorrupt", err)
 		}
@@ -94,7 +94,7 @@ func TestReadErrors(t *testing.T) {
 	t.Run("file shorter than record", func(t *testing.T) {
 		raw, _ := os.ReadFile(path)
 		short := t.TempDir()
-		os.WriteFile(filepath.Join(short, "00000001.pack"), raw[:len(raw)-3], 0o644)
+		os.WriteFile(segmentPath(short, 1), raw[:len(raw)-3], 0o644)
 		if _, err := Read(short, loc, hash); !errors.Is(err, ErrCorrupt) {
 			t.Errorf("err = %v, want ErrCorrupt", err)
 		}
@@ -108,6 +108,14 @@ func TestReadErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("negative offset", func(t *testing.T) {
+		neg := loc
+		neg.Offset = -1
+		if _, err := Read(dir, neg, hash); !errors.Is(err, ErrCorrupt) {
+			t.Errorf("err = %v, want ErrCorrupt", err)
+		}
+	})
+
 	t.Run("missing segment", func(t *testing.T) {
 		missing := loc
 		missing.Segment = 99
@@ -115,4 +123,13 @@ func TestReadErrors(t *testing.T) {
 			t.Errorf("err = %v, want ErrSegmentMissing", err)
 		}
 	})
+}
+
+func TestSegmentFileNameHasTenDigits(t *testing.T) {
+	dir := t.TempDir()
+	l := openLog(t, dir, 0)
+	l.Close()
+	if _, err := os.Stat(filepath.Join(dir, "0000000001.pack")); err != nil {
+		t.Fatalf("expected 0000000001.pack: %v", err)
+	}
 }
