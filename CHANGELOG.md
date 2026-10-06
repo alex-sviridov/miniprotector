@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — Per-OS reader/writer files; mpbench sparse profile and cold cache
+
+Reader and writer I/O now live in per-OS files (`reader_{linux,windows}.go`, `writer_*`, `storelock_*`,
+`diskspace_*`), which also makes `bwfs`'s store lock and disk-usage report build on Windows; behavior
+is unchanged. `mpbench` gains a `sparse` profile and `--cold-cache`. A read-path tuning attempt
+(adaptive read-ahead, cache hints, hole skipping) was built and measured on a cold cache; it gave no
+measurable gain and cost memory, so it was not adopted — see the design doc for numbers.
+
 ## 2026-10-06 — mpbench: peak memory per phase
 
 `mpbench` now reports peak resident memory next to wall time: for each phase, the client (`brfs`/`rwfs`)

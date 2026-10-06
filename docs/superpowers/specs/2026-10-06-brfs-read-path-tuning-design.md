@@ -1,5 +1,11 @@
 # Design: brfs Read-Path Tuning
 
+> **Status: implemented, measured, not adopted.** On a 4-core virtual SSD (ext4, cold cache via
+> `mpbench --cold-cache`) end-to-end backups were unchanged within noise (~21 MB/s, bound by the
+> pipeline, not reading) and the raw reader was already fast at depth 1 (~550 MB/s, hash-bound), while
+> client memory grew 10–30 MB. Not worth the complexity here, so it was dropped. The code is kept on
+> branch `os-specific-io-read-tuning-attempt`; revisit on NVMe or cloud volumes with real queue depth.
+
 > Builds on the per-OS reader split (`workload/filesystem/reader_{linux,windows}.go`). Makes file
 > reading cheaper on page cache and faster on queue-depth-hungry storage, without a protocol change
 > and without needing to know what disk is underneath.

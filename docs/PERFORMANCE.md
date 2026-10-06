@@ -158,4 +158,5 @@ same `--seed`.
 | Slow backup of big files, or warm backups, over WAN | raise `default_window` (16 → 32), check `--streams` |
 | Slow restore over a high-latency link with few streams | more streams first; then `grpc_window_bytes` ≥ bandwidth × RTT |
 | Backup slow even on a LAN | not network-bound; see issue #35 |
+| Wondering whether source-file reading is the limit | Probably not: on a virtual SSD with a cold cache, `brfs` read-ahead, `O_NOATIME`/fadvise and hole skipping gave no measurable gain (see [the tuning spec](superpowers/specs/2026-10-06-brfs-read-path-tuning-design.md)); measure with `mpbench --cold-cache` first |
 | High memory on `brfs` | lower `default_window` or `default_streams` (`streams × window × 64 KB`) |
