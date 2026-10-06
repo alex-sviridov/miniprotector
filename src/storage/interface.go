@@ -9,6 +9,17 @@ import (
 
 var ErrChunkNotFound = errors.New("chunk not found")
 
+// ErrChunkCorrupt means a chunk's stored bytes are lost for good: they fail
+// verification, their segment is gone, or the index row is damaged. Callers
+// may drop the chunk (MarkChunkCorrupted). Other read errors (I/O, database
+// busy) may be transient and must not lead to dropping anything.
+var ErrChunkCorrupt = errors.New("chunk corrupt")
+
+// ErrReclaimIncomplete wraps a Vacuum error that happened only while freeing
+// pack segment space, after the database cleanup was committed. The store is
+// consistent; some disk space is just not reclaimed yet.
+var ErrReclaimIncomplete = errors.New("segment reclaim incomplete")
+
 const (
 	JobStatusInProgress = "in_progress"
 	JobStatusSuccess    = "success"

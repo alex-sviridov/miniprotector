@@ -68,15 +68,17 @@ the only legitimate caller. See
 | Condition | bwfs behaviour |
 |-----------|----------------|
 | `file_uuid` not found or not finalized | gRPC `NotFound` |
-| Chunk file missing or unreadable | gRPC `Internal` (stream terminates) |
+| Chunk missing or corrupt (`ErrChunkNotFound` / `ErrChunkCorrupt`) | gRPC `Internal` (stream terminates); chunk marked corrupted |
+| Other chunk read error (I/O, too many open files, database busy) | gRPC `Internal` (stream terminates); nothing is marked |
 | Send error (network) | stream terminates; client retries entire `RestoreFile` call |
 
-On a chunk-read failure, bwfs also marks that chunk corrupted server-side (deletes its
+When the chunk is missing or corrupt (and only then), bwfs also marks it corrupted server-side (deletes its
 DB records, and invalidates the `FileData` of every file
 that referenced it) before returning the `Internal` error — see the [backup
 protocol](./backup.md)'s "How does the system recover from a corrupted chunk?" section for
 the full recovery rationale. A `restore` or `verify` run doubles as the trigger for this
-self-healing: the next backup re-uploads the affected files.
+self-healing: the next backup re-uploads the affected files. Other read errors may be transient, so
+they only fail the request: marking would drop data that is still intact.
 
 ## CLI → RPC Mapping
 

@@ -12,7 +12,7 @@ page says when to move off them.
   costs a few round trips of its own (announce the file, wait for the result).
 - **Restore is a stream.** `rwfs` asks for a file once and `bwfs` streams all its chunks back without
   waiting, so restore is much less sensitive to latency. It still pays a round trip or more per file.
-- **On a fast network the limit moves to the machines:** hashing, writing chunk files and database
+- **On a fast network the limit moves to the machines:** hashing, writing chunks to pack segments and database
   rows on the server. More streams or a larger window do nothing there.
 
 Rule of thumb: **latency makes things slow, parallelism hides it.** There are two kinds of

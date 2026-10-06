@@ -858,9 +858,16 @@ func TestMarkChunkCorrupted_ConcurrentWithNewLink_NoOrphanedFileData(t *testing.
 
 		close(start)
 		wg.Wait()
-		require.NoError(t, linkErr, "iteration %d", i)
 
 		exists, err := store.FileDataExists(newFileID)
+		if linkErr != nil {
+			// MarkChunkCorrupted won and dropped the file mid-transfer:
+			// finalize must say so instead of pretending the file is stored.
+			require.ErrorContains(t, linkErr, "no longer exists", "iteration %d", i)
+			require.NoError(t, err)
+			assert.False(t, exists, "iteration %d", i)
+			continue
+		}
 		require.NoError(t, err)
 		if exists {
 			var count int64

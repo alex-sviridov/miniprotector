@@ -6,9 +6,12 @@ import "time"
 // locate its record (the header start), Size is the data length. A row is only
 // ever written after its bytes were fsynced (see Store.flush).
 type ChunkRecord struct {
-	Hash      string `gorm:"primaryKey"`
-	Size      int64
-	Segment   int64 `gorm:"index"` // indexed: compaction selects a segment's rows
+	Hash string `gorm:"primaryKey"`
+	// (segment, size) is a covering index: compaction's per-segment live-byte
+	// sum runs under the exclusive guard and must not scan the whole table,
+	// and the same index serves selecting one segment's rows.
+	Size      int64 `gorm:"index:idx_chunk_segment_size,priority:2"`
+	Segment   int64 `gorm:"index:idx_chunk_segment_size,priority:1"`
 	Offset    int64
 	CreatedAt time.Time
 }

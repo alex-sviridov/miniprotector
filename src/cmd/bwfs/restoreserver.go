@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"github.com/alex-sviridov/miniprotector/storage"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -77,12 +78,8 @@ func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreSer
 			return status.Errorf(codes.Internal, "decode chunk hash: %v", err)
 		}
 
-		data, err := s.store.ReadChunk(hash)
+		data, err := readRestoreChunk(s.store, logger, hash)
 		if err != nil {
-			logger.Error("read chunk failed", "chunk_hash", link.ChunkHash, "error", err)
-			if markErr := s.store.MarkChunkCorrupted(hash); markErr != nil {
-				logger.Error("mark chunk corrupted failed", "chunk_hash", link.ChunkHash, "error", markErr)
-			}
 			return status.Errorf(codes.Internal, "read chunk %s: %v", link.ChunkHash, err)
 		}
 
@@ -103,4 +100,32 @@ func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreSer
 
 	logger.Debug("restore stream complete", "chunks", len(links))
 	return nil
+}
+
+// restoreChunkSource is the part of the store readRestoreChunk needs.
+type restoreChunkSource interface {
+	ReadChunk(hash []byte) ([]byte, error)
+	MarkChunkCorrupted(hash []byte) error
+}
+
+// readRestoreChunk reads one chunk for a restore. Only a chunk that is lost
+// for good (storage.ErrChunkCorrupt) or no longer indexed
+// (storage.ErrChunkNotFound) is marked corrupted, which drops it and
+// invalidates the files using it so the next backup uploads them again.
+// Not-found must keep marking: it is how a restore that races a backup
+// linking a just-dropped chunk heals. Any other error (I/O, too many open
+// files, database busy) may be transient, so it only fails this request.
+func readRestoreChunk(src restoreChunkSource, logger *slog.Logger, hash []byte) ([]byte, error) {
+	data, err := src.ReadChunk(hash)
+	if err == nil {
+		return data, nil
+	}
+	logger.Error("read chunk failed", "chunk_hash", hex.EncodeToString(hash), "error", err)
+	if !errors.Is(err, storage.ErrChunkCorrupt) && !errors.Is(err, storage.ErrChunkNotFound) {
+		return nil, err
+	}
+	if markErr := src.MarkChunkCorrupted(hash); markErr != nil {
+		logger.Error("mark chunk corrupted failed", "chunk_hash", hex.EncodeToString(hash), "error", markErr)
+	}
+	return nil, err
 }

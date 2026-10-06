@@ -60,10 +60,18 @@ func (s *Store) reclaimSegments(ctx context.Context, batchSize int) (removed, co
 		return 0, 0, 0, err
 	}
 
+	// Segments that could not be read are skipped so that one bad sector
+	// does not stop the rest of the reclaim; they are reported at the end.
+	var skipped []error
 	for _, p := range plans {
 		if p.compact {
 			copied, err := s.compactSegment(ctx, p.id, batchSize)
 			bytes -= copied
+			var readErr *segmentReadError
+			if errors.As(err, &readErr) {
+				skipped = append(skipped, err)
+				continue
+			}
 			if err != nil {
 				return removed, compacted, bytes, err
 			}
@@ -85,8 +93,25 @@ func (s *Store) reclaimSegments(ctx context.Context, batchSize int) (removed, co
 			removed++
 		}
 	}
+	if len(skipped) > 0 {
+		return removed, compacted, bytes, fmt.Errorf("skipped %d unreadable segment(s): %w", len(skipped), errors.Join(skipped...))
+	}
 	return removed, compacted, bytes, nil
 }
+
+// segmentReadError is a compaction read failure that is not corruption (for
+// example EIO or EACCES). Its batch is rolled back and the segment is left as
+// it is: dropping chunks over an error that may be transient would lose data.
+type segmentReadError struct {
+	id  uint32
+	err error
+}
+
+func (e *segmentReadError) Error() string {
+	return fmt.Sprintf("segment %d: read: %v", e.id, e.err)
+}
+
+func (e *segmentReadError) Unwrap() error { return e.err }
 
 // planSegments compares each sealed segment's live bytes (the records rows
 // still point at) with its file size.
@@ -177,7 +202,7 @@ func (s *Store) moveBatch(tx *gorm.DB, id uint32, batchSize int) (int, int64, er
 			continue
 		}
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, &segmentReadError{id: id, err: err}
 		}
 		loc, err := s.log.Append(sum, data)
 		if err != nil {

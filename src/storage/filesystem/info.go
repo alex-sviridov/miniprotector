@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -95,7 +96,10 @@ func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 	result.SegmentsRemoved, result.SegmentsCompacted, result.BytesReclaimed, err =
 		s.reclaimSegments(context.Background(), reclaimBatchSize)
 	if err != nil {
-		return nil, err
+		// The database cleanup is committed; only disk space is not freed.
+		// The distinct sentinel lets startup carry on instead of crash-looping
+		// on, say, one unreadable sector.
+		return result, fmt.Errorf("%w: %w", storage.ErrReclaimIncomplete, err)
 	}
 	return result, nil
 }

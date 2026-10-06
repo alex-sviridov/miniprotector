@@ -13,7 +13,9 @@ dead bytes but never an index row pointing at missing data. Reads verify the BLA
 torn segment tail, and an fsync failure fails requests until restart. Vacuum now also compacts segments under
 50% live and removes dead ones (new log fields `segments_removed`, `segments_compacted`). This is a format
 break with no migration: a store with a `chunks/` directory is rejected and a fresh store must be started.
-Linux only.
+Linux only. A restore now marks a chunk corrupt only when its data is really lost (corrupt or missing), not
+on a possibly transient read error; an unreadable segment no longer stops compaction or the bwfs startup; and
+SQLite now applies its busy timeout and runs with `synchronous=FULL`, which the pack ordering relies on.
 
 Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.35 s, backup-warm 7.7 s to 4.6 s, restore 0.96 s to 1.17 s (slower, because reads are now hash-verified). See docs/PERFORMANCE.md.
 

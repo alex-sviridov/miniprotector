@@ -233,8 +233,8 @@ an error. There is no migration: start a fresh store.
   A crash leaves at worst unindexed dead bytes in a segment, never a row pointing at missing data.
 - An fsync failure is sticky: the log refuses further writes (the kernel may have dropped the dirty
   pages, so a retry could falsely succeed). Requests fail; restarting the server recovers.
-- After each sync `posix_fadvise(DONTNEED)` is applied to the synced range so backup writes do not
-  evict the page cache.
+- After each sync `posix_fadvise(DONTNEED)` is applied to the whole active segment file so backup
+  writes do not evict the page cache (it is only advice; clean pages of that file are dropped).
 
 ### Recovery and verified reads
 
@@ -242,10 +242,15 @@ an error. There is no migration: start a fresh store.
   corrupt tail is truncated at the first bad record (earlier segments were fsynced when sealed). A
   last segment that is only a partial magic (crash during creation) is recreated. A bad magic on a
   segment that holds data refuses to open the store.
-- Every read verifies the record header and BLAKE3 hash. A mismatch at restore or verify marks the
-  chunk corrupt exactly as before (rows dropped, dependent `FileData` invalidated, healed by the next
-  backup); the bytes stay behind as dead space. A read that finds its segment gone (compaction moved
-  the chunk) re-locates the chunk once and retries.
+- Every read verifies the record header and BLAKE3 hash. A read that finds its segment gone
+  (compaction moved the chunk) re-locates the chunk and retries, up to 3 attempts in total, and only
+  while the chunk's location keeps changing.
+- Read failures are classified. Lost data -- a hash or header mismatch, a damaged index row, or a
+  segment that is still missing after re-locating -- is `storage.ErrChunkCorrupt`. At restore or
+  verify, only that or a chunk that is no longer indexed (`ErrChunkNotFound`) marks the chunk
+  corrupt (rows dropped, dependent `FileData` invalidated, healed by the next backup; the bytes stay
+  behind as dead space). Any other read error (I/O error, too many open files, database busy) may be
+  transient: it fails the restore request and drops nothing.
 
 ### Vacuum and compaction
 
@@ -256,13 +261,21 @@ segment, synced, and their rows repointed in bounded batches; then the emptied s
 removed). The active segment is never compacted or removed, and a crash during compaction leaves at
 worst duplicate dead bytes. The result and the log line carry `segments_removed`,
 `segments_compacted` (a compacted segment counts only as compacted) and `bytes_reclaimed`, which is
-the physical size of removed segments minus the bytes copied during compaction.
+the physical size of removed segments minus the bytes copied during compaction (only meaningful when
+the run succeeded).
+
+A record that fails verification during compaction is dropped like a corrupt chunk. A segment that
+cannot be read for another reason (for example EIO or a permission error) is skipped: its batch is
+rolled back, the run continues with the next segment and reports an error at the end, and a later
+run retries it. At startup such a reclaim failure only logs a warning and bwfs starts, because the
+database part of the vacuum is already committed; a failure of the database cleanup itself is still
+fatal.
 
 ## Platform-specific code
 
-Chunk storage is Linux only (`src/storage/pack`, which uses `posix_fadvise`). The exclusive store
-lock is `src/storage/filesystem/storelock_linux.go` (`flock`); disk usage for status reports is
-`src/cmd/bwfs/diskspace_{linux,windows}.go`.
+bwfs is Linux only: chunk storage (`src/storage/pack`) uses `posix_fadvise`, the exclusive store
+lock is `src/storage/filesystem/storelock_linux.go` (`flock`), and disk usage for status reports is
+`src/cmd/bwfs/diskspace_linux.go`.
 
 ## Building
 

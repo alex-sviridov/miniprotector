@@ -166,12 +166,25 @@ func (s *Store) ReadChunk(chunkHash []byte) ([]byte, error) {
 
 	loc, ok, err := s.locate(hexHash)
 	if err != nil {
-		return nil, err
+		return nil, classifyRead(err)
 	}
 	if !ok {
 		return nil, storage.ErrChunkNotFound
 	}
-	return s.readLocated(hexHash, sum, loc)
+	data, err := s.readLocated(hexHash, sum, loc)
+	return data, classifyRead(err)
+}
+
+// classifyRead marks errors that mean the chunk's bytes are lost for good
+// (failed verification, damaged row, segment gone even after re-locating)
+// with storage.ErrChunkCorrupt, keeping the pack error in the chain. Anything
+// else -- an I/O or database error -- may be transient, and callers must not
+// drop the chunk over it.
+func classifyRead(err error) error {
+	if errors.Is(err, pack.ErrCorrupt) || errors.Is(err, pack.ErrSegmentMissing) {
+		return fmt.Errorf("%w: %w", storage.ErrChunkCorrupt, err)
+	}
+	return err
 }
 
 // readLocated reads the record at loc. If its segment is gone, compaction may

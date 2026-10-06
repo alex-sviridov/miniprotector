@@ -76,14 +76,29 @@ func (s *Store) FinalizeFileData(fileID string, checksum []byte) error {
 	if err := s.flush(); err != nil {
 		return err
 	}
-	return s.db.Model(&FileDataRecord{}).
+	res := s.db.Model(&FileDataRecord{}).
 		Where("file_id = ? AND checksum IS NULL", fileID).
 		Updates(map[string]any{
 			"checksum": checksum,
 			"chunk_count": s.db.Model(&FileDataChunkRecord{}).
 				Where("file_id = ?", fileID).
 				Select("count(*)"),
-		}).Error
+		})
+	if res.Error != nil || res.RowsAffected > 0 {
+		return res.Error
+	}
+	// Nothing to complete. Fine if a concurrent transfer of the same file
+	// completed it (its finalize updates every row of the file_id); but if the
+	// file data is gone -- dropped by corruption handling mid-transfer -- the
+	// caller must not record a version for a file that is not stored.
+	exists, err := s.FileDataExists(fileID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("finalize %s: file data no longer exists", fileID)
+	}
+	return nil
 }
 
 func (s *Store) FileData(fileID string) (*storage.FileData, error) {

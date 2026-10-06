@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +14,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/storage"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"google.golang.org/grpc"
 )
@@ -72,22 +75,18 @@ func main() {
 			logger.Error("Server initialization failed", "error", err)
 			os.Exit(1)
 		}
-		defer backupServer.store.Close()
+		defer func() {
+			// Close flushes pending chunks; a failure means the last writes
+			// may not be durable, which the operator must be able to see.
+			if err := backupServer.store.Close(); err != nil {
+				logger.Error("Closing the store failed", "error", err)
+			}
+		}()
 
-		vacuumResult, err := backupServer.store.Vacuum()
-		if err != nil {
+		if err := startupVacuum(logger, backupServer.store); err != nil {
 			logger.Error("Startup vacuum failed", "error", err)
 			os.Exit(1)
 		}
-		logger.Info("Startup vacuum completed",
-			"orphaned_file_data_removed", vacuumResult.OrphanedFileDataRemoved,
-			"orphaned_chunk_links_removed", vacuumResult.OrphanedChunkLinksRemoved,
-			"orphaned_chunks_removed", vacuumResult.OrphanedChunksRemoved,
-			"incomplete_file_data_removed", vacuumResult.IncompleteFileData,
-			"segments_removed", vacuumResult.SegmentsRemoved,
-			"segments_compacted", vacuumResult.SegmentsCompacted,
-			"bytes_reclaimed", vacuumResult.BytesReclaimed,
-		)
 
 		staleCount, err := backupServer.store.FailStaleInProgressJobs()
 		if err != nil {
@@ -146,5 +145,36 @@ func main() {
 			logger.Error("List failed", "error", err)
 			os.Exit(1)
 		}
+	}
+}
+
+// startupVacuum runs the startup Vacuum and logs its result. A failure while
+// reclaiming segment space (say, one unreadable sector) only warns: the
+// database cleanup is committed and the store is consistent, and refusing to
+// start would turn a space problem into a crash loop. Any other failure is
+// returned and is fatal.
+func startupVacuum(logger *slog.Logger, store storage.BackupStore) error {
+	res, err := store.Vacuum()
+	if errors.Is(err, storage.ErrReclaimIncomplete) && res != nil {
+		logger.Warn("Startup vacuum could not reclaim all segment space; continuing",
+			append(vacuumResultAttrs(res), "error", err)...)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	logger.Info("Startup vacuum completed", vacuumResultAttrs(res)...)
+	return nil
+}
+
+func vacuumResultAttrs(res *storage.VacuumResult) []any {
+	return []any{
+		"orphaned_file_data_removed", res.OrphanedFileDataRemoved,
+		"orphaned_chunk_links_removed", res.OrphanedChunkLinksRemoved,
+		"orphaned_chunks_removed", res.OrphanedChunksRemoved,
+		"incomplete_file_data_removed", res.IncompleteFileData,
+		"segments_removed", res.SegmentsRemoved,
+		"segments_compacted", res.SegmentsCompacted,
+		"bytes_reclaimed", res.BytesReclaimed,
 	}
 }
