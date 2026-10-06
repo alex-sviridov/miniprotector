@@ -17,6 +17,7 @@ type BackupResult struct {
 	FileID   string
 	Success  bool
 	Error    error
+	Stats    jobStats
 }
 
 func processFilesList(ctx context.Context, logger *slog.Logger, client pb.BackupServiceClient, fileList []filesystem.FileInfo, streams, window int, st *stamper) <-chan BackupResult {
@@ -93,7 +94,8 @@ func stream(ctx context.Context, logger *slog.Logger, client pb.BackupServiceCli
 
 	for f := range workChan {
 		fileLogger := logger.With(slog.String("file_id", f.ID()))
-		err := processOneFile(ctx, fileLogger, stream, rd, f, st.expireAt(f, time.Now()), window)
+		var fileStats jobStats
+		err := processOneFile(ctx, fileLogger, stream, rd, f, st.expireAt(f, time.Now()), window, &fileStats)
 		if err != nil {
 			logger.Error("Failed to process file", "error", err)
 			if conf.StopStreamOnFileError {
@@ -105,6 +107,7 @@ func stream(ctx context.Context, logger *slog.Logger, client pb.BackupServiceCli
 			FileID:   f.ID(),
 			Success:  err == nil,
 			Error:    err,
+			Stats:    fileStats,
 		}
 	}
 	if err := stream.CloseSend(); err != nil {

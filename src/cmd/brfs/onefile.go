@@ -16,7 +16,7 @@ import (
 )
 
 // processOneFile handles the complete backup lifecycle for one file
-func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, rd *responseReader, file filesystem.FileInfo, expireAt int64, window int) error {
+func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, rd *responseReader, file filesystem.FileInfo, expireAt int64, window int, st *jobStats) error {
 
 	conf := config.GetConfigFromContext(ctx)
 	logger.Debug("Started file processing")
@@ -36,6 +36,10 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 	}
 	logger.Debug("Got fileResponse", "is_needed", fileResponse.Needed)
 
+	if !fileResponse.Needed && file.Size() > 0 && file.GetType() == 'f' {
+		st.filesUnchanged++
+		st.bytesUnchanged += file.Size()
+	}
 	if file.Size() == 0 || file.GetType() != 'f' {
 		logger.Debug("Will not send file", "file_size", file.Size(), "file_type", file.GetType())
 		fileResponse.Needed = false
@@ -44,7 +48,8 @@ func processOneFile(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 	var fileHash []byte
 	if fileResponse.Needed {
 		var err error
-		fileHash, err = transferChunks(ctx, logger, stream, rd, file, window)
+		st.filesSent++
+		fileHash, err = transferChunks(ctx, logger, stream, rd, file, window, st)
 		if err != nil {
 			return err
 		}

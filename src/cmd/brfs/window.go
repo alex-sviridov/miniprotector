@@ -35,7 +35,7 @@ type pendingReply struct {
 // bwfs accounts for chunks in arrival order, which with window > 1 is not
 // index order (a stored chunk is accounted for at hash time, a new one only
 // when its data lands); it reassembles the order itself (see chunkOrder).
-func transferChunks(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, rd *responseReader, file filesystem.FileInfo, window int) ([]byte, error) {
+func transferChunks(ctx context.Context, logger *slog.Logger, stream pb.BackupService_ProcessBackupStreamClient, rd *responseReader, file filesystem.FileInfo, window int, st *jobStats) ([]byte, error) {
 	if window < 1 {
 		window = defaultWindow
 	}
@@ -74,6 +74,7 @@ func transferChunks(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 			inflight--
 			return nil
 		}
+		st.bytesSent += int64(len(p.chunk.Data()))
 		// TODO: Transmission retry
 		if err := sendChunkData(logger, stream, p.chunk); err != nil {
 			return fmt.Errorf("failed to send chunk data: %w", err)
@@ -86,6 +87,7 @@ func transferChunks(ctx context.Context, logger *slog.Logger, stream pb.BackupSe
 		if err != nil {
 			return nil, fmt.Errorf("failed to read chunk: %w", err)
 		}
+		st.bytesRead += int64(len(chunk.Data()))
 		var crcBytes [4]byte
 		binary.BigEndian.PutUint32(crcBytes[:], chunk.Checksum())
 		fileCRC.Write(crcBytes[:])

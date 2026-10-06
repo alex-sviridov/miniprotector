@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/connection"
@@ -207,6 +208,7 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 	defer q.Abort()
 
 	logger.Info("restoring file content")
+	started := time.Now()
 
 	writeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -262,7 +264,14 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 		return fmt.Errorf("commit restored files: %w", err)
 	}
 	committedFiles, committedBytes := q.Stats()
-	logger.Info("restore complete", "files_written", committedFiles, "bytes_written", committedBytes, "skipped", skipped)
+	elapsed := time.Since(started)
+	logger.Info("restore complete",
+		"files_written", committedFiles,
+		"bytes_written", committedBytes,
+		"skipped", skipped,
+		"duration", elapsed.Round(time.Millisecond).String(),
+		"throughput_mb_s", fmt.Sprintf("%.1f", float64(committedBytes)/1e6/max(elapsed.Seconds(), 1e-9)),
+	)
 	return nil
 }
 

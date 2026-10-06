@@ -330,3 +330,53 @@ func TestProcessFilesList_StreamError_FailsAllFilesWithoutHanging(t *testing.T) 
 		}
 	}
 }
+
+func TestProcessFilesList_StatsCountReadAndSent(t *testing.T) {
+	fake := &fakeBwfs{}
+	client := startFake(t, fake)
+	dir := t.TempDir()
+	c := randChunks(t, 3)
+	// a.bin stores c0,c1; b.bin repeats c0,c1 and adds c2 -> only c2 is new.
+	writeParts(t, filepath.Join(dir, "a.bin"), c[0], c[1])
+	files, err := filesystem.Discover(dir, []string{"*"}, nil)
+	require.NoError(t, err)
+	var total jobStats
+	run := func(files []filesystem.FileInfo) {
+		ctx, cancel := context.WithTimeout(testCtx(), 30*time.Second)
+		defer cancel()
+		for r := range processFilesList(ctx, slog.New(slog.DiscardHandler), client, files, 1, 4, nil) {
+			total.add(r.Stats)
+		}
+	}
+	run(files)
+	assert.Equal(t, fileBytes(files), total.bytesRead)
+	assert.Equal(t, total.bytesRead, total.bytesSent, "nothing stored yet")
+	assert.Equal(t, 1.0, total.dedupRatio())
+
+	writeParts(t, filepath.Join(dir, "b.bin"), c[0], c[1], c[2])
+	files, err = filesystem.Discover(dir, []string{"b.bin"}, nil)
+	require.NoError(t, err)
+	total = jobStats{}
+	run(files)
+	assert.Equal(t, fileBytes(files), total.bytesRead)
+	assert.Greater(t, total.bytesSent, int64(0))
+	assert.Less(t, total.bytesSent, total.bytesRead, "c0,c1 already stored")
+	assert.Equal(t, int64(1), total.filesSent)
+	assert.Greater(t, total.dedupRatio(), 1.0)
+}
+
+func TestJobStats_DedupRatioNothingSent(t *testing.T) {
+	assert.Equal(t, 0.0, jobStats{}.dedupRatio())
+	assert.Equal(t, 0.0, jobStats{bytesRead: 10}.dedupRatio())
+}
+
+// fileBytes sums the sizes of regular files; Discover also returns directories.
+func fileBytes(files []filesystem.FileInfo) int64 {
+	var n int64
+	for _, f := range files {
+		if f.GetType() == 'f' {
+			n += f.Size()
+		}
+	}
+	return n
+}

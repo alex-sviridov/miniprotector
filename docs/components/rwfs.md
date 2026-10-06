@@ -207,7 +207,8 @@ the first occurrence, with no retry. On the first terminal failure -- a mismatch
 or a stream error whose retries are exhausted -- every other in-flight file transfer is cancelled
 immediately, the failing (partial) file is removed from disk, a `failed to restore file` error is
 logged for it, and no summary line is logged -- the same abort convention phase 1 already uses. On
-full success, a `restore complete` line reports `files_written`, `bytes_written`, and
+full success, a `restore complete` line reports `files_written`, `bytes_written`, `duration`,
+`throughput_mb_s` (bytes written over the content phase's wall time), and
 `skipped` (files left untouched because they already existed and `--overwrite` was false). Per-file
 success (`file verified` / `file skipped, already exists`) is logged at `Debug` level only -- pass
 `--debug` to see it; it is not controlled by `--quiet`. Every created or overwritten file uses a
