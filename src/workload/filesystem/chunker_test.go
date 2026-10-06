@@ -72,7 +72,7 @@ func TestChunkIterator_SmallFile(t *testing.T) {
 	testCases := generateTestData()
 
 	for _, tc := range testCases {
-		if tc.size >= ChunkSize {
+		if tc.size >= MinChunkSize {
 			continue // Skip large files for this test
 		}
 
@@ -96,9 +96,9 @@ func TestChunkIterator_SmallFile(t *testing.T) {
 
 func TestChunkIterator_ExactlyOneChunk(t *testing.T) {
 	testCases := []testData{
-		{"binary_64KB", ChunkSize, "binary"},
-		{"text_64KB", ChunkSize, "text"},
-		{"pattern_64KB", ChunkSize, "pattern"},
+		{"binary_min", MinChunkSize, "binary"},
+		{"text_min", MinChunkSize, "text"},
+		{"pattern_min", MinChunkSize, "pattern"},
 	}
 
 	for _, tc := range testCases {
@@ -110,7 +110,7 @@ func TestChunkIterator_ExactlyOneChunk(t *testing.T) {
 			fi := FileInfo{path: tempFile}
 			chunks := collectChunks(t, fi)
 
-			require.Len(t, chunks, 1, "64KB file should produce exactly one chunk")
+			require.Len(t, chunks, 1, "file of MinChunkSize should produce exactly one chunk")
 
 			chunk := chunks[0]
 			assert.Equal(t, int64(0), chunk.Index())
@@ -120,17 +120,41 @@ func TestChunkIterator_ExactlyOneChunk(t *testing.T) {
 	}
 }
 
+// assertCDCInvariants checks the content-defined chunking contract: non-final
+// chunks are within [MinChunkSize, MaxChunkSize], the final chunk is at most
+// MaxChunkSize, offsets are contiguous, only the last chunk has EOF=true, and
+// the chunks reassemble to the original data.
+func assertCDCInvariants(t *testing.T, data []byte, chunks []workload.Chunk) {
+	t.Helper()
+	require.NotEmpty(t, chunks)
+
+	var reassembled []byte
+	expectedIndex := int64(0)
+	for i, chunk := range chunks {
+		assert.Equal(t, expectedIndex, chunk.Index(), "chunk %d offset", i)
+		assert.LessOrEqual(t, len(chunk.Data()), MaxChunkSize, "chunk %d too large", i)
+		if i < len(chunks)-1 {
+			assert.GreaterOrEqual(t, len(chunk.Data()), MinChunkSize, "non-final chunk %d too small", i)
+			assert.False(t, chunk.IsEOF(), "Non-last chunk should have EOF=false")
+		} else {
+			assert.True(t, chunk.IsEOF(), "Last chunk should have EOF=true")
+		}
+		reassembled = append(reassembled, chunk.Data()...)
+		expectedIndex += int64(len(chunk.Data()))
+	}
+	assert.Equal(t, data, reassembled, "Reassembled data should match original")
+}
+
 func TestChunkIterator_BoundaryConditions(t *testing.T) {
 	testCases := []struct {
-		name           string
-		size           int
-		expectedChunks int
-		dataType       string
+		name     string
+		size     int
+		dataType string
 	}{
-		{"one_byte_over", ChunkSize + 1, 2, "binary"},
-		{"two_chunks_exact", ChunkSize * 2, 2, "binary"},
-		{"two_chunks_plus_small", ChunkSize*2 + 1000, 3, "binary"},
-		{"three_chunks_minus_one", ChunkSize*3 - 1, 3, "binary"},
+		{"one_byte_over_min", MinChunkSize + 1, "binary"},
+		{"one_byte_over_max", MaxChunkSize + 1, "binary"},
+		{"two_max_plus_small", MaxChunkSize*2 + 1000, "binary"},
+		{"three_max_minus_one", MaxChunkSize*3 - 1, "binary"},
 	}
 
 	for _, tc := range testCases {
@@ -139,18 +163,11 @@ func TestChunkIterator_BoundaryConditions(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{path: tempFile}
-			chunks := collectChunks(t, fi)
+			chunks := collectChunks(t, FileInfo{path: tempFile})
 
-			require.Len(t, chunks, tc.expectedChunks, "Should have correct number of chunks")
-
-			// Verify only last chunk has EOF=true
-			for i, chunk := range chunks {
-				if i == len(chunks)-1 {
-					assert.True(t, chunk.IsEOF(), "Last chunk should have EOF=true")
-				} else {
-					assert.False(t, chunk.IsEOF(), "Non-last chunk should have EOF=false")
-				}
+			assertCDCInvariants(t, data, chunks)
+			if tc.size > MaxChunkSize {
+				assert.Greater(t, len(chunks), 1, "File larger than MaxChunkSize must be split")
 			}
 		})
 	}
@@ -162,9 +179,9 @@ func TestChunkIterator_MultipleChunks(t *testing.T) {
 		size     int
 		dataType string
 	}{
-		{"large_binary", ChunkSize*3 + 5000, "binary"},
-		{"large_text", ChunkSize*2 + 1000, "text"},
-		{"very_large", ChunkSize * 5, "binary"},
+		{"large_binary", NormalChunkSize*3 + 5000, "binary"},
+		{"large_text", NormalChunkSize*2 + 1000, "text"},
+		{"very_large", MaxChunkSize * 5, "binary"},
 	}
 
 	for _, tc := range testCases {
@@ -173,24 +190,9 @@ func TestChunkIterator_MultipleChunks(t *testing.T) {
 			tempFile := createTempFile(t, data)
 			defer os.Remove(tempFile)
 
-			fi := FileInfo{path: tempFile}
-			chunks := collectChunks(t, fi)
+			chunks := collectChunks(t, FileInfo{path: tempFile})
 
-			expectedChunks := (tc.size + ChunkSize - 1) / ChunkSize
-			require.Len(t, chunks, expectedChunks, "Should have correct number of chunks")
-
-			// Verify chunk sizes
-			for i, chunk := range chunks {
-				if i < len(chunks)-1 {
-					assert.Len(t, chunk.Data(), ChunkSize, "Non-final chunk should be full size")
-				} else {
-					expectedLastSize := tc.size % ChunkSize
-					if expectedLastSize == 0 {
-						expectedLastSize = ChunkSize
-					}
-					assert.Len(t, chunk.Data(), expectedLastSize, "Final chunk should have correct size")
-				}
-			}
+			assertCDCInvariants(t, data, chunks)
 		})
 	}
 }
@@ -203,7 +205,7 @@ func TestChunkIterator_HashSizes(t *testing.T) {
 	}{
 		{"small_text", 500, "text"},
 		{"medium_binary", 10000, "binary"},
-		{"large_pattern", ChunkSize + 1000, "pattern"},
+		{"large_pattern", NormalChunkSize + 1000, "pattern"},
 	}
 
 	for _, tc := range testCases {
@@ -247,7 +249,7 @@ func TestChunkIterator_HashCorrectness(t *testing.T) {
 
 func TestChunkIterator_HashUniqueness(t *testing.T) {
 	// Create file with multiple chunks of random data
-	data := make([]byte, ChunkSize*3+500)
+	data := make([]byte, MaxChunkSize*3+500)
 	rand.Read(data)
 
 	tempFile := createTempFile(t, data)
@@ -276,9 +278,9 @@ func TestChunkIterator_DataIntegrity(t *testing.T) {
 		dataType string
 	}{
 		{"small_integrity", 1000, "binary"},
-		{"medium_integrity", ChunkSize + 5000, "binary"},
-		{"large_integrity", ChunkSize*3 + 2000, "binary"},
-		{"text_integrity", ChunkSize*2 + 500, "text"},
+		{"medium_integrity", NormalChunkSize + 5000, "binary"},
+		{"large_integrity", NormalChunkSize*3 + 2000, "binary"},
+		{"text_integrity", NormalChunkSize*2 + 500, "text"},
 	}
 
 	for _, tc := range testCases {
@@ -306,9 +308,9 @@ func TestChunkIterator_IndexProgression(t *testing.T) {
 		name string
 		size int
 	}{
-		{"two_chunks", ChunkSize*2 + 500},
-		{"three_chunks", ChunkSize*3 + 1000},
-		{"five_chunks", ChunkSize*5 + 200},
+		{"two_max", MaxChunkSize*2 + 500},
+		{"three_max", MaxChunkSize*3 + 1000},
+		{"five_max", MaxChunkSize*5 + 200},
 	}
 
 	for _, tc := range testCases {
@@ -339,9 +341,9 @@ func TestChunkIterator_IncrementalCRC32(t *testing.T) {
 		size     int
 		dataType string
 	}{
-		{"medium_file", ChunkSize*2 + 1000, "binary"},
-		{"large_file", ChunkSize*4 + 500, "binary"},
-		{"text_file", ChunkSize*3 + 200, "text"},
+		{"medium_file", MaxChunkSize*2 + 1000, "binary"},
+		{"large_file", MaxChunkSize*4 + 500, "binary"},
+		{"text_file", MaxChunkSize*3 + 200, "text"},
 	}
 
 	for _, tc := range testCases {
@@ -409,7 +411,7 @@ func TestChunkIterator_FileLocking(t *testing.T) {
 }
 
 func TestChunkIterator_EarlyTermination(t *testing.T) {
-	data := make([]byte, ChunkSize*4)
+	data := make([]byte, MaxChunkSize*4)
 	rand.Read(data)
 	tempFile := createTempFile(t, data)
 	defer os.Remove(tempFile)
@@ -433,9 +435,9 @@ func TestChunkIterator_EarlyTermination(t *testing.T) {
 // Benchmark tests
 func BenchmarkChunkIterator(b *testing.B) {
 	sizes := []int{
-		ChunkSize,       // 64KB
-		ChunkSize * 10,  // 640KB
-		ChunkSize * 100, // 6.4MB
+		NormalChunkSize,       // 64KB
+		NormalChunkSize * 10,  // 640KB
+		NormalChunkSize * 100, // 6.4MB
 	}
 
 	for _, size := range sizes {
