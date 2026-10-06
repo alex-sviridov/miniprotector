@@ -74,7 +74,7 @@ func (c Chunk) Size() int {
 func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 	return func(yield func(workload.Chunk, error) bool) {
 
-		file, err := os.Open(fi.path)
+		file, err := openForRead(fi.path)
 		if err != nil {
 			yield(nil, err)
 			return
