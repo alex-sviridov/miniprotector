@@ -1,5 +1,36 @@
 # Design: rwfs Write-Path Tuning
 
+> **Status: implemented, measured, adopted.** Measured with `mpbench --files 500 --runs 5 --seed 1
+> --cold-cache` (run as root via sudo, so cold cache was in effect for every run) on a 4-core virtual
+> SSD, ext4 on `/dev/sda1`. Every run verified (restored tree matches the source). Variants: **A** =
+> `main` (direct write, no fsync), **B** = this branch with defaults (64 files / 64 MiB checkpoints),
+> **C** = this branch with `restore_commit_files=0,restore_commit_bytes=0` (per-file fsync + rename).
+> `restore` phase, median (min–max), client RSS median:
+>
+> | Profile | A (main) | B (batched) | C (per-file fsync) | B vs A | B vs C |
+> |---------|----------|-------------|--------------------|--------|--------|
+> | small (8.6 MB) | 0.60 s (0.55–0.68), 827 files/s, 32.9 MB | 0.65 s (0.64–0.73), 765 files/s, 32.0 MB | 1.20 s (1.19–1.24), 416 files/s, 30.5 MB | +8% | 46% faster |
+> | mixed (172 MB) | 1.33 s (1.29–1.40), 129 MB/s, 45.4 MB | 1.42 s (1.38–1.52), 121 MB/s, 45.8 MB | 1.84 s (1.76–1.88), 94 MB/s, 43.3 MB | +7% | 23% faster |
+> | large (2.6 GB) | 11.50 s (11.13–11.55), 228 MB/s, 53.7 MB | 11.53 s (11.36–12.05), 227 MB/s, 51.5 MB | 12.27 s (11.94–12.51), 214 MB/s, 51.8 MB | +0.3% | 6% faster, ranges overlap (noise) |
+>
+> Ablations on B (restore median, min–max):
+>
+> | Profile | B | fallocate off | cache hygiene off |
+> |---------|---|---------------|-------------------|
+> | mixed | 1.42 s (1.38–1.52) | 1.43 s (1.34–1.45) | 1.42 s (1.41–1.51) |
+> | large | 11.53 s (11.36–12.05) | 11.45 s (11.25–11.73) | 11.01 s (10.94–11.36) |
+>
+> - **Temp file + deferred durable commit: adopted** (correctness change). B is within +10% of A on
+>   all profiles (+8% / +7% / +0.3%); the cost is the fsync at checkpoints.
+> - **Batched commit: adopted.** B beats C beyond run-to-run spread on small and mixed; on large the
+>   difference (6%) is inside the spread, so batching is neutral there rather than a win.
+> - **fallocate: adopted.** No difference beyond noise on either profile; its benefit (early ENOSPC,
+>   less fragmentation) is not visible in mpbench.
+> - **Cache hygiene (`FADV_DONTNEED` after sync): adopted, borderline.** No effect on mixed; on large
+>   removing it was ~4.5% faster (11.01 s vs 11.53 s) but the min–max ranges only touch (11.36 s),
+>   so by the decision rule it is not a regression beyond spread. Its working-set benefit is not
+>   visible in mpbench; revisit if the large-profile cost is reproduced.
+
 > Builds on `rwfs restore` phase 2 (`src/cmd/rwfs/restorefile.go`, see
 > `2026-08-17-restore-file-content-design.md`) and the per-OS I/O split used by the reader
 > (`2026-10-06-brfs-read-path-tuning-design.md`). No protocol change. Linux gets the full treatment;
