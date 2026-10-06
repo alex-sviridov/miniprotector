@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — rwfs restore: atomic, durable, batched writes
+
+`rwfs restore` used to write straight into the destination with `O_TRUNC` and never fsync, so
+`--overwrite` destroyed the old file before the new one was verified and a crash left torn files under
+their final names. It now writes to hidden `.mptmp-*` temp files and commits them in batches (fsync,
+rename, one directory fsync per parent), so a file appears only once durable and the old file survives
+a failed run; a crash leaves only temp files, which the next restore sweeps. It also preallocates with
+`fallocate` for early `ENOSPC`, starts writeback as data arrives and drops the page cache after sync.
+Batching is set by the new `restore_commit_files` and `restore_commit_bytes` keys. On a cold cache the
+contract costs about 7-8% on small and mixed trees and nothing on large files, while per-file fsync
+took roughly 30-85% longer than batching on small and mixed trees (neutral on large); `fallocate` and cache hygiene were within noise and are adopted
+for their non-throughput benefits (cache hygiene is borderline, revisit). A replaced file now takes
+mode 0644 instead of keeping its old mode.
+
 ## 2026-10-06 — Per-OS reader/writer files; mpbench sparse profile and cold cache
 
 Reader and writer I/O now live in per-OS files (`reader_{linux,windows}.go`, `writer_*`, `storelock_*`,

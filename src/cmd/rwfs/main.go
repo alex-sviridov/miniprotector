@@ -29,6 +29,7 @@ func main() {
 	}
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
 	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
+	setRestoreCommitLimits(conf.RestoreCommitFiles, conf.RestoreCommitBytes)
 
 	arguments, err := parseArguments(conf)
 	if err != nil {

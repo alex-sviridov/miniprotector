@@ -133,6 +133,8 @@ type Config struct {
 	RestoreCleanupIntervalSec        int
 	RestoreCleanupGracePeriodSec     int
 	RwfsRetries                      int
+	RestoreCommitFiles               int
+	RestoreCommitBytes               int64
 }
 
 // Bounds for grpc_window_bytes: HTTP/2's initial window may not go below 64KiB
@@ -141,6 +143,10 @@ const (
 	MinGrpcWindowBytes = 64 * 1024
 	MaxGrpcWindowBytes = 1 << 30
 )
+
+// MaxRestoreCommitFiles caps restore_commit_files: every pending file holds
+// its descriptor open until the checkpoint.
+const MaxRestoreCommitFiles = 1024
 
 type contextKey string
 
@@ -198,6 +204,8 @@ func ParseConfig(configPath string) (*Config, error) {
 		RestoreCleanupIntervalSec:        300,
 		RestoreCleanupGracePeriodSec:     900,
 		RwfsRetries:                      3,
+		RestoreCommitFiles:               64,
+		RestoreCommitBytes:               64 << 20,
 		DefaultWindow:                    16,
 	}
 	foundFields := make(map[string]bool)
@@ -552,6 +560,18 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.RwfsRetries = number
 			foundFields["RwfsRetries"] = true
+		case "restore_commit_files":
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 0 || number > MaxRestoreCommitFiles {
+				return nil, fmt.Errorf("invalid restore_commit_files value at line %d: %s (must be 0-%d)", lineNum, value, MaxRestoreCommitFiles)
+			}
+			config.RestoreCommitFiles = number
+		case "restore_commit_bytes":
+			number, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || number < 0 {
+				return nil, fmt.Errorf("invalid restore_commit_bytes value at line %d: %s (must be >= 0)", lineNum, value)
+			}
+			config.RestoreCommitBytes = number
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}

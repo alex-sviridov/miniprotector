@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -361,13 +362,13 @@ func TestRunRestore_WritesFileContent(t *testing.T) {
 	assert.Contains(t, out, "restoring file content")
 	assert.Contains(t, out, "restore complete")
 	assert.Contains(t, out, "files_written=1")
-	assert.NotContains(t, out, "file written",
+	assert.NotContains(t, out, "file verified",
 		"the per-file success line must not appear at the default (Info) log level")
 }
 
 // TestRunRestore_DebugLogsPerFileSuccessLine is
 // TestRunRestore_WritesFileContent's counterpart at Debug level -- proves
-// the per-file "file written" line exists and is gated purely by the
+// the per-file "file verified" line exists and is gated purely by the
 // logger's level (slog.LevelDebug), not by a separate --quiet-style flag.
 func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
 	store, err := wfs.New(t.TempDir())
@@ -394,7 +395,7 @@ func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
 	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
-	assert.Contains(t, logBuf.String(), "file written")
+	assert.Contains(t, logBuf.String(), "file verified")
 }
 
 func TestRunRestore_OverwriteFalseSkipsExistingFile(t *testing.T) {
@@ -637,4 +638,63 @@ func TestRunRestore_RecoversFromTransientFileErrorViaRetry(t *testing.T) {
 	require.NoError(t, readErr)
 	assert.Equal(t, "vacation photo bytes", string(got))
 	assert.Equal(t, 2, restoreSrv.Calls(), "one failed attempt, then one successful retry")
+}
+
+func TestRestoreFileContent_CommitsAllFilesAcrossCheckpointsAndSweepsStaleTemp(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	destBase := t.TempDir()
+	stale := filepath.Join(destBase, ".old.txt.mptmp-deadbeef")
+	require.NoError(t, os.WriteFile(stale, []byte("junk"), 0o644))
+
+	var files []restoreFile
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		uuid := seedRestorableFileChunks(t, store, "hosta", "/data/"+name, "job1", 1000, [][]byte{[]byte("content " + name)})
+		files = append(files, restoreFile{FileUUID: uuid, Source: "hosta", Path: "/data/" + name, DestPath: filepath.Join(destBase, name)})
+	}
+
+	saved := restoreCommit
+	t.Cleanup(func() { restoreCommit = saved })
+	setRestoreCommitLimits(2, 1<<40) // two mid-run checkpoints plus the final flush
+
+	require.NoError(t, restoreFileContent(context.Background(), discardLogger(), client, files, false, 2, 1))
+
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		got, err := os.ReadFile(filepath.Join(destBase, name))
+		require.NoError(t, err)
+		assert.Equal(t, "content "+name, string(got))
+	}
+	assert.NoFileExists(t, stale)
+	entries, _ := os.ReadDir(destBase)
+	assert.Len(t, entries, 5, "no temp files remain")
+}
+
+func TestRestoreFileContent_FailureLeavesNoTempFiles(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	good := seedRestorableFileChunks(t, store, "hosta", "/data/good.txt", "job1", 1000, [][]byte{[]byte("ok")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	destBase := t.TempDir()
+	files := []restoreFile{
+		{FileUUID: good, Source: "hosta", Path: "/data/good.txt", DestPath: filepath.Join(destBase, "good.txt")},
+		{FileUUID: "does-not-exist", Source: "hosta", Path: "/data/bad.txt", DestPath: filepath.Join(destBase, "bad.txt")},
+	}
+	saved := restoreCommit
+	t.Cleanup(func() { restoreCommit = saved })
+	setRestoreCommitLimits(100, 1<<40)
+
+	err = restoreFileContent(context.Background(), discardLogger(), client, files, false, 1, 1)
+	require.Error(t, err)
+
+	entries, _ := os.ReadDir(destBase)
+	for _, e := range entries {
+		assert.False(t, isTempName(e.Name()), "leftover temp file %s", e.Name())
+	}
 }

@@ -91,6 +91,29 @@ It is **off by default** because:
 Only set it after measuring: pick a value of at least `bandwidth × RTT` and confirm with
 `mpbench --conf grpc_window_bytes=<n>`.
 
+### Restore write tuning
+
+`rwfs restore` writes each file to a hidden temp file and commits in batches (fsync, rename, directory
+fsync), so a file only appears under its final name once durable and `--overwrite` never destroys the
+old file early (see the [rwfs write contract](components/rwfs.md#write-contract)). Two config keys
+control the batching: `restore_commit_files` (default 64, range 0-1024) and `restore_commit_bytes`
+(default 64 MiB); `0` for either commits after every file. Measured with `mpbench --files 500 --runs 5
+--seed 1 --cold-cache` on a 4-core virtual SSD (ext4), restore phase median: A = previous direct
+write, B = defaults, C = per-file fsync + rename.
+
+| Profile | A (direct) | B (batched) | C (per-file) | B vs A | B vs C |
+|---|---|---|---|---|---|
+| small (8.6 MB) | 0.60 s | 0.65 s | 1.20 s | +8% | 46% faster |
+| mixed (172 MB) | 1.33 s | 1.42 s | 1.84 s | +7% | 23% faster |
+| large (2.6 GB) | 11.50 s | 11.53 s | 12.27 s | +0.3% | 6% faster (within noise) |
+
+The durability contract costs about 7-8% on small and mixed trees; batching recovers most of what
+per-file fsync would cost. `fallocate` preallocation and the post-sync cache drop were each within
+noise on this hardware (the cache drop is borderline: removing it was about 4.5% faster on large, but
+the ranges touch), so they are kept for their non-throughput benefits (early `ENOSPC`, smaller page
+cache footprint) and flagged to revisit. Leave the defaults unless you measure otherwise; see [the
+design](superpowers/specs/2026-10-06-rwfs-write-tuning-design.md) for the full numbers.
+
 ### Things that are not knobs (yet)
 
 - **Chunk size** is fixed at 64 KB (the protocol doc still says 512 KB; the code is authoritative).
