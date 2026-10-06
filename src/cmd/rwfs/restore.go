@@ -240,6 +240,7 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 				"reason", result.Err,
 			)
 			cancel()
+			q.Abort()
 		case result.Err != nil:
 			// Expected fallout of cancel() above -- not a new independent
 			// failure, so it's not logged individually.
@@ -248,7 +249,7 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 			logger.Debug("file skipped, already exists",
 				"source", result.Source, "path", result.Path, "dest_path", result.DestPath)
 		default:
-			logger.Debug("file written",
+			logger.Debug("file verified",
 				"source", result.Source, "path", result.Path, "dest_path", result.DestPath, "bytes", result.Bytes)
 		}
 	}

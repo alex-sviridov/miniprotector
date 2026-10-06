@@ -57,6 +57,8 @@ func TestIsTempName(t *testing.T) {
 	assert.False(t, isTempName(".a.mptmp-0123abc"), "suffix must be 8 hex digits")
 	assert.False(t, isTempName(".a.mptmp-0123abcz"), "suffix must be hex")
 	assert.False(t, isTempName(".mptmp-0123abcd"), "needs a base name")
+	assert.True(t, isTempName(".a.mptmp-deadbeef"))
+	assert.False(t, isTempName(".a.mptmp-DEADBEEF"), "must be lowercase hex")
 }
 
 func TestSweepStaleTemp_RemovesOnlyTempFiles(t *testing.T) {

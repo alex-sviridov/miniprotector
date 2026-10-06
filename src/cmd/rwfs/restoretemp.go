@@ -55,8 +55,7 @@ func isTempName(name string) bool {
 	if len(suffix) != tempSuffixLen {
 		return false
 	}
-	_, err := hex.DecodeString(suffix)
-	return err == nil
+	return strings.Trim(suffix, "0123456789abcdef") == ""
 }
 
 // destDirs returns the unique parent directories of the files' destinations.

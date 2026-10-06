@@ -362,13 +362,13 @@ func TestRunRestore_WritesFileContent(t *testing.T) {
 	assert.Contains(t, out, "restoring file content")
 	assert.Contains(t, out, "restore complete")
 	assert.Contains(t, out, "files_written=1")
-	assert.NotContains(t, out, "file written",
+	assert.NotContains(t, out, "file verified",
 		"the per-file success line must not appear at the default (Info) log level")
 }
 
 // TestRunRestore_DebugLogsPerFileSuccessLine is
 // TestRunRestore_WritesFileContent's counterpart at Debug level -- proves
-// the per-file "file written" line exists and is gated purely by the
+// the per-file "file verified" line exists and is gated purely by the
 // logger's level (slog.LevelDebug), not by a separate --quiet-style flag.
 func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
 	store, err := wfs.New(t.TempDir())
@@ -395,7 +395,7 @@ func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
 	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
-	assert.Contains(t, logBuf.String(), "file written")
+	assert.Contains(t, logBuf.String(), "file verified")
 }
 
 func TestRunRestore_OverwriteFalseSkipsExistingFile(t *testing.T) {
