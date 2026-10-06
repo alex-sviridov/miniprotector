@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// blockSize is the unit of deduplication: brfs chunks files into 64KB pieces
-// (workload/filesystem.ChunkSize), so shared 64KB blocks become shared chunks.
+// blockSize is the generator's unit of duplication. brfs uses content-defined
+// chunking (average 64KB), so duplicate blocks only approximately map to shared
+// chunks.
 const blockSize = 64 * 1024
 
 // poolBlocks is how many distinct blocks the duplicate pool holds.
@@ -30,6 +31,9 @@ type DatasetSpec struct {
 	Profile  string
 	DupRatio float64
 	Seed     uint64
+	// Shift prefixes each non-sparse file with 1..4095 random bytes so pooled
+	// blocks sit off 64KB alignment. It does not apply to the sparse profile.
+	Shift bool
 }
 
 type DatasetFile struct {
@@ -86,8 +90,9 @@ func filePath(r *rand.Rand, i int) string {
 
 // Generate writes a deterministic dataset under spec.Dir. Each full 64KB
 // block of a file is, with probability DupRatio, copied from a shared pool of
-// poolBlocks blocks (so chunk-level dedup is exercised within and across
-// files), otherwise fresh seeded-random bytes.
+// poolBlocks blocks (so dedup is exercised within and across files),
+// otherwise fresh seeded-random bytes. With spec.Shift each non-sparse file
+// starts with a random 1..4095 byte prefix, moving the blocks off alignment.
 func Generate(spec DatasetSpec) (*Dataset, error) {
 	r := rand.New(rand.NewPCG(spec.Seed, spec.Seed^0x9e3779b97f4a7c15))
 	pool := make([][]byte, poolBlocks)
@@ -108,10 +113,16 @@ func Generate(spec DatasetSpec) (*Dataset, error) {
 			ds.TotalBytes += size
 			continue
 		}
-		data := make([]byte, size)
+		prefix := int64(0)
+		if spec.Shift {
+			prefix = 1 + r.Int64N(blockSize/16-1) // 1..4095 bytes
+		}
+		data := make([]byte, size+prefix)
+		fillRandom(r, data[:prefix])
+		body := data[prefix:]
 		for off := int64(0); off < size; off += blockSize {
 			end := min(off+blockSize, size)
-			blk := data[off:end]
+			blk := body[off:end]
 			if end-off == blockSize && r.Float64() < spec.DupRatio {
 				copy(blk, pool[r.IntN(poolBlocks)])
 			} else {
@@ -128,8 +139,8 @@ func Generate(spec DatasetSpec) (*Dataset, error) {
 		if err := os.Chtimes(full, baseTime, baseTime); err != nil {
 			return nil, err
 		}
-		ds.Files = append(ds.Files, DatasetFile{Rel: rel, Size: size})
-		ds.TotalBytes += size
+		ds.Files = append(ds.Files, DatasetFile{Rel: rel, Size: size + prefix})
+		ds.TotalBytes += size + prefix
 	}
 	return ds, nil
 }

@@ -183,7 +183,7 @@ func RunOnce(ctx context.Context, a *Args, idx int, logf func(string, ...any)) (
 			return nil, err
 		}
 	}
-	ds, err := Generate(DatasetSpec{Dir: src, Files: a.Files, Profile: a.Profile, DupRatio: a.DupRatio, Seed: a.Seed})
+	ds, err := Generate(DatasetSpec{Dir: src, Files: a.Files, Profile: a.Profile, DupRatio: a.DupRatio, Seed: a.Seed, Shift: a.Shift})
 	if err != nil {
 		return nil, fmt.Errorf("dataset: %w", err)
 	}

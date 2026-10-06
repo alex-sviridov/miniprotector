@@ -15,6 +15,7 @@ type Args struct {
 	Files     int
 	Profile   string
 	DupRatio  float64
+	Shift     bool
 	Seed      uint64
 	RTT       time.Duration // full round trip; the proxy delays each direction by RTT/2
 	Bandwidth int64         // bytes per second per direction; 0 = unlimited
@@ -49,6 +50,7 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	fs.IntVar(&a.Files, "files", 500, "number of files in the generated dataset")
 	fs.StringVar(&a.Profile, "profile", "mixed", "file size profile: small, mixed, large or sparse")
 	fs.Float64Var(&a.DupRatio, "dup-ratio", 0.3, "fraction of full 64KB blocks drawn from a shared pool (0..1)")
+	fs.BoolVar(&a.Shift, "shift", false, "prefix each file with 1-4095 random bytes so duplicate blocks sit off 64KB alignment (what content-defined chunking is for)")
 	fs.Uint64Var(&a.Seed, "seed", 1, "dataset seed; the same seed gives byte-identical data")
 	fs.DurationVar(&a.RTT, "rtt", 0, "emulated round-trip time, e.g. 50ms")
 	fs.StringVar(&bandwidth, "bandwidth", "", "emulated bandwidth per direction, e.g. 100mbit, 1gbit, 10mbyte (default unlimited)")

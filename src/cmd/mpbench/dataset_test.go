@@ -149,3 +149,34 @@ func TestGenerate_SparseProfileIsMostlyHole(t *testing.T) {
 	again := gen(t, DatasetSpec{Files: 3, Profile: "sparse", Seed: 1})
 	require.NoError(t, CompareTrees(ds.Root, again.Root))
 }
+
+func TestGenerate_ShiftOffIsUnchanged(t *testing.T) {
+	spec := DatasetSpec{Files: 15, Profile: "mixed", DupRatio: 0.5, Seed: 9}
+	a, b := gen(t, spec), gen(t, spec)
+	require.NoError(t, CompareTrees(a.Root, b.Root))
+}
+
+func TestGenerate_ShiftIsDeterministicAndDiffersFromAligned(t *testing.T) {
+	aligned := DatasetSpec{Files: 15, Profile: "mixed", DupRatio: 0.5, Seed: 9}
+	shifted := aligned
+	shifted.Shift = true
+
+	s1, s2 := gen(t, shifted), gen(t, shifted)
+	require.NoError(t, CompareTrees(s1.Root, s2.Root), "same seed must be byte-identical")
+	assert.Error(t, CompareTrees(gen(t, aligned).Root, s1.Root))
+}
+
+func TestGenerate_ShiftPlacesPoolBlocksOffBoundary(t *testing.T) {
+	ds := gen(t, DatasetSpec{Files: 20, Profile: "large", DupRatio: 1, Seed: 3, Shift: true})
+	// With DupRatio 1 and no shift, every full 64KB block of a file is a pool block, so at most
+	// poolBlocks distinct aligned blocks exist. With a shift the aligned blocks are all different.
+	seen := map[[32]byte]bool{}
+	for _, f := range ds.Files {
+		data, err := os.ReadFile(filepath.Join(ds.Root, f.Rel))
+		require.NoError(t, err)
+		for off := 0; off+blockSize <= len(data); off += blockSize {
+			seen[sha256.Sum256(data[off:off+blockSize])] = true
+		}
+	}
+	assert.Greater(t, len(seen), poolBlocks, "aligned blocks should not collapse onto the pool when shifted")
+}
