@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — Content-defined chunking (FastCDC)
+
+`brfs` used to cut every file into fixed 64 KB chunks, so inserting a few bytes at the front of a file
+shifted every later boundary and nothing after the edit deduplicated. It now cuts with FastCDC
+(`go-cdc-chunkers`): boundaries follow the data, with chunks of 16 KB to 256 KB averaging 64 KB, so only
+the chunks around an edit change. Chunk size, offsets and hashes are carried on the wire exactly as
+before, so there is no protocol or store change and existing backups restore as usual; old fixed-size
+chunks simply do not deduplicate against new ones, so the first backup after upgrading re-uploads data.
+The window memory bound is now worst case `streams × window × 256 KB` (32 MB at 8 × 16), typically
+64 KB per slot, plus one pooled 256 KB chunker scan buffer per stream reading a file. `mpbench` gains `--shift` (a short random prefix per file, so duplicates sit off
+alignment) and `--dup-block-kb` (size of the duplicated blocks), because its default 64 KB duplicate
+unit equals the average chunk and hides the benefit.
+
+Measured with `mpbench` (seed 1, same flags, baseline built from the previous commit, 3 runs, median).
+Files whose duplicated 1 MiB blocks sit at a random offset (`large`, 40 files, 226 MB, `--dup-ratio 0.5
+--dup-block-kb 1024 --shift`): cold backup sent 221.5 MB before and 144.1 MB now, 12.8 s down to 9.0 s,
+restore unchanged. Duplicates aligned to the block grid, the case fixed chunks handle well: 136.4 MB
+before and 144.9 MB now (about 6% more on the wire, edge chunks no longer dedup), time 10.0 s down to
+8.8 s. Default `mixed` data with 64 KB duplicate blocks, where almost no chunk fits inside a duplicate:
+79.5 MB before and 109.8 MB now (that dataset is the artifact described above, not a typical tree).
+`small` files and the 20 ms RTT run are unchanged within noise (cold backup 4.07 s both, restore 1.10 s
+and 1.07 s); `large` with the default 64 KB duplicate blocks (`--dup-ratio 0.3`) ran 10.6 s both and sent 157.8 MB before
+against 219.7 MB now, for the same reason. Restore is unchanged or slightly faster throughout. Client
+peak memory is a few MB higher (about 54 to 60 MB on `mixed`).
+
 ## 2026-10-06 — rwfs restore: atomic, durable, batched writes
 
 `rwfs restore` used to write straight into the destination with `O_TRUNC` and never fsync, so

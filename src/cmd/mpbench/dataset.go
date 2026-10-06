@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// blockSize is the unit of deduplication: brfs chunks files into 64KB pieces
-// (workload/filesystem.ChunkSize), so shared 64KB blocks become shared chunks.
+// blockSize is the generator's unit of duplication. brfs uses content-defined
+// chunking (average 64KB), so duplicate blocks only approximately map to shared
+// chunks.
 const blockSize = 64 * 1024
 
 // poolBlocks is how many distinct blocks the duplicate pool holds.
@@ -30,6 +31,15 @@ type DatasetSpec struct {
 	Profile  string
 	DupRatio float64
 	Seed     uint64
+	// Shift prefixes each non-sparse file with 1..4095 random bytes so pooled
+	// blocks sit off block alignment (the --dup-block-kb grid, default 64KB).
+	// It does not apply to the sparse profile.
+	Shift bool
+	// DupBlock is the size in bytes of the duplicated blocks (and of the pool's
+	// blocks); 0 means blockSize. Sparse files do not use duplicate
+	// blocks, but the pool is still generated, so a sparse dataset can differ
+	// between values of this flag.
+	DupBlock int64
 }
 
 type DatasetFile struct {
@@ -84,15 +94,20 @@ func filePath(r *rand.Rand, i int) string {
 	return filepath.Join(parts...)
 }
 
-// Generate writes a deterministic dataset under spec.Dir. Each full 64KB
-// block of a file is, with probability DupRatio, copied from a shared pool of
-// poolBlocks blocks (so chunk-level dedup is exercised within and across
-// files), otherwise fresh seeded-random bytes.
+// Generate writes a deterministic dataset under spec.Dir. Each full
+// spec.DupBlock-byte block (default 64KB) of a file is, with probability
+// DupRatio, copied from a shared pool of poolBlocks blocks (so dedup is
+// exercised within and across files), otherwise fresh seeded-random bytes. With spec.Shift each non-sparse file
+// starts with a random 1..4095 byte prefix, moving the blocks off alignment.
 func Generate(spec DatasetSpec) (*Dataset, error) {
 	r := rand.New(rand.NewPCG(spec.Seed, spec.Seed^0x9e3779b97f4a7c15))
+	dupBlock := spec.DupBlock
+	if dupBlock == 0 {
+		dupBlock = blockSize
+	}
 	pool := make([][]byte, poolBlocks)
 	for i := range pool {
-		pool[i] = make([]byte, blockSize)
+		pool[i] = make([]byte, dupBlock)
 		fillRandom(r, pool[i])
 	}
 
@@ -108,11 +123,17 @@ func Generate(spec DatasetSpec) (*Dataset, error) {
 			ds.TotalBytes += size
 			continue
 		}
-		data := make([]byte, size)
-		for off := int64(0); off < size; off += blockSize {
-			end := min(off+blockSize, size)
-			blk := data[off:end]
-			if end-off == blockSize && r.Float64() < spec.DupRatio {
+		prefix := int64(0)
+		if spec.Shift {
+			prefix = 1 + r.Int64N(blockSize/16-1) // 1..4095 bytes
+		}
+		data := make([]byte, size+prefix)
+		fillRandom(r, data[:prefix])
+		body := data[prefix:]
+		for off := int64(0); off < size; off += dupBlock {
+			end := min(off+dupBlock, size)
+			blk := body[off:end]
+			if end-off == dupBlock && r.Float64() < spec.DupRatio {
 				copy(blk, pool[r.IntN(poolBlocks)])
 			} else {
 				fillRandom(r, blk)
@@ -128,8 +149,8 @@ func Generate(spec DatasetSpec) (*Dataset, error) {
 		if err := os.Chtimes(full, baseTime, baseTime); err != nil {
 			return nil, err
 		}
-		ds.Files = append(ds.Files, DatasetFile{Rel: rel, Size: size})
-		ds.TotalBytes += size
+		ds.Files = append(ds.Files, DatasetFile{Rel: rel, Size: size + prefix})
+		ds.TotalBytes += size + prefix
 	}
 	return ds, nil
 }

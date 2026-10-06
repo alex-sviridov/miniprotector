@@ -6,7 +6,7 @@ page says when to move off them.
 
 ## Why backup and restore are fast or slow
 
-- **Backup is a conversation.** For every chunk (64 KB) `brfs` asks `bwfs` "do you have this?", and
+- **Backup is a conversation.** For every chunk (16-256 KB, average 64 KB) `brfs` asks `bwfs` "do you have this?", and
   for a new chunk sends the data and waits for the confirmation. Each question costs a network round
   trip, so on a link with latency the round trips, not the bandwidth, set the speed. Every file also
   costs a few round trips of its own (announce the file, wait for the result).
@@ -54,7 +54,7 @@ nothing there.
 How many chunks of one file a stream keeps in flight before waiting for replies (see
 [brfs sliding window](components/brfs.md#sliding-window)). `1` is the old stop-and-wait behaviour.
 
-Sizing: the window must cover the bandwidth-delay product, `RTT × throughput / 64 KB`. Measured at 8
+Sizing: the window must cover the bandwidth-delay product, `RTT × throughput / average chunk size (64 KB)`. Measured at 8
 streams, 50 ms RTT, 200 Mbit/s cap:
 
 | window | backup-cold | backup-warm |
@@ -64,13 +64,15 @@ streams, 50 ms RTT, 200 Mbit/s cap:
 | 16 | 4.9 s (−21%) | 3.3 s (−16%) |
 | 32 | 4.9 s (−21%) | 3.1 s (−21%) |
 
+These measurements were taken with fixed 64 KB chunks, before content-defined chunking.
+
 With one stream and no other parallelism the window is worth much more: at 50 ms RTT, `--window 8`
 cut a 60 MB cold backup from 54 s to 17 s and a warm (hash-only) backup from 32 s to 11 s.
 
 - **Default:** `default_window=16`, the knee in the measurements above. On a LAN, 8 vs 32 made no
   difference (+1%).
 - **Raise it** for long, fast links (bandwidth × RTT large) and big files. **Lower it** (or use `1`)
-  to limit memory: chunks held are `streams × window × 64 KB` (8 × 16 × 64 KB = 8 MB).
+  to limit memory: chunks held are `streams × window × chunk size`, typically 64 KB per slot and 256 KB worst case (8 × 16 × 256 KB = 32 MB). On top of that, each stream reading a file holds one pooled 256 KB chunker scan buffer (`MaxChunkSize`).
 - A `bwfs` older than the sliding-window change requires `--window 1`.
 
 ### `grpc_window_bytes` (config) — HTTP/2 flow-control window, off by default
@@ -116,8 +118,9 @@ design](superpowers/specs/2026-10-06-rwfs-write-tuning-design.md) for the full n
 
 ### Things that are not knobs (yet)
 
-- **Chunk size** is fixed at 64 KB (the protocol doc still says 512 KB; the code is authoritative).
-  Larger chunks would mean fewer round trips and fewer database rows; tracked as a possible change.
+- **Chunk size** is content-defined (FastCDC): 16 KB minimum, 64 KB average, 256 KB maximum, set by
+  constants in `src/workload/filesystem/chunker.go`, not by a flag. A larger average chunk size would mean fewer
+  round trips and fewer database rows; tracked as a possible change.
 - **Per-chunk server cost.** Even at zero latency, backup runs at about 12 MB/s against about 105
   MB/s for restore; the cost is per-chunk work on the backup path, not the network. See
   [issue #35](https://github.com/alex-sviridov/miniprotector/issues/35).
@@ -182,4 +185,4 @@ same `--seed`.
 | Slow restore over a high-latency link with few streams | more streams first; then `grpc_window_bytes` ≥ bandwidth × RTT |
 | Backup slow even on a LAN | not network-bound; see issue #35 |
 | Wondering whether source-file reading is the limit | Probably not: on a virtual SSD with a cold cache, `brfs` read-ahead, `O_NOATIME`/fadvise and hole skipping gave no measurable gain (see [the tuning spec](superpowers/specs/2026-10-06-brfs-read-path-tuning-design.md)); measure with `mpbench --cold-cache` first |
-| High memory on `brfs` | lower `default_window` or `default_streams` (`streams × window × 64 KB`) |
+| High memory on `brfs` | lower `default_window` or `default_streams` (`streams × window × chunk size`, up to 256 KB per slot) |

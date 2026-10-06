@@ -1,11 +1,11 @@
 # Chunked Backup Protocol - Design Overview
 
 ## **Core Concept**
-A dual-layer integrity system with smart deduplication that processes files in 512KB chunks, optimizing for both network efficiency and data reliability.
+A dual-layer integrity system with smart deduplication that processes files in content-defined chunks (16-256 KB, average 64 KB), optimizing for both network efficiency and data reliability.
 
 ## **Protocol Flow**
 1. **File-level filtering**: Send metadata first, get `SEND_FILE` or `SKIP_FILE` to avoid unnecessary processing
-2. **Chunk-based transfer**: Split files into 512KB chunks, send hash batches, receive selective requests  
+2. **Chunk-based transfer**: Split files into variable-size content-defined chunks (16-256 KB, average 64 KB), send hash batches, receive selective requests  
 3. **Dual integrity verification**: BLAKE3 per-chunk + CRC32 whole-file validation
 
 ## Authorization
@@ -16,14 +16,14 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 
 ## **Key Design Decisions**
 
-**Why 512KB chunks?**
+**Why content-defined chunks of 16-256 KB (average 64 KB)?**
+- Chunk boundaries follow the file content (FastCDC), so an insertion or shift in a file changes only the chunks around it and the rest still deduplicate
 - Optimal balance: large enough for network efficiency, small enough for granular deduplication
-- Memory-friendly: predictable RAM usage regardless of file size
-- **Future evolution**: Fixed 512KB will be replaced with variable chunk sizes based on https://github.com/PlakarKorp/go-cdc-chunkers
+- Memory-friendly: a chunk never exceeds 256 KB, so RAM usage is predictable regardless of file size
 
 **Why batch hashes but send chunks individually?**
 - Hashes are small (~32 bytes) → efficient to batch
-- Chunks are large (512KB) → individual sending avoids massive memory buffers
+- Chunks are large (up to 256 KB) → individual sending avoids massive memory buffers
 
 **Why can several chunks be in flight on one stream?**
 - With one chunk at a time, every chunk costs a round trip; a client-side window of N chunks shares it. See [In-flight chunks](#in-flight-chunks-sliding-window)
@@ -178,7 +178,7 @@ sequenceDiagram
             Server-->>Client: SEND_FILE
             
             loop For Each Chunk Batch
-                Note left of Client: Read N chunks (512KB each)<br/>Calculate BLAKE3 hashes<br/>Update file CRC32 incrementally<br/>(same memory buffer, no re-read)
+                Note left of Client: Read N chunks (16-256 KB each)<br/>Calculate BLAKE3 hashes<br/>Update file CRC32 incrementally<br/>(same memory buffer, no re-read)
                 
                 Client->>Server: HASHES:hash1,hash2,hash3,...
                 Note right of Server: Analyze hashes against existing data<br/>Determine needed chunks

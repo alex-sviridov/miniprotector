@@ -11,21 +11,23 @@ import (
 
 // Args are mpbench's parsed, validated command-line settings.
 type Args struct {
-	BinDir    string
-	Files     int
-	Profile   string
-	DupRatio  float64
-	Seed      uint64
-	RTT       time.Duration // full round trip; the proxy delays each direction by RTT/2
-	Bandwidth int64         // bytes per second per direction; 0 = unlimited
-	Streams   int
-	Window    int // 0 = leave brfs's own default
-	BrfsArgs  []string
-	RwfsArgs  []string
-	Runs      int
-	JSONPath  string
-	Keep      bool
-	ColdCache bool // drop the page cache before each phase (needs root)
+	BinDir     string
+	Files      int
+	Profile    string
+	DupRatio   float64
+	Shift      bool
+	DupBlockKB int
+	Seed       uint64
+	RTT        time.Duration // full round trip; the proxy delays each direction by RTT/2
+	Bandwidth  int64         // bytes per second per direction; 0 = unlimited
+	Streams    int
+	Window     int // 0 = leave brfs's own default
+	BrfsArgs   []string
+	RwfsArgs   []string
+	Runs       int
+	JSONPath   string
+	Keep       bool
+	ColdCache  bool // drop the page cache before each phase (needs root)
 
 	// Sweeps run the full cycle once per value (or per combination); a swept
 	// dimension overrides its scalar flag.
@@ -49,6 +51,8 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	fs.IntVar(&a.Files, "files", 500, "number of files in the generated dataset")
 	fs.StringVar(&a.Profile, "profile", "mixed", "file size profile: small, mixed, large or sparse")
 	fs.Float64Var(&a.DupRatio, "dup-ratio", 0.3, "fraction of full 64KB blocks drawn from a shared pool (0..1)")
+	fs.BoolVar(&a.Shift, "shift", false, "prefix each file with 1-4095 random bytes so duplicate blocks sit off block alignment (the --dup-block-kb grid) (what content-defined chunking is for)")
+	fs.IntVar(&a.DupBlockKB, "dup-block-kb", 64, "size in KiB of the duplicated blocks, 4..4096; use e.g. 1024 with content-defined chunking so duplicates exceed the average chunk (sparse files do not use duplicate blocks, but the pool is still generated, so a sparse dataset can differ between values of this flag)")
 	fs.Uint64Var(&a.Seed, "seed", 1, "dataset seed; the same seed gives byte-identical data")
 	fs.DurationVar(&a.RTT, "rtt", 0, "emulated round-trip time, e.g. 50ms")
 	fs.StringVar(&bandwidth, "bandwidth", "", "emulated bandwidth per direction, e.g. 100mbit, 1gbit, 10mbyte (default unlimited)")
@@ -100,6 +104,8 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 		return nil, fmt.Errorf("--profile must be small, mixed, large or sparse, got %q", a.Profile)
 	case a.DupRatio < 0 || a.DupRatio > 1:
 		return nil, fmt.Errorf("--dup-ratio must be between 0 and 1, got %v", a.DupRatio)
+	case a.DupBlockKB < 4 || a.DupBlockKB > 4096:
+		return nil, fmt.Errorf("--dup-block-kb must be between 4 and 4096, got %d", a.DupBlockKB)
 	case a.RTT < 0:
 		return nil, fmt.Errorf("--rtt must not be negative, got %v", a.RTT)
 	case a.Streams <= 0:

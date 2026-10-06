@@ -87,7 +87,7 @@ func TestIntegration_Pipelined_CachedChunksAheadOfInFlightData(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.cleanup()
 
-	shared := randBytes(t, wfs.ChunkSize) // exactly one chunk, stored by the seed file
+	shared := randBytes(t, 4*wfs.MaxChunkSize) // several chunks, stored by the seed file
 	dir := t.TempDir()
 	write := func(name string, parts ...[]byte) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(strings.Join(func() []string {
@@ -100,9 +100,9 @@ func TestIntegration_Pipelined_CachedChunksAheadOfInFlightData(t *testing.T) {
 	}
 	write("seed.bin", shared)
 	// middle: cached chunk sits between two new ones
-	write("middle.bin", randBytes(t, wfs.ChunkSize), shared, randBytes(t, wfs.ChunkSize))
+	write("middle.bin", randBytes(t, wfs.MaxChunkSize), shared, randBytes(t, wfs.MaxChunkSize))
 	// last: the EOF chunk is cached while the chunk before it still needs data
-	write("last.bin", randBytes(t, wfs.ChunkSize), shared)
+	write("last.bin", randBytes(t, wfs.MaxChunkSize), shared)
 
 	files, err := wfs.Discover(dir, []string{"*"}, nil)
 	require.NoError(t, err)
@@ -110,6 +110,38 @@ func TestIntegration_Pipelined_CachedChunksAheadOfInFlightData(t *testing.T) {
 	for _, f := range files {
 		byName[filepath.Base(f.Path())] = f
 	}
+
+	// Premise: CDC resynchronises inside the shared region, so middle.bin mixes
+	// cached and new chunks and last.bin's EOF chunk is cached.
+	seedHashes := map[string]bool{}
+	for c, err := range byName["seed.bin"].ChunkIterator() {
+		require.NoError(t, err)
+		seedHashes[string(c.Hash())] = true
+	}
+	var cachedMid, newMid int
+	for c, err := range byName["middle.bin"].ChunkIterator() {
+		require.NoError(t, err)
+		if seedHashes[string(c.Hash())] {
+			cachedMid++
+		} else {
+			newMid++
+		}
+	}
+	t.Logf("premise: middle.bin cached=%d new=%d", cachedMid, newMid)
+	require.Positive(t, cachedMid, "middle.bin must reuse seed chunks")
+	require.Positive(t, newMid, "middle.bin must contain new chunks")
+	var lastEOFCached, lastNew bool
+	for c, err := range byName["last.bin"].ChunkIterator() {
+		require.NoError(t, err)
+		if c.IsEOF() {
+			lastEOFCached = seedHashes[string(c.Hash())]
+		} else if !seedHashes[string(c.Hash())] {
+			lastNew = true
+		}
+	}
+	t.Logf("premise: last.bin EOF cached=%v, has new non-EOF chunk=%v", lastEOFCached, lastNew)
+	require.True(t, lastEOFCached, "last.bin EOF chunk must be cached")
+	require.True(t, lastNew, "last.bin must have a new chunk before the cached EOF chunk")
 
 	ctx := jobContext("job-pipelined")
 	stream, err := env.client.ProcessBackupStream(ctx)

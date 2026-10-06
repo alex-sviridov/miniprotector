@@ -52,6 +52,21 @@ brfs /var/log --destination localhost:8080 --debug --streams 5
 the job-id convention `backup:<policy-name>:<slug-of-path>:<short-filter-id>:<unix-timestamp>` — useful when grepping
 `bwfs`'s job history for which policy produced a given run.
 
+## Chunking
+
+`brfs` splits each file into content-defined chunks with FastCDC: minimum 16 KB, average 64 KB,
+maximum 256 KB (`MinChunkSize`, `NormalChunkSize`, `MaxChunkSize` in
+`src/workload/filesystem/chunker.go`). Each chunk is hashed with BLAKE3, and the file as a whole
+gets a CRC32.
+
+Boundaries are chosen from the data itself rather than at fixed offsets, so inserting or removing
+bytes in a file only changes the chunks around the edit; the following chunks keep their hashes and
+deduplicate against the previous backup. With fixed-size chunks a single inserted byte shifted every
+later chunk.
+
+Chunks stored by an older `brfs` that used fixed 64 KB chunks do not deduplicate against
+content-defined chunks, so the first backup after the change stores the data again.
+
 ## Sliding window
 
 Each stream keeps up to `--window` chunks in flight at once instead of waiting for a reply to every
@@ -62,10 +77,10 @@ matters on high-latency links and for incremental backups, where almost every ch
 and only hashes cross the wire. `--window 1` is the previous stop-and-wait behavior.
 
 Sizing: the window needs to cover the bandwidth-delay product, `RTT × throughput / chunk size`
-(chunks are 64 KB). On a LAN `1`–`2` is enough; across a WAN with tens of milliseconds of RTT,
+(chunks average 64 KB). On a LAN `1`–`2` is enough; across a WAN with tens of milliseconds of RTT,
 `8`–`16` helps (the measured knee at 8 streams and 50 ms is about 16; see [performance tuning](../PERFORMANCE.md)), and a mostly-deduplicated backup (tiny hash-only requests) benefits from a
 larger window than one transferring new data. Past the knee a larger window only costs memory
-(`--streams × --window × 64 KB` of chunks held) and queueing delay. The window is per stream and
+(typically `--streams × --window × 64 KB` of chunks held, worst case 256 KB per slot, plus one pooled 256 KB chunker scan buffer per stream reading a file) and queueing delay. The window is per stream and
 within one file; it drains at the end of each file, so many tiny files see little gain. Set the
 site default with `default_window` in `local.conf`; `--window` overrides it per run.
 
