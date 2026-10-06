@@ -26,6 +26,7 @@ func TestParseArgs_Defaults(t *testing.T) {
 	assert.Equal(t, 3, a.Runs)
 	assert.False(t, a.Keep)
 	assert.False(t, a.Shift)
+	assert.Equal(t, 64, a.DupBlockKB)
 }
 
 func TestParseArgs_AllFlags(t *testing.T) {
@@ -50,6 +51,17 @@ func TestParseArgs_AllFlags(t *testing.T) {
 	assert.Equal(t, "out.json", a.JSONPath)
 	assert.True(t, a.Keep)
 	assert.True(t, a.Shift)
+}
+
+func TestParseArgs_DupBlockKB(t *testing.T) {
+	a, err := parseArgs([]string{"--bin-dir", "/b", "--dup-block-kb", "1024"}, io.Discard)
+	require.NoError(t, err)
+	assert.Equal(t, 1024, a.DupBlockKB)
+	for _, v := range []string{"3", "5000"} {
+		_, err := parseArgs([]string{"--bin-dir", "/b", "--dup-block-kb", v}, io.Discard)
+		require.Error(t, err, v)
+		assert.Contains(t, err.Error(), "--dup-block-kb must be between 4 and 4096")
+	}
 }
 
 func TestParseArgs_Rejects(t *testing.T) {

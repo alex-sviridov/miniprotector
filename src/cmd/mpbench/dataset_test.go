@@ -180,3 +180,30 @@ func TestGenerate_ShiftPlacesPoolBlocksOffBoundary(t *testing.T) {
 	}
 	assert.Greater(t, len(seen), poolBlocks, "aligned blocks should not collapse onto the pool when shifted")
 }
+
+func TestGenerate_DefaultDupBlockEqualsExplicit64KiB(t *testing.T) {
+	spec := DatasetSpec{Files: 15, Profile: "mixed", DupRatio: 0.5, Seed: 9}
+	explicit := spec
+	explicit.DupBlock = 64 << 10
+	require.NoError(t, CompareTrees(gen(t, spec).Root, gen(t, explicit).Root))
+}
+
+func TestGenerate_DupBlockIsDeterministic(t *testing.T) {
+	spec := DatasetSpec{Files: 6, Profile: "large", DupRatio: 0.5, Seed: 4, DupBlock: 1 << 20}
+	require.NoError(t, CompareTrees(gen(t, spec).Root, gen(t, spec).Root))
+}
+
+func TestGenerate_DupBlockSetsDuplicateUnit(t *testing.T) {
+	const unit = 1 << 20
+	ds := gen(t, DatasetSpec{Files: 10, Profile: "large", DupRatio: 1, Seed: 3, DupBlock: unit})
+	seen := map[[32]byte]bool{}
+	for _, f := range ds.Files {
+		data, err := os.ReadFile(filepath.Join(ds.Root, f.Rel))
+		require.NoError(t, err)
+		for off := 0; off+unit <= len(data); off += unit {
+			seen[sha256.Sum256(data[off:off+unit])] = true
+		}
+	}
+	assert.NotEmpty(t, seen)
+	assert.LessOrEqual(t, len(seen), poolBlocks, "every full 1MiB block should come from the pool")
+}

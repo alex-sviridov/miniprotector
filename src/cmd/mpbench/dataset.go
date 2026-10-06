@@ -34,6 +34,9 @@ type DatasetSpec struct {
 	// Shift prefixes each non-sparse file with 1..4095 random bytes so pooled
 	// blocks sit off 64KB alignment. It does not apply to the sparse profile.
 	Shift bool
+	// DupBlock is the size in bytes of the duplicated blocks (and of the pool's
+	// blocks); 0 means blockSize. It does not apply to the sparse profile.
+	DupBlock int64
 }
 
 type DatasetFile struct {
@@ -88,16 +91,20 @@ func filePath(r *rand.Rand, i int) string {
 	return filepath.Join(parts...)
 }
 
-// Generate writes a deterministic dataset under spec.Dir. Each full 64KB
-// block of a file is, with probability DupRatio, copied from a shared pool of
-// poolBlocks blocks (so dedup is exercised within and across files),
-// otherwise fresh seeded-random bytes. With spec.Shift each non-sparse file
+// Generate writes a deterministic dataset under spec.Dir. Each full
+// spec.DupBlock-byte block (default 64KB) of a file is, with probability
+// DupRatio, copied from a shared pool of poolBlocks blocks (so dedup is
+// exercised within and across files), otherwise fresh seeded-random bytes. With spec.Shift each non-sparse file
 // starts with a random 1..4095 byte prefix, moving the blocks off alignment.
 func Generate(spec DatasetSpec) (*Dataset, error) {
 	r := rand.New(rand.NewPCG(spec.Seed, spec.Seed^0x9e3779b97f4a7c15))
+	dupBlock := spec.DupBlock
+	if dupBlock == 0 {
+		dupBlock = blockSize
+	}
 	pool := make([][]byte, poolBlocks)
 	for i := range pool {
-		pool[i] = make([]byte, blockSize)
+		pool[i] = make([]byte, dupBlock)
 		fillRandom(r, pool[i])
 	}
 
@@ -120,10 +127,10 @@ func Generate(spec DatasetSpec) (*Dataset, error) {
 		data := make([]byte, size+prefix)
 		fillRandom(r, data[:prefix])
 		body := data[prefix:]
-		for off := int64(0); off < size; off += blockSize {
-			end := min(off+blockSize, size)
+		for off := int64(0); off < size; off += dupBlock {
+			end := min(off+dupBlock, size)
 			blk := body[off:end]
-			if end-off == blockSize && r.Float64() < spec.DupRatio {
+			if end-off == dupBlock && r.Float64() < spec.DupRatio {
 				copy(blk, pool[r.IntN(poolBlocks)])
 			} else {
 				fillRandom(r, blk)
