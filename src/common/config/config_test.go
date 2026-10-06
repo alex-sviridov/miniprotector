@@ -827,3 +827,38 @@ func TestParseConfig_GrpcWindowBytesRejectsOutOfRange(t *testing.T) {
 		require.Error(t, err, v)
 	}
 }
+
+func writeTestConf(t *testing.T, extra string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n" + extra
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	return path
+}
+
+func TestParseConfig_RestoreCommitDefaults(t *testing.T) {
+	conf, err := ParseConfig(writeTestConf(t, ""))
+	require.NoError(t, err)
+	assert.Equal(t, 64, conf.RestoreCommitFiles)
+	assert.EqualValues(t, 64<<20, conf.RestoreCommitBytes)
+}
+
+func TestParseConfig_RestoreCommitParsesCorrectly(t *testing.T) {
+	conf, err := ParseConfig(writeTestConf(t, "restore_commit_files=0\nrestore_commit_bytes=1048576\n"))
+	require.NoError(t, err)
+	assert.Equal(t, 0, conf.RestoreCommitFiles)
+	assert.EqualValues(t, 1048576, conf.RestoreCommitBytes)
+}
+
+func TestParseConfig_RestoreCommitRejectsInvalid(t *testing.T) {
+	for _, extra := range []string{
+		"restore_commit_files=-1\n",
+		"restore_commit_files=1025\n",
+		"restore_commit_files=abc\n",
+		"restore_commit_bytes=-5\n",
+		"restore_commit_bytes=abc\n",
+	} {
+		_, err := ParseConfig(writeTestConf(t, extra))
+		require.Error(t, err, extra)
+	}
+}
