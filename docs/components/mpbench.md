@@ -29,7 +29,8 @@ mpbench --bin-dir bin --files 500 --profile mixed --dup-ratio 0.3 \
 | `--bin-dir` | — | **Required.** Directory holding the `brfs`, `bwfs` and `rwfs` binaries to measure. All three come from here, so a protocol change is always measured with a matched client and server. |
 | `--files` | 500 | Number of files in the generated dataset |
 | `--profile` | `mixed` | Size mix: `small` (1–32 KB), `mixed` (70% 1–32 KB, 25% 64 KB–1 MB, 5% 2–8 MB), `large` (2–8 MB), `sparse` (4–16 MB apparent size, ~90% hole) |
-| `--dup-ratio` | 0.3 | Fraction of full 64 KB blocks drawn from a small shared pool, so chunk-level deduplication is exercised within and across files (0–1) |
+| `--dup-ratio` | 0.3 | Fraction of full 64 KB blocks drawn from a small shared pool, so chunk-level deduplication is exercised within and across files (0–1). The 64 KB block is the generator's unit; `brfs` chunks are content-defined (average 64 KB), so duplicate blocks map only approximately onto shared chunks. Dedup ratios are not comparable with runs from before content-defined chunking |
+| `--shift` | false | Prefix each file with 1–4095 random bytes so duplicate blocks sit off 64 KB alignment, which fixed-size chunking could not deduplicate and content-defined chunking can. Does not apply to the `sparse` profile |
 | `--seed` | 1 | Dataset seed. The same seed gives byte-identical data |
 | `--rtt` | 0 | Emulated **round-trip** time, e.g. `50ms` (each direction is delayed by half) |
 | `--bandwidth` | unlimited | Emulated bandwidth per direction: `100mbit`, `1gbit`, `10mbyte`, … (decimal units) |

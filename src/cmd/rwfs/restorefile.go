@@ -25,9 +25,9 @@ const (
 	// stub, like createRestoreDirectory's 0o755, pending real
 	// captured-permission restore in a future round.
 	defaultRestoreFilePerm = 0o644
-	// restoreWriteBufferSize coalesces 64KB chunks (see
-	// workload/filesystem/chunker.go's ChunkSize) into far fewer syscalls --
-	// ~16 chunks per Write instead of one syscall per chunk.
+	// restoreWriteBufferSize coalesces chunks (16-256 KB, average 64 KB; see
+	// workload/filesystem/chunker.go) into far fewer syscalls -- about 16
+	// average chunks per Write instead of one syscall per chunk.
 	restoreWriteBufferSize = 1 << 20 // 1MB
 )
 
