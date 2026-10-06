@@ -127,3 +127,10 @@ func TestParseArgs_ConfLines(t *testing.T) {
 		assert.Error(t, err, bad)
 	}
 }
+
+func TestParseArgs_SparseProfileAndColdCache(t *testing.T) {
+	a, err := parseArgs([]string{"--bin-dir", "x", "--profile", "sparse", "--cold-cache"}, io.Discard)
+	require.NoError(t, err)
+	assert.Equal(t, "sparse", a.Profile)
+	assert.True(t, a.ColdCache)
+}

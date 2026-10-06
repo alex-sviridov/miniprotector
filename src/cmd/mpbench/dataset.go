@@ -59,6 +59,8 @@ func pickSize(r *rand.Rand, profile string) int64 {
 		return span(1<<10, 32<<10)
 	case "large":
 		return span(2<<20, 8<<20)
+	case "sparse":
+		return span(4<<20, 16<<20)
 	default: // mixed
 		switch x := r.Float64(); {
 		case x < 0.70:
@@ -98,6 +100,14 @@ func Generate(spec DatasetSpec) (*Dataset, error) {
 	for i := 0; i < spec.Files; i++ {
 		size := pickSize(r, spec.Profile)
 		rel := filePath(r, i)
+		if spec.Profile == "sparse" {
+			if err := writeSparse(r, filepath.Join(spec.Dir, rel), size); err != nil {
+				return nil, err
+			}
+			ds.Files = append(ds.Files, DatasetFile{Rel: rel, Size: size})
+			ds.TotalBytes += size
+			continue
+		}
 		data := make([]byte, size)
 		for off := int64(0); off < size; off += blockSize {
 			end := min(off+blockSize, size)
@@ -122,6 +132,43 @@ func Generate(spec DatasetSpec) (*Dataset, error) {
 		ds.TotalBytes += size
 	}
 	return ds, nil
+}
+
+// sparseDataRatio is the fraction of a sparse-profile file's blocks that hold
+// data; the rest is a hole.
+const sparseDataRatio = 0.1
+
+// writeSparse creates a file of the given apparent size that is mostly hole:
+// it is truncated to size and a random sparseDataRatio of its 64KB blocks are
+// filled with seeded-random bytes.
+func writeSparse(r *rand.Rand, full string, size int64) error {
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(full)
+	if err != nil {
+		return err
+	}
+	if err := f.Truncate(size); err != nil {
+		f.Close()
+		return err
+	}
+	buf := make([]byte, blockSize)
+	for off := int64(0); off < size; off += blockSize {
+		if r.Float64() >= sparseDataRatio {
+			continue
+		}
+		b := buf[:min(blockSize, size-off)]
+		fillRandom(r, b)
+		if _, err := f.WriteAt(b, off); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chtimes(full, baseTime, baseTime)
 }
 
 // Touch advances every file's mtime by two seconds. A file's ID embeds its

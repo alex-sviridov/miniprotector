@@ -201,6 +201,12 @@ by that CA is trusted — there's no additional per-client allowlist. Missing or
 are a fatal startup error; there is no plaintext fallback. Cert issuance itself is out of scope
 for `bwfs` — see the [control plane setup](../../deploy/control-plane/README.md) for how certs are provisioned today.
 
+## Platform-specific code
+
+Writing is split per OS so it can be tuned independently: `src/storage/filesystem/writer_{linux,windows}.go`
+(`writeChunkFile`: temp write + rename), `storelock_{linux,windows}.go` (exclusive store lock;
+`flock` vs `LockFileEx`) and `src/cmd/bwfs/diskspace_{linux,windows}.go` (disk usage for status reports).
+
 ## Building
 
 ```bash

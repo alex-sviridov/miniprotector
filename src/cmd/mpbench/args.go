@@ -25,6 +25,7 @@ type Args struct {
 	Runs      int
 	JSONPath  string
 	Keep      bool
+	ColdCache bool // drop the page cache before each phase (needs root)
 
 	// Sweeps run the full cycle once per value (or per combination); a swept
 	// dimension overrides its scalar flag.
@@ -37,7 +38,7 @@ type Args struct {
 	ConfLines []string
 }
 
-var validProfiles = map[string]bool{"small": true, "mixed": true, "large": true}
+var validProfiles = map[string]bool{"small": true, "mixed": true, "large": true, "sparse": true}
 
 func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	a := &Args{}
@@ -46,7 +47,7 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	var bandwidth, brfsArgs, rwfsArgs string
 	fs.StringVar(&a.BinDir, "bin-dir", "", "directory holding the brfs, bwfs and rwfs binaries (required)")
 	fs.IntVar(&a.Files, "files", 500, "number of files in the generated dataset")
-	fs.StringVar(&a.Profile, "profile", "mixed", "file size profile: small, mixed or large")
+	fs.StringVar(&a.Profile, "profile", "mixed", "file size profile: small, mixed, large or sparse")
 	fs.Float64Var(&a.DupRatio, "dup-ratio", 0.3, "fraction of full 64KB blocks drawn from a shared pool (0..1)")
 	fs.Uint64Var(&a.Seed, "seed", 1, "dataset seed; the same seed gives byte-identical data")
 	fs.DurationVar(&a.RTT, "rtt", 0, "emulated round-trip time, e.g. 50ms")
@@ -58,6 +59,7 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	fs.IntVar(&a.Runs, "runs", 3, "number of full cycles to run")
 	fs.StringVar(&a.JSONPath, "json", "", "also write the full report as JSON to this path")
 	fs.BoolVar(&a.Keep, "keep", false, "keep the work directory of each run")
+	fs.BoolVar(&a.ColdCache, "cold-cache", false, "drop the Linux page cache before each phase so reads hit the disk (needs root; warns and continues otherwise)")
 	var sweepWindow, sweepStreams, sweepRTT, confLines string
 	fs.StringVar(&confLines, "conf", "", "comma-separated key=value lines appended to the generated local.conf, e.g. grpc_window_bytes=4194304")
 	fs.StringVar(&sweepWindow, "sweep-window", "", "comma-separated --window values to compare, e.g. 1,4,8 (0 = brfs default)")
@@ -95,7 +97,7 @@ func parseArgs(argv []string, stderr io.Writer) (*Args, error) {
 	case a.Files <= 0:
 		return nil, fmt.Errorf("--files must be positive, got %d", a.Files)
 	case !validProfiles[a.Profile]:
-		return nil, fmt.Errorf("--profile must be small, mixed or large, got %q", a.Profile)
+		return nil, fmt.Errorf("--profile must be small, mixed, large or sparse, got %q", a.Profile)
 	case a.DupRatio < 0 || a.DupRatio > 1:
 		return nil, fmt.Errorf("--dup-ratio must be between 0 and 1, got %v", a.DupRatio)
 	case a.RTT < 0:

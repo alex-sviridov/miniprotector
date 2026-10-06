@@ -28,7 +28,7 @@ mpbench --bin-dir bin --files 500 --profile mixed --dup-ratio 0.3 \
 |------|---------|-------------|
 | `--bin-dir` | — | **Required.** Directory holding the `brfs`, `bwfs` and `rwfs` binaries to measure. All three come from here, so a protocol change is always measured with a matched client and server. |
 | `--files` | 500 | Number of files in the generated dataset |
-| `--profile` | `mixed` | Size mix: `small` (1–32 KB), `mixed` (70% 1–32 KB, 25% 64 KB–1 MB, 5% 2–8 MB), `large` (2–8 MB) |
+| `--profile` | `mixed` | Size mix: `small` (1–32 KB), `mixed` (70% 1–32 KB, 25% 64 KB–1 MB, 5% 2–8 MB), `large` (2–8 MB), `sparse` (4–16 MB apparent size, ~90% hole) |
 | `--dup-ratio` | 0.3 | Fraction of full 64 KB blocks drawn from a small shared pool, so chunk-level deduplication is exercised within and across files (0–1) |
 | `--seed` | 1 | Dataset seed. The same seed gives byte-identical data |
 | `--rtt` | 0 | Emulated **round-trip** time, e.g. `50ms` (each direction is delayed by half) |
@@ -43,6 +43,7 @@ mpbench --bin-dir bin --files 500 --profile mixed --dup-ratio 0.3 \
 | `--sweep-rtt` | | Comma-separated `--rtt` values to compare, e.g. `0,20ms,100ms`. Overrides `--rtt` |
 | `--runs` | 3 | Number of full cycles; the report gives median, min and max |
 | `--json` | | Also write the full report to this path |
+| `--cold-cache` | false | Drop the Linux page cache before each phase (needs root; warns and continues if not permitted). Without it, repeated runs read the dataset from RAM and hide disk effects |
 | `--keep` | false | Keep each run's work directory (logs, store, restored tree) for inspection |
 
 Exit codes: `0` success, `1` a run failed (a subprocess failed or the restored tree differs from the

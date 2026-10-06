@@ -212,12 +212,18 @@ func RunOnce(ctx context.Context, a *Args, idx int, logf func(string, ...any)) (
 	dest := "localhost:" + strconv.Itoa(px.Port())
 
 	res := &RunResult{Index: idx, DatasetFiles: len(ds.Files), DatasetBytes: ds.TotalBytes}
-	resetWarned := false
+	resetWarned, coldWarned := false, false
 	measure := func(name string, fn func() (int64, error)) error {
 		px.ResetCounters()
 		if err := resetPeakRSS(bw.pid); err != nil && !resetWarned {
 			resetWarned = true
 			logf("warning: cannot reset bwfs peak RSS (%v); server memory will be cumulative", err)
+		}
+		if a.ColdCache && !coldWarned {
+			if err := dropPageCache(); err != nil {
+				coldWarned = true
+				logf("warning: --cold-cache: %v; phases run with a warm page cache", err)
+			}
 		}
 		start := time.Now()
 		clientRSS, err := fn()

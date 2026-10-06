@@ -120,6 +120,12 @@ traffic is sent. When `--destination` is a loopback address (`localhost`, `127.0
 hostname verification against the server cert's SAN is skipped — the cert must still chain to
 the trusted CA.
 
+## Platform-specific code
+
+File reading is split per OS so it can be tuned independently: `src/workload/filesystem/reader_linux.go`
+and `reader_windows.go` each define `openForRead`, used by the chunk iterator. Metadata
+(`fileinfo_*.go`) is split the same way.
+
 ## Building
 
 ```bash

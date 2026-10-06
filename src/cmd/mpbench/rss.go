@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // peakRSS returns the high-water resident set size of a running process, from
@@ -39,4 +40,11 @@ func peakRSS(pid int) (int64, error) {
 // peakRSS reports the peak since this call.
 func resetPeakRSS(pid int) error {
 	return os.WriteFile(fmt.Sprintf("/proc/%d/clear_refs", pid), []byte("5"), 0o200)
+}
+
+// dropPageCache flushes dirty pages and drops the Linux page, dentry and
+// inode caches (needs root).
+func dropPageCache() error {
+	syscall.Sync()
+	return os.WriteFile("/proc/sys/vm/drop_caches", []byte("3"), 0o200)
 }
