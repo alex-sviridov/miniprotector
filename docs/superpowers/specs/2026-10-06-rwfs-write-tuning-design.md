@@ -52,8 +52,9 @@ a 1 MB buffer, and never fsyncs or renames. Consequences:
 ## Checkpoint flush (committer)
 
 For the pending batch: `fsync` each file (cheap, writeback already running) → `dropCache` each (pages are
-clean now) → `rename` temp over destination (atomic replace for `--overwrite`) → `syncDir` each distinct
-parent once → close files and report each as restored. `bytes`/file counts reported by `restoreFileContent`
+clean now) → close each (Windows cannot rename an open file) → `rename` temp over destination (atomic
+replace for `--overwrite`) → `syncDir` each distinct parent once → count each as restored. Pending files
+hold their descriptors open until the checkpoint, so `restore_commit_files` is capped at 1024. `bytes`/file counts reported by `restoreFileContent`
 move to the point of commit, so the summary only counts durable files.
 
 ## Errors and crashes
@@ -70,7 +71,7 @@ move to the point of commit, so the summary only counts durable files.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `restore_commit_files` | `64` | Files per checkpoint; `0` = every file |
+| `restore_commit_files` | `64` | Files per checkpoint, 0–1024; `0` = every file |
 | `restore_commit_bytes` | `67108864` | Bytes per checkpoint; `0` = every file |
 
 Config keys only; no new CLI flags.
