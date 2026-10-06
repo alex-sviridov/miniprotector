@@ -3,77 +3,117 @@ package filesystem
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"math/rand/v2"
-	"os"
-	"path/filepath"
+	"math"
 
 	"lukechampine.com/blake3"
 
 	"github.com/alex-sviridov/miniprotector/storage"
+	"github.com/alex-sviridov/miniprotector/storage/pack"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-func (s *Store) chunkPath(hexHash string) string {
-	return filepath.Join(s.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
+// locate finds a chunk's record: pending first (appended, not yet flushed),
+// then the database. ok is false when the chunk is unknown.
+func (s *Store) locate(hexHash string) (pack.Location, bool, error) {
+	if loc, ok := s.pending.lookup(hexHash); ok {
+		return loc, true, nil
+	}
+	var rec ChunkRecord
+	err := s.db.Where("hash = ?", hexHash).Limit(1).Find(&rec).Error
+	if err != nil {
+		return pack.Location{}, false, fmt.Errorf("look up chunk: %w", err)
+	}
+	if rec.Hash == "" {
+		return pack.Location{}, false, nil
+	}
+	loc, err := rowLocation(rec)
+	if err != nil {
+		return pack.Location{}, false, err
+	}
+	return loc, true, nil
+}
+
+// rowLocation converts a row to a Location, refusing values that would wrap
+// around in the narrower Location fields: a damaged row must read as corrupt,
+// not as some other record.
+func rowLocation(rec ChunkRecord) (pack.Location, error) {
+	if rec.Segment <= 0 || rec.Segment > math.MaxUint32 ||
+		rec.Size < 0 || rec.Size > math.MaxUint32 || rec.Offset < 0 {
+		return pack.Location{}, fmt.Errorf("%w: chunk %s has an invalid location (segment %d, offset %d, size %d)",
+			pack.ErrCorrupt, rec.Hash, rec.Segment, rec.Offset, rec.Size)
+	}
+	return pack.Location{Segment: uint32(rec.Segment), Offset: rec.Offset, Size: uint32(rec.Size)}, nil
 }
 
 func (s *Store) ChunkExists(chunkHash []byte) error {
-	path := s.chunkPath(hex.EncodeToString(chunkHash))
-	_, err := os.Stat(path)
-	if os.IsNotExist(err) {
+	_, ok, err := s.locate(hex.EncodeToString(chunkHash))
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return storage.ErrChunkNotFound
 	}
-	return err
+	return nil
 }
 
+// StoreChunk appends the chunk to the pack log and remembers it as pending.
+// It is not durable on return: FinalizeFileData (or the size trigger, or
+// Close) flushes it, and only then does it get a database row.
 func (s *Store) StoreChunk(chunkHash []byte, data []byte) error {
 	sum := blake3.Sum256(data)
 	if !bytes.Equal(chunkHash, sum[:]) {
 		return fmt.Errorf("chunk hash mismatch")
 	}
+	if s.log == nil {
+		return errors.New("store is read-only")
+	}
 
 	hexHash := hex.EncodeToString(chunkHash)
-	finalPath := s.chunkPath(hexHash)
-
-	if _, err := os.Stat(finalPath); err == nil {
-		return nil // already exists
-	}
-
-	dir := filepath.Dir(finalPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create chunk dir: %w", err)
-	}
-
-	tmpPath := fmt.Sprintf("%s.%016x.tmp", finalPath, rand.Uint64())
-	if err := writeChunkFile(tmpPath, finalPath, data); err != nil {
+	_, known, err := s.locate(hexHash)
+	if err != nil {
 		return err
 	}
+	if known {
+		return nil
+	}
 
-	record := ChunkRecord{Hash: hexHash, Size: int64(len(data))}
-	return s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error
+	loc, err := s.log.Append(sum, data)
+	if err != nil {
+		return fmt.Errorf("append chunk: %w", err)
+	}
+	if s.pending.addChunk(hexHash, loc) >= flushThreshold {
+		return s.flush()
+	}
+	return nil
 }
 
+// LinkChunkToFileData records the link as pending; it is committed by the
+// next flush together with (or after) the chunk row it references.
 func (s *Store) LinkChunkToFileData(chunkHash []byte, fileID string, index int64) error {
-	record := FileDataChunkRecord{
+	if s.log == nil {
+		return errors.New("store is read-only")
+	}
+	s.pending.addLink(FileDataChunkRecord{
 		FileID:    fileID,
 		ChunkHash: hex.EncodeToString(chunkHash),
 		Index:     index,
-	}
-	return s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error
+	})
+	return nil
 }
 
 // MarkChunkCorrupted removes a chunk that failed to read correctly (missing
 // or otherwise unusable) along with every DB record that depends on it, so
 // affected files are treated as needing a fresh upload on the next backup.
+// Its bytes stay in the segment as dead space for compaction to reclaim.
 func (s *Store) MarkChunkCorrupted(chunkHash []byte) error {
-	hexHash := hex.EncodeToString(chunkHash)
-
-	path := s.chunkPath(hexHash)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove corrupted chunk file: %w", err)
+	// Flush first so a pending row or link for this chunk cannot be
+	// committed after the delete and bring it back.
+	if err := s.flush(); err != nil {
+		return err
 	}
+	hexHash := hex.EncodeToString(chunkHash)
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var links []FileDataChunkRecord
@@ -101,14 +141,51 @@ func (s *Store) MarkChunkCorrupted(chunkHash []byte) error {
 	})
 }
 
+// ReadChunk returns the chunk's data after the pack layer verified its hash.
+// A damaged record yields an error wrapping pack.ErrCorrupt.
 func (s *Store) ReadChunk(chunkHash []byte) ([]byte, error) {
-	path := s.chunkPath(hex.EncodeToString(chunkHash))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, storage.ErrChunkNotFound
-		}
-		return nil, fmt.Errorf("read chunk: %w", err)
+	var sum [32]byte
+	if len(chunkHash) != len(sum) {
+		return nil, storage.ErrChunkNotFound
 	}
-	return data, nil
+	copy(sum[:], chunkHash)
+	hexHash := hex.EncodeToString(chunkHash)
+
+	loc, ok, err := s.locate(hexHash)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, storage.ErrChunkNotFound
+	}
+	return s.readLocated(hexHash, sum, loc)
+}
+
+// readLocated reads the record at loc. If its segment is gone, compaction may
+// have moved the chunk (updated the row, then removed the old segment) between
+// our lookup and the read, so it looks the chunk up once more and retries.
+func (s *Store) readLocated(hexHash string, sum [32]byte, loc pack.Location) ([]byte, error) {
+	data, err := pack.Read(s.packDir(), loc, sum)
+	if err == nil || !errors.Is(err, pack.ErrSegmentMissing) {
+		return data, wrapRead(err)
+	}
+	fresh, ok, lerr := s.locate(hexHash)
+	if lerr != nil {
+		return nil, lerr
+	}
+	if !ok {
+		return nil, storage.ErrChunkNotFound // removed meanwhile
+	}
+	if fresh == loc {
+		return nil, wrapRead(err) // not moved: the segment really is missing
+	}
+	data, err = pack.Read(s.packDir(), fresh, sum)
+	return data, wrapRead(err)
+}
+
+func wrapRead(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("read chunk: %w", err)
 }

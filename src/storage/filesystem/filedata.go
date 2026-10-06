@@ -68,7 +68,14 @@ func (s *Store) CreateFileData(fileID string, size int64) error {
 	return s.db.Create(&record).Error
 }
 
+// FinalizeFileData marks the file complete. It is the durability barrier:
+// the file's chunk bytes are fsynced and their rows and links committed
+// (flush) before the checksum is set, so a complete file never references
+// data a crash could lose.
 func (s *Store) FinalizeFileData(fileID string, checksum []byte) error {
+	if err := s.flush(); err != nil {
+		return err
+	}
 	return s.db.Model(&FileDataRecord{}).
 		Where("file_id = ? AND checksum IS NULL", fileID).
 		Updates(map[string]any{

@@ -1022,20 +1022,12 @@ func TestIntegration_ScheduledGC_NeverCorruptsConcurrentBackups(t *testing.T) {
 		}
 	}
 
-	// 2. Nothing is left over: every chunk record and chunk file is
-	// referenced by a surviving version, and every expired version is gone.
+	// 2. Nothing is left over: every chunk record is referenced by a
+	// surviving version, and every expired version is gone. (Unreferenced
+	// chunk bytes are dead space inside pack segments, not separate files.)
 	var records []storagefs.ChunkRecord
 	require.NoError(t, store.RawDB().Find(&records).Error)
 	assert.Len(t, records, len(referenced), "chunk records leaked")
-	var onDisk int
-	chunksRoot := filepath.Join(env.storageDir, "chunks")
-	require.NoError(t, filepath.WalkDir(chunksRoot, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			onDisk++
-		}
-		return err
-	}))
-	assert.Equal(t, len(referenced), onDisk, "chunk files leaked")
 	var expired int64
 	require.NoError(t, store.RawDB().Model(&storagefs.FileVersionRecord{}).Where("expire_at IS NOT NULL").Count(&expired).Error)
 	assert.Equal(t, int64(0), expired)

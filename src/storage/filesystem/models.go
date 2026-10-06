@@ -2,9 +2,14 @@ package filesystem
 
 import "time"
 
+// ChunkRecord indexes one chunk stored in the pack log: Segment and Offset
+// locate its record (the header start), Size is the data length. A row is only
+// ever written after its bytes were fsynced (see Store.flush).
 type ChunkRecord struct {
 	Hash      string `gorm:"primaryKey"`
 	Size      int64
+	Segment   int64
+	Offset    int64
 	CreatedAt time.Time
 }
 

@@ -1,7 +1,6 @@
 package filesystem
 
 import (
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"lukechampine.com/blake3"
 
 	"github.com/alex-sviridov/miniprotector/storage"
+	"github.com/alex-sviridov/miniprotector/storage/pack"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -421,18 +421,20 @@ func TestChunkExists_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, storage.ErrChunkNotFound)
 }
 
-func TestStoreChunk_WritesFile(t *testing.T) {
+func TestStoreChunk_AppendsToPackSegment(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk data for testing")
 	hash := makeChunk(t, data)
 
+	before, err := pack.Segments(store.packDir())
+	require.NoError(t, err)
 	require.NoError(t, store.StoreChunk(hash, data))
 
-	// File must exist on disk
-	hexHash := hex.EncodeToString(hash)
-	path := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
-	_, err := os.Stat(path)
-	assert.NoError(t, err)
+	// The record (header + data) must land in the active segment.
+	after, err := pack.Segments(store.packDir())
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, before[0].Size+pack.HeaderSize+int64(len(data)), after[0].Size)
 }
 
 func TestChunkExists_AfterStore(t *testing.T) {
@@ -510,7 +512,7 @@ func TestFileDataExists_TrueAfterFinalize(t *testing.T) {
 	assert.True(t, exists)
 }
 
-func TestMarkChunkCorrupted_RemovesFileFromDiskIfPresent(t *testing.T) {
+func TestMarkChunkCorrupted_RemovesChunkRecord(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk data for corrupted-chunk test")
 	hash := makeChunk(t, data)
@@ -518,23 +520,26 @@ func TestMarkChunkCorrupted_RemovesFileFromDiskIfPresent(t *testing.T) {
 
 	require.NoError(t, store.MarkChunkCorrupted(hash))
 
-	hexHash := hex.EncodeToString(hash)
-	chunkPath := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
-	_, err := os.Stat(chunkPath)
-	assert.True(t, os.IsNotExist(err), "corrupted chunk file must be removed from disk")
+	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound, "corrupted chunk must no longer be indexed")
 }
 
-func TestMarkChunkCorrupted_TolerantOfAlreadyMissingFile(t *testing.T) {
+func TestMarkChunkCorrupted_TolerantOfMissingSegment(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk that is already gone from disk")
 	hash := makeChunk(t, data)
 	require.NoError(t, store.StoreChunk(hash, data))
+	require.NoError(t, store.flush())
 
-	hexHash := hex.EncodeToString(hash)
-	chunkPath := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
-	require.NoError(t, os.Remove(chunkPath))
+	segs, err := pack.Segments(store.packDir())
+	require.NoError(t, err)
+	for _, seg := range segs {
+		require.NoError(t, pack.RemoveSegment(store.packDir(), seg.ID))
+	}
+	_, err = store.ReadChunk(hash)
+	require.ErrorIs(t, err, pack.ErrSegmentMissing)
 
-	assert.NoError(t, store.MarkChunkCorrupted(hash), "must not error when the chunk file is already gone")
+	assert.NoError(t, store.MarkChunkCorrupted(hash), "must not error when the chunk's segment is already gone")
+	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
 }
 
 func TestMarkChunkCorrupted_InvalidatesDependentFileData(t *testing.T) {
@@ -744,6 +749,7 @@ func TestVacuum_RemovesOrphanedChunkLinksForIncompleteFileData(t *testing.T) {
 	}
 	store.db.Create(&old)
 	require.NoError(t, store.LinkChunkToFileData(hash, "incomplete-file", 0))
+	require.NoError(t, store.flush()) // links are pending until a flush
 
 	var before int64
 	store.db.Model(&FileDataChunkRecord{}).Where("file_id = ?", "incomplete-file").Count(&before)
@@ -755,25 +761,6 @@ func TestVacuum_RemovesOrphanedChunkLinksForIncompleteFileData(t *testing.T) {
 	var after int64
 	store.db.Model(&FileDataChunkRecord{}).Where("file_id = ?", "incomplete-file").Count(&after)
 	assert.Equal(t, int64(0), after)
-}
-
-func TestVacuum_RemovesOrphanedChunkFiles(t *testing.T) {
-	store := newTestStore(t)
-
-	// Write a chunk file without a DB record
-	data := []byte("orphan chunk data for vacuum test!")
-	hash := makeChunk(t, data)
-	hexHash := hex.EncodeToString(hash)
-	dir := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4])
-	require.NoError(t, os.MkdirAll(dir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, hexHash[4:]), data, 0644))
-
-	result, err := store.Vacuum()
-	require.NoError(t, err)
-	assert.Greater(t, result.BytesReclaimed, int64(0))
-
-	// File must be gone
-	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
 }
 
 func TestConcurrentStores_NoSQLiteBusy(t *testing.T) {

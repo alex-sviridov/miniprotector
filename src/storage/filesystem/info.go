@@ -1,9 +1,6 @@
 package filesystem
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,8 +35,16 @@ func (s *Store) StoreInfo() (*storage.StoreInfo, error) {
 	}, nil
 }
 
+// Vacuum removes everything no file version references, in one transaction.
+// It runs at startup, before backups are served.
 func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 	result := &storage.VacuumResult{}
+
+	// Flush first so every stored chunk has its row and link in the database;
+	// otherwise a chunk whose link is still pending would look orphaned.
+	if err := s.flush(); err != nil {
+		return nil, err
+	}
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Step 1: remove incomplete FileData older than threshold
@@ -81,38 +86,6 @@ func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Step 5: walk chunk files; delete any not in chunk_records (includes temp files)
-	chunksRoot := filepath.Join(s.basePath, "chunks")
-	filepath.WalkDir(chunksRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		// Reconstruct hash from path: last three segments are [aa][bb][rest]
-		rel, _ := filepath.Rel(chunksRoot, path)
-		parts := strings.Split(filepath.ToSlash(rel), "/")
-		if len(parts) != 3 {
-			// temp file or unexpected structure — delete
-			info, statErr := d.Info()
-			if statErr == nil {
-				result.BytesReclaimed += info.Size()
-			}
-			os.Remove(path)
-			return nil
-		}
-		hexHash := parts[0] + parts[1] + parts[2]
-
-		var count int64
-		s.db.Model(&ChunkRecord{}).Where("hash = ?", hexHash).Count(&count)
-		if count == 0 {
-			info, statErr := d.Info()
-			if statErr == nil {
-				result.BytesReclaimed += info.Size()
-			}
-			os.Remove(path)
-		}
-		return nil
-	})
 
 	return result, nil
 }
