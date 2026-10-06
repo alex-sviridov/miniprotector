@@ -250,7 +250,7 @@ Tuning keys (config only, no flags):
 
 The temp-file contract is not free: measured against the previous direct-write restore, it costs about
 7-8% on small and mixed trees and nothing visible on large files. Committing after every file
-(`restore_commit_files=0` or `1`) is 20-50% slower than the defaults; see [performance
+(`restore_commit_files=0` or `1`) takes roughly 30-85% longer than the defaults on small and mixed trees (neutral on large, within noise); see [performance
 tuning](../PERFORMANCE.md#restore-write-tuning).
 
 ## Transport Security

@@ -12,7 +12,7 @@ a failed run; a crash leaves only temp files, which the next restore sweeps. It 
 `fallocate` for early `ENOSPC`, starts writeback as data arrives and drops the page cache after sync.
 Batching is set by the new `restore_commit_files` and `restore_commit_bytes` keys. On a cold cache the
 contract costs about 7-8% on small and mixed trees and nothing on large files, while per-file fsync
-would be 20-50% slower than batching; `fallocate` and cache hygiene were within noise and are adopted
+took roughly 30-85% longer than batching on small and mixed trees (neutral on large); `fallocate` and cache hygiene were within noise and are adopted
 for their non-throughput benefits (cache hygiene is borderline, revisit). A replaced file now takes
 mode 0644 instead of keeping its old mode.
 
