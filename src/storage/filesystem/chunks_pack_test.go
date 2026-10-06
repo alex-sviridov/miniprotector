@@ -468,3 +468,79 @@ func TestPack_NewReadOnlyRejectsLegacyStore(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "legacy")
 }
+
+// setRelocateHook runs fn each time readLocated finds a segment missing,
+// before it looks the chunk up again.
+func setRelocateHook(t *testing.T, fn func()) {
+	t.Helper()
+	old := relocateHook
+	relocateHook = fn
+	t.Cleanup(func() { relocateHook = old })
+}
+
+// copySegment places a copy of segment src at id dst (same offsets).
+func copySegment(t *testing.T, s *Store, src, dst int64) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(s.packDir(), segmentName(src)))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(s.packDir(), segmentName(dst)), raw, 0o644))
+}
+
+func setRowSegment(t *testing.T, s *Store, hash []byte, seg int64) {
+	t.Helper()
+	require.NoError(t, s.RawDB().Model(&ChunkRecord{}).Where("hash = ?", hex.EncodeToString(hash)).
+		Update("segment", seg).Error)
+}
+
+func TestPack_ReadLocatedFollowsAChunkThatMovesTwice(t *testing.T) {
+	s := newTestStore(t)
+	data := []byte("chunk compacted twice during one read")
+	hash := makeChunk(t, data)
+	require.NoError(t, s.StoreChunk(hash, data))
+	require.NoError(t, s.flush())
+	stale, ok, err := s.locate(hex.EncodeToString(hash))
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// The reader holds segment 1's location. The chunk already moved to 7
+	// (and 7 is gone again); while the reader re-locates it moves on to 8.
+	copySegment(t, s, int64(stale.Segment), 8)
+	setRowSegment(t, s, hash, 7)
+	require.NoError(t, os.Remove(filepath.Join(s.packDir(), segmentName(int64(stale.Segment)))))
+	calls := 0
+	setRelocateHook(t, func() {
+		calls++
+		if calls == 2 {
+			setRowSegment(t, s, hash, 8)
+		}
+	})
+
+	var sum [32]byte
+	copy(sum[:], hash)
+	got, err := s.readLocated(hex.EncodeToString(hash), sum, stale)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}
+
+func TestPack_ReadLocatedGivesUpAfterBoundedAttempts(t *testing.T) {
+	s := newTestStore(t)
+	data := []byte("chunk that keeps moving to missing segments")
+	hash := makeChunk(t, data)
+	require.NoError(t, s.StoreChunk(hash, data))
+	require.NoError(t, s.flush())
+	stale, _, err := s.locate(hex.EncodeToString(hash))
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(s.packDir(), segmentName(int64(stale.Segment)))))
+
+	calls := 0
+	setRelocateHook(t, func() {
+		calls++
+		setRowSegment(t, s, hash, int64(100+calls)) // always a new, missing segment
+	})
+
+	var sum [32]byte
+	copy(sum[:], hash)
+	_, err = s.readLocated(hex.EncodeToString(hash), sum, stale)
+	assert.ErrorIs(t, err, pack.ErrSegmentMissing)
+	assert.Equal(t, maxReadAttempts-1, calls, "one re-locate per retry, no more")
+}

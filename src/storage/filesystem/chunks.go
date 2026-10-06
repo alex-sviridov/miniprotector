@@ -176,25 +176,39 @@ func (s *Store) ReadChunk(chunkHash []byte) ([]byte, error) {
 
 // readLocated reads the record at loc. If its segment is gone, compaction may
 // have moved the chunk (updated the row, then removed the old segment) between
-// our lookup and the read, so it looks the chunk up once more and retries.
+// our lookup and the read, so it looks the chunk up again and retries. It
+// keeps doing so only while the location keeps changing, and at most
+// maxReadAttempts times: a location that did not change means the segment
+// really is missing.
 func (s *Store) readLocated(hexHash string, sum [32]byte, loc pack.Location) ([]byte, error) {
-	data, err := pack.Read(s.packDir(), loc, sum)
-	if err == nil || !errors.Is(err, pack.ErrSegmentMissing) {
-		return data, wrapRead(err)
+	for attempt := 1; ; attempt++ {
+		data, err := pack.Read(s.packDir(), loc, sum)
+		if err == nil || !errors.Is(err, pack.ErrSegmentMissing) || attempt == maxReadAttempts {
+			return data, wrapRead(err)
+		}
+		if relocateHook != nil {
+			relocateHook()
+		}
+		fresh, ok, lerr := s.locate(hexHash)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if !ok {
+			return nil, storage.ErrChunkNotFound // removed meanwhile
+		}
+		if fresh == loc {
+			return nil, wrapRead(err) // not moved: the segment really is missing
+		}
+		loc = fresh
 	}
-	fresh, ok, lerr := s.locate(hexHash)
-	if lerr != nil {
-		return nil, lerr
-	}
-	if !ok {
-		return nil, storage.ErrChunkNotFound // removed meanwhile
-	}
-	if fresh == loc {
-		return nil, wrapRead(err) // not moved: the segment really is missing
-	}
-	data, err = pack.Read(s.packDir(), fresh, sum)
-	return data, wrapRead(err)
 }
+
+// maxReadAttempts bounds how often readLocated reads a chunk that compaction
+// keeps moving.
+const maxReadAttempts = 3
+
+// relocateHook, when set by a test, runs before readLocated re-locates.
+var relocateHook func()
 
 func wrapRead(err error) error {
 	if err == nil {

@@ -16,6 +16,9 @@ var errLogClosed = errors.New("pack: log is closed")
 // Options configures a Log.
 type Options struct {
 	SegmentSize int64 // 0 means 256 MiB
+	// SyncFile replaces fsync; nil means (*os.File).Sync. Only tests set it,
+	// to inject fsync failures from outside the package.
+	SyncFile func(*os.File) error
 }
 
 // Log appends records to the active segment, rotating to a new segment when
@@ -61,6 +64,9 @@ func Open(dir string, opts Options) (*Log, error) {
 		dir:         dir,
 		segmentSize: opts.SegmentSize,
 		syncFile:    (*os.File).Sync,
+	}
+	if opts.SyncFile != nil {
+		l.syncFile = opts.SyncFile
 	}
 
 	segs, err := Segments(dir)

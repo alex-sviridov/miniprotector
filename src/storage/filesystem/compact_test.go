@@ -3,9 +3,11 @@ package filesystem
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -297,10 +299,12 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 	setFlushThreshold(t, 2*chunkLen)
 	s := newSmallStore(t, 8)
 	const (
-		kept     = 4
-		garbage  = 8
-		perFile  = 20
-		vacBatch = 3
+		kept    = 4
+		garbage = 8
+		perFile = 20
+		// junkChunks keeps garbage files small so new garbage keeps arriving.
+		junkChunks = 4
+		vacBatch   = 3
 	)
 
 	op := func(fn func() error) error {
@@ -308,15 +312,15 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 		defer end()
 		return fn()
 	}
-	backup := func(fileID string, withVersion bool) error {
+	backup := func(fileID string, withVersion bool, chunks int) error {
 		job := "job-" + fileID
 		if err := op(func() error { return s.EnsureBackupJob(job, "hosta") }); err != nil {
 			return err
 		}
-		if err := op(func() error { return s.CreateFileData(fileID, perFile*chunkLen) }); err != nil {
+		if err := op(func() error { return s.CreateFileData(fileID, int64(chunks)*chunkLen) }); err != nil {
 			return err
 		}
-		for i := 0; i < perFile; i++ {
+		for i := 0; i < chunks; i++ {
 			data := fixedChunk(fmt.Sprintf("%s-%d", fileID, i))
 			if err := op(func() error {
 				h := makeChunk(t, data)
@@ -356,21 +360,104 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 		}
 	}()
 
-	errs := make(chan error, kept+garbage)
-	for g := 0; g < kept+garbage; g++ {
+	// Restore reads through its own NewReadOnly view; reads of completed kept
+	// files must never fail while compaction moves their chunks.
+	ro := readOnlyView(t, s)
+	// Count the reader's re-locations (stale location, segment removed) to
+	// prove the test exercised that path.
+	var relocations atomic.Int64
+	setRelocateHook(t, func() { relocations.Add(1) })
+	readDone := make(chan error, 1)
+	go func() {
+		var reads int
+		for {
+			select {
+			case <-stop:
+				if reads == 0 {
+					readDone <- errors.New("the reader never read a chunk")
+					return
+				}
+				readDone <- nil
+				return
+			default:
+			}
+			var hashes []string
+			if err := ro.RawDB().Model(&FileDataChunkRecord{}).
+				Where("file_id IN (SELECT file_id FROM file_data_records WHERE checksum IS NOT NULL AND file_id LIKE 'keep%')").
+				Pluck("chunk_hash", &hashes).Error; err != nil {
+				readDone <- err
+				return
+			}
+			// Locate everything first and read afterwards, like a slow
+			// restore: by the time of the read, compaction may have moved the
+			// chunk and removed the segment the location names.
+			locs := make([]pack.Location, len(hashes))
+			for i, h := range hashes {
+				loc, ok, err := ro.locate(h)
+				if err != nil || !ok {
+					readDone <- fmt.Errorf("locate %s: ok=%v err=%v", h, ok, err)
+					return
+				}
+				locs[i] = loc
+			}
+			time.Sleep(50 * time.Millisecond)
+			for i, h := range hashes {
+				var sum [32]byte
+				raw, err := hex.DecodeString(h)
+				if err != nil {
+					readDone <- err
+					return
+				}
+				copy(sum[:], raw)
+				if _, err := ro.readLocated(h, sum, locs[i]); err != nil {
+					readDone <- fmt.Errorf("read %s during compaction: %w", h, err)
+					return
+				}
+				reads++
+			}
+		}
+	}()
+
+	// Kept files are backed up once. Garbage writers keep producing files
+	// with no version until stopJunk, so segments holding kept chunks keep
+	// turning sparse and those chunks get compacted again and again while the
+	// reader reads them.
+	errs := make(chan error, kept)
+	for g := 0; g < kept; g++ {
+		go func() { errs <- backup(fmt.Sprintf("keep%d", g), true, perFile) }()
+	}
+	stopJunk := make(chan struct{})
+	junkErrs := make(chan error, garbage)
+	for g := 0; g < garbage; g++ {
 		go func() {
-			if g < kept {
-				errs <- backup(fmt.Sprintf("keep%d", g), true)
-			} else {
-				errs <- backup(fmt.Sprintf("junk%d", g), false)
+			for n := 0; ; n++ {
+				select {
+				case <-stopJunk:
+					junkErrs <- nil
+					return
+				default:
+				}
+				if err := backup(fmt.Sprintf("junk%d-%d", g, n), false, junkChunks); err != nil {
+					junkErrs <- err
+					return
+				}
 			}
 		}()
 	}
-	for g := 0; g < kept+garbage; g++ {
+	for g := 0; g < kept; g++ {
 		require.NoError(t, <-errs)
+	}
+	for deadline := time.Now().Add(10 * time.Second); relocations.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(stopJunk)
+	for g := 0; g < garbage; g++ {
+		require.NoError(t, <-junkErrs)
 	}
 	close(stop)
 	require.NoError(t, <-vacDone)
+	require.NoError(t, <-readDone)
+	assert.Positive(t, relocations.Load(), "the reader never raced a compaction")
 
 	res, err := s.VacuumOnline(context.Background(), vacBatch, time.Hour)
 	require.NoError(t, err)
@@ -401,4 +488,68 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 		}
 		assert.Equal(t, perFile, i)
 	}
+}
+
+// sparseSegmentWithHook builds a store whose segment 1 holds one live record
+// of four (so it gets compacted) and whose fsync is the given hook. It returns
+// the live chunk's hash.
+func sparseSegmentWithHook(t *testing.T, sync func(*os.File) error) (*Store, []byte) {
+	t.Helper()
+	s, err := newWithOptions(t.TempDir(), pack.Options{SegmentSize: segmentFor(4), SyncFile: sync})
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+	all := storeRaw(t, s, names("c", 4)...)
+	storeRaw(t, s, "opens segment 2")
+	require.Equal(t, uint32(2), s.log.ActiveSegment())
+	dropRows(t, s, all[1:])
+	return s, all[0]
+}
+
+func TestReclaim_FailedSyncLeavesRowsOnTheOldSegment(t *testing.T) {
+	var failSync atomic.Bool
+	s, live := sparseSegmentWithHook(t, func(f *os.File) error {
+		if failSync.Load() {
+			return errors.New("injected fsync failure")
+		}
+		return f.Sync()
+	})
+	before := chunkRow(t, s, live)
+
+	failSync.Store(true)
+	_, _, _, err := s.reclaimSegments(context.Background(), 100)
+
+	require.ErrorContains(t, err, "injected fsync failure")
+	assert.Equal(t, before, chunkRow(t, s, live), "no row may point at copies that were never made durable")
+	assert.True(t, segmentExists(t, s, 1), "the old segment still holds the only durable copy")
+	got, err := readOnlyView(t, s).ReadChunk(live)
+	require.NoError(t, err)
+	assert.Equal(t, fixedChunk("c-0"), got)
+}
+
+func TestReclaim_CopiesAreFsyncedBeforeTheMoveIsVisible(t *testing.T) {
+	var ro *Store
+	var hash string
+	var rowsOnOldAtSync atomic.Int64
+	rowsOnOldAtSync.Store(-1)
+	s, live := sparseSegmentWithHook(t, func(f *os.File) error {
+		// Another connection sees only committed rows: at fsync time the row
+		// must still point at segment 1.
+		if ro != nil && rowsOnOldAtSync.Load() < 0 {
+			var n int64
+			if err := ro.RawDB().Model(&ChunkRecord{}).Where("hash = ? AND segment = 1", hash).Count(&n).Error; err != nil {
+				return err
+			}
+			rowsOnOldAtSync.Store(n)
+		}
+		return f.Sync()
+	})
+	hash = hex.EncodeToString(live)
+	ro = readOnlyView(t, s)
+
+	_, compacted, _, err := s.reclaimSegments(context.Background(), 100)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(1), compacted)
+	assert.Equal(t, int64(1), rowsOnOldAtSync.Load(), "the move was committed before the copy was fsynced")
+	assert.NotEqual(t, int64(1), chunkRow(t, s, live).Segment)
 }
