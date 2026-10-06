@@ -209,7 +209,7 @@ immediately, the failing (partial) file is removed from disk, a `failed to resto
 logged for it, and no summary line is logged -- the same abort convention phase 1 already uses. On
 full success, a `restore complete` line reports `files_written`, `bytes_written`, and
 `skipped` (files left untouched because they already existed and `--overwrite` was false). Per-file
-success (`file written` / `file skipped, already exists`) is logged at `Debug` level only -- pass
+success (`file verified` / `file skipped, already exists`) is logged at `Debug` level only -- pass
 `--debug` to see it; it is not controlled by `--quiet`. Every created or overwritten file uses a
 fixed default permission (`0o644`, directories use `0o755`) -- real captured-permission restore is
 still unbuilt, for both files and directories.
