@@ -155,15 +155,15 @@ runs, baseline built from the tree just before the change:
 
 | Phase | Before | After | Change |
 |---|---|---|---|
-| backup-cold | 12.00 s (14.4 MB/s) | 5.35 s (32.2 MB/s) | −55% |
-| backup-warm | 7.72 s | 4.60 s | −40% |
-| restore | 0.96 s (180 MB/s) | 1.17 s (147 MB/s) | +22% (slower) |
+| backup-cold | 12.00 s (14.4 MB/s) | 5.24 s (32.9 MB/s) | −56% |
+| backup-warm | 7.72 s | 4.54 s | −41% |
+| restore | 0.96 s (180 MB/s) | 1.23 s (140 MB/s) | +28% (slower) |
 
 Server memory is unchanged (about 45-70 MB RSS). Backup got faster because the per-chunk file creation and
 the two fsynced database commits per chunk are gone: durability is paid once per file. Restore got slower
 because every chunk read is now verified against its BLAKE3 hash and looked up in the index first; the old
 path trusted whatever the file contained. That is a deliberate trade, reliability before speed: a flipped bit
-is now caught on read instead of restored. The restore is still above 140 MB/s on this machine. Wire bytes
+is now caught on read instead of restored. The restore is still about 140 MB/s on this machine. Wire bytes
 are unchanged. Remeasure with the command under [How to measure your own link](#how-to-measure-your-own-link).
 
 ## A note on the bandwidth cap

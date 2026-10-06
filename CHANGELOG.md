@@ -17,7 +17,7 @@ Linux only. A restore now marks a chunk corrupt only when its data is really los
 on a possibly transient read error; an unreadable segment no longer stops compaction or the bwfs startup; and
 SQLite now applies its busy timeout and runs with `synchronous=FULL`, which the pack ordering relies on.
 
-Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.35 s, backup-warm 7.7 s to 4.6 s, restore 0.96 s to 1.17 s (slower, because reads are now hash-verified). See docs/PERFORMANCE.md.
+Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.24 s, backup-warm 7.7 s to 4.5 s, restore 0.96 s to 1.23 s (slower, because reads are now hash-verified). See docs/PERFORMANCE.md.
 
 ## 2026-10-06 — Backup and restore statistics
 
