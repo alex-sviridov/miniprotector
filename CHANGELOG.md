@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-06 — mpbench: bandwidth cap delivered only ~57% of its rate
+
+The "restore plateau" recorded in the performance guide (restore stuck at 12–13 MB/s at 50 ms RTT
+whatever the streams or window) was a benchmark artifact, not a restore-path problem. `mpbench`'s
+proxy paced a capped link by forgetting its sleep overshoot after every block, so a 25 MB/s cap
+delivered about 14 MB/s; a plain TCP copy through the proxy showed the same, and uncapped restore
+scaled normally. The pacer now carries the overshoot forward and delivers the configured rate, with a
+regression test. Capped results change: restore at 8 streams, 50 ms, 200 Mbit/s goes from 4.7 s to
+3.1 s, a fixed `grpc_window_bytes` of 4 MiB now shows −12% restore at 8 streams (was −6%), and backup
+is within noise because it is latency-bound. The tables in the performance guide were re-measured and
+the open finding was replaced by a note. No change to `brfs`, `bwfs` or `rwfs`.
+
 ## 2026-10-05 — Performance tuning: stream and window defaults, opt-in gRPC window
 
 Using `mpbench` to look for the optimum, `default_window` is now 16 (the measured knee at 8 streams and

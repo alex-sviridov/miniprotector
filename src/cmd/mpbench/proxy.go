@@ -124,6 +124,10 @@ func (p *Proxy) handle(client net.Conn) {
 	inner.Wait()
 }
 
+// paceBurst is how far the bandwidth pacer may run ahead of (or behind) the
+// ideal schedule; it absorbs timer overshoot without changing the average rate.
+const paceBurst = 5 * time.Millisecond
+
 type block struct {
 	data []byte
 	at   time.Time
@@ -148,12 +152,21 @@ func (p *Proxy) pipe(dst, src net.Conn, counter *atomic.Int64) {
 		for b := range q {
 			sleepUntil(b.at.Add(p.delay))
 			if p.bw > 0 {
+				// nextFree is when the link finishes sending everything
+				// so far. A sleep always overshoots a little; the pacer
+				// carries that lag forward (up to paceBurst of credit
+				// after an idle spell) rather than forgetting it, and
+				// only sleeps once it is more than paceBurst ahead.
+				// Resetting nextFree to now on every block forfeited each
+				// overshoot and delivered only ~57% of the cap.
 				now := time.Now()
-				if nextFree.Before(now) {
-					nextFree = now
+				if nextFree.Before(now.Add(-paceBurst)) {
+					nextFree = now.Add(-paceBurst)
 				}
 				nextFree = nextFree.Add(time.Duration(float64(len(b.data)) / float64(p.bw) * float64(time.Second)))
-				sleepUntil(nextFree)
+				if time.Until(nextFree) > paceBurst {
+					sleepUntil(nextFree.Add(-paceBurst))
+				}
 			}
 			if _, err := dst.Write(b.data); err != nil {
 				for range q { // keep the reader from blocking

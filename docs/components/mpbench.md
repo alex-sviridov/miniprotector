@@ -116,7 +116,8 @@ build as described above.
 A userspace TCP proxy between the clients and `bwfs`. It delays each direction by half of `--rtt`
 using a timestamped queue — blocks that arrive together leave together — so it models propagation
 delay without serializing a stream, which would hide exactly the pipelining gains being measured.
-`--bandwidth` is a per-direction cap. TLS passes through untouched. It needs no root and works
+`--bandwidth` is a per-direction cap, paced per block with a small burst allowance (5 ms) so timer
+overshoot is carried forward; an earlier pacer discarded it and delivered only ~57% of the cap. TLS passes through untouched. It needs no root and works
 anywhere Go runs. It does not model jitter or loss; use `tc netem` for those.
 
 ## See Also

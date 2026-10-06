@@ -31,13 +31,13 @@ Number of files `brfs` (backup) or `rwfs` (restore, verify) process concurrently
 for **small-file workloads**: each small file is one chunk, so the window never fills and each file
 costs about two round trips, regardless of window. More streams overlap those round trips.
 
-Measured at 50 ms RTT, mixed dataset (120 files, 59.8 MB):
+Measured at 50 ms RTT, 200 Mbit/s cap, mixed dataset (120 files, 59.8 MB), window 16:
 
 | streams | backup-cold | backup-warm | restore |
 |---|---|---|---|
-| 4 | 9.0 s | 5.8 s | 5.3 s |
-| 8 | 5.2 s (−42%) | 3.3 s (−42%) | 4.8 s (−11%) |
-| 16 | 4.6 s (−49%) | 3.0 s (−49%) | 4.7 s (−13%) |
+| 4 | 7.7 s | 5.3 s | 3.7 s |
+| 8 | 4.7 s (−39%) | 3.3 s (−38%) | 3.1 s (−16%) |
+| 16 | 4.2 s (−45%) | 2.8 s (−48%) | 3.1 s (−16%) |
 
 On 200 small files (1–32 KB) at 50 ms, 4 streams cut every phase by 49% and 8 streams by 73%
 against 2, close to linear. On a LAN (RTT 0) 4, 8 and 16 streams are the same within noise, so a higher value costs
@@ -59,10 +59,10 @@ streams, 50 ms RTT, 200 Mbit/s cap:
 
 | window | backup-cold | backup-warm |
 |---|---|---|
-| 4 | 6.6 s | 3.95 s |
-| 8 | 5.4 s (−18%) | 3.5 s (−12%) |
-| 16 | 5.1 s (−22%) | 3.3 s (−16%) |
-| 32 | 5.2 s (−21%) | 3.2 s (−18%) |
+| 4 | 6.2 s | 3.9 s |
+| 8 | 5.0 s (−19%) | 3.3 s (−16%) |
+| 16 | 4.9 s (−21%) | 3.3 s (−16%) |
+| 32 | 4.9 s (−21%) | 3.1 s (−21%) |
 
 With one stream and no other parallelism the window is worth much more: at 50 ms RTT, `--window 8`
 cut a 60 MB cold backup from 54 s to 17 s and a warm (hash-only) backup from 32 s to 11 s.
@@ -82,10 +82,11 @@ one stream, 100 ms RTT, 28.7 MB restore: 3.23 s default, **2.44 s with 4 MiB (�
 
 It is **off by default** because:
 
-- With more streams the gain is small: at 8 streams and 50 ms, any fixed size from 1 to 16 MiB gave
-  4.5 s against 4.8 s (−6%, near noise).
+- With more streams the gain is smaller: at 8 streams, 50 ms and a 200 Mbit/s cap, 4 and 16 MiB gave
+  2.7 s against 3.1 s by default (−12%).
 - A fixed window smaller than the link's bandwidth-delay product is *slower* than the default (1 MiB
-  at 100 ms: 4.41 s against 3.23 s), and setting any value turns off gRPC's automatic sizing.
+  at 100 ms, one stream: 4.41 s against 3.23 s; 1 MiB at 8 streams, 50 ms, 200 Mbit/s: 4.1 s against
+  3.1 s), and setting any value turns off gRPC's automatic sizing.
 
 Only set it after measuring: pick a value of at least `bandwidth × RTT` and confirm with
 `mpbench --conf grpc_window_bytes=<n>`.
@@ -99,27 +100,33 @@ Only set it after measuring: pick a value of at least `bandwidth × RTT` and con
   [issue #35](https://github.com/alex-sviridov/miniprotector/issues/35).
 - **Pipelining across files** would let one stream hide the per-file round trips that streams hide
   today. See [issue #36](https://github.com/alex-sviridov/miniprotector/issues/36).
-- **Restore plateau (open finding).** At 50 ms RTT restore stops improving at about 12–13 MB/s
-  (about 4.7 s for 60 MB) from 8 streams up, whatever the window or `grpc_window_bytes`, while at
-  zero latency it takes 0.28 s. Something in the restore path still costs tens of round trips
-  that streams do not hide. The cause is not identified yet.
 
 ## Net effect of the shipped defaults
 
 The code before the sliding window with the old shipped setting (4 streams, no window) against the
 current defaults (8 streams, window 16), same dataset and seed (120 files, 59.8 MB, `mixed`), median
-of 2 runs:
+of 2 runs (numbers re-measured after the `mpbench` bandwidth-cap fix, see below):
 
 | Network | Phase | Before | After | Change |
 |---|---|---|---|---|
-| 50 ms RTT, 200 Mbit/s | backup-cold | 28.0 s | 5.2 s | −82% |
-| | backup-warm | 16.7 s | 3.4 s | −80% |
-| | restore | 5.3 s | 4.8 s | −9% |
-| LAN (RTT 0) | backup-cold | 3.5 s | 3.7 s | +6% (within the ±6% run-to-run spread seen on a LAN) |
-| | backup-warm | 2.5 s | 2.6 s | +1% |
-| | restore | 0.32 s | 0.30 s | −6% |
+| 50 ms RTT, 200 Mbit/s | backup-cold | 27.1 s | 5.0 s | −82% |
+| | backup-warm | 16.6 s | 3.3 s | −80% |
+| | restore | 3.7 s | 3.1 s | −16% |
+| LAN (RTT 0) | backup-cold | 3.6 s | 3.7 s | +1% (within the ±6% run-to-run spread seen on a LAN) |
+| | backup-warm | 2.6 s | 2.7 s | +3% |
+| | restore | 0.31 s | 0.26 s | −16% |
 
 Bytes on the wire are unchanged: the gain is all latency hidden, none of it data saved.
+
+## A note on the bandwidth cap
+
+Until 2026-10-06 `mpbench`'s bandwidth cap delivered only about 57% of the configured rate (the pacer
+lost its sleep overshoot on every block), so restore under a cap looked like it plateaued at 12–13 MB/s
+whatever the streams or window. That was the benchmark, not the restore path: with no cap, restore
+scaled normally (7.7 s at 1 stream, 1.8 s at 8, 1.4 s at 16 at 50 ms RTT). Capped results from before
+that date are not comparable with current ones; the tables on this page were re-measured. Backup was
+barely affected because it is latency-bound, not bandwidth-bound. A capped restore now reaches about
+75–80% of the cap at 200 Mbit/s; the rest is connection setup, resolution and the last file's tail.
 
 ## How to measure your own link
 
