@@ -178,5 +178,7 @@ func vacuumOnce(ctx context.Context, logger *slog.Logger, store storage.BackupSt
 		"orphaned_file_data_removed", res.OrphanedFileDataRemoved,
 		"orphaned_chunk_links_removed", res.OrphanedChunkLinksRemoved,
 		"orphaned_chunks_removed", res.OrphanedChunksRemoved,
+		"segments_removed", res.SegmentsRemoved,
+		"segments_compacted", res.SegmentsCompacted,
 		"bytes_reclaimed", res.BytesReclaimed)
 }

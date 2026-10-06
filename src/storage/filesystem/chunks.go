@@ -114,31 +114,35 @@ func (s *Store) MarkChunkCorrupted(chunkHash []byte) error {
 		return err
 	}
 	hexHash := hex.EncodeToString(chunkHash)
+	return s.db.Transaction(func(tx *gorm.DB) error { return dropChunk(tx, hexHash) })
+}
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var links []FileDataChunkRecord
-		if err := tx.Where("chunk_hash = ?", hexHash).Find(&links).Error; err != nil {
-			return fmt.Errorf("find files depending on chunk: %w", err)
-		}
+// dropChunk deletes a chunk's row and links and invalidates every file data
+// that used it, so those files are uploaded afresh by the next backup. It is
+// how both MarkChunkCorrupted and compaction react to unusable bytes.
+func dropChunk(tx *gorm.DB, hexHash string) error {
+	var links []FileDataChunkRecord
+	if err := tx.Where("chunk_hash = ?", hexHash).Find(&links).Error; err != nil {
+		return fmt.Errorf("find files depending on chunk: %w", err)
+	}
 
-		if err := tx.Where("chunk_hash = ?", hexHash).Delete(&FileDataChunkRecord{}).Error; err != nil {
-			return fmt.Errorf("remove chunk links: %w", err)
-		}
-		if err := tx.Where("hash = ?", hexHash).Delete(&ChunkRecord{}).Error; err != nil {
-			return fmt.Errorf("remove chunk record: %w", err)
-		}
+	if err := tx.Where("chunk_hash = ?", hexHash).Delete(&FileDataChunkRecord{}).Error; err != nil {
+		return fmt.Errorf("remove chunk links: %w", err)
+	}
+	if err := tx.Where("hash = ?", hexHash).Delete(&ChunkRecord{}).Error; err != nil {
+		return fmt.Errorf("remove chunk record: %w", err)
+	}
 
-		fileIDs := make([]string, len(links))
-		for i, link := range links {
-			fileIDs[i] = link.FileID
+	fileIDs := make([]string, len(links))
+	for i, link := range links {
+		fileIDs[i] = link.FileID
+	}
+	if len(fileIDs) > 0 {
+		if err := tx.Where("file_id IN ?", fileIDs).Delete(&FileDataRecord{}).Error; err != nil {
+			return fmt.Errorf("invalidate dependent file data: %w", err)
 		}
-		if len(fileIDs) > 0 {
-			if err := tx.Where("file_id IN ?", fileIDs).Delete(&FileDataRecord{}).Error; err != nil {
-				return fmt.Errorf("invalidate dependent file data: %w", err)
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // ReadChunk returns the chunk's data after the pack layer verified its hash.

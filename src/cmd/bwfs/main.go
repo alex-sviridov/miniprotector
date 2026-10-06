@@ -84,6 +84,8 @@ func main() {
 			"orphaned_chunk_links_removed", vacuumResult.OrphanedChunkLinksRemoved,
 			"orphaned_chunks_removed", vacuumResult.OrphanedChunksRemoved,
 			"incomplete_file_data_removed", vacuumResult.IncompleteFileData,
+			"segments_removed", vacuumResult.SegmentsRemoved,
+			"segments_compacted", vacuumResult.SegmentsCompacted,
 			"bytes_reclaimed", vacuumResult.BytesReclaimed,
 		)
 

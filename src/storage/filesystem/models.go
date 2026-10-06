@@ -8,7 +8,7 @@ import "time"
 type ChunkRecord struct {
 	Hash      string `gorm:"primaryKey"`
 	Size      int64
-	Segment   int64
+	Segment   int64 `gorm:"index"` // indexed: compaction selects a segment's rows
 	Offset    int64
 	CreatedAt time.Time
 }

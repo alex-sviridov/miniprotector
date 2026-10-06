@@ -201,7 +201,7 @@ func TestVacuumOnline_ReclaimsDataLinksChunksAndFilesOfRemovedVersions(t *testin
 	assert.Equal(t, int64(1), res.OrphanedFileDataRemoved)
 	assert.Equal(t, int64(2), res.OrphanedChunkLinksRemoved)
 	assert.Equal(t, int64(1), res.OrphanedChunksRemoved)
-	assert.Equal(t, int64(len("only-in-gone")), res.BytesReclaimed)
+	assert.Zero(t, res.BytesReclaimed, "dead bytes stay in the active segment until it is compacted")
 	assert.False(t, chunkKnown(s, gone[0]), "chunk used only by the removed file is no longer indexed")
 	assert.True(t, chunkKnown(s, gone[1]), "a chunk shared with a kept file stays")
 	assert.True(t, chunkKnown(s, kept[1]))

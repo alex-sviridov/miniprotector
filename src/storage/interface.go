@@ -119,8 +119,10 @@ type VacuumResult struct {
 	OrphanedFileDataRemoved   int64 // FileData with no FileVersions
 	OrphanedChunkLinksRemoved int64 // FileDataChunkRecord rows with no FileDataRecord reference
 	OrphanedChunksRemoved     int64 // Chunks with no FileData references
-	BytesReclaimed            int64 // Storage space freed
+	BytesReclaimed            int64 // Disk space freed: bytes of removed segments minus bytes compaction copied
 	IncompleteFileData        int64 // FileData with CRC32=0 (optional cleanup)
+	SegmentsRemoved           int64 // Sealed pack segments deleted because no chunk row referenced them
+	SegmentsCompacted         int64 // Sealed pack segments whose live chunks were moved, then deleted
 }
 
 // CleanupResult reports what CleanupExpired did (or, with DryRun, would do).

@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -35,8 +36,9 @@ func (s *Store) StoreInfo() (*storage.StoreInfo, error) {
 	}, nil
 }
 
-// Vacuum removes everything no file version references, in one transaction.
-// It runs at startup, before backups are served.
+// Vacuum removes everything no file version references, in one transaction,
+// then reclaims pack segment space. It runs at startup, before backups are
+// served.
 func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 	result := &storage.VacuumResult{}
 
@@ -87,5 +89,13 @@ func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 		return nil, err
 	}
 
+	// Then free the disk space: this also removes segment files with no rows
+	// that a crash left behind (e.g. after compaction committed the moves but
+	// before it deleted the old file).
+	result.SegmentsRemoved, result.SegmentsCompacted, result.BytesReclaimed, err =
+		s.reclaimSegments(context.Background(), reclaimBatchSize)
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
