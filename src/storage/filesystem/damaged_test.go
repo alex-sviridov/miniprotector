@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alex-sviridov/miniprotector/storage"
+	"github.com/alex-sviridov/miniprotector/storage/pack"
 )
 
 // Damaged file data: a chunk that turns out to be unusable flags the FileData
@@ -230,4 +233,98 @@ func TestOpen_AddsDamagedAtToAnExistingStore(t *testing.T) {
 	exists, err := s.FileDataExists(damagedFileA)
 	require.NoError(t, err)
 	assert.True(t, exists)
+}
+
+// manyDependents is past SQLite's 32,766 bound-variable limit: a chunk shared
+// by that many files (a zero block, the same file on many hosts) must still
+// be droppable.
+const manyDependents = 33_000
+
+// addDependents links n extra finalized files to the chunk with two
+// set-based inserts, so the test stays fast and binds no per-row variables.
+func addDependents(t *testing.T, s *Store, hash []byte, n int) {
+	t.Helper()
+	const seq = "WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < ?) "
+	require.NoError(t, s.RawDB().Exec(seq+
+		"INSERT INTO file_data_records (uuid, file_id, source_host, path, mtime, size, checksum, chunk_count, created_at) "+
+		"SELECT 'many-' || i, 'fs://hosta:f:/many/' || i || ':1', 'hosta', '/many/' || i, 1, 1, x'01', 1, ? FROM seq",
+		n, time.Now()).Error)
+	require.NoError(t, s.RawDB().Exec(seq+
+		"INSERT INTO file_data_chunk_records (file_id, chunk_hash, `index`) "+
+		"SELECT 'fs://hosta:f:/many/' || i || ':1', ?, 0 FROM seq",
+		n, hex.EncodeToString(hash)).Error)
+}
+
+func damagedCount(t *testing.T, s *Store) int64 {
+	t.Helper()
+	var n int64
+	require.NoError(t, s.RawDB().Model(&FileDataRecord{}).Where("damaged_at IS NOT NULL").Count(&n).Error)
+	return n
+}
+
+func TestMarkChunkCorrupted_ChunkSharedByMoreFilesThanSQLiteVariables(t *testing.T) {
+	s := newTestStore(t)
+	hashes := writeFile(t, s, damagedFileA, []byte("shared by very many files"))
+	addDependents(t, s, hashes[0], manyDependents)
+
+	require.NoError(t, s.MarkChunkCorrupted(hashes[0]))
+
+	assert.Equal(t, int64(manyDependents+1), damagedCount(t, s))
+	assert.False(t, chunkKnown(s, hashes[0]))
+	assert.Zero(t, linkCount(t, s, "chunk_hash = ?", hex.EncodeToString(hashes[0])))
+}
+
+func TestReclaim_CorruptRecordSharedByMoreFilesThanSQLiteVariables(t *testing.T) {
+	s := newSmallStore(t, 6)
+	require.NoError(t, s.CreateFileData("F", chunkLen))
+	all := storeRaw(t, s, names("c", 6)...)
+	bad := all[0]
+	require.NoError(t, s.LinkChunkToFileData(bad, "F", 0))
+	require.NoError(t, s.FinalizeFileData("F", []byte{1}))
+	addDependents(t, s, bad, manyDependents)
+	storeRaw(t, s, "opens segment 2")
+	dropRows(t, s, all[2:])
+
+	rec := chunkRow(t, s, bad)
+	f, err := os.OpenFile(filepath.Join(s.packDir(), segmentName(rec.Segment)), os.O_RDWR, 0)
+	require.NoError(t, err)
+	_, err = f.WriteAt([]byte{'X'}, rec.Offset+pack.HeaderSize)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	_, compacted, _, err := s.reclaimSegments(context.Background(), 100)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(1), compacted)
+	assert.Equal(t, int64(manyDependents+1), damagedCount(t, s))
+	assert.False(t, chunkKnown(s, bad))
+}
+
+func TestMarkChunkCorrupted_LogsEachPathOnce(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s := newTestStore(t)
+	// Two contents of the same path (different mtime) sharing a chunk.
+	hashes := writeFile(t, s, "fs://hosta:f:/data/twice.txt:100", []byte("same block"))
+	writeFile(t, s, "fs://hosta:f:/data/twice.txt:200", []byte("same block"))
+
+	require.NoError(t, s.MarkChunkCorrupted(hashes[0]))
+
+	out := buf.String()
+	assert.Contains(t, out, "file_versions_damaged=2")
+	assert.Equal(t, 1, bytes.Count([]byte(out), []byte("/data/twice.txt")), out)
+}
+
+func TestStoreInfo_ExcludesDamagedFileData(t *testing.T) {
+	s := newTestStore(t)
+	hashes := writeFile(t, s, damagedFileA, []byte("will be damaged"))
+	writeFile(t, s, damagedFileB, []byte("stays healthy"))
+	require.NoError(t, s.MarkChunkCorrupted(hashes[0]))
+
+	info, err := s.StoreInfo()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), info.TotalFileData)
 }

@@ -18,7 +18,8 @@ func (s *Store) StoreInfo() (*storage.StoreInfo, error) {
 	if err := s.db.Model(&FileVersionRecord{}).Count(&totalVersions).Error; err != nil {
 		return nil, err
 	}
-	if err := s.db.Model(&FileDataRecord{}).Where("checksum IS NOT NULL").Count(&totalFileData).Error; err != nil {
+	// Damaged file data is still stored but no longer usable content: not counted.
+	if err := s.db.Model(&FileDataRecord{}).Where("checksum IS NOT NULL AND damaged_at IS NULL").Count(&totalFileData).Error; err != nil {
 		return nil, err
 	}
 	if err := s.db.Model(&ChunkRecord{}).Count(&totalChunks).Error; err != nil {

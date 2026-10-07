@@ -174,28 +174,19 @@ func (d damage) log() {
 // their damaged_at, the time the damage was first found.
 func dropChunk(tx *gorm.DB, hexHash string) (damage, error) {
 	d := damage{hash: hexHash}
-	var fileIDs []string
-	if err := tx.Model(&FileDataChunkRecord{}).Where("chunk_hash = ?", hexHash).
-		Distinct().Pluck("file_id", &fileIDs).Error; err != nil {
-		return d, fmt.Errorf("find files depending on chunk: %w", err)
-	}
-
-	if err := tx.Where("chunk_hash = ?", hexHash).Delete(&FileDataChunkRecord{}).Error; err != nil {
-		return d, fmt.Errorf("remove chunk links: %w", err)
-	}
-	if err := tx.Where("hash = ?", hexHash).Delete(&ChunkRecord{}).Error; err != nil {
-		return d, fmt.Errorf("remove chunk record: %w", err)
-	}
-	if len(fileIDs) == 0 {
-		return d, nil
-	}
-
-	// Collect the paths for the report before flagging, while "not yet
-	// flagged" still tells which rows this call damages.
+	// The dependents are selected by subquery, never collected into a Go
+	// list: a chunk shared by more files than SQLite's bound-variable limit
+	// (a zero block, one file on many hosts) must still be droppable. Both
+	// statements run before the links go, while the links still name them.
 	newlyDamaged := func() *gorm.DB {
-		return tx.Model(&FileDataRecord{}).Where("file_id IN ? AND damaged_at IS NULL", fileIDs)
+		return tx.Model(&FileDataRecord{}).Where("damaged_at IS NULL AND file_id IN (?)",
+			tx.Model(&FileDataChunkRecord{}).Select("file_id").Where("chunk_hash = ?", hexHash))
 	}
-	if err := newlyDamaged().Order("path").Limit(maxDamagedPaths).Pluck("path", &d.paths).Error; err != nil {
+	// Paths for the report, taken while "not yet flagged" still tells which
+	// rows this call damages. Several contents of one path share it: list it
+	// once.
+	if err := newlyDamaged().Distinct("path").Order("path").Limit(maxDamagedPaths).
+		Pluck("path", &d.paths).Error; err != nil {
 		return d, fmt.Errorf("find dependent file data: %w", err)
 	}
 	res := newlyDamaged().Update("damaged_at", time.Now())
@@ -203,6 +194,13 @@ func dropChunk(tx *gorm.DB, hexHash string) (damage, error) {
 		return d, fmt.Errorf("flag dependent file data damaged: %w", res.Error)
 	}
 	d.flagged = res.RowsAffected
+
+	if err := tx.Where("chunk_hash = ?", hexHash).Delete(&FileDataChunkRecord{}).Error; err != nil {
+		return d, fmt.Errorf("remove chunk links: %w", err)
+	}
+	if err := tx.Where("hash = ?", hexHash).Delete(&ChunkRecord{}).Error; err != nil {
+		return d, fmt.Errorf("remove chunk record: %w", err)
+	}
 	return d, nil
 }
 
