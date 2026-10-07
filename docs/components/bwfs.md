@@ -286,11 +286,14 @@ whose files were all flagged before is not reported again.
   period).
 - `damaged_at` is nullable; opening an older store adds the column and treats existing rows as
   healthy.
-- **Replica reader.** `damaged_at` is indexed, and `ReplicaReader.DamagedFileIDs` lists, in pages
-  ordered by `file_id`, the file ids that are currently damaged: some row is flagged and no row of
-  the same `file_id` is a healthy finalized copy (an in-flight re-upload does not count).
-  `catalogsync` reads this set to mirror the damage into the catalog (see
-  [catalogsync](catalogsync.md#damaged-files)).
+- **Replica reader.** `ReplicaReader.DamagedFileIDs` lists, in pages ordered by `file_id`, the file
+  ids that are currently damaged: some row is flagged and no row of the same `file_id` is a healthy
+  finalized copy (an in-flight re-upload does not count). `catalogsync` reads this set to mirror the
+  damage into the catalog (see [catalogsync](catalogsync.md#damaged-files)). It is served by a
+  partial index on `file_id` covering only damaged rows (`idx_file_data_damaged_file_id`), so each
+  page seeks to its cursor and reads only its own rows. The index is created on bwfs startup by
+  AutoMigrate (a one-time `CREATE INDEX` on large stores); until bwfs has migrated, `catalogsync`'s
+  damage pass fails and retries with backoff.
 
 ### Vacuum and compaction
 
