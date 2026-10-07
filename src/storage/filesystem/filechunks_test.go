@@ -162,3 +162,64 @@ func TestReadLocatedChunk_SegmentGoneAndNotMovedIsCorrupt(t *testing.T) {
 	assert.ErrorIs(t, err, storage.ErrChunkCorrupt)
 	assert.ErrorIs(t, err, pack.ErrSegmentMissing)
 }
+
+// The snapshot's "not found" is not final: a backup may store the chunk
+// again after LocateFileChunks, and a healthy chunk must then be read, not
+// reported lost (restore would mark it).
+func TestReadLocatedChunk_RowCommittedAfterSnapshotIsRead(t *testing.T) {
+	s := newTestStore(t)
+	data := []byte("chunk stored again after the snapshot")
+	hashes := writeFile(t, s, "A", data)
+	row := chunkRow(t, s, hashes[0])
+	require.NoError(t, s.RawDB().Where("hash = ?", row.Hash).Delete(&ChunkRecord{}).Error)
+	ro := readOnlyView(t, s)
+	chunks, err := ro.LocateFileChunks("A")
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+
+	require.NoError(t, s.RawDB().Create(&row).Error)
+
+	got, err := ro.ReadLocatedChunk(chunks[0])
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}
+
+func TestReadLocatedChunk_RowRepairedAfterSnapshotIsRead(t *testing.T) {
+	s := newTestStore(t)
+	data := []byte("chunk whose broken row gets repaired")
+	hashes := writeFile(t, s, "A", data)
+	require.NoError(t, s.RawDB().Model(&ChunkRecord{}).Where("hash = ?", hex.EncodeToString(hashes[0])).
+		Update("segment", int64(1)<<40).Error)
+	ro := readOnlyView(t, s)
+	chunks, err := ro.LocateFileChunks("A")
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+
+	// StoreChunk treats the invalid row as unknown, appends the chunk again
+	// and the flush overwrites the row with the new location.
+	require.NoError(t, s.StoreChunk(hashes[0], data))
+	require.NoError(t, s.flush())
+
+	got, err := ro.ReadLocatedChunk(chunks[0])
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}
+
+// Like locate, LocateFileChunks prefers a pending location over the row: a
+// chunk re-appended to repair an invalid row is pending until the flush.
+func TestLocateFileChunks_PendingLocationWinsOverRow(t *testing.T) {
+	s := newTestStore(t)
+	data := []byte("re-appended, not yet flushed")
+	hashes := writeFile(t, s, "A", data)
+	require.NoError(t, s.RawDB().Model(&ChunkRecord{}).Where("hash = ?", hex.EncodeToString(hashes[0])).
+		Update("segment", int64(1)<<40).Error)
+	require.NoError(t, s.StoreChunk(hashes[0], data))
+
+	chunks, err := s.LocateFileChunks("A")
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+	require.NoError(t, chunks[0].err, "the pending location is used, not the invalid row")
+	got, err := s.ReadLocatedChunk(chunks[0])
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}

@@ -19,7 +19,8 @@ import (
 // restoreserver does. Each sub-benchmark times one part of ReadChunk so their
 // shares of the whole can be compared. The writer drops the segments from the
 // page cache after fsync, so a restore right after a backup reads from disk:
-// FullCold measures that, the rest run warm. The parts do not add up: run
+// FullCold measures that, the rest run warm (FullCold measures nothing
+// different if TMPDIR is a tmpfs, which has no backing disk to read from). The parts do not add up: run
 // alone, a lookup's working set stays in the CPU caches, interleaved with
 // 64 KiB reads and hashing it does not, so InSitu times both halves inside
 // one ReadChunk-shaped loop. Run with

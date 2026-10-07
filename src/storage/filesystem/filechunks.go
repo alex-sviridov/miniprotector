@@ -18,8 +18,7 @@ type FileChunk struct {
 	loc pack.Location
 	// err is set when the chunk could not be located: storage.ErrChunkNotFound
 	// for a link without a chunk row, or pack.ErrCorrupt for a row whose
-	// location is invalid. ReadLocatedChunk returns it, classified like
-	// ReadChunk's errors.
+	// location is invalid. ReadLocatedChunk then looks the chunk up again.
 	err error
 }
 
@@ -41,8 +40,9 @@ type fileChunkRow struct {
 //
 // A link whose chunk row is missing is kept, in its place, as a not-found
 // entry: a backup may have linked a chunk that was dropped concurrently, and
-// the restore must report that chunk (and mark it, so the file is uploaded
-// again) rather than silently produce a shorter file.
+// the restore must report that chunk if it is still missing when read (and
+// mark it, so the file is uploaded again) rather than silently produce a
+// shorter file.
 //
 // The locations are a snapshot: compaction may move a chunk afterwards.
 // ReadLocatedChunk handles that.
@@ -52,7 +52,7 @@ func (s *Store) LocateFileChunks(fileID string) ([]FileChunk, error) {
 		"c.hash, c.segment, c.`offset`, c.size "+
 		"FROM file_data_chunk_records l "+
 		"LEFT JOIN chunk_records c ON c.hash = l.chunk_hash "+
-		"WHERE l.file_id = ? ORDER BY l.`index`", fileID).
+		"WHERE l.file_id = ? ORDER BY l.`index`, l.chunk_hash", fileID).
 		Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("locate file chunks: %w", err)
@@ -65,23 +65,19 @@ func (s *Store) LocateFileChunks(fileID string) ([]FileChunk, error) {
 			return nil, fmt.Errorf("decode chunk hash %q: %w", r.LinkHash, err)
 		}
 		c := FileChunk{Hash: hash, Index: r.Index}
-		switch {
-		case r.Hash.Valid:
+		// Same order as locate: a pending location (writable store only)
+		// is newer than any row, e.g. a re-append repairing an invalid row.
+		if loc, ok := s.pending.lookup(r.LinkHash); ok {
+			c.loc = loc
+		} else if r.Hash.Valid {
 			c.loc, c.err = rowLocation(ChunkRecord{
 				Hash:    r.Hash.String,
 				Segment: r.Segment.Int64,
 				Offset:  r.Offset.Int64,
 				Size:    r.Size.Int64,
 			})
-		default:
-			// Not in the database; a writable store may still hold it as
-			// pending (a read-only one never does).
-			loc, ok := s.pending.lookup(r.LinkHash)
-			if ok {
-				c.loc = loc
-			} else {
-				c.err = storage.ErrChunkNotFound
-			}
+		} else {
+			c.err = storage.ErrChunkNotFound
 		}
 		chunks[i] = c
 	}
@@ -94,13 +90,18 @@ func (s *Store) LocateFileChunks(fileID string) ([]FileChunk, error) {
 // store's guard), so readLocated looks the chunk up again in the database
 // rather than trusting the stale location, and only a chunk whose row still
 // points at the missing segment is reported as lost.
+//
+// A snapshot entry that could not be located is not trusted either: a
+// backup may have stored the chunk again, or StoreChunk repaired its invalid
+// row, after the snapshot. It is looked up afresh with ReadChunk, so only a
+// chunk that is still missing or broken when read is reported (and marked).
 func (s *Store) ReadLocatedChunk(c FileChunk) ([]byte, error) {
 	var sum [32]byte
 	if len(c.Hash) != len(sum) {
 		return nil, storage.ErrChunkNotFound
 	}
 	if c.err != nil {
-		return nil, classifyRead(c.err)
+		return s.ReadChunk(c.Hash)
 	}
 	copy(sum[:], c.Hash)
 	data, err := s.readLocated(hex.EncodeToString(c.Hash), sum, c.loc)

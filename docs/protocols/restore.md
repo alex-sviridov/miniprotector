@@ -10,7 +10,8 @@ chunk and heal it (see [Error Handling](#error-handling)).
 
 `bwfs` locates all of a file's chunks with one database query (the file's links, in index
 order, left-joined to their chunk rows) and then reads each chunk from its segment. A link
-whose chunk row is gone stays in the list and fails at its position, which marks it. The
+whose chunk row is gone stays in the list; it is looked up again when read and, if still
+missing, fails at its position, which marks it. The
 restore does not hold the store's guard, so compaction may move a chunk after that query;
 a read that finds its segment gone looks the chunk up again instead of trusting the stale
 location.
