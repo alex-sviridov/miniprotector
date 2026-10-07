@@ -26,6 +26,13 @@ type FileDataRecord struct {
 	Checksum   []byte
 	ChunkCount int
 	CreatedAt  time.Time
+	// DamagedAt is set when a chunk of this file data was found unusable
+	// (MarkChunkCorrupted). The row is kept rather than deleted so the loss
+	// stays visible to restore and list until the versions referencing it
+	// expire; dedup ignores it, so the next backup uploads the file again.
+	// NULL = healthy. Nullable, so AutoMigrate adds it to existing stores
+	// without a backfill.
+	DamagedAt *time.Time
 }
 
 type FileDataChunkRecord struct {

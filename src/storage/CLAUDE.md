@@ -27,5 +27,7 @@ This storage system prioritizes **simplicity and understandability** over premat
   record is `MPKR | len | BLAKE3 | data`. SQLite (`chunk_records`) holds each chunk's segment and offset
 - Reads verify the BLAKE3 hash; opening recovers the last segment (torn tail truncated)
 - Vacuum deletes orphan rows, then compacts sealed segments under 50% live and removes dead ones
+- An unusable chunk (`MarkChunkCorrupted`, or a bad record found by compaction) loses its row and links, but the
+  `FileData` that used it is flagged (`damaged_at`), not deleted; dedup and `FileData()` ignore flagged rows
 - Legacy `chunks/` stores are rejected (no migration); Linux only
 - BLAKE3 provides fast, secure, and parallel hashing

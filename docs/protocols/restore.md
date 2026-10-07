@@ -82,8 +82,8 @@ the only legitimate caller. See
 | Send error (network) | stream terminates; client retries entire `RestoreFile` call |
 
 When the chunk is missing or corrupt (and only then), bwfs also marks it corrupted server-side (deletes its
-DB records, and invalidates the `FileData` of every file
-that referenced it) before returning the `Internal` error — see the [backup
+chunk record and links, and flags the `FileData` of every file that referenced it as damaged)
+before returning the `Internal` error — see the [backup
 protocol](./backup.md)'s "How does the system recover from a corrupted chunk?" section for
 the full recovery rationale. A `restore` or `verify` run doubles as the trigger for this
 self-healing: the next backup re-uploads the affected files. Other read errors may be transient, so

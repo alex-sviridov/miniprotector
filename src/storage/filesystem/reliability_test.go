@@ -154,7 +154,7 @@ func TestFinalizeFileData_FailsWhenTheFileDataVanished(t *testing.T) {
 	h := makeChunk(t, []byte("x"))
 	require.NoError(t, s.StoreChunk(h, []byte("x")))
 	require.NoError(t, s.LinkChunkToFileData(h, "F", 0))
-	// Corruption handling dropped the chunk and with it the file in transfer.
+	// Corruption handling dropped the chunk and flagged the file in transfer.
 	require.NoError(t, s.MarkChunkCorrupted(h))
 
 	err := s.FinalizeFileData("F", []byte{1})

@@ -542,7 +542,7 @@ func TestMarkChunkCorrupted_TolerantOfMissingSegment(t *testing.T) {
 	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
 }
 
-func TestMarkChunkCorrupted_InvalidatesDependentFileData(t *testing.T) {
+func TestMarkChunkCorrupted_DependentFileDataNoLongerDeduplicates(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk shared by a finalized file")
 	hash := makeChunk(t, data)
@@ -861,7 +861,7 @@ func TestMarkChunkCorrupted_ConcurrentWithNewLink_NoOrphanedFileData(t *testing.
 
 		exists, err := store.FileDataExists(newFileID)
 		if linkErr != nil {
-			// MarkChunkCorrupted won and dropped the file mid-transfer:
+			// MarkChunkCorrupted won and flagged the file mid-transfer:
 			// finalize must say so instead of pretending the file is stored.
 			require.ErrorContains(t, linkErr, "no longer exists", "iteration %d", i)
 			require.NoError(t, err)

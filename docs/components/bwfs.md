@@ -252,9 +252,32 @@ an error. There is no migration: start a fresh store.
 - Read failures are classified. Lost data -- a hash or header mismatch, a damaged index row, or a
   segment that is still missing after re-locating -- is `storage.ErrChunkCorrupt`. At restore or
   verify, only that or a chunk that is no longer indexed (`ErrChunkNotFound`) marks the chunk
-  corrupt (rows dropped, dependent `FileData` invalidated, healed by the next backup; the bytes stay
-  behind as dead space). Any other read error (I/O error, too many open files, database busy) may be
+  corrupt: its chunk row and links are dropped (the bytes stay behind as dead space) and every
+  dependent `FileData` is flagged damaged -- see "Damaged file data" below. Any other read error (I/O error, too many open files, database busy) may be
   transient: it fails the restore request and drops nothing.
+
+### Damaged file data
+
+Marking a chunk corrupt (`MarkChunkCorrupted`, at restore or verify, or compaction finding a bad
+record) does not delete the files that used it. Their `file_data_records` rows get `damaged_at` set
+(the time the damage was first found; a row already flagged keeps it), so the loss stays recorded
+instead of the file silently disappearing from the store. Only the bad chunk's row and links are
+dropped; the file's other links stay, because they are keyed by `file_id` and a healthy re-upload
+of the same file shares them. bwfs logs one Error line `chunk marked corrupt` with `chunk_hash`,
+`file_versions_damaged` (the number of `FileData` rows newly flagged) and up to 5 `paths`; a chunk
+whose files were all flagged before is not reported again.
+
+- **Dedup ignores damaged data.** `FileDataExists` and `FileData` only see rows with
+  `damaged_at IS NULL`, so the next backup of an unchanged file uploads it again (chunk-level dedup
+  still skips its intact chunks). The re-upload is a newer `FileData` for the same `file_id`, and
+  the resolver's and `bwfs list`'s "latest finalized per `file_id`" picks it, so the file heals.
+- **A file in transfer** whose chunk is marked corrupt is flagged too; its `FinalizeFileData` then
+  fails ("file data no longer exists") instead of recording a version for data with a lost chunk.
+- **Removal.** A damaged row is removed by vacuum like any other `FileData`: once no file version
+  references its `file_id` (or, if it was never finalized, as incomplete data after the grace
+  period).
+- `damaged_at` is nullable; opening an older store adds the column and treats existing rows as
+  healthy.
 
 ### Vacuum and compaction
 
@@ -268,7 +291,8 @@ worst duplicate dead bytes. The result and the log line carry `segments_removed`
 the physical size of removed segments minus the bytes copied during compaction (only meaningful when
 the run succeeded).
 
-A record that fails verification during compaction is dropped like a corrupt chunk. A segment that
+A record that fails verification during compaction is dropped like a corrupt chunk (its files are
+flagged damaged, see above). A segment that
 cannot be read for another reason (for example EIO or a permission error) is skipped: its batch is
 rolled back, the run continues with the next segment and reports an error at the end, and a later
 run retries it. At startup such a reclaim failure only logs a warning and bwfs starts, because the

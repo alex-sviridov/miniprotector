@@ -40,10 +40,13 @@ func parseFileID(fileID string) (source, objType, path string, mtime int64) {
 	return source, objType, path, mt
 }
 
+// FileDataExists reports whether the file's content is stored complete and
+// healthy. Damaged data does not count, so the next backup of the file
+// uploads it again instead of deduplicating against a lost chunk.
 func (s *Store) FileDataExists(fileID string) (bool, error) {
 	var record FileDataRecord
 	err := s.db.
-		Where("file_id = ? AND checksum IS NOT NULL", fileID).
+		Where("file_id = ? AND checksum IS NOT NULL AND damaged_at IS NULL", fileID).
 		First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
@@ -76,8 +79,10 @@ func (s *Store) FinalizeFileData(fileID string, checksum []byte) error {
 	if err := s.flush(); err != nil {
 		return err
 	}
+	// A row flagged damaged while in transfer lost one of its chunks: it
+	// must not be completed, or a version would point at missing data.
 	res := s.db.Model(&FileDataRecord{}).
-		Where("file_id = ? AND checksum IS NULL", fileID).
+		Where("file_id = ? AND checksum IS NULL AND damaged_at IS NULL", fileID).
 		Updates(map[string]any{
 			"checksum": checksum,
 			"chunk_count": s.db.Model(&FileDataChunkRecord{}).
@@ -89,7 +94,7 @@ func (s *Store) FinalizeFileData(fileID string, checksum []byte) error {
 	}
 	// Nothing to complete. Fine if a concurrent transfer of the same file
 	// completed it (its finalize updates every row of the file_id); but if the
-	// file data is gone -- dropped by corruption handling mid-transfer -- the
+	// file data was flagged damaged mid-transfer by corruption handling, the
 	// caller must not record a version for a file that is not stored.
 	exists, err := s.FileDataExists(fileID)
 	if err != nil {
@@ -101,10 +106,11 @@ func (s *Store) FinalizeFileData(fileID string, checksum []byte) error {
 	return nil
 }
 
+// FileData returns the latest complete, healthy file data of fileID.
 func (s *Store) FileData(fileID string) (*storage.FileData, error) {
 	var record FileDataRecord
 	err := s.db.
-		Where("file_id = ? AND checksum IS NOT NULL", fileID).
+		Where("file_id = ? AND checksum IS NOT NULL AND damaged_at IS NULL", fileID).
 		Order("created_at DESC").
 		First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

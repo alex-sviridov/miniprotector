@@ -161,13 +161,17 @@ func (s *Store) compactSegment(ctx context.Context, id uint32, batchSize int) (c
 		}
 		var n int
 		var batchCopied int64
+		var dropped []damage
 		err := s.inBatch(func(tx *gorm.DB) error {
 			var err error
-			n, batchCopied, err = s.moveBatch(tx, id, batchSize)
+			n, batchCopied, dropped, err = s.moveBatch(tx, id, batchSize)
 			return err
 		})
 		if err != nil {
 			return copied, err
+		}
+		for _, d := range dropped {
+			d.log() // after the commit, like MarkChunkCorrupted
 		}
 		copied += batchCopied
 		if n < batchSize {
@@ -178,11 +182,11 @@ func (s *Store) compactSegment(ctx context.Context, id uint32, batchSize int) (c
 
 // moveBatch copies up to batchSize records out of segment id and points their
 // rows at the copies. It returns how many rows it handled (moved or dropped
-// as corrupt) and the bytes copied.
-func (s *Store) moveBatch(tx *gorm.DB, id uint32, batchSize int) (int, int64, error) {
+// as corrupt), the bytes copied, and the damage the dropped ones caused.
+func (s *Store) moveBatch(tx *gorm.DB, id uint32, batchSize int) (int, int64, []damage, error) {
 	var rows []ChunkRecord
 	if err := tx.Where("segment = ?", id).Order("`offset`").Limit(batchSize).Find(&rows).Error; err != nil {
-		return 0, 0, fmt.Errorf("list segment %d rows: %w", id, err)
+		return 0, 0, nil, fmt.Errorf("list segment %d rows: %w", id, err)
 	}
 
 	type move struct {
@@ -191,22 +195,26 @@ func (s *Store) moveBatch(tx *gorm.DB, id uint32, batchSize int) (int, int64, er
 	}
 	var moves []move
 	var copied int64
+	var dropped []damage
 	for _, row := range rows {
 		data, sum, err := s.readRow(row)
 		if errors.Is(err, pack.ErrCorrupt) {
 			// The bytes are gone for good; treat it exactly as a restore
-			// that hit a corrupt chunk would, so its files get re-uploaded.
-			if err := dropChunk(tx, row.Hash); err != nil {
-				return 0, 0, err
+			// that hit a corrupt chunk would: its files are flagged damaged
+			// and get re-uploaded by the next backup.
+			d, err := dropChunk(tx, row.Hash)
+			if err != nil {
+				return 0, 0, nil, err
 			}
+			dropped = append(dropped, d)
 			continue
 		}
 		if err != nil {
-			return 0, 0, &segmentReadError{id: id, err: err}
+			return 0, 0, nil, &segmentReadError{id: id, err: err}
 		}
 		loc, err := s.log.Append(sum, data)
 		if err != nil {
-			return 0, 0, fmt.Errorf("compact append: %w", err)
+			return 0, 0, nil, fmt.Errorf("compact append: %w", err)
 		}
 		moves = append(moves, move{row.Hash, loc})
 		copied += pack.HeaderSize + int64(loc.Size)
@@ -215,16 +223,16 @@ func (s *Store) moveBatch(tx *gorm.DB, id uint32, batchSize int) (int, int64, er
 	// The copies must be durable before any row points at them.
 	if len(moves) > 0 {
 		if err := s.log.Sync(); err != nil {
-			return 0, 0, fmt.Errorf("sync pack log: %w", err)
+			return 0, 0, nil, fmt.Errorf("sync pack log: %w", err)
 		}
 	}
 	for _, m := range moves {
 		if err := tx.Model(&ChunkRecord{}).Where("hash = ?", m.hash).
 			Updates(map[string]any{"segment": int64(m.loc.Segment), "offset": m.loc.Offset}).Error; err != nil {
-			return 0, 0, fmt.Errorf("update chunk location: %w", err)
+			return 0, 0, nil, fmt.Errorf("update chunk location: %w", err)
 		}
 	}
-	return len(rows), copied, nil
+	return len(rows), copied, dropped, nil
 }
 
 // readRow reads and verifies the record a row points at. Anything wrong with

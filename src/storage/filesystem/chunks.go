@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
+	"time"
 
 	"lukechampine.com/blake3"
 
@@ -112,10 +114,11 @@ func (s *Store) LinkChunkToFileData(chunkHash []byte, fileID string, index int64
 	return nil
 }
 
-// MarkChunkCorrupted removes a chunk that failed to read correctly (missing
-// or otherwise unusable) along with every DB record that depends on it, so
-// affected files are treated as needing a fresh upload on the next backup.
-// Its bytes stay in the segment as dead space for compaction to reclaim.
+// MarkChunkCorrupted drops a chunk that failed to read correctly (missing or
+// otherwise unusable) and flags every file data that used it as damaged, so
+// those files are uploaded afresh by the next backup while the loss stays
+// visible. Its bytes stay in the segment as dead space for compaction to
+// reclaim.
 func (s *Store) MarkChunkCorrupted(chunkHash []byte) error {
 	// Flush first so a pending row or link for this chunk cannot be
 	// committed after the delete and bring it back.
@@ -123,35 +126,84 @@ func (s *Store) MarkChunkCorrupted(chunkHash []byte) error {
 		return err
 	}
 	hexHash := hex.EncodeToString(chunkHash)
-	return s.db.Transaction(func(tx *gorm.DB) error { return dropChunk(tx, hexHash) })
+	var d damage
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		d, err = dropChunk(tx, hexHash)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	d.log() // only once committed: a rolled-back drop damaged nothing
+	return nil
 }
 
-// dropChunk deletes a chunk's row and links and invalidates every file data
-// that used it, so those files are uploaded afresh by the next backup. It is
-// how both MarkChunkCorrupted and compaction react to unusable bytes.
-func dropChunk(tx *gorm.DB, hexHash string) error {
-	var links []FileDataChunkRecord
-	if err := tx.Where("chunk_hash = ?", hexHash).Find(&links).Error; err != nil {
-		return fmt.Errorf("find files depending on chunk: %w", err)
+// damage describes what one dropChunk call newly flagged.
+type damage struct {
+	hash    string
+	flagged int64    // file data rows newly flagged damaged
+	paths   []string // up to maxDamagedPaths of their paths
+}
+
+// maxDamagedPaths bounds the paths in the log line: a chunk shared by
+// thousands of files must not produce a log line of that size.
+const maxDamagedPaths = 5
+
+// log reports the damage at Error. The Store has no logger of its own, so it
+// uses the process default (bwfs sets it up). A chunk whose files were all
+// flagged before is not reported again.
+func (d damage) log() {
+	if d.flagged == 0 {
+		return
+	}
+	slog.Error("chunk marked corrupt",
+		"chunk_hash", d.hash,
+		"file_versions_damaged", d.flagged,
+		"paths", d.paths)
+}
+
+// dropChunk deletes a chunk's row and links and flags every file data that
+// used it as damaged. It is how both MarkChunkCorrupted and compaction react
+// to unusable bytes.
+//
+// The file data is flagged, not deleted: deleting it made the loss invisible
+// (restore listed no such file and reported success). Only this chunk's links
+// go; the file's other links stay, because they are keyed by file_id and a
+// healthy re-upload of the same file shares them. Rows flagged earlier keep
+// their damaged_at, the time the damage was first found.
+func dropChunk(tx *gorm.DB, hexHash string) (damage, error) {
+	d := damage{hash: hexHash}
+	var fileIDs []string
+	if err := tx.Model(&FileDataChunkRecord{}).Where("chunk_hash = ?", hexHash).
+		Distinct().Pluck("file_id", &fileIDs).Error; err != nil {
+		return d, fmt.Errorf("find files depending on chunk: %w", err)
 	}
 
 	if err := tx.Where("chunk_hash = ?", hexHash).Delete(&FileDataChunkRecord{}).Error; err != nil {
-		return fmt.Errorf("remove chunk links: %w", err)
+		return d, fmt.Errorf("remove chunk links: %w", err)
 	}
 	if err := tx.Where("hash = ?", hexHash).Delete(&ChunkRecord{}).Error; err != nil {
-		return fmt.Errorf("remove chunk record: %w", err)
+		return d, fmt.Errorf("remove chunk record: %w", err)
+	}
+	if len(fileIDs) == 0 {
+		return d, nil
 	}
 
-	fileIDs := make([]string, len(links))
-	for i, link := range links {
-		fileIDs[i] = link.FileID
+	// Collect the paths for the report before flagging, while "not yet
+	// flagged" still tells which rows this call damages.
+	newlyDamaged := func() *gorm.DB {
+		return tx.Model(&FileDataRecord{}).Where("file_id IN ? AND damaged_at IS NULL", fileIDs)
 	}
-	if len(fileIDs) > 0 {
-		if err := tx.Where("file_id IN ?", fileIDs).Delete(&FileDataRecord{}).Error; err != nil {
-			return fmt.Errorf("invalidate dependent file data: %w", err)
-		}
+	if err := newlyDamaged().Order("path").Limit(maxDamagedPaths).Pluck("path", &d.paths).Error; err != nil {
+		return d, fmt.Errorf("find dependent file data: %w", err)
 	}
-	return nil
+	res := newlyDamaged().Update("damaged_at", time.Now())
+	if res.Error != nil {
+		return d, fmt.Errorf("flag dependent file data damaged: %w", res.Error)
+	}
+	d.flagged = res.RowsAffected
+	return d, nil
 }
 
 // ReadChunk returns the chunk's data after the pack layer verified its hash.
