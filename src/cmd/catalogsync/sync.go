@@ -201,6 +201,10 @@ func (d *damagePass) send(ctx context.Context) error {
 
 	pages := &damagedPager{ctx: ctx, rd: d.rd, batchSize: d.batchSize, pending: first}
 	if err := d.sender.SendDamaged(pages.next); err != nil {
+		// The catalog's state is now unknown: it may have replaced its set
+		// before we saw the error (e.g. a timeout after the commit). Stop
+		// trusting "it is empty", so the next empty set is sent again.
+		d.catalogHasEmptySet = false
 		return err
 	}
 	d.catalogHasEmptySet = pages.total == 0

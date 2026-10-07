@@ -104,12 +104,16 @@ replaces this node's set with it (see the
   interval.
 - **Skip rule.** The send is skipped only when the set is empty *and* the previous successful send
   in this process was also empty. That flag is in memory, so the first pass after a restart always
-  sends, which clears rows a previous run may have left in the catalog.
+  sends, which clears rows a previous run may have left in the catalog. A failed send also clears
+  the flag, because the catalog may have applied the stream before the error reached
+  `catalogsync`, so the next empty set is sent again.
 - **Failures stay in this pass.** A failed store read or send is logged and retried with the pass's
   own exponential backoff (from 1s, capped at `CatalogSyncMaxBackoffSec`). It never sleeps the loop
   and never `continue`s it, so versions and deletions keep replicating on schedule. A failed send
   does not count as a successful empty send, so the skip rule cannot hide a retry.
 - The pass can lag by up to one poll interval, because it only runs when the loop wakes up.
+- One `ConnectionTimeOutSec` deadline covers the whole `ReportDamagedFiles` stream, not each chunk.
+  That is enough for the set this pass expects, which is small because damage is rare.
 
 ## Configuration Keys
 

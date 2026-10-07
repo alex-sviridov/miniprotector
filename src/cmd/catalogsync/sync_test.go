@@ -532,3 +532,30 @@ func TestRun_DamagedReadErrorMidStreamIsNotASuccessfulSend(t *testing.T) {
 	require.Eventually(t, func() bool { return sender.damagedAttemptCount() >= 2 }, time.Second, 5*time.Millisecond)
 	assert.Empty(t, sender.damagedSendIDs())
 }
+
+// A failed send leaves the catalog's state unknown: the server may have
+// replaced its set before the client saw the error. So after a failure an
+// empty set must be sent again even if the last successful send was empty,
+// or a heal could leave a stale damaged set in the catalog until restart.
+func TestDamagePass_FailedSendInvalidatesTheEmptySetBelief(t *testing.T) {
+	rd := &fakeReader{}
+	sender := &fakeSender{}
+	d := newDamagePass(testLogger(), rd, sender, damageCfg(10, time.Minute))
+	ctx := context.Background()
+	t0 := time.Unix(1_000_000, 0)
+
+	d.runIfDue(ctx, t0) // empty set, sent: the catalog is known empty
+	require.Equal(t, [][]string{{}}, sender.damagedSendIDs())
+
+	rd.setDamaged("f1")
+	sender.mu.Lock()
+	sender.failDamagedN = 1
+	sender.mu.Unlock()
+	d.runIfDue(ctx, t0.Add(time.Hour)) // fails; the catalog may or may not hold {f1}
+	require.Equal(t, 2, sender.damagedAttemptCount())
+
+	rd.setDamaged() // healed
+	d.runIfDue(ctx, t0.Add(2*time.Hour))
+
+	assert.Equal(t, [][]string{{}, {}}, sender.damagedSendIDs(), "the empty set must be re-sent after a failed send")
+}
