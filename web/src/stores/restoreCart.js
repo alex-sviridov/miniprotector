@@ -15,12 +15,12 @@ export const useRestoreCartStore = defineStore('restoreCart', {
     entries: (state) => state.rules.filter((r) => r.include),
   },
   actions: {
-    // storeHost/size are optional, display-only (never sent to the API --
+    // storeHost/size/damaged are optional, display-only (never sent to the API --
     // see restoreSubmission.js's toWireRule) -- captured off the catalog
     // row at selection time since the cart's rule shape otherwise has no
     // way to know either.
-    toggleFile(host, path, storeHost, size, notBefore, notAfter) {
-      this.rules = toggleFileRule(this.rules, host, path, { storeHost, size, notBefore, notAfter })
+    toggleFile(host, path, storeHost, size, notBefore, notAfter, damaged) {
+      this.rules = toggleFileRule(this.rules, host, path, { storeHost, size, notBefore, notAfter, damaged })
     },
     toggleFolder(path, notBefore, notAfter) {
       this.rules = toggleFolderRule(this.rules, path, { notBefore, notAfter })
@@ -33,8 +33,8 @@ export const useRestoreCartStore = defineStore('restoreCart', {
     // state to unselected (creating an exclusion rule) instead of
     // materializing the implicit selection into a real rule. See
     // CatalogView.vue's selectVersion, which is the only current caller.
-    ensureFileSelected(host, path, storeHost, size, notBefore, notAfter) {
-      this.rules = ensureFileRule(this.rules, host, path, { storeHost, size, notBefore, notAfter })
+    ensureFileSelected(host, path, storeHost, size, notBefore, notAfter, damaged) {
+      this.rules = ensureFileRule(this.rules, host, path, { storeHost, size, notBefore, notAfter, damaged })
     },
     ensureFolderSelected(path, notBefore, notAfter) {
       this.rules = ensureFolderRule(this.rules, path, { notBefore, notAfter })
@@ -46,6 +46,14 @@ export const useRestoreCartStore = defineStore('restoreCart', {
     setDestPath(entry, destPath) {
       const rule = this.rules.find((r) => r.host === entry.host && r.path === entry.path)
       if (rule) rule.destPath = destPath
+    },
+    // setDamaged refreshes the display-only damaged flag of an exact file
+    // rule (the flag describes the version the rule resolves to, so it
+    // changes when a version is pinned or reset). Not persisted anywhere;
+    // a rule without the flag simply counts as not damaged.
+    setDamaged(entry, damaged) {
+      const rule = this.rules.find((r) => r.host === entry.host && r.path === entry.path)
+      if (rule) rule.damaged = damaged
     },
     // setVersionWindow pins (or, called with 0, 0, resets) the version an
     // already-selected entry resolves to -- see restoreRules.js's toggle

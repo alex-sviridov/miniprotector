@@ -39,15 +39,6 @@ where the knee actually is and whether one default fails to fit, before building
 window drains at every file boundary, so runs of many small files gain little; pipelining across file
 boundaries is a separate, larger change.
 
-## Show damaged versions in the catalog and web UI
-
-When `bwfs` finds a corrupt chunk it flags the affected `FileData` rows as damaged (see
-`docs/superpowers/specs/2026-10-07-damaged-data-reporting-design.md`). Restore and `bwfs list` report
-that, but the catalog (`catalogsync` replicates only `file_version_records`) and the web UI still show a
-damaged version as restorable. Replicate the damaged flag (by file id) to the catalog, show it in the
-file/version views, and have the restore cart warn before a damaged version is added. Needs a
-catalogsync cursor or a small replicated table, and a catalog API field.
-
 ## Key chunk links by FileData, not by file_id
 
 Chunk links (`file_data_chunk_records`) are keyed by `file_id` (source, path, mtime), not by the

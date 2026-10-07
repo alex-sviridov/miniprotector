@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-08 — The catalog and web UI show damaged backup data
+
+Damage was flagged in the store (see the 2026-10-07 entry) but the catalog and web UI still offered a
+damaged version as restorable. The `bwfs` replica reader now lists the file ids that are currently
+damaged, and `catalogsync` streams that set periodically as a state snapshot (no cursor), so a repaired
+file disappears from it. The catalog's `ReportDamagedFiles` replaces the stored set atomically and
+annotates `Entry.damaged`; the api-server exposes `damaged` on catalog entries. The web UI shows a red
+`Damaged` badge on catalog file rows (latest version) and on versions, marks damaged file rules in the
+restore cart, and the confirm modal gives an amber count of damaged selected files. The flag lags the
+store by up to about a minute, so it is a warning, not a guarantee, and restore is never blocked. Folder
+rules cannot be checked (`rwfs` resolves them at restore time) and show nothing. No Playwright test was
+added because the demo lab cannot create real damage.
+
 ## 2026-10-07 — Damaged backup data is flagged, reported, and no longer stops a restore
 
 When `bwfs` found a corrupt chunk it deleted every `FileData` row that used it, so the loss was invisible:

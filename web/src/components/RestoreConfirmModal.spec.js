@@ -48,4 +48,21 @@ describe('RestoreConfirmModal', () => {
     await wrapper.get('.fixed').trigger('click')
     expect(wrapper.emitted('cancel')).toHaveLength(2)
   })
+
+  it('shows the damaged warning with the count only when damagedCount is greater than zero', () => {
+    expect(renderModal().find('[data-test="confirm-damaged"]').exists()).toBe(false)
+    expect(renderModal({ damagedCount: 0 }).find('[data-test="confirm-damaged"]').exists()).toBe(false)
+    const text = renderModal({ damagedCount: 2 }).get('[data-test="confirm-damaged"]').text()
+    expect(text).toContain('2 selected files')
+    expect(text).toContain('damaged')
+    expect(renderModal({ damagedCount: 1 }).get('[data-test="confirm-damaged"]').text()).toContain('1 selected file ')
+  })
+
+  it('never blocks confirming when files are damaged', async () => {
+    const wrapper = renderModal({ damagedCount: 2 })
+    const btn = wrapper.get('[data-test="confirm-restore"]')
+    expect(btn.attributes('disabled')).toBeUndefined()
+    await btn.trigger('click')
+    expect(wrapper.emitted('confirm')).toHaveLength(1)
+  })
 })

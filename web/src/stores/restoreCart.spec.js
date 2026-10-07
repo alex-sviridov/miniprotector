@@ -188,4 +188,33 @@ describe('restoreCart store', () => {
     cart.removeEntry({ path: '/etc/hosts', host: 'web01', include: true })
     expect(cart.rules).toEqual([])
   })
+
+  it('toggleFile stores a display-only damaged flag; omitted means not damaged', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/a', 'bwfs', 10, 1, 2, true)
+    cart.toggleFile('web01', '/b', 'bwfs', 10, 1, 2)
+    expect(cart.rules.find((r) => r.path === '/a').damaged).toBe(true)
+    expect(cart.rules.find((r) => r.path === '/b').damaged).toBeFalsy()
+  })
+
+  it('ensureFileSelected stores the damaged flag on a new rule', () => {
+    const cart = useRestoreCartStore()
+    cart.ensureFileSelected('web01', '/a', 'bwfs', 10, 1, 2, true)
+    expect(cart.rules[0].damaged).toBe(true)
+  })
+
+  it('toggleFolder never stores a damaged flag', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+    expect(cart.rules[0]).not.toHaveProperty('damaged')
+  })
+
+  it('setDamaged updates an existing file rule and ignores a missing one', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/a', 'bwfs', 10, 1, 2, true)
+    cart.setDamaged({ host: 'web01', path: '/a' }, false)
+    expect(cart.rules[0].damaged).toBe(false)
+    cart.setDamaged({ host: 'web01', path: '/nope' }, true)
+    expect(cart.rules).toHaveLength(1)
+  })
 })

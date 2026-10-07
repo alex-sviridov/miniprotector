@@ -122,4 +122,18 @@ describe('VersionsModal', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(wrapper.emitted('close')).toHaveLength(2)
   })
+
+  it('shows a Damaged badge with a warning tooltip only on damaged versions, and keeps restore enabled', async () => {
+    const { wrapper } = mountModal(
+      { path: '/var/lib/dbdata/data.db', sourceHost: 'database' },
+      [version({ id: 1, damaged: true }), version({ id: 2, damaged: false }), version({ id: 3 })]
+    )
+    await flushPromises()
+    const badge = wrapper.get('[data-test="version-damaged-1"]')
+    expect(badge.text()).toBe('Damaged')
+    expect(badge.attributes('title')).toBe('Backup data for this version is damaged; restore will fail.')
+    expect(wrapper.find('[data-test="version-damaged-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="version-damaged-3"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="restore-version-1"]').attributes('disabled')).toBeUndefined()
+  })
 })

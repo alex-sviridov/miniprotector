@@ -226,4 +226,29 @@ describe('RestoreView', () => {
     wrapper.unmount()
     expect(jobs.disconnectJobsStream).toHaveBeenCalledTimes(1)
   })
+
+  it('shows a Damaged badge on damaged file rows only, never on folder rules', () => {
+    const damagedEntry = { ...fileEntry, path: '/etc/bad', destPath: '/etc/bad', damaged: true }
+    const { wrapper } = mountView({
+      restoreCart: { rules: [fileEntry, damagedEntry, { ...folderEntry, damaged: true }] },
+    })
+    const badge = wrapper.get('[data-test="cart-damaged-web01:/etc/bad"]')
+    expect(badge.text()).toBe('Damaged')
+    expect(badge.attributes('title')).toContain('damaged')
+    expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="cart-damaged-:/var"]').exists()).toBe(false)
+  })
+
+  it('passes the damaged file-rule count into the confirmation modal (folders and excluded rules not counted)', async () => {
+    const dmg = { ...fileEntry, path: '/etc/bad', destPath: '/etc/bad', damaged: true }
+    const excluded = { ...fileEntry, path: '/etc/x', destPath: '/etc/x', damaged: true, include: false }
+    const { wrapper } = mountView({
+      restoreCart: { rules: [fileEntry, dmg, excluded, { ...folderEntry, damaged: true }] },
+      clients: { list: [{ hostname: 'web01', last_seen_at: Math.floor(Date.now() / 1000) }] },
+    })
+    wrapper.vm.destinationHost = 'web01'
+    await wrapper.get('[data-test="destination-select"]').setValue('web01')
+    await wrapper.get('[data-test="restore-button"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'RestoreConfirmModal' }).props('damagedCount')).toBe(1)
+  })
 })

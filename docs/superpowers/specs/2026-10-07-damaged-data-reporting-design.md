@@ -39,8 +39,9 @@ and every `FileData` row that used it. Consequences:
 - **Operator visibility.** `MarkChunkCorrupted` logs one Error line: chunk hash, number of file versions
   flagged, up to 5 paths. `bwfs list` marks damaged rows (JSON `"damaged": true` omitted when false; table adds a
   `DAMAGED` marker column only when at least one row is damaged). The gRPC list protocol is unchanged.
-- Out of scope (backlog "Show damaged versions in the catalog and web UI"): catalog/web display; background
-  scrub; a client-to-server corruption report RPC.
+- Out of scope: catalog/web display (done later, see
+  `docs/superpowers/specs/2026-10-08-catalog-damage-replication-design.md`); background scrub; a
+  client-to-server corruption report RPC.
 
 ## Data flow (corrupt chunk on disk)
 
