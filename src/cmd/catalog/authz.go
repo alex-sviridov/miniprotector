@@ -3,7 +3,7 @@ package main
 import pb "github.com/alex-sviridov/miniprotector/api"
 
 // roleRequirements is catalog's per-RPC authorization matrix:
-// SyncFileVersions and DeleteFileVersions are called only by catalogsync,
+// SyncFileVersions, DeleteFileVersions and ReportDamagedFiles are called only by catalogsync,
 // which always runs on a store-role bwfs host; the six List* query RPCs back api-server's
 // catalog views and are restricted to control-plane callers.
 func roleRequirements() map[string][]string {
@@ -11,6 +11,7 @@ func roleRequirements() map[string][]string {
 	return map[string][]string{
 		"/" + svc + "/SyncFileVersions":      {"store"},
 		"/" + svc + "/DeleteFileVersions":    {"store"},
+		"/" + svc + "/ReportDamagedFiles":    {"store"},
 		"/" + svc + "/ListEntries":           {"control-plane"},
 		"/" + svc + "/ListClientFacets":      {"control-plane"},
 		"/" + svc + "/ListJobFacets":         {"control-plane"},

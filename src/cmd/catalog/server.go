@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"time"
 
@@ -97,6 +99,46 @@ func (s *catalogServer) DeleteFileVersions(ctx context.Context, req *pb.DeleteVe
 	return &pb.DeleteVersionsResponse{}, nil
 }
 
+// ReportDamagedFiles receives the sending node's complete set of currently
+// damaged file ids and makes it that node's set in the catalog. The stream is
+// one snapshot, so it is applied only after a clean end of stream: a stream
+// that breaks off is a partial set, and applying it would clear damage that is
+// still real -- on any other Recv error nothing changes and the error goes
+// back to catalogsync, which retries. The ids are accumulated before the
+// replace so the single catalog writer is held only for the replace itself,
+// never while waiting on the network. As with SyncFileVersions the node is
+// the CA-verified mTLS peer, never a request field, so a node can only ever
+// replace its own set.
+func (s *catalogServer) ReportDamagedFiles(stream pb.CatalogService_ReportDamagedFilesServer) error {
+	ctx := stream.Context()
+	storeNode, err := mtls.PeerHostname(ctx)
+	if err != nil {
+		s.logger.Error("ReportDamagedFiles: could not determine peer identity", "error", err)
+		return err
+	}
+
+	var objectIDs []string
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			s.logger.Warn("ReportDamagedFiles: stream ended early, damaged set left unchanged",
+				"store_node", storeNode, "received", len(objectIDs), "error", err)
+			return err
+		}
+		objectIDs = append(objectIDs, chunk.GetObjectIds()...)
+	}
+
+	if err := s.store.ReplaceDamagedFiles(ctx, storeNode, objectIDs); err != nil {
+		s.logger.Error("ReportDamagedFiles: replace failed", "store_node", storeNode, "count", len(objectIDs), "error", err)
+		return status.Errorf(codes.Internal, "replace damaged files: %v", err)
+	}
+	s.logger.Info("ReportDamagedFiles: damaged set replaced", "store_node", storeNode, "count", len(objectIDs))
+	return stream.SendAndClose(&pb.ReportDamagedFilesResponse{})
+}
+
 // decodeDirectoryAncestors walks parentDir's ancestor chain via splitPath
 // -- the same shape-detecting split SyncFileVersions uses to derive
 // parentDir itself -- collecting one DirectoryAncestor per level from
@@ -157,7 +199,8 @@ func (s *catalogServer) ListEntries(ctx context.Context, req *pb.ListEntriesRequ
 // is NOT decoded here — it's read directly from rec.SourceHost, persisted
 // once at sync time in SyncFileVersions. ParentDirectory and ShortFilename
 // are the same: persisted columns computed once at sync time, not decoded
-// here.
+// here. Damaged comes from the store's per-row annotation against
+// catalog_damaged_files.
 func toProtoEntry(rec catalogstore.EntryRecord) *pb.Entry {
 	entry := &pb.Entry{
 		Id:              rec.ID,
@@ -170,6 +213,7 @@ func toProtoEntry(rec catalogstore.EntryRecord) *pb.Entry {
 		ReceivedAt:      rec.ReceivedAt.Unix(),
 		ParentDirectory: rec.ParentDirectory,
 		ShortFilename:   rec.ShortFilename,
+		Damaged:         rec.Damaged,
 	}
 	if fi, err := filesystem.DecodeFileInfo(rec.Metadata); err == nil {
 		entry.Path = fi.Path()

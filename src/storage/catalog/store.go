@@ -304,7 +304,15 @@ func (s *Store) ListEntries(ctx context.Context, filter ListEntriesFilter) ([]En
 		limit = maxListEntriesLimit
 	}
 
-	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).Order("id DESC")
+	// damaged is annotated per row with a correlated EXISTS on
+	// catalog_damaged_files' primary key (store_node, object_id): one query
+	// for the page, no N+1, and no join that could duplicate or drop rows. It
+	// matches by file id alone, so it also covers damage that was reported
+	// before this version row was replicated.
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).
+		Select("entry_records.*, EXISTS (SELECT 1 FROM catalog_damaged_files d " +
+			"WHERE d.store_node = entry_records.store_node AND d.object_id = entry_records.object_id) AS damaged").
+		Order("id DESC")
 	if filter.StoreNode != "" {
 		q = q.Where("store_node = ?", filter.StoreNode)
 	}
@@ -359,4 +367,42 @@ func (s *Store) Close() error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// damagedInsertBatch bounds how many rows one INSERT into
+// catalog_damaged_files carries (two bind variables each): 800 variables stays
+// under SQLite's historic default limit of 999, let alone today's 32,766, so
+// a node reporting any number of damaged files never hits the limit.
+const damagedInsertBatch = 400
+
+// ReplaceDamagedFiles makes objectIDs the complete set of file ids currently
+// damaged on storeNode, replacing whatever that node reported before; other
+// nodes' rows are untouched. An empty set clears the node -- that is how a
+// heal (healthy re-upload) or vacuum on bwfs reaches the catalog, since a
+// snapshot carries no "healed" event. The delete and every insert batch run
+// in ONE transaction, so a failure leaves the previous set intact rather than
+// a half-replaced one. Duplicate ids are stored once.
+func (s *Store) ReplaceDamagedFiles(ctx context.Context, storeNode string, objectIDs []string) error {
+	records := make([]DamagedFileRecord, 0, len(objectIDs))
+	seen := make(map[string]struct{}, len(objectIDs))
+	for _, id := range objectIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		records = append(records, DamagedFileRecord{StoreNode: storeNode, ObjectID: id})
+	}
+
+	return s.writeDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("store_node = ?", storeNode).Delete(&DamagedFileRecord{}).Error; err != nil {
+			return fmt.Errorf("clear damaged files: %w", err)
+		}
+		if len(records) == 0 {
+			return nil
+		}
+		if err := tx.CreateInBatches(records, damagedInsertBatch).Error; err != nil {
+			return fmt.Errorf("insert damaged files: %w", err)
+		}
+		return nil
+	})
 }

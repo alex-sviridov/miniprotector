@@ -6,7 +6,9 @@ package listformat
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"slices"
 	"text/tabwriter"
 	"time"
 )
@@ -23,6 +25,9 @@ type Row struct {
 	Chunks    int
 	Versions  int64
 	CreatedAt time.Time
+	// Damaged reports that bwfs flagged this version's data as damaged (a
+	// chunk it needs was lost), so restoring it fails with DataLoss.
+	Damaged bool
 }
 
 type jsonRow struct {
@@ -35,6 +40,9 @@ type jsonRow struct {
 	Chunks    int    `json:"chunks"`
 	Versions  int64  `json:"versions"`
 	CreatedAt string `json:"created_at"`
+	// omitempty keeps healthy rows exactly as they were before damage was
+	// reported, so existing JSON consumers see no change.
+	Damaged bool `json:"damaged,omitempty"`
 }
 
 func toJSONRows(rows []Row) []jsonRow {
@@ -50,6 +58,7 @@ func toJSONRows(rows []Row) []jsonRow {
 			Chunks:    r.Chunks,
 			Versions:  r.Versions,
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
+			Damaged:   r.Damaged,
 		}
 	}
 	return out
@@ -74,21 +83,43 @@ func FormatSize(bytes int64) string {
 	}
 }
 
-// RenderTable writes rows to stdout as a tab-aligned table.
+// RenderTable writes rows to stdout as a tab-aligned table. A DAMAGED column
+// is added only when at least one row is damaged, so the usual table (and any
+// script parsing it) is unchanged.
 func RenderTable(rows []Row) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SOURCE\tTYPE\tPATH\tTIMESTAMP\tSIZE\tCHUNKS\tVERSIONS")
+	return writeTable(os.Stdout, rows)
+}
+
+func writeTable(out io.Writer, rows []Row) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	damaged := slices.ContainsFunc(rows, func(r Row) bool { return r.Damaged })
+	header := "SOURCE\tTYPE\tPATH\tTIMESTAMP\tSIZE\tCHUNKS\tVERSIONS"
+	if damaged {
+		header += "\tDAMAGED"
+	}
+	fmt.Fprintln(w, header)
 	for _, r := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%d\t%d\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%d\t%d",
 			r.Source, r.Type, r.Path, r.Timestamp, FormatSize(r.Size), r.Chunks, r.Versions)
+		if damaged {
+			marker := ""
+			if r.Damaged {
+				marker = "yes"
+			}
+			fmt.Fprintf(w, "\t%s", marker)
+		}
+		fmt.Fprintln(w)
 	}
 	return w.Flush()
 }
 
 // RenderJSON writes rows to stdout as indented JSON.
 func RenderJSON(rows []Row) error {
-	out := toJSONRows(rows)
-	enc := json.NewEncoder(os.Stdout)
+	return writeJSON(os.Stdout, rows)
+}
+
+func writeJSON(out io.Writer, rows []Row) error {
+	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return enc.Encode(toJSONRows(rows))
 }

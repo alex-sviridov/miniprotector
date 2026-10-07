@@ -13,6 +13,8 @@ import DateRangePanel from '../components/catalog/DateRangePanel.vue'
 import FacetPanel from '../components/catalog/FacetPanel.vue'
 import DirectoryPathBar from '../components/catalog/DirectoryPathBar.vue'
 import VersionsModal from '../components/VersionsModal.vue'
+import Badge from '../components/ui/Badge.vue'
+import { DAMAGED_TOOLTIP } from '../utils/damaged'
 import TriStateCheckbox from '../components/ui/TriStateCheckbox.vue'
 
 const catalog = useCatalogStore()
@@ -91,7 +93,8 @@ function toggleSelection(row) {
       row.representative?.store_host,
       row.representative?.size,
       catalog.filters.receivedAfter,
-      catalog.filters.receivedBefore
+      catalog.filters.receivedBefore,
+      row.damaged
     )
     submission.clearEntry({ host: row.sourceHost, path: row.path })
   }
@@ -148,25 +151,32 @@ function selectVersion(version) {
   } else if (resolveFile(restoreCart.rules, target.sourceHost, target.path)) {
     restoreCart.ensureFileSelected(
       target.sourceHost, target.path, version.store_host, version.size,
-      catalog.filters.receivedAfter, catalog.filters.receivedBefore
+      catalog.filters.receivedAfter, catalog.filters.receivedBefore, version.damaged === true
     )
   } else {
     restoreCart.toggleFile(
       target.sourceHost, target.path, version.store_host, version.size,
-      catalog.filters.receivedAfter, catalog.filters.receivedBefore
+      catalog.filters.receivedAfter, catalog.filters.receivedBefore, version.damaged === true
     )
+  }
+  if (target.sourceHost !== null) {
+    restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, version.damaged === true)
   }
   restoreCart.setVersionWindow({ host: target.sourceHost, path: target.path }, version.store_created_at, version.store_created_at)
   versionsFor.value = null
 }
 
-function useLatestVersion() {
+function useLatestVersion(latestDamaged = false) {
   const target = versionsFor.value
   restoreCart.setVersionWindow(
     { host: target.sourceHost, path: target.path },
     catalog.filters.receivedAfter,
     catalog.filters.receivedBefore
   )
+  if (target.sourceHost !== null) {
+    // The modal knows its newest version; a missing payload falls back to false.
+    restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, latestDamaged === true)
+  }
   versionsFor.value = null
 }
 
@@ -341,7 +351,16 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
             <span v-else></span>
           </template>
           <template v-else>
-            <span v-if="column.field === 'path'">{{ browsing ? row.representative.short_filename : row.path }}</span>
+            <span v-if="column.field === 'path'">
+              {{ browsing ? row.representative.short_filename : row.path }}
+              <Badge
+                v-if="row.damaged"
+                variant="bad"
+                class="ml-2"
+                :data-test="`file-damaged-${row.sourceHost}:${row.path}`"
+                :title="DAMAGED_TOOLTIP"
+              >Damaged</Badge>
+            </span>
             <span v-else-if="column.field === 'sourceHost'">{{ row.sourceHost }}</span>
             <span v-else-if="column.field === 'representative.store_host'">{{ row.representative.store_host }}</span>
             <span v-else-if="column.field === 'representative.size'">{{ formatBytes(row.representative.size) }}</span>

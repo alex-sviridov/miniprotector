@@ -226,4 +226,86 @@ describe('RestoreView', () => {
     wrapper.unmount()
     expect(jobs.disconnectJobsStream).toHaveBeenCalledTimes(1)
   })
+
+  it('shows a Damaged badge on damaged file rows only, never on folder rules', () => {
+    const damagedEntry = { ...fileEntry, path: '/etc/bad', destPath: '/etc/bad', damaged: true }
+    const { wrapper } = mountView({
+      restoreCart: { rules: [fileEntry, damagedEntry, { ...folderEntry, damaged: true }] },
+    })
+    const badge = wrapper.get('[data-test="cart-damaged-web01:/etc/bad"]')
+    expect(badge.text()).toBe('Damaged')
+    expect(badge.attributes('title')).toContain('damaged')
+    expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="cart-damaged-:/var"]').exists()).toBe(false)
+  })
+
+  it('passes the damaged file-rule count into the confirmation modal (folders and excluded rules not counted)', async () => {
+    const dmg = { ...fileEntry, path: '/etc/bad', destPath: '/etc/bad', damaged: true }
+    const excluded = { ...fileEntry, path: '/etc/x', destPath: '/etc/x', damaged: true, include: false }
+    const { wrapper } = mountView({
+      restoreCart: { rules: [fileEntry, dmg, excluded, { ...folderEntry, damaged: true }] },
+      clients: { list: [{ hostname: 'web01', last_seen_at: Math.floor(Date.now() / 1000) }] },
+    })
+    wrapper.vm.destinationHost = 'web01'
+    await wrapper.get('[data-test="destination-select"]').setValue('web01')
+    await wrapper.get('[data-test="restore-button"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'RestoreConfirmModal' }).props('damagedCount')).toBe(1)
+  })
+
+  describe('damaged flag when changing version on the cart page', () => {
+    const dmg = { ...fileEntry, damaged: true }
+
+    function mountReal(rules) {
+      const pinia = createTestingPinia({ stubActions: false, initialState: { restoreCart: { rules } } })
+      vi.spyOn(useCatalogStore(), 'fetchPathVersions').mockResolvedValue([])
+      const wrapper = mount(RestoreView, {
+        global: { plugins: [pinia], stubs: { 'router-link': { template: '<a><slot /></a>' } } },
+      })
+      return { wrapper, cart: useRestoreCartStore() }
+    }
+    async function pick(wrapper, event, payload) {
+      await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
+      await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit(event, payload)
+    }
+
+    it('pinning an older healthy version clears the badge and the confirm count', async () => {
+      const { wrapper } = mountReal([dmg])
+      await pick(wrapper, 'select-version', { store_created_at: 5, damaged: false })
+      expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(false)
+      await wrapper.get('[data-test="destination-select"]').setValue('web01')
+      await wrapper.get('[data-test="restore-button"]').trigger('click')
+      expect(wrapper.findComponent({ name: 'RestoreConfirmModal' }).props('damagedCount')).toBe(0)
+    })
+
+    it('pinning a damaged older version shows the badge', async () => {
+      const { wrapper } = mountReal([fileEntry])
+      await pick(wrapper, 'select-version', { store_created_at: 5, damaged: true })
+      expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(true)
+    })
+
+    it('use latest takes the damaged state of the latest version from the modal', async () => {
+      const { wrapper, cart } = mountReal([dmg])
+      await pick(wrapper, 'use-latest', true)
+      expect(cart.rules[0].damaged).toBe(true)
+      expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(true)
+    })
+
+    it('use latest of a healthy latest version clears the flag; no payload falls back to healthy', async () => {
+      const { wrapper, cart } = mountReal([dmg])
+      await pick(wrapper, 'use-latest', false)
+      expect(cart.rules[0].damaged).toBe(false)
+      expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(false)
+
+      await pick(wrapper, 'select-version', { store_created_at: 5, damaged: true })
+      await pick(wrapper, 'use-latest')
+      expect(cart.rules[0].damaged).toBe(false)
+    })
+
+    it('does not touch folder rules', async () => {
+      const { wrapper, cart } = mountReal([folderEntry])
+      await wrapper.get('[data-test="captured-:/var"]').trigger('click')
+      await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('select-version', { store_created_at: 5, damaged: true })
+      expect(cart.rules[0]).not.toHaveProperty('damaged')
+    })
+  })
 })

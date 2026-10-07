@@ -34,6 +34,9 @@ func NewBackupServer(ctx context.Context, logger *slog.Logger, storagePath strin
 	if err != nil {
 		return nil, err
 	}
+	// GC compaction runs on this store and reports damage; send it to the
+	// server's log rather than the unconfigured process default.
+	store.SetLogger(logger)
 	return &backupServer{
 		logger:   logger,
 		config:   conf,

@@ -2,6 +2,62 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-07 — The catalog and web UI show damaged backup data
+
+Damage was flagged in the store (see the 2026-10-07 entry) but the catalog and web UI still offered a
+damaged version as restorable. The `bwfs` replica reader now lists the file ids that are currently
+damaged, and `catalogsync` streams that set periodically as a state snapshot (no cursor), so a repaired
+file disappears from it. The catalog's `ReportDamagedFiles` replaces the stored set atomically and
+annotates `Entry.damaged`; the api-server exposes `damaged` on catalog entries. The web UI shows a red
+`Damaged` badge on catalog file rows (latest version) and on versions, marks damaged file rules in the
+restore cart, and the confirm modal gives an amber count of damaged selected files. The flag lags the
+store by up to about a minute, so it is a warning, not a guarantee, and restore is never blocked. Folder
+rules cannot be checked (`rwfs` resolves them at restore time) and show nothing. No Playwright test was
+added because the demo lab cannot create real damage.
+
+## 2026-10-07 — Damaged backup data is flagged, reported, and no longer stops a restore
+
+When `bwfs` found a corrupt chunk it deleted every `FileData` row that used it, so the loss was invisible:
+a folder restore could report success with those files simply missing, and nothing recorded which versions
+were gone. The stream also failed with a generic `Internal` that `rwfs` retried in vain, and one damaged
+file aborted the whole `rwfs restore`, healthy files included. Now the affected `FileData` rows are flagged
+damaged instead of deleted (one Error line names the chunk and up to five paths), deduplication ignores
+flagged rows so the next backup of an unchanged file uploads it again, and `RestoreFile` answers a damaged
+version with gRPC `DataLoss`. `rwfs` treats `DataLoss` as final: `verify` reports it with reason
+`data_loss`, and `restore` logs the damaged file at Error, restores and commits every other file, then
+exits non-zero with the number of damaged files. Any other restore failure still aborts the run. A
+client-side BLAKE3 mismatch, which can only be a fault in transit since `bwfs` checks every chunk before
+sending it, is now retried once (a CRC32 mismatch stays final). `bwfs list` marks damaged versions
+(`DAMAGED` column, JSON `"damaged": true`). Showing damage in the catalog and web UI is in `backlog.md`.
+
+## 2026-10-07 — Restore locates a file's chunks with one query
+
+A restore looked each chunk up in `chunk_records` with its own query before reading it; a micro-benchmark
+showed that lookup took about 40% of reading a 64 KB chunk. `bwfs` now locates all of a file's chunks with
+one query (links joined to chunk rows, in index order) and reads each chunk from that location, still
+verifying its BLAKE3 hash. The server-side hash is kept on purpose: `rwfs` already detects corruption, but
+only `bwfs` can mark the bad chunk so the next backup heals it. A link whose chunk row is gone is still
+reported and marked at its position, and a chunk that compaction moved after the lookup is looked up again
+instead of being reported lost. The documentation no longer claims the server-side hash is what catches
+corruption on restore.
+
+## 2026-10-06 — Chunk storage in pack segments
+
+`bwfs` stored every chunk as its own file (`chunks/aa/bb/<hash>`), never fsynced it, trusted it on read and
+paid several filesystem operations plus two SQLite commits per chunk. Chunks now go into append-only pack
+segments (`packs/NNNNNNNNNN.pack`, 256 MiB) indexed in SQLite by segment and offset, which means far fewer
+files and inodes (about 16M per TB before). Durability is paid once per file (group commit): a file becomes
+complete only after its chunk bytes are fsynced and its rows committed in one transaction, so a crash leaves
+dead bytes but never an index row pointing at missing data. Reads verify the BLAKE3 hash, opening recovers a
+torn segment tail, and an fsync failure fails requests until restart. Vacuum now also compacts segments under
+50% live and removes dead ones (new log fields `segments_removed`, `segments_compacted`). This is a format
+break with no migration: a store with a `chunks/` directory is rejected and a fresh store must be started.
+Linux only. A restore now marks a chunk corrupt only when its data is really lost (corrupt or missing), not
+on a possibly transient read error; an unreadable segment no longer stops compaction or the bwfs startup; and
+SQLite now applies its busy timeout and runs with `synchronous=FULL`, which the pack ordering relies on.
+
+Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.25 s, backup-warm 7.7 s to 4.5 s, restore 0.96 s to 1.07 s (slower: the server now hashes every chunk, duplicating the check `rwfs` already does; a restored file's chunks are located with one query). See docs/PERFORMANCE.md.
+
 ## 2026-10-06 — Backup and restore statistics
 
 `brfs` now ends a job with its totals on the `Backup finished` line: bytes read, bytes actually sent,

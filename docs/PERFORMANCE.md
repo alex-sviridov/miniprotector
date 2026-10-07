@@ -12,7 +12,7 @@ page says when to move off them.
   costs a few round trips of its own (announce the file, wait for the result).
 - **Restore is a stream.** `rwfs` asks for a file once and `bwfs` streams all its chunks back without
   waiting, so restore is much less sensitive to latency. It still pays a round trip or more per file.
-- **On a fast network the limit moves to the machines:** hashing, writing chunk files and database
+- **On a fast network the limit moves to the machines:** hashing, writing chunks to pack segments and database
   rows on the server. More streams or a larger window do nothing there.
 
 Rule of thumb: **latency makes things slow, parallelism hides it.** There are two kinds of
@@ -121,8 +121,10 @@ design](superpowers/specs/2026-10-06-rwfs-write-tuning-design.md) for the full n
 - **Chunk size** is content-defined (FastCDC): 16 KB minimum, 64 KB average, 256 KB maximum, set by
   constants in `src/workload/filesystem/chunker.go`, not by a flag. A larger average chunk size would mean fewer
   round trips and fewer database rows; tracked as a possible change.
-- **Per-chunk server cost.** Even at zero latency, backup runs at about 12 MB/s against about 105
-  MB/s for restore; the cost is per-chunk work on the backup path, not the network. See
+- **Per-chunk server cost.** Before pack segments, even at zero latency backup ran at about 12 MB/s
+  against about 105 MB/s for restore; the cost was per-chunk work on the backup path (a file, a directory
+  check and two fsynced database commits per chunk), not the network. Pack segments removed most of it, see
+  [Storage pack segments](#storage-pack-segments). See also
   [issue #35](https://github.com/alex-sviridov/miniprotector/issues/35).
 - **Pipelining across files** would let one stream hide the per-file round trips that streams hide
   today. See [issue #36](https://github.com/alex-sviridov/miniprotector/issues/36).
@@ -143,6 +145,33 @@ of 2 runs (numbers re-measured after the `mpbench` bandwidth-cap fix, see below)
 | | restore | 0.31 s | 0.26 s | −16% |
 
 Bytes on the wire are unchanged: the gain is all latency hidden, none of it data saved.
+
+## Storage pack segments
+
+`bwfs` now appends chunks to large segment files and commits index rows once per file instead of once per
+chunk (see [bwfs](components/bwfs.md#storage-layout)). Same dataset and seed on both sides (500 files,
+172.3 MB, `mixed`, dup ratio 0.3, 4 streams, LAN with no emulated delay, ext4 on a virtual SSD), median of 3
+runs, baseline built from the tree just before the change:
+
+| Phase | Before | After | Change |
+|---|---|---|---|
+| backup-cold | 12.00 s (14.4 MB/s) | 5.25 s (32.8 MB/s) | −56% |
+| backup-warm | 7.72 s | 4.53 s | −41% |
+| restore | 0.96 s (180 MB/s) | 1.07 s (161 MB/s) | +11% (slower) |
+
+Server memory is unchanged (about 45-70 MB RSS). Backup got faster because the per-chunk file creation and
+the two fsynced database commits per chunk are gone: durability is paid once per file. Restore is still
+somewhat slower, for two reasons: `bwfs` now checks every chunk's BLAKE3 hash before sending it, and (before
+the one-query change described below) it looked every chunk up in the index with its own query. Measured
+after that change the restore slowdown is +11%, against +28% with the per-chunk lookup. The hash check is not what protects the restored data: `rwfs` already
+verifies each chunk's BLAKE3 hash and the whole file's CRC32, so a flipped bit failed the restore before as
+well. The server-side check exists so that `bwfs` can tell which chunk is bad and heal it (mark it corrupt,
+so the next backup uploads the affected files again), and so that compaction and crash recovery never copy
+or keep corrupt bytes. On restore it is therefore a duplicate hash, and that duplicate is the remaining extra cost in the
+table above. The per-chunk lookup was replaced by one query per file (`LocateFileChunks`); in the `BenchmarkReadChunk` micro-benchmark
+(`src/storage/filesystem`) the per-chunk lookup took about 40% of reading a 64 KB chunk, while the hash
+takes about a quarter of it and stays. Wire bytes are unchanged. Remeasure with the command under
+[How to measure your own link](#how-to-measure-your-own-link).
 
 ## A note on the bandwidth cap
 

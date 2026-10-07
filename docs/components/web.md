@@ -52,7 +52,20 @@ no data — there's no read-only "guest" mode.
   version" on any row pins the restore cart's selection to that version's exact timestamp. The
   button's own label reflects an already-pinned version for that row's exact `(source_host, path)`
   when the restore cart has one, falling back to the representative/last-seen default otherwise, the
-  same per-row cart lookup the selection checkbox already does. A folder's
+  same per-row cart lookup the selection checkbox already does.
+
+  **Damaged badges.** Catalog entries carry a boolean `damaged` (replicated from the store as a
+  snapshot, so it can lag by about a minute; see
+  `docs/superpowers/specs/2026-10-08-catalog-damage-replication-design.md`). A red `Damaged` badge
+  (tooltip: "Backup data for this version is damaged; restore may fail.") appears on a catalog file
+  row when its latest version is damaged (`groupEntriesByFile` exposes this as `group.damaged`), on
+  each damaged row of the versions modal, and on file rows of the restore cart (`restoreCart` keeps a
+  display-only `damaged` flag on file rules, refreshed when a version is pinned or reset: "Use latest" takes
+  the damaged state of the versions modal's newest version, falling back to not damaged when the
+  modal has no versions; a missing flag counts as not damaged). The confirm modal adds an amber line with the number of damaged
+  selected files. These are warnings only: "Restore this version" and Restore stay enabled, and folder
+  rules never show the badge or count because `rwfs` resolves them at restore time. There is no
+  Playwright test: the demo lab cannot create real damage. A folder's
   versions can span multiple source hosts (each host's own capture of that path is a separate row);
   the modal calls this out with a note when it detects more than one, since picking a version in that
   case scopes the selection down to just that host's capture. Each row (folder or file) also carries
@@ -90,7 +103,8 @@ no data — there's no read-only "guest" mode.
   Picking a destination host (from the enrolled-client list, `useClientsStore`) and clicking
   **Verify** submits immediately, but **Restore** now opens `RestoreConfirmModal` first — a summary
   ("You're about to restore N items (size) to `<host>`", plus callouts when overwrite is on or any
-  items are pinned to an older version) that must be confirmed (or cancelled) before anything is
+  items are pinned to an older version, or an amber line when some selected files are known
+  damaged) that must be confirmed (or cancelled) before anything is
   submitted, so a destructive restore is never one accidental click away. Confirming (or clicking
   Verify directly) resolves the cart's rules into concrete catalog entries (`GET /catalog`),
   collapses those to one entry per distinct file (the catalog returns one row per *version*, so a
@@ -165,7 +179,7 @@ no data — there's no read-only "guest" mode.
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
 - `/jobs/:job_id` — one job's log lines from the last 24h (for a `cleanup:` / `vacuum:` job — `bwfs`'s
   scheduled store maintenance — a banner above them summarizes the run from its finish line: versions
-  deleted and deletion-log entries pruned, or chunks/file data removed and bytes reclaimed, plus the
+  deleted and deletion-log entries pruned, or chunks/file data removed, segments removed/compacted and bytes reclaimed, plus the
   duration, "Dry run" for a cleanup that deleted nothing, or the error of a failed run;
   restore/verify jobs have their own banner); each line is parsed from its underlying
   JSON via `LogLine.vue` into a level-colored `[LEVEL] time binary@hostname: message` summary, with

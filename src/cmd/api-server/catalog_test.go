@@ -16,12 +16,12 @@ import (
 )
 
 type fakeCatalogQueryClient struct {
-	resp          *pb.ListEntriesResponse
-	err           error
-	lastReq       *pb.ListEntriesRequest
-	facetsResp    *pb.ListFacetsResponse
-	facetsErr     error
-	lastFacetsReq *pb.ListFacetsRequest
+	resp            *pb.ListEntriesResponse
+	err             error
+	lastReq         *pb.ListEntriesRequest
+	facetsResp      *pb.ListFacetsResponse
+	facetsErr       error
+	lastFacetsReq   *pb.ListFacetsRequest
 	childrenResp    *pb.ListDirectoryChildrenResponse
 	childrenErr     error
 	lastChildrenReq *pb.ListDirectoryChildrenRequest
@@ -600,4 +600,26 @@ func TestHandleListCatalogStores_ReturnsFacets(t *testing.T) {
 	require.Len(t, body["data"], 1)
 	assert.Equal(t, "bwfs-1", body["data"][0].Name)
 	assert.Equal(t, "/var/www", fake.lastFacetsReq.GetPattern())
+}
+
+func TestHandleListCatalog_ReturnsDamagedField(t *testing.T) {
+	fake := &fakeCatalogQueryClient{resp: &pb.ListEntriesResponse{
+		Entries: []*pb.Entry{{Id: 1, Damaged: true}, {Id: 2}},
+	}}
+	srv := newServer(nil, fake, nil, testLogger())
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	data := body["data"].([]any)
+	require.Len(t, data, 2)
+	assert.Equal(t, true, data[0].(map[string]any)["damaged"])
+	assert.Equal(t, false, data[1].(map[string]any)["damaged"])
 }

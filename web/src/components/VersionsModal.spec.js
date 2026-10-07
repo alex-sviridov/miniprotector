@@ -76,6 +76,29 @@ describe('VersionsModal', () => {
     expect(wrapper.emitted('use-latest')).toHaveLength(1)
   })
 
+  it('use-latest carries the damaged state of the newest version (false when there are none)', async () => {
+    const damagedLatest = mountModal({ path: '/etc/hosts', sourceHost: 'web01' }, [
+      version({ id: 2, store_created_at: 200, damaged: true }),
+      version({ id: 1, store_created_at: 100, damaged: false }),
+    ])
+    await flushPromises()
+    await damagedLatest.wrapper.get('[data-test="use-latest"]').trigger('click')
+    expect(damagedLatest.wrapper.emitted('use-latest')).toEqual([[true]])
+
+    const healthyLatest = mountModal({ path: '/etc/hosts', sourceHost: 'web01' }, [
+      version({ id: 2, store_created_at: 200 }),
+      version({ id: 1, store_created_at: 100, damaged: true }),
+    ])
+    await flushPromises()
+    await healthyLatest.wrapper.get('[data-test="use-latest"]').trigger('click')
+    expect(healthyLatest.wrapper.emitted('use-latest')).toEqual([[false]])
+
+    const none = mountModal({ path: '/etc/hosts', sourceHost: 'web01' }, [])
+    await flushPromises()
+    await none.wrapper.get('[data-test="use-latest"]').trigger('click')
+    expect(none.wrapper.emitted('use-latest')).toEqual([[false]])
+  })
+
   it('shows a multi-host note only when the fetched versions span more than one source host', async () => {
     const single = await mountModal({ path: '/srv/shared', sourceHost: null }, [version({ source_host: 'a' })])
     await flushPromises()
@@ -121,5 +144,19 @@ describe('VersionsModal', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(wrapper.emitted('close')).toHaveLength(2)
+  })
+
+  it('shows a Damaged badge with a warning tooltip only on damaged versions, and keeps restore enabled', async () => {
+    const { wrapper } = mountModal(
+      { path: '/var/lib/dbdata/data.db', sourceHost: 'database' },
+      [version({ id: 1, damaged: true }), version({ id: 2, damaged: false }), version({ id: 3 })]
+    )
+    await flushPromises()
+    const badge = wrapper.get('[data-test="version-damaged-1"]')
+    expect(badge.text()).toBe('Damaged')
+    expect(badge.attributes('title')).toBe('Backup data for this version is damaged; restore may fail.')
+    expect(wrapper.find('[data-test="version-damaged-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="version-damaged-3"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="restore-version-1"]').attributes('disabled')).toBeUndefined()
   })
 })

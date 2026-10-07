@@ -9,6 +9,7 @@ const props = defineProps({
   destinationHost: { type: String, required: true },
   overwrite: { type: Boolean, required: true },
   pinnedCount: { type: Number, required: true },
+  damagedCount: { type: Number, default: 0 },
 })
 const emit = defineEmits(['confirm', 'cancel'])
 
@@ -30,8 +31,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
       <p v-if="overwrite" data-test="confirm-overwrite" class="mb-2 text-amber-700">
         Existing files at the destination will be overwritten.
       </p>
-      <p v-if="pinnedCount > 0" data-test="confirm-pinned" class="mb-4 text-amber-700">
+      <p v-if="pinnedCount > 0" data-test="confirm-pinned" class="mb-2 text-amber-700">
         {{ pinnedCount }} item{{ pinnedCount === 1 ? '' : 's' }} pinned to an older version.
+      </p>
+      <p v-if="damagedCount > 0" data-test="confirm-damaged" class="mb-2 text-amber-700">
+        {{ damagedCount }} selected file{{ damagedCount === 1 ? '' : 's' }} may have damaged backup data and may fail to restore.
       </p>
       <div class="flex justify-end gap-2">
         <BaseButton data-test="confirm-cancel" variant="secondary" @click="$emit('cancel')">Cancel</BaseButton>

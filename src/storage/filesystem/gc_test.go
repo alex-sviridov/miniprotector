@@ -2,8 +2,6 @@ package filesystem
 
 import (
 	"context"
-	"encoding/hex"
-	"os"
 	"testing"
 	"time"
 
@@ -53,9 +51,9 @@ func deletions(t *testing.T, s *Store) []FileVersionDeletionRecord {
 	return rows
 }
 
-func chunkFileExists(s *Store, hash []byte) bool {
-	_, err := os.Stat(s.chunkPath(hex.EncodeToString(hash)))
-	return err == nil
+// chunkKnown reports whether the store still indexes the chunk.
+func chunkKnown(s *Store, hash []byte) bool {
+	return s.ChunkExists(hash) == nil
 }
 
 var now = time.Unix(1_000_000, 0)
@@ -185,7 +183,7 @@ func TestVacuumOnline_KeepsEverythingStillReferencedByAVersion(t *testing.T) {
 
 	assert.Equal(t, storage.VacuumResult{}, *res)
 	for _, h := range hashes {
-		assert.True(t, chunkFileExists(s, h))
+		assert.True(t, chunkKnown(s, h))
 	}
 }
 
@@ -203,10 +201,10 @@ func TestVacuumOnline_ReclaimsDataLinksChunksAndFilesOfRemovedVersions(t *testin
 	assert.Equal(t, int64(1), res.OrphanedFileDataRemoved)
 	assert.Equal(t, int64(2), res.OrphanedChunkLinksRemoved)
 	assert.Equal(t, int64(1), res.OrphanedChunksRemoved)
-	assert.Equal(t, int64(len("only-in-gone")), res.BytesReclaimed)
-	assert.False(t, chunkFileExists(s, gone[0]), "chunk used only by the removed file is deleted from disk")
-	assert.True(t, chunkFileExists(s, gone[1]), "a chunk shared with a kept file stays")
-	assert.True(t, chunkFileExists(s, kept[1]))
+	assert.Zero(t, res.BytesReclaimed, "dead bytes stay in the active segment until it is compacted")
+	assert.False(t, chunkKnown(s, gone[0]), "chunk used only by the removed file is no longer indexed")
+	assert.True(t, chunkKnown(s, gone[1]), "a chunk shared with a kept file stays")
+	assert.True(t, chunkKnown(s, kept[1]))
 	ok, err := s.FileDataExists("kept")
 	require.NoError(t, err)
 	assert.True(t, ok)
@@ -263,7 +261,7 @@ func TestVacuumOnline_LeavesAnInFlightFileAndItsChunksAlone(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, storage.VacuumResult{}, *res)
-	assert.True(t, chunkFileExists(s, h))
+	assert.True(t, chunkKnown(s, h))
 }
 
 func TestBackupOpGuard_ExcludesGCBatchesWhileAHandlerCallIsRunning(t *testing.T) {

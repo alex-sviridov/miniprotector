@@ -36,8 +36,9 @@ bwfs /home/user/backup server --port 8080 --debug
 | `--quiet` | false | Suppress console logging |
 
 On startup, before accepting connections, the server runs a full vacuum pass over the store
-(removes incomplete/orphaned `FileData`, orphaned chunk links, orphaned chunk records, and
-orphaned chunk files) and logs the results. A vacuum failure is fatal — the server exits
+(removes incomplete/orphaned `FileData`, orphaned chunk links and orphaned chunk records, then
+compacts and removes pack segments, see [Storage layout](#storage-layout)) and logs the results
+(`segments_removed`, `segments_compacted`, `bytes_reclaimed`). A vacuum failure is fatal — the server exits
 rather than serving against a store it couldn't clean up.
 
 Opening the store also runs a one-time backfill of the `source_host`/`path`/`mtime` columns on
@@ -180,17 +181,19 @@ bwfs /home/user/backup list --filter nginx
 | `--filter` | | Free-text substring filter on file path (composes with positional) |
 | `--debug` | false | Enable debug logging |
 
-**Table columns:** SOURCE, TYPE, PATH, TIMESTAMP, SIZE, CHUNKS, VERSIONS
+**Table columns:** SOURCE, TYPE, PATH, TIMESTAMP, SIZE, CHUNKS, VERSIONS, plus a DAMAGED marker column (`yes` on damaged rows) that appears only when at least one listed row is damaged, so the usual table is unchanged
 
-**JSON fields:** `file_uuid`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`
+**JSON fields:** `file_uuid`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`, and `"damaged": true` on damaged rows only (omitted otherwise)
+
+Each row is the latest finalized `FileData` of its file. A damaged one (see "Damaged file data" below) stays listed and marked until a newer backup re-uploads the file, which replaces it. The gRPC `ListService` (and so `rwfs list`) does not carry the damaged flag; its protocol is unchanged.
 
 ### RestoreService
 
 Provides file reconstruction via server-streaming gRPC RPC. Given a `file_uuid` (UUID from `ListService.ListFiles`), returns file metadata followed by all chunks in index order.
 
-**Lookup semantics:** The handler first queries `file_data_records` by the `file_uuid` (column `uuid`) to obtain the `file_id` (fs:// path reference — the natural key, distinct from `file_uuid`), then uses that `file_id` to query `file_data_chunk_records` in index order. The file must be finalized (with a non-NULL checksum) before restore is allowed.
+**Lookup semantics:** The handler first queries `file_data_records` by the `file_uuid` (column `uuid`) to obtain the `file_id` (fs:// path reference — the natural key, distinct from `file_uuid`), then locates all of the file's chunks with one query (`Store.LocateFileChunks`: `file_data_chunk_records` in index order, left-joined to `chunk_records`) and reads each chunk from that location (`Store.ReadLocatedChunk`, hash-verified). A link whose chunk row is missing is kept in place; it is looked up again when read and, if still missing, fails, and is marked, at its position. The file must be finalized (with a non-NULL checksum) before restore is allowed.
 
-**Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.Internal` when a database error occurs or a chunk file cannot be read from disk — a chunk-read failure also marks that chunk corrupted server-side (see [backup protocol](../protocols/backup.md)) so it heals on the next backup. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
+**Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.DataLoss` when the data is gone for good: the `FileData` is already flagged damaged (checked with the lookup, before any event is sent), or a chunk is missing or fails hash verification mid-stream — such a chunk is also marked corrupted server-side, which flags the file damaged (see [backup protocol](../protocols/backup.md)), so it heals on the next backup. Returns gRPC `codes.Internal` only for errors that may be transient (a database error, or a chunk read failing with I/O, too many open files, database busy); these mark nothing. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
 
 ## Transport Security
 
@@ -201,11 +204,122 @@ by that CA is trusted — there's no additional per-client allowlist. Missing or
 are a fatal startup error; there is no plaintext fallback. Cert issuance itself is out of scope
 for `bwfs` — see the [control plane setup](../../deploy/control-plane/README.md) for how certs are provisioned today.
 
+## Storage layout
+
+Chunk bytes live in append-only **pack segments**, not one file per chunk:
+
+```
+<storage_path>/packs/0000000001.pack      # 10-digit segment id, rotated at 256 MiB
+<storage_path>/<sqlite database>          # metadata and the chunk index
+```
+
+A segment is the 8-byte magic `MPKSEG01` followed by records back to back; each record is
+`MPKR | data length (uint32 LE) | BLAKE3-256 of data | data` (40-byte header, data up to 16 MiB).
+`chunk_records` carries each chunk's `segment` and `offset`, so a read is one `pread`. This
+replaces roughly one file and inode per 64 KB chunk (about 16M files per TB) with a handful of
+large files. The package is `src/storage/pack`; `src/storage/filesystem` owns the SQLite index.
+
+A store written by the previous layout (it has a `chunks/` directory) is rejected at open with
+an error. There is no migration: start a fresh store.
+
+### Durability contract
+
+- Acknowledging a chunk to `brfs` happens **before** its bytes are fsynced. Durability is paid
+  once per barrier (group commit), not per chunk.
+- The barrier is file finalize. `FinalizeFileData` fsyncs the active segment, then commits all
+  pending chunk rows and links in one SQLite transaction, and only then sets the file's checksum.
+  A file is therefore "complete" (skippable by later backups) only after its bytes are durable and
+  indexed. Other barriers: 32 MiB of unflushed chunk bytes, vacuum, marking a chunk corrupt, and
+  `Close`.
+- Index rows only ever point at durable bytes. New rows are held in memory until after the fsync.
+  A crash leaves at worst unindexed dead bytes in a segment, never a row pointing at missing data.
+- An fsync failure is sticky: the log refuses further writes (the kernel may have dropped the dirty
+  pages, so a retry could falsely succeed). Requests fail; restarting the server recovers.
+- After each sync `posix_fadvise(DONTNEED)` is applied to the whole active segment file so backup
+  writes do not evict the page cache (it is only advice; clean pages of that file are dropped).
+
+### Recovery and verified reads
+
+- On open the **last** segment is scanned record by record, checking each BLAKE3 hash; a torn or
+  corrupt tail is truncated at the first bad record (earlier segments were fsynced when sealed). A
+  last segment that is only a partial magic (crash during creation) is recreated. A bad magic on a
+  segment that holds data refuses to open the store.
+- Every read verifies the record header and BLAKE3 hash. A read that finds its segment gone
+  (compaction moved the chunk) re-locates the chunk and retries, up to 3 attempts in total, and only
+  while the chunk's location keeps changing. Restore locates a whole file's chunks up front without
+  holding the guard, so this re-locate is also what keeps a chunk compacted mid-restore readable.
+- The client (`rwfs`) verifies BLAKE3 and the file CRC32 as well, so on restore the server's hash
+  check does not protect the data; it lets `bwfs` identify and heal the bad chunk, and keeps
+  compaction and recovery from copying or keeping corrupt bytes.
+- Read failures are classified. Lost data -- a hash or header mismatch, a damaged index row, or a
+  segment that is still missing after re-locating -- is `storage.ErrChunkCorrupt`. At restore or
+  verify, only that or a chunk that is no longer indexed (`ErrChunkNotFound`) marks the chunk
+  corrupt: its chunk row and links are dropped (the bytes stay behind as dead space) and every
+  dependent `FileData` is flagged damaged -- see "Damaged file data" below. Any other read error (I/O error, too many open files, database busy) may be
+  transient: it fails the restore request and drops nothing.
+
+### Damaged file data
+
+Marking a chunk corrupt (`MarkChunkCorrupted`, at restore or verify, or compaction finding a bad
+record) does not delete the files that used it. Their `file_data_records` rows get `damaged_at` set
+(the time the damage was first found; a row already flagged keeps it), so the loss stays recorded
+instead of the file silently disappearing from the store. Only the bad chunk's row and links are
+dropped; the file's other links stay, because they are keyed by `file_id` and a healthy re-upload
+of the same file shares them. bwfs logs one Error line `chunk marked corrupt` (in its own log,
+`bwfs.log`: the server gives its writer and restore stores its logger) with `chunk_hash`,
+`file_versions_damaged` (the number of `FileData` rows newly flagged) and up to 5 `paths`; a chunk
+whose files were all flagged before is not reported again.
+
+- **Restore and list report it.** `RestoreFile` on a damaged `FileData` fails with gRPC
+  `DataLoss` before sending anything, and a chunk lost mid-stream also ends the stream with
+  `DataLoss` (not `Internal`), so clients know a retry cannot help. The restore resolver still lists
+  damaged files, so a folder restore fails visibly on them rather than skipping them; `bwfs list`
+  marks them (DAMAGED column, JSON `"damaged": true`).
+- **Dedup ignores damaged data.** `FileDataExists` and `FileData` only see rows with
+  `damaged_at IS NULL`, so the next backup of an unchanged file uploads it again (chunk-level dedup
+  still skips its intact chunks). The re-upload is a newer `FileData` for the same `file_id`, and
+  the resolver's and `bwfs list`'s "latest finalized per `file_id`" picks it, so the file heals.
+- **A file in transfer** whose chunk is marked corrupt is flagged too; its `FinalizeFileData` then
+  fails ("file data no longer exists") instead of recording a version for data with a lost chunk.
+- **Removal.** A damaged row is removed by vacuum like any other `FileData`: once no file version
+  references its `file_id` (or, if it was never finalized, as incomplete data after the grace
+  period).
+- `damaged_at` is nullable; opening an older store adds the column and treats existing rows as
+  healthy.
+- **Replica reader.** `ReplicaReader.DamagedFileIDs` lists, in pages ordered by `file_id`, the file
+  ids that are currently damaged: some row is flagged and no row of the same `file_id` is a healthy
+  finalized copy (an in-flight re-upload does not count). `catalogsync` reads this set to mirror the
+  damage into the catalog (see [catalogsync](catalogsync.md#damaged-files)). It is served by a
+  partial index on `file_id` covering only damaged rows (`idx_file_data_damaged_file_id`), so each
+  page seeks to its cursor and reads only its own rows. The index is created on bwfs startup by
+  AutoMigrate (a one-time `CREATE INDEX` on large stores); until bwfs has migrated, `catalogsync`'s
+  damage pass fails and retries with backoff.
+
+### Vacuum and compaction
+
+Vacuum first deletes orphan rows; deleted chunks become dead space inside segments. It then
+reclaims that space per sealed segment: a segment with no live records is removed, and one that is
+under 50% live is **compacted** (live records are read hash-verified, appended to the active
+segment, synced, and their rows repointed in bounded batches; then the emptied segment is
+removed). The active segment is never compacted or removed, and a crash during compaction leaves at
+worst duplicate dead bytes. The result and the log line carry `segments_removed`,
+`segments_compacted` (a compacted segment counts only as compacted) and `bytes_reclaimed`, which is
+the physical size of removed segments minus the bytes copied during compaction (only meaningful when
+the run succeeded).
+
+A record that fails verification during compaction is dropped like a corrupt chunk (its files are
+flagged damaged, see above). A segment that
+cannot be read for another reason (for example EIO or a permission error) is skipped: its batch is
+rolled back, the run continues with the next segment and reports an error at the end, and a later
+run retries it. At startup such a reclaim failure only logs a warning and bwfs starts, because the
+database part of the vacuum is already committed; a failure of the database cleanup itself is still
+fatal.
+
 ## Platform-specific code
 
-Writing is split per OS so it can be tuned independently: `src/storage/filesystem/writer_{linux,windows}.go`
-(`writeChunkFile`: temp write + rename), `storelock_{linux,windows}.go` (exclusive store lock;
-`flock` vs `LockFileEx`) and `src/cmd/bwfs/diskspace_{linux,windows}.go` (disk usage for status reports).
+bwfs is Linux only: chunk storage (`src/storage/pack`) uses `posix_fadvise`, the exclusive store
+lock is `src/storage/filesystem/storelock_linux.go` (`flock`), and disk usage for status reports is
+`src/cmd/bwfs/diskspace_linux.go`.
 
 ## Building
 

@@ -31,6 +31,7 @@ type entryDTO struct {
 	ModTime         int64  `json:"mod_time"`
 	ParentDirectory string `json:"parent_directory"`
 	ShortFilename   string `json:"short_filename"`
+	Damaged         bool   `json:"damaged"`
 }
 
 func toEntryDTO(e *pb.Entry) entryDTO {
@@ -51,6 +52,7 @@ func toEntryDTO(e *pb.Entry) entryDTO {
 		ModTime:         e.GetModTime(),
 		ParentDirectory: e.GetParentDirectory(),
 		ShortFilename:   e.GetShortFilename(),
+		Damaged:         e.GetDamaged(),
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"log/slog"
@@ -17,6 +18,8 @@ import (
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/checksum"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"lukechampine.com/blake3"
 )
 
@@ -69,11 +72,30 @@ type restoreFileResult struct {
 	// Retryable is true only when Err comes from the network/RPC-facing
 	// call to bwfs (connect, Recv, or an unexpected event type) -- the
 	// same class of failure verifyFileWithRetry already retries. It
-	// stays false (the zero value) for every other failure: integrity
-	// mismatches (blake3_mismatch, crc_mismatch), a pre-existing
-	// directory at the destination, and local disk I/O errors -- none of
-	// which retrying can fix. See writeRestoreFileWithRetry.
+	// stays false (the zero value) for every other failure: a DataLoss
+	// status (see Damaged), integrity mismatches, a pre-existing directory
+	// at the destination, and local disk I/O errors. A blake3_mismatch
+	// (errBlake3Mismatch) still gets one retry of its own; see
+	// restoreAttempts.
 	Retryable bool
+	// Damaged is true when bwfs answered with gRPC DataLoss: the backup
+	// data of this file version is gone for good, so it is never retried,
+	// and restoreFileContent counts it instead of aborting the run.
+	Damaged bool
+}
+
+// errBlake3Mismatch marks a chunk whose data does not match its hash on
+// arrival. Its text is the reason name rwfs has always logged.
+var errBlake3Mismatch = errors.New("blake3_mismatch")
+
+// streamFailure fills base for an error from the RestoreFile stream. A
+// DataLoss status is final (Damaged); any other stream error may be
+// transient and is retried.
+func streamFailure(base restoreFileResult, err error) restoreFileResult {
+	base.Err = fmt.Errorf("stream error: %w", err)
+	base.Damaged = status.Code(err) == codes.DataLoss
+	base.Retryable = !base.Damaged
+	return base
 }
 
 // writeRestoreFile fetches f's content via RestoreFile and writes it to
@@ -111,16 +133,12 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 
 	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileUuid: f.FileUUID})
 	if err != nil {
-		base.Err = fmt.Errorf("stream error: %w", err)
-		base.Retryable = true
-		return base
+		return streamFailure(base, err)
 	}
 
 	firstEvent, err := stream.Recv()
 	if err != nil {
-		base.Err = fmt.Errorf("stream error: %w", err)
-		base.Retryable = true
-		return base
+		return streamFailure(base, err)
 	}
 	touch()
 	meta := firstEvent.GetMeta()
@@ -157,9 +175,7 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 	for {
 		event, err := stream.Recv()
 		if err != nil {
-			base.Err = fmt.Errorf("stream error: %w", err)
-			base.Retryable = true
-			return base
+			return streamFailure(base, err)
 		}
 		touch()
 		chunk := event.GetChunk()
@@ -171,7 +187,7 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 
 		computed := blake3.Sum256(chunk.Data)
 		if !bytes.Equal(computed[:], chunk.Hash) {
-			base.Err = fmt.Errorf("blake3_mismatch: chunk %d", chunk.Index)
+			base.Err = fmt.Errorf("%w: chunk %d", errBlake3Mismatch, chunk.Index)
 			return base
 		}
 
@@ -214,19 +230,36 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 	return base
 }
 
-// writeRestoreFileWithRetry retries writeRestoreFile up to maxRetries
-// times on a retryable (network/RPC-facing) failure, sharing withRetry's
-// backoff with verifyFileWithRetry (retry.go) so the two commands can't
-// drift apart. A retry is safe with no extra cleanup: writeRestoreFile's
-// own defer already removes any partial temp file before
-// returning on failure, so each attempt starts from a clean slate (fresh
-// stat, temp file, preallocate). A non-retryable failure (integrity mismatch,
-// pre-existing directory, local disk error) surfaces on the first
-// attempt with no backoff wait.
+// writeRestoreFileWithRetry retries writeRestoreFile on a retryable
+// (network/RPC-facing) failure up to maxRetries attempts, and on a
+// blake3_mismatch once, sharing withRetry's backoff with
+// verifyFileWithRetry (retry.go) so the two commands can't drift apart. A
+// retry is safe with no extra cleanup: writeRestoreFile's own defer
+// already removes any partial temp file before returning on failure, so
+// each attempt starts from a clean slate (fresh stat, temp file,
+// preallocate). A final failure (DataLoss, CRC mismatch, pre-existing
+// directory, local disk error) surfaces on the first attempt with no
+// backoff wait.
 func writeRestoreFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int, q *commitQueue) restoreFileResult {
-	return withRetry(ctx, logger.With("source", f.Source, "path", f.Path, "dest_path", f.DestPath), maxRetries,
+	return withRetry(ctx, logger.With("source", f.Source, "path", f.Path, "dest_path", f.DestPath),
 		func(ctx context.Context) restoreFileResult { return writeRestoreFile(ctx, client, f, overwrite, q) },
-		func(r restoreFileResult) bool { return r.Err != nil && r.Retryable },
+		func(r restoreFileResult) int { return restoreAttempts(r, maxRetries) },
 		func(r restoreFileResult) string { return r.Err.Error() },
 	)
+}
+
+// restoreAttempts is how many attempts in total r's outcome allows (see
+// withRetry): the configured retries for a network error, one retry for a
+// hash mismatch, none for anything else.
+func restoreAttempts(r restoreFileResult, maxRetries int) int {
+	switch {
+	case r.Err == nil:
+		return 1
+	case r.Retryable:
+		return maxRetries
+	case errors.Is(r.Err, errBlake3Mismatch):
+		return hashMismatchAttempts
+	default:
+		return 1
+	}
 }

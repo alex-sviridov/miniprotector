@@ -2,7 +2,6 @@ package filesystem
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"gorm.io/gorm"
@@ -24,10 +23,18 @@ func (s *Store) BeginBackupOp() func() {
 	return s.opGuard.RUnlock
 }
 
-// inBatch runs fn in one transaction under the exclusive guard.
+// inBatch runs fn in one transaction under the exclusive guard. It flushes
+// first: with the guard held no handler is mid-call, so after the flush every
+// chunk a stream stored has both its row and its link in the database, and a
+// chunk row without a link really is an orphan. Without the flush, a chunk
+// whose link was still pending could look orphaned, or one whose row was
+// still pending could escape the batch's view.
 func (s *Store) inBatch(fn func(tx *gorm.DB) error) error {
 	s.opGuard.Lock()
 	defer s.opGuard.Unlock()
+	if err := s.flush(); err != nil {
+		return err
+	}
 	return s.db.Transaction(fn)
 }
 
@@ -112,10 +119,11 @@ func (s *Store) batchLoop(ctx context.Context, batchSize int, step func(tx *gorm
 }
 
 // VacuumOnline reclaims what no file version references any more, safely on
-// a store that is serving backups: the same four DB-driven steps as Vacuum,
-// each in bounded batches under the exclusive guard, and no disk walk (the
-// chunk files to delete are exactly the hashes whose records are removed;
-// strays and crash-leftover temp files stay Vacuum's startup job).
+// a store that is serving backups: the same steps as Vacuum, each in bounded
+// batches under the exclusive guard. Removing an orphan chunk's row only turns
+// its bytes into dead space in their pack segment; the final step
+// (reclaimSegments) removes dead segments and compacts sparse ones, and only
+// that frees disk space (BytesReclaimed).
 //
 // Incomplete file data is only treated as abandoned after incompleteGrace,
 // because unlike at startup a file may legitimately still be transferring.
@@ -168,33 +176,30 @@ func (s *Store) VacuumOnline(ctx context.Context, batchSize int, incompleteGrace
 	}
 
 	res.OrphanedChunksRemoved, err = s.batchLoop(ctx, batchSize, func(tx *gorm.DB) (int64, error) {
-		var orphans []ChunkRecord
-		if err := tx.Where("hash NOT IN (SELECT chunk_hash FROM file_data_chunk_records)").
-			Limit(batchSize).Find(&orphans).Error; err != nil || len(orphans) == 0 {
+		var hashes []string
+		if err := tx.Model(&ChunkRecord{}).Where("hash NOT IN (SELECT chunk_hash FROM file_data_chunk_records)").
+			Limit(batchSize).Pluck("hash", &hashes).Error; err != nil || len(hashes) == 0 {
 			return 0, err
-		}
-		hashes := make([]string, len(orphans))
-		for i, o := range orphans {
-			hashes[i] = o.Hash
 		}
 		if err := tx.Where("hash IN ?", hashes).Delete(&ChunkRecord{}).Error; err != nil {
 			return 0, err
 		}
-		// Files go while the exclusive guard is still held, so a concurrent
-		// backup can't have just decided this chunk "already exists".
-		for _, o := range orphans {
-			if err := os.Remove(s.chunkPath(o.Hash)); err != nil && !os.IsNotExist(err) {
-				return 0, err
-			}
-			res.BytesReclaimed += o.Size
-		}
-		return int64(len(orphans)), nil
+		// The rows go while the exclusive guard is held, so a concurrent
+		// backup can't have just decided this chunk "already exists". The
+		// bytes become dead space in their segment; reclaimSegments frees it.
+		return int64(len(hashes)), nil
 	})
 	if err != nil {
 		return res, err
 	}
 
-	if res.IncompleteFileData+res.OrphanedFileDataRemoved+res.OrphanedChunkLinksRemoved+res.OrphanedChunksRemoved > 0 {
+	res.SegmentsRemoved, res.SegmentsCompacted, res.BytesReclaimed, err = s.reclaimSegments(ctx, batchSize)
+	if err != nil {
+		return res, err
+	}
+
+	if res.IncompleteFileData+res.OrphanedFileDataRemoved+res.OrphanedChunkLinksRemoved+res.OrphanedChunksRemoved+
+		res.SegmentsRemoved+res.SegmentsCompacted > 0 {
 		// Best effort: keep the WAL from staying large after a big run. A
 		// busy reader (list/restore connections) can make this a no-op.
 		_ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)").Error

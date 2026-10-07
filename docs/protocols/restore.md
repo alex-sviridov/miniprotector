@@ -3,9 +3,18 @@
 ## Core Concept
 
 A server-streaming gRPC RPC (`RestoreService.RestoreFile`) that sends file metadata
-followed by all chunks for a single file in index order. `bwfs` serves the data as-is;
-it does not verify integrity before sending. The caller is responsible for any
-integrity checks.
+followed by all chunks for a single file in index order. The client verifies every
+chunk's BLAKE3 hash and the whole file's CRC32; that is what protects the restored data.
+`bwfs` also checks each chunk's hash before sending it, so that it can identify a bad
+chunk and heal it (see [Error Handling](#error-handling)).
+
+`bwfs` locates all of a file's chunks with one database query (the file's links, in index
+order, left-joined to their chunk rows) and then reads each chunk from its segment. A link
+whose chunk row is gone stays in the list; it is looked up again when read and, if still
+missing, fails at its position, which marks it. The
+restore does not hold the store's guard, so compaction may move a chunk after that query;
+a read that finds its segment gone looks the chunk up again instead of trusting the stale
+location.
 
 `RestoreService` is registered on the same `grpc.Server` as `BackupService` and
 `ListService`, so no additional port or process is needed.
@@ -68,15 +77,40 @@ the only legitimate caller. See
 | Condition | bwfs behaviour |
 |-----------|----------------|
 | `file_uuid` not found or not finalized | gRPC `NotFound` |
-| Chunk file missing or unreadable | gRPC `Internal` (stream terminates) |
+| `FileData` already flagged damaged (`damaged_at` set) | gRPC `DataLoss` ("backup data damaged ..."), returned before any event, not even the meta |
+| Fewer chunk links than the `chunk_count` stored at finalize (a chunk marked by a concurrent restore, verify or compaction after the lookup) | gRPC `DataLoss` ("backup data damaged: chunk lost"), returned before any event: chunks are located before the meta is sent, so a truncated file is never streamed |
+| Chunk missing or corrupt (`ErrChunkNotFound` / `ErrChunkCorrupt`) | gRPC `DataLoss` (stream terminates); chunk marked corrupted, which flags the file damaged |
+| Other chunk read error (I/O, too many open files, database busy) | gRPC `Internal` (stream terminates); nothing is marked |
+| Database error looking up the file or its chunks | gRPC `Internal` |
 | Send error (network) | stream terminates; client retries entire `RestoreFile` call |
 
-On a chunk-read failure, bwfs also marks that chunk corrupted server-side (removes any
-leftover chunk file, deletes its DB records, and invalidates the `FileData` of every file
-that referenced it) before returning the `Internal` error — see the [backup
+`DataLoss` means the data is gone for good: retrying cannot help, and only the next backup of the
+file (which re-uploads it, since dedup ignores damaged rows) heals it. `Internal` is kept for errors
+that may be transient. A damaged version fails before the meta event because its links to the lost
+chunk are gone: streaming it would send a silently truncated file. The resolver
+(`ResolveRestoreFiles`) still lists damaged files, so a folder restore fails visibly on them instead
+of succeeding with the file missing; once a healthy re-upload exists, it is the newer row and wins.
+
+When the chunk is missing or corrupt (and only then), bwfs also marks it corrupted server-side (deletes its
+chunk record and links, and flags the `FileData` of every file that referenced it as damaged)
+before returning the `DataLoss` error — see the [backup
 protocol](./backup.md)'s "How does the system recover from a corrupted chunk?" section for
 the full recovery rationale. A `restore` or `verify` run doubles as the trigger for this
-self-healing: the next backup re-uploads the affected files.
+self-healing: the next backup re-uploads the affected files. Other read errors may be transient, so
+they only fail the request: marking would drop data that is still intact.
+
+### Client behaviour (`rwfs`)
+
+| What `rwfs` sees | `verify` | `restore` |
+|------------------|----------|-----------|
+| gRPC `DataLoss` (at the first or any later `Recv`) | no retry; reason `data_loss`; the other files are still verified | no retry; the file is logged at Error and counted, no temp or partial file is left, the other files are restored and committed, then the run fails with the damaged count (non-zero exit) |
+| BLAKE3 mismatch on a received chunk | retried exactly once, regardless of `--retries`; a second mismatch is final (`blake3_mismatch`) | same; a second mismatch aborts the run |
+| CRC32 mismatch on the whole file | final, no retry (`crc_mismatch`) | final, aborts the run |
+| Any other stream error (`Internal`, `NotFound`, network) | retried up to `--retries` attempts with backoff | same; once exhausted, aborts the run |
+
+`bwfs` verifies each chunk's BLAKE3 before sending it, so a client-side mismatch can only come from a
+fault in transit or in the client's memory: one more try usually clears it, and a repeat suggests
+something persistent rather than worth the full retry budget.
 
 ## CLI → RPC Mapping
 
@@ -121,9 +155,16 @@ handles concurrency without needing multiplexed bidi state.
 So the client can detect storage-level corruption (bytes that changed after the chunk was
 stored) without prior knowledge of the expected hash.
 
-**Why does bwfs not re-verify BLAKE3 before sending?**
-bwfs trusts its own storage. Detecting corruption after the fact is exactly the purpose
-of `rwfs verify`.
+**Why does bwfs verify BLAKE3 before sending, when the client verifies it too?**
+Not to protect the restored data: the client's per-chunk BLAKE3 and whole-file CRC32
+already catch corruption. Only bwfs can act on it, though: knowing which chunk is bad, it
+marks it corrupted so the next backup uploads the affected files again. The same read
+path is used by compaction and crash recovery, which must never copy or keep corrupt
+bytes. On restore the cost is one duplicate hash per chunk.
+
+**Why locate all chunks of a file in one query?**
+A separate index lookup per chunk was a large share of reading a 64 KB chunk (about 40%
+in `BenchmarkReadChunk`). One query per file removes that per-chunk cost.
 
 **Why is `expected_checksum` sent in `RestoreFileMeta` rather than a separate RPC?**
 Collocating the checksum with the stream eliminates an extra round-trip and lets the

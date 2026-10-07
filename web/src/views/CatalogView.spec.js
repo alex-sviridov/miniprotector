@@ -282,7 +282,7 @@ describe('CatalogView', () => {
     const restoreCart = useRestoreCartStore()
     await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
     await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('select-version', { store_created_at: 555, store_host: 'bwfs-1', size: 10 })
-    expect(restoreCart.toggleFile).toHaveBeenCalledWith('web01', '/etc/hosts', 'bwfs-1', 10, expect.any(Number), expect.any(Number))
+    expect(restoreCart.toggleFile).toHaveBeenCalledWith('web01', '/etc/hosts', 'bwfs-1', 10, expect.any(Number), expect.any(Number), false)
     expect(restoreCart.setVersionWindow).toHaveBeenCalledWith({ host: 'web01', path: '/etc/hosts' }, 555, 555)
   })
 
@@ -298,7 +298,7 @@ describe('CatalogView', () => {
     // ancestor), so toggling would flip it to an exclusion instead of
     // materializing the implicit selection into a real rule.
     expect(restoreCart.toggleFile).not.toHaveBeenCalled()
-    expect(restoreCart.ensureFileSelected).toHaveBeenCalledWith('web01', '/etc/hosts', 'bwfs-1', 10, expect.any(Number), expect.any(Number))
+    expect(restoreCart.ensureFileSelected).toHaveBeenCalledWith('web01', '/etc/hosts', 'bwfs-1', 10, expect.any(Number), expect.any(Number), false)
     expect(restoreCart.setVersionWindow).toHaveBeenCalledWith({ host: 'web01', path: '/etc/hosts' }, 555, 555)
   })
 
@@ -345,7 +345,7 @@ describe('CatalogView', () => {
     await wrapper.get('[data-test="file-checkbox-web01:/etc/hosts"]').trigger('click')
     await wrapper.find('tbody tr input[type="checkbox"]').trigger('change')
     expect(restoreCart.toggleFile).toHaveBeenCalledWith(
-      'web01', '/etc/hosts', 'bwfs-east', 8192, catalog.filters.receivedAfter, catalog.filters.receivedBefore
+      'web01', '/etc/hosts', 'bwfs-east', 8192, catalog.filters.receivedAfter, catalog.filters.receivedBefore, false
     )
   })
 
@@ -391,7 +391,7 @@ describe('CatalogView', () => {
     // component's @click.stop, which is what keeps this from navigating.
     await checkbox.trigger('click')
     await checkbox.trigger('change')
-    expect(restoreCart.toggleFile).toHaveBeenCalledWith('database', '/var/lib/dbdata/data.db', 'bwfs-east', 8192, 1000, 2000)
+    expect(restoreCart.toggleFile).toHaveBeenCalledWith('database', '/var/lib/dbdata/data.db', 'bwfs-east', 8192, 1000, 2000, false)
     expect(catalog.navigateTo).not.toHaveBeenCalled()
   })
 
@@ -476,5 +476,50 @@ describe('CatalogView', () => {
       entries: [entry({ id: 1, source_host: 'database', path: '/var/lib/dbdata/dump.sql' })],
     })
     expect(wrapper.find('[data-test="file-checkbox-database:/var/lib/dbdata/dump.sql"]').exists()).toBe(true)
+  })
+
+  it('shows a Damaged badge on a file row only when its latest version is damaged', () => {
+    const { wrapper } = mountView({
+      entries: [
+        entry({ id: 1, source_host: 'web01', path: '/a', store_created_at: 100, damaged: true }),
+        entry({ id: 2, source_host: 'web01', path: '/a', store_created_at: 200, damaged: false }),
+        entry({ id: 3, source_host: 'web01', path: '/b', store_created_at: 100, damaged: false }),
+        entry({ id: 4, source_host: 'web01', path: '/b', store_created_at: 200, damaged: true }),
+      ],
+    })
+    expect(wrapper.find('[data-test="file-damaged-web01:/a"]').exists()).toBe(false)
+    const badge = wrapper.get('[data-test="file-damaged-web01:/b"]')
+    expect(badge.text()).toBe('Damaged')
+    expect(badge.attributes('title')).toContain('damaged')
+  })
+
+  it('checking a damaged file passes the damaged flag to the cart', async () => {
+    const { wrapper, restoreCart, catalog } = mountView({
+      entries: [entry({ path: '/etc/hosts', source_host: 'web01', damaged: true })],
+    })
+    await wrapper.get('[data-test="file-checkbox-web01:/etc/hosts"]').trigger('click')
+    await wrapper.find('tbody tr input[type="checkbox"]').trigger('change')
+    expect(restoreCart.toggleFile).toHaveBeenCalledWith(
+      'web01', '/etc/hosts', 'bwfs-east', 8192, catalog.filters.receivedAfter, catalog.filters.receivedBefore, true
+    )
+  })
+
+  it('picking a version refreshes the cart rule damaged flag from that version; using latest from the latest row', async () => {
+    const wrapper = mountView({ entries: [entry({ path: '/etc/hosts', source_host: 'web01', damaged: true })] }).wrapper
+    const restoreCart = useRestoreCartStore()
+    await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
+    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('select-version', { store_created_at: 555, damaged: false })
+    expect(restoreCart.setDamaged).toHaveBeenCalledWith({ host: 'web01', path: '/etc/hosts' }, false)
+    await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
+    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('use-latest', true)
+    expect(restoreCart.setDamaged).toHaveBeenLastCalledWith({ host: 'web01', path: '/etc/hosts' }, true)
+  })
+
+  it('using latest without a damaged state from the modal falls back to healthy', async () => {
+    const { wrapper } = mountView({ entries: [entry({ path: '/etc/hosts', source_host: 'web01', damaged: true })] })
+    const restoreCart = useRestoreCartStore()
+    await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
+    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('use-latest')
+    expect(restoreCart.setDamaged).toHaveBeenLastCalledWith({ host: 'web01', path: '/etc/hosts' }, false)
   })
 })

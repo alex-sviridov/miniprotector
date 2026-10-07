@@ -3,6 +3,8 @@ import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
 import { useCatalogStore } from '../stores/catalog'
 import { formatBytes, formatTimestamp } from '../utils/format'
 import BaseButton from './ui/BaseButton.vue'
+import Badge from './ui/Badge.vue'
+import { DAMAGED_TOOLTIP } from '../utils/damaged'
 
 const props = defineProps({
   path: { type: String, required: true },
@@ -42,7 +44,9 @@ function close() {
 }
 
 function useLatest() {
-  emit('use-latest')
+  // Versions are newest first; carry the latest one's damaged state so the
+  // cart flag matches what "latest" will actually restore.
+  emit('use-latest', versions.value[0]?.damaged === true)
 }
 
 function selectVersion(version) {
@@ -83,6 +87,7 @@ function onKeydown(event) {
             <th class="py-2 pr-4">Job ID</th>
             <th class="py-2 pr-4">Store Host</th>
             <th class="py-2 pr-4"></th>
+            <th class="py-2 pr-4"></th>
           </tr>
         </thead>
         <tbody>
@@ -94,6 +99,9 @@ function onKeydown(event) {
             <td class="py-2 pr-4">{{ formatTimestamp(version.mod_time) || '—' }}</td>
             <td class="py-2 pr-4">{{ version.job_id }}</td>
             <td class="py-2 pr-4">{{ version.store_host }}</td>
+            <td class="py-2 pr-4">
+              <Badge v-if="version.damaged" variant="bad" :data-test="`version-damaged-${version.id}`" :title="DAMAGED_TOOLTIP">Damaged</Badge>
+            </td>
             <td class="py-2 pr-4">
               <BaseButton :data-test="`restore-version-${version.id}`" variant="secondary" @click="selectVersion(version)">
                 Restore this version

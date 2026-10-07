@@ -1,9 +1,8 @@
 package filesystem
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
+	"context"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -19,7 +18,8 @@ func (s *Store) StoreInfo() (*storage.StoreInfo, error) {
 	if err := s.db.Model(&FileVersionRecord{}).Count(&totalVersions).Error; err != nil {
 		return nil, err
 	}
-	if err := s.db.Model(&FileDataRecord{}).Where("checksum IS NOT NULL").Count(&totalFileData).Error; err != nil {
+	// Damaged file data is still stored but no longer usable content: not counted.
+	if err := s.db.Model(&FileDataRecord{}).Where("checksum IS NOT NULL AND damaged_at IS NULL").Count(&totalFileData).Error; err != nil {
 		return nil, err
 	}
 	if err := s.db.Model(&ChunkRecord{}).Count(&totalChunks).Error; err != nil {
@@ -38,8 +38,17 @@ func (s *Store) StoreInfo() (*storage.StoreInfo, error) {
 	}, nil
 }
 
+// Vacuum removes everything no file version references, in one transaction,
+// then reclaims pack segment space. It runs at startup, before backups are
+// served.
 func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 	result := &storage.VacuumResult{}
+
+	// Flush first so every stored chunk has its row and link in the database;
+	// otherwise a chunk whose link is still pending would look orphaned.
+	if err := s.flush(); err != nil {
+		return nil, err
+	}
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Step 1: remove incomplete FileData older than threshold
@@ -82,37 +91,16 @@ func (s *Store) Vacuum() (*storage.VacuumResult, error) {
 		return nil, err
 	}
 
-	// Step 5: walk chunk files; delete any not in chunk_records (includes temp files)
-	chunksRoot := filepath.Join(s.basePath, "chunks")
-	filepath.WalkDir(chunksRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		// Reconstruct hash from path: last three segments are [aa][bb][rest]
-		rel, _ := filepath.Rel(chunksRoot, path)
-		parts := strings.Split(filepath.ToSlash(rel), "/")
-		if len(parts) != 3 {
-			// temp file or unexpected structure — delete
-			info, statErr := d.Info()
-			if statErr == nil {
-				result.BytesReclaimed += info.Size()
-			}
-			os.Remove(path)
-			return nil
-		}
-		hexHash := parts[0] + parts[1] + parts[2]
-
-		var count int64
-		s.db.Model(&ChunkRecord{}).Where("hash = ?", hexHash).Count(&count)
-		if count == 0 {
-			info, statErr := d.Info()
-			if statErr == nil {
-				result.BytesReclaimed += info.Size()
-			}
-			os.Remove(path)
-		}
-		return nil
-	})
-
+	// Then free the disk space: this also removes segment files with no rows
+	// that a crash left behind (e.g. after compaction committed the moves but
+	// before it deleted the old file).
+	result.SegmentsRemoved, result.SegmentsCompacted, result.BytesReclaimed, err =
+		s.reclaimSegments(context.Background(), reclaimBatchSize)
+	if err != nil {
+		// The database cleanup is committed; only disk space is not freed.
+		// The distinct sentinel lets startup carry on instead of crash-looping
+		// on, say, one unreadable sector.
+		return result, fmt.Errorf("%w: %w", storage.ErrReclaimIncomplete, err)
+	}
 	return result, nil
 }

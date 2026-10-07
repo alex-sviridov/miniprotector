@@ -58,4 +58,21 @@ describe('groupEntriesByFile', () => {
     expect(groups[0].versions).toEqual([only])
     expect(groups[0].representative).toBe(only)
   })
+
+  it('exposes damaged on the group from the latest version only', () => {
+    const [group] = groupEntriesByFile([
+      entry({ id: 1, store_created_at: 100, damaged: true }),
+      entry({ id: 2, store_created_at: 200, damaged: false }),
+    ])
+    expect(group.damaged).toBe(false)
+    const [older] = groupEntriesByFile([
+      entry({ id: 1, store_created_at: 100, damaged: false }),
+      entry({ id: 2, store_created_at: 200, damaged: true }),
+    ])
+    expect(older.damaged).toBe(true)
+  })
+
+  it('treats a missing damaged field as not damaged', () => {
+    expect(groupEntriesByFile([entry({})])[0].damaged).toBe(false)
+  })
 })

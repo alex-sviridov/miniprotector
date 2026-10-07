@@ -63,6 +63,10 @@ unlike `GET /api/v1/jobs`, which translates one REST call into one Loki query, t
 state across calls — one shared Loki tail feeds every subscriber, and a subscriber joining late
 still gets the current state via the snapshot rather than replaying history.
 
+### Catalog Entries
+
+`GET /api/v1/catalog` entries carry a boolean `damaged` (always emitted), mapped from `Entry.damaged`: true when the store has reported the file's backup data as damaged. It lags the store by up to about a minute and does not block restore.
+
 ### Catalog Facet Endpoints
 
 - `GET /api/v1/catalog/clients` — distinct client (source host) facets
@@ -217,6 +221,7 @@ with no backend gRPC call. See [Storage Status Protocol](../protocols/storagesta
 - [clientmanager-api](./clientmanager-api.md) — one of the two backends this component reads from
 - [clientmanager-admin-api](./clientmanager-admin-api.md) — the write-capable backend behind this component's client-write endpoints
 - [catalog](./catalog.md) — the other backend
+- [Catalog Sync Protocol](../protocols/catalog-sync.md) — `ListEntries` and the facet RPCs this component calls, including `Entry.damaged`
 - [REST API v1](../api/rest-v1.md)
 - [Job Status Protocol](../protocols/jobstatus.md) — the `JobStatusService` this component's gRPC listener serves
 - [Storage Status Protocol](../protocols/storagestatus.md) — the `StorageStatusService` on the same listener, fed by every `bwfs`

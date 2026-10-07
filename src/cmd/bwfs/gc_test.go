@@ -72,7 +72,8 @@ func (s *spyStore) VacuumOnline(ctx context.Context, batch int, grace time.Durat
 	if s.vacuumErr != nil {
 		return &storage.VacuumResult{}, s.vacuumErr
 	}
-	return &storage.VacuumResult{OrphanedChunksRemoved: 2, OrphanedFileDataRemoved: 1, BytesReclaimed: 10}, nil
+	return &storage.VacuumResult{OrphanedChunksRemoved: 2, OrphanedFileDataRemoved: 1, BytesReclaimed: 10,
+		SegmentsRemoved: 3, SegmentsCompacted: 4}, nil
 }
 
 func (s *spyStore) PruneDeletionLog(ctx context.Context, olderThan time.Time) (int64, error) {
@@ -354,6 +355,8 @@ func TestVacuumOnce_LogsAJobWithStartAndFinishStatistics(t *testing.T) {
 	assert.Equal(t, float64(2), finishes[0]["orphaned_chunks_removed"])
 	assert.Equal(t, float64(1), finishes[0]["orphaned_file_data_removed"])
 	assert.Equal(t, float64(10), finishes[0]["bytes_reclaimed"])
+	assert.Equal(t, float64(3), finishes[0]["segments_removed"])
+	assert.Equal(t, float64(4), finishes[0]["segments_compacted"])
 }
 
 func TestVacuumOnce_RunsEvenWhenThereIsNothingToDoAndFailureFinishesTheJob(t *testing.T) {

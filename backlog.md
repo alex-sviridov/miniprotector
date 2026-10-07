@@ -38,3 +38,13 @@ first: run a latency-injected benchmark (`tc netem` at 0, 20 and 100 ms) with th
 where the knee actually is and whether one default fails to fit, before building it. Related: the
 window drains at every file boundary, so runs of many small files gain little; pipelining across file
 boundaries is a separate, larger change.
+
+## Key chunk links by FileData, not by file_id
+
+Chunk links (`file_data_chunk_records`) are keyed by `file_id` (source, path, mtime), not by the
+`FileData` uuid. Two consequences of the damaged-data work: a flagged `FileData` row keeps its file's
+surviving links alive (they are shared with any re-upload), and if a re-upload under the same `file_id`
+(same path and mtime) has different content, its links merge with the old ones. The client's whole-file
+CRC32 catches the mixed result on restore, so it is not silent, but the version cannot be restored.
+Consider keying links by `FileData` uuid so each content has its own link set; needs a schema change and
+a migration of existing links.

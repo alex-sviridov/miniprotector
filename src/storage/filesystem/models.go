@@ -2,15 +2,23 @@ package filesystem
 
 import "time"
 
+// ChunkRecord indexes one chunk stored in the pack log: Segment and Offset
+// locate its record (the header start), Size is the data length. A row is only
+// ever written after its bytes were fsynced (see Store.flush).
 type ChunkRecord struct {
-	Hash      string `gorm:"primaryKey"`
-	Size      int64
+	Hash string `gorm:"primaryKey"`
+	// (segment, size) is a covering index: compaction's per-segment live-byte
+	// sum runs under the exclusive guard and must not scan the whole table,
+	// and the same index serves selecting one segment's rows.
+	Size      int64 `gorm:"index:idx_chunk_segment_size,priority:2"`
+	Segment   int64 `gorm:"index:idx_chunk_segment_size,priority:1"`
+	Offset    int64
 	CreatedAt time.Time
 }
 
 type FileDataRecord struct {
 	UUID       string `gorm:"primaryKey"`
-	FileID     string `gorm:"index"` // retained for uniqueness/display; not parsed on the query path anymore
+	FileID     string `gorm:"index;index:idx_file_data_damaged_file_id,where:damaged_at IS NOT NULL"` // retained for uniqueness/display; not parsed on the query path anymore
 	SourceHost string `gorm:"index:idx_file_data_path_host,priority:2"`
 	Path       string `gorm:"index:idx_file_data_path_host,priority:1"`
 	Mtime      int64
@@ -18,6 +26,15 @@ type FileDataRecord struct {
 	Checksum   []byte
 	ChunkCount int
 	CreatedAt  time.Time
+	// DamagedAt is set when a chunk of this file data was found unusable
+	// (MarkChunkCorrupted, or compaction). The row is kept rather than deleted
+	// so the loss stays visible to restore and list until no file version
+	// references its file_id any more (a healed re-upload shares that
+	// file_id, so the row can outlive the damaged versions themselves); dedup
+	// ignores it, so the next backup uploads the file again.
+	// NULL = healthy. Nullable, so AutoMigrate adds it to existing stores
+	// without a backfill.
+	DamagedAt *time.Time
 }
 
 type FileDataChunkRecord struct {

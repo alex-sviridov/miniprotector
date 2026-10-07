@@ -12,7 +12,19 @@ import (
 )
 
 func openDB(basePath string) (*gorm.DB, error) {
-	dbPath := filepath.Join(basePath, "metadata.db") + "?_busy_timeout=5000"
+	// Pragmas in the DSN apply to every connection the pool opens, not just
+	// the first. (modernc ignores the old "_busy_timeout" parameter.)
+	//
+	// synchronous=FULL is what the pack layer's ordering relies on: flush
+	// fsyncs chunk bytes and then commits their rows, and compaction removes a
+	// segment file only after the commit that moved its rows. If a commit could
+	// be lost on power failure (NORMAL in WAL mode), the database could come
+	// back pointing at a segment that was already deleted.
+	//
+	// busy_timeout makes a writer on another connection (the restore server's
+	// read-only store marking a chunk corrupt) wait instead of failing.
+	dbPath := filepath.Join(basePath, "metadata.db") +
+		"?_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)"
 
 	// Open via database/sql with modernc driver (registered as "sqlite")
 	sqlDB, err := sql.Open("sqlite", dbPath)

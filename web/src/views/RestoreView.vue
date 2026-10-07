@@ -13,6 +13,7 @@ import BaseField from '../components/ui/BaseField.vue'
 import BaseSelect from '../components/ui/BaseSelect.vue'
 import Badge from '../components/ui/Badge.vue'
 import VersionsModal from '../components/VersionsModal.vue'
+import { DAMAGED_TOOLTIP } from '../utils/damaged'
 import RestoreConfirmModal from '../components/RestoreConfirmModal.vue'
 
 // 2x agent's default 15-minute operating-refresh cadence
@@ -80,6 +81,11 @@ function selectVersion(version) {
     version.store_created_at,
     version.store_created_at
   )
+  // The flag describes the version the rule now resolves to; folder rules
+  // are never flagged (rwfs resolves them at restore time).
+  if (versionsFor.value.host !== null) {
+    restoreCart.setDamaged({ host: versionsFor.value.host, path: versionsFor.value.path }, version.damaged === true)
+  }
   versionsFor.value = null
 }
 
@@ -90,8 +96,12 @@ function selectVersion(version) {
 // fully unbounded (see toWireRule's truthy check, Task 5), which resolves
 // to a genuine "whatever's newest at restore time" -- the simplest correct
 // meaning "latest" can have on this page.
-function useLatestVersion() {
+function useLatestVersion(latestDamaged = false) {
   restoreCart.setVersionWindow({ host: versionsFor.value.host, path: versionsFor.value.path }, 0, 0)
+  // The modal knows its newest version; a missing payload falls back to false.
+  if (versionsFor.value.host !== null) {
+    restoreCart.setDamaged({ host: versionsFor.value.host, path: versionsFor.value.path }, latestDamaged === true)
+  }
   versionsFor.value = null
 }
 
@@ -119,6 +129,8 @@ function capturedLabel(entry) {
 
 const totalSize = computed(() => restoreCart.entries.reduce((sum, e) => sum + (e.size || 0), 0))
 const pinnedCount = computed(() => restoreCart.entries.filter(isPinned).length)
+// Folder rules are resolved by rwfs at restore time, so only file rules can be known-damaged.
+const damagedCount = computed(() => restoreCart.entries.filter((e) => e.host !== null && e.damaged === true).length)
 
 const destinationClient = computed(() => clients.list.find((c) => c.hostname === destinationHost.value))
 const destinationStale = computed(() => {
@@ -184,7 +196,15 @@ function badgeVariant(status) {
         <tbody>
           <tr v-for="entry in restoreCart.entries" :key="entryKey(entry)" :data-test="`restore-row-${entryKey(entry)}`">
             <td>{{ entry.host ?? '—' }}</td>
-            <td>{{ sourcePathLabel(entry) }}</td>
+            <td>
+              {{ sourcePathLabel(entry) }}
+              <Badge
+                v-if="entry.host !== null && entry.damaged"
+                variant="bad"
+                :data-test="`cart-damaged-${entryKey(entry)}`"
+                :title="DAMAGED_TOOLTIP"
+              >Damaged</Badge>
+            </td>
             <td>
               <button
                 type="button"
@@ -275,6 +295,7 @@ function badgeVariant(status) {
       :destination-host="destinationHost"
       :overwrite="overwrite"
       :pinned-count="pinnedCount"
+      :damaged-count="damagedCount"
       @confirm="confirmRestore"
       @cancel="confirming = false"
     />

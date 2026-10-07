@@ -87,7 +87,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
 - **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol
-- **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol
+- **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol (versions, deletions, damaged-file sets)
 - **[Issuer Protocol](docs/protocols/issuer.md)** - issuer operating-certificate minting protocol
 - **[Policy Server Protocol](docs/protocols/policy-server.md)** - policy-server's GetPolicies protocol
 - **[Job Status Protocol](docs/protocols/jobstatus.md)** - api-server's GetPolicyJobStatus protocol, polled by policy-server's restore-cleanup sweep
