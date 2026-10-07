@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +24,37 @@ type fakeCatalogServer struct {
 	lastReq    *pb.SyncRequest
 	lastDelReq *pb.DeleteVersionsRequest
 	err        error
+
+	// ReportDamagedFiles: the chunks of the last stream and how it ended,
+	// guarded by mu since the handler runs on the server's goroutine.
+	mu             sync.Mutex
+	damagedChunks  [][]string
+	damagedEOF     bool // the client closed the stream cleanly
+	damagedRecvErr error
+}
+
+func (f *fakeCatalogServer) ReportDamagedFiles(stream grpc.ClientStreamingServer[pb.DamagedFilesChunk, pb.ReportDamagedFilesResponse]) error {
+	var chunks [][]string
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			f.mu.Lock()
+			f.damagedChunks, f.damagedRecvErr = chunks, err
+			f.mu.Unlock()
+			return err
+		}
+		chunks = append(chunks, chunk.ObjectIds)
+	}
+	f.mu.Lock()
+	f.damagedChunks, f.damagedEOF = chunks, true
+	f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	return stream.SendAndClose(&pb.ReportDamagedFilesResponse{})
 }
 
 func (f *fakeCatalogServer) DeleteFileVersions(ctx context.Context, req *pb.DeleteVersionsRequest) (*pb.DeleteVersionsResponse, error) {
@@ -133,4 +166,64 @@ func TestGrpcSender_SendDeletions_PropagatesErrors(t *testing.T) {
 	sender := newTestGrpcSender(t, fake)
 
 	assert.Error(t, sender.SendDeletions([]wfs.FileVersionDeletionRecord{{Seq: 1, JobID: "j", ObjectID: "o"}}))
+}
+
+func TestGrpcSender_SendDamaged_StreamsEveryPageAsAChunk(t *testing.T) {
+	fake := &fakeCatalogServer{}
+	sender := newTestGrpcSender(t, fake)
+
+	require.NoError(t, sender.SendDamaged(pagesOf([]string{"a", "b"}, []string{"c"})))
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.True(t, fake.damagedEOF)
+	assert.Equal(t, [][]string{{"a", "b"}, {"c"}}, fake.damagedChunks)
+}
+
+// An empty set is an empty stream, which the catalog takes as "nothing is
+// damaged any more".
+func TestGrpcSender_SendDamaged_EmptySetIsACleanEmptyStream(t *testing.T) {
+	fake := &fakeCatalogServer{}
+	sender := newTestGrpcSender(t, fake)
+
+	require.NoError(t, sender.SendDamaged(pagesOf()))
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.True(t, fake.damagedEOF)
+	assert.Empty(t, fake.damagedChunks)
+}
+
+func TestGrpcSender_SendDamaged_ServerErrorPropagates(t *testing.T) {
+	fake := &fakeCatalogServer{err: errors.New("catalog down")}
+	sender := newTestGrpcSender(t, fake)
+
+	assert.Error(t, sender.SendDamaged(pagesOf([]string{"a"})))
+}
+
+// A page that fails to read must abort the stream rather than end it
+// cleanly, or the catalog would replace its set with a truncated one.
+func TestGrpcSender_SendDamaged_PageErrorAbortsTheStream(t *testing.T) {
+	fake := &fakeCatalogServer{}
+	sender := newTestGrpcSender(t, fake)
+	calls := 0
+	nextPage := func() ([]string, error) {
+		calls++
+		if calls == 1 {
+			return []string{"a"}, nil
+		}
+		return nil, errors.New("database is locked")
+	}
+
+	err := sender.SendDamaged(nextPage)
+
+	assert.ErrorContains(t, err, "database is locked")
+	require.Eventually(t, func() bool {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		return fake.damagedRecvErr != nil
+	}, time.Second, 5*time.Millisecond, "the server must see the stream fail")
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.False(t, fake.damagedEOF)
 }

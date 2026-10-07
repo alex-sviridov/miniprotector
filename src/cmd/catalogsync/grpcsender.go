@@ -80,3 +80,40 @@ func (s *GrpcSender) SendDeletions(batch []wfs.FileVersionDeletionRecord) error 
 func (s *GrpcSender) Close() error {
 	return s.conn.Close()
 }
+
+// SendDamaged streams the damaged set to ReportDamagedFiles, one chunk per
+// page. The catalog replaces its set only on a clean end of stream, so any
+// failure here -- a page that can't be read, a Send, or CloseAndRecv --
+// returns before closing the stream cleanly, and the deferred cancel aborts
+// it, leaving the catalog's previous set in place. The timeout covers the
+// whole stream; the set is expected to be small (damage is rare).
+func (s *GrpcSender) SendDamaged(nextPage DamagedPages) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.timeoutSec)*time.Second)
+	defer cancel()
+
+	stream, err := s.client.ReportDamagedFiles(ctx)
+	if err != nil {
+		return fmt.Errorf("ReportDamagedFiles: %w", err)
+	}
+	for {
+		page, err := nextPage()
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			break
+		}
+		if err := stream.Send(&pb.DamagedFilesChunk{ObjectIds: page}); err != nil {
+			// Send reports io.EOF when the server ended the stream; the real
+			// status comes from CloseAndRecv.
+			if _, recvErr := stream.CloseAndRecv(); recvErr != nil {
+				return fmt.Errorf("ReportDamagedFiles: %w", recvErr)
+			}
+			return fmt.Errorf("ReportDamagedFiles: %w", err)
+		}
+	}
+	if _, err := stream.CloseAndRecv(); err != nil {
+		return fmt.Errorf("ReportDamagedFiles: %w", err)
+	}
+	return nil
+}

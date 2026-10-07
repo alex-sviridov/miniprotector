@@ -74,6 +74,7 @@ func main() {
 		PollInterval:   time.Duration(conf.CatalogSyncPollIntervalSec) * time.Second,
 		InitialBackoff: initialBackoff,
 		MaxBackoff:     time.Duration(conf.CatalogSyncMaxBackoffSec) * time.Second,
+		DamageInterval: time.Duration(conf.CatalogSyncDamageIntervalSec) * time.Second,
 	}
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

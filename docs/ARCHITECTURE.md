@@ -8,8 +8,8 @@ A backup system with intelligent deduplication and integrity verification.
 | brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
 | rwfs | Restore Writer for File System — queries bwfs (list, verify, restore) | list, verify, and restore fully implemented -- `restore` creates the resolved directory structure and writes real file content to the destination filesystem |
-| catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
-| catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
+| catalogsync | Replicates a bwfs node's file_versions, their deletions and its damaged file set to a backup catalog | Implemented |
+| catalog | Backup Catalog — receives catalogsync's replicated file_versions, deletions and damaged file set over gRPC | Implemented |
 | agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, policy-driven backup execution via `brfs`, one-shot restore-policy verification via `rwfs verify`, and one-shot restore execution via `rwfs restore` for `mode: "restore"` policies -- both directory structure creation and file content restore are real) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
@@ -190,8 +190,9 @@ graph TB
     rwfs -->|writes files| DstFS
 
     %% Catalog Replication Flow (bwfs's own operation is unaffected either way)
-    DB -->|reads file_versions,<br/>read-only| catalogsync
-    catalogsync -->|SyncFileVersions<br/>gRPC, mTLS| Catalog
+    DB -->|reads file_versions, deletions,<br/>damaged file ids; read-only| catalogsync
+    catalogsync -->|SyncFileVersions,<br/>DeleteFileVersions<br/>gRPC, mTLS| Catalog
+    catalogsync -->|ReportDamagedFiles<br/>damaged set snapshot, periodic<br/>gRPC stream, mTLS| Catalog
 
     classDef filesystem fill:#e1f5fe
     classDef component fill:#f3e5f5

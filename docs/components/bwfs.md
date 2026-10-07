@@ -289,7 +289,8 @@ whose files were all flagged before is not reported again.
 - **Replica reader.** `damaged_at` is indexed, and `ReplicaReader.DamagedFileIDs` lists, in pages
   ordered by `file_id`, the file ids that are currently damaged: some row is flagged and no row of
   the same `file_id` is a healthy finalized copy (an in-flight re-upload does not count).
-  `catalogsync` reads this set to mirror the damage into the catalog.
+  `catalogsync` reads this set to mirror the damage into the catalog (see
+  [catalogsync](catalogsync.md#damaged-files)).
 
 ### Vacuum and compaction
 

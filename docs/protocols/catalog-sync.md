@@ -110,6 +110,16 @@ message ReportDamagedFilesResponse {} // empty ack, sent only after the set was 
   reported before `catalogsync` replicated the version row still shows once the row arrives (see
   `Entry.damaged` under [ListEntries](#listentries)).
 
+**Client behaviour.** `catalogsync` runs this as a third pass after the versions and deletions
+passes, at most once every `CatalogSyncDamageIntervalSec` (default 60). It pages
+`ReplicaReader.DamagedFileIDs` and sends one chunk per `CatalogSyncBatchSize` ids over a single
+stream, then `CloseAndRecv`. It keeps no cursor. It skips the send only when the set is empty and
+its previous successful send in this process was empty too, so the first pass after a restart always
+sends and clears any stale rows. A store read that fails mid-stream aborts the stream (the catalog
+keeps its old set) instead of closing it cleanly. Any failure (read, `Send`, `CloseAndRecv`) counts
+as not sent: the damage pass retries with its own exponential backoff, and versions and deletions
+keep replicating on schedule. See [catalogsync](../components/catalogsync.md#damaged-files).
+
 ## Identity
 
 `catalog` does not trust any node identifier carried in the request payload. The persisted

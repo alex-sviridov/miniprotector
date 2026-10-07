@@ -94,6 +94,7 @@ type Config struct {
 	CatalogSyncBatchSize             int
 	CatalogSyncPollIntervalSec       int
 	CatalogSyncMaxBackoffSec         int
+	CatalogSyncDamageIntervalSec     int // catalogsync: seconds between damaged-set snapshots sent to the catalog
 	CatalogHost                      string
 	CatalogPort                      int
 	VarPath                          string
@@ -174,6 +175,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncBatchSize:             500,
 		CatalogSyncPollIntervalSec:       5,
 		CatalogSyncMaxBackoffSec:         60,
+		CatalogSyncDamageIntervalSec:     60,
 		CatalogPort:                      15723,
 		ReconcileIntervalSec:             30,
 		IssuerPort:                       9200,
@@ -344,6 +346,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CatalogSyncMaxBackoffSec = number
 			foundFields["CatalogSyncMaxBackoffSec"] = true
+		case "CatalogSyncDamageIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CatalogSyncDamageIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.CatalogSyncDamageIntervalSec = number
+			foundFields["CatalogSyncDamageIntervalSec"] = true
 		case "issuer_host":
 			config.IssuerHost = value
 			foundFields["issuer_host"] = true
