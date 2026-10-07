@@ -248,6 +248,25 @@ func TestRestoreFile_DamagedFileDataFailsWithDataLossBeforeAnyEvent(t *testing.T
 	assert.Zero(t, stream.events, "no event, not even the meta, is sent")
 }
 
+// A chunk marked by a concurrent restore, verify or compaction between the
+// file lookup and locating its chunks loses its link without this file being
+// seen as flagged yet. Streaming the remaining links would send a truncated
+// file and report success; fewer links than chunk_count must be DataLoss,
+// before any event. Deleting a link directly is that state, deterministically.
+func TestRestoreFile_MissingLinkFailsWithDataLossBeforeAnyEvent(t *testing.T) {
+	f := newRestoreFixture(t, 3)
+	require.NoError(t, f.writer.RawDB().Table("file_data_chunk_records").
+		Where("chunk_hash = ?", hex.EncodeToString(f.hashes[1])).Delete(nil).Error)
+	require.False(t, f.fileDamaged(t), "the file is not flagged: only the link count gives the loss away")
+	stream := &restoreStream{}
+
+	err := f.restore(t, stream)
+
+	assert.Equal(t, codes.DataLoss, status.Code(err), "got %v", err)
+	assert.ErrorContains(t, err, "backup data damaged")
+	assert.Zero(t, stream.events, "no event, not even the meta, is sent")
+}
+
 // A read error that may be transient (here: permission denied on the
 // segment) must not be reported as data loss, and must never drop data.
 func TestRestoreFile_TransientReadErrorIsInternalAndMarksNothing(t *testing.T) {

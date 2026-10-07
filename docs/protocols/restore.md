@@ -78,6 +78,7 @@ the only legitimate caller. See
 |-----------|----------------|
 | `file_uuid` not found or not finalized | gRPC `NotFound` |
 | `FileData` already flagged damaged (`damaged_at` set) | gRPC `DataLoss` ("backup data damaged ..."), returned before any event, not even the meta |
+| Fewer chunk links than the `chunk_count` stored at finalize (a chunk marked by a concurrent restore, verify or compaction after the lookup) | gRPC `DataLoss` ("backup data damaged: chunk lost"), returned before any event: chunks are located before the meta is sent, so a truncated file is never streamed |
 | Chunk missing or corrupt (`ErrChunkNotFound` / `ErrChunkCorrupt`) | gRPC `DataLoss` (stream terminates); chunk marked corrupted, which flags the file damaged |
 | Other chunk read error (I/O, too many open files, database busy) | gRPC `Internal` (stream terminates); nothing is marked |
 | Database error looking up the file or its chunks | gRPC `Internal` |

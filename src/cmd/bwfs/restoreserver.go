@@ -54,6 +54,24 @@ func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreSer
 		return status.Errorf(codes.DataLoss, "backup data damaged: file_uuid %s lost a chunk; back the file up again", req.GetFileUuid())
 	}
 
+	// One query locates every chunk of the file; a lookup per chunk was a
+	// large share of the restore's time. A link whose chunk row is missing
+	// is still listed, so it fails (and is marked) at its position below.
+	chunks, err := s.store.LocateFileChunks(fd.FileID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "query chunks: %v", err)
+	}
+	// chunk_count is the link count at finalize. Fewer links now means a
+	// chunk was marked after the lookup above (by a concurrent restore,
+	// verify or compaction), so streaming the rest would send a truncated
+	// file and report success. Locating before the meta event lets this fail
+	// before the client writes anything, at no extra query. Only missing
+	// links mean loss, so the check is "<": extra link rows never fail it.
+	if len(chunks) < fd.ChunkCount {
+		return status.Errorf(codes.DataLoss, "backup data damaged: chunk lost (file_uuid %s has %d of %d chunks)",
+			req.GetFileUuid(), len(chunks), fd.ChunkCount)
+	}
+
 	if err := stream.Send(&pb.RestoreEvent{
 		Payload: &pb.RestoreEvent_Meta{
 			Meta: &pb.RestoreFileMeta{
@@ -64,14 +82,6 @@ func (s *restoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreSer
 		},
 	}); err != nil {
 		return err
-	}
-
-	// One query locates every chunk of the file; a lookup per chunk was a
-	// large share of the restore's time. A link whose chunk row is missing
-	// is still listed, so it fails (and is marked) at its position below.
-	chunks, err := s.store.LocateFileChunks(fd.FileID)
-	if err != nil {
-		return status.Errorf(codes.Internal, "query chunks: %v", err)
 	}
 
 	for i, chunk := range chunks {
