@@ -215,7 +215,7 @@ local disk-write error still aborts on the first occurrence, with no retry. On t
 failure -- a mismatch or disk-write error, or a stream error whose retries are exhausted -- every
 other in-flight file transfer is cancelled immediately, the failing (partial) file is removed from
 disk, a `failed to restore file` error is logged for it, and no summary line is logged -- the same
-abort convention phase 1 already uses. On full success, a `restore complete` line reports
+abort convention phase 1 already uses. Unless the run aborted, a `restore complete` line reports
 `files_written`, `bytes_written`, `duration`, `throughput_mb_s` (bytes written over the content
 phase's wall time), `skipped` (files left untouched because they already existed and `--overwrite`
 was false), and `damaged` (see below). Per-file

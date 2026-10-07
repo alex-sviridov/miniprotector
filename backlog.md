@@ -47,3 +47,13 @@ that, but the catalog (`catalogsync` replicates only `file_version_records`) and
 damaged version as restorable. Replicate the damaged flag (by file id) to the catalog, show it in the
 file/version views, and have the restore cart warn before a damaged version is added. Needs a
 catalogsync cursor or a small replicated table, and a catalog API field.
+
+## Key chunk links by FileData, not by file_id
+
+Chunk links (`file_data_chunk_records`) are keyed by `file_id` (source, path, mtime), not by the
+`FileData` uuid. Two consequences of the damaged-data work: a flagged `FileData` row keeps its file's
+surviving links alive (they are shared with any re-upload), and if a re-upload under the same `file_id`
+(same path and mtime) has different content, its links merge with the old ones. The client's whole-file
+CRC32 catches the mixed result on restore, so it is not silent, but the version cannot be restored.
+Consider keying links by `FileData` uuid so each content has its own link set; needs a schema change and
+a migration of existing links.

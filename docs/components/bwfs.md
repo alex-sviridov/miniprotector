@@ -265,7 +265,8 @@ record) does not delete the files that used it. Their `file_data_records` rows g
 (the time the damage was first found; a row already flagged keeps it), so the loss stays recorded
 instead of the file silently disappearing from the store. Only the bad chunk's row and links are
 dropped; the file's other links stay, because they are keyed by `file_id` and a healthy re-upload
-of the same file shares them. bwfs logs one Error line `chunk marked corrupt` with `chunk_hash`,
+of the same file shares them. bwfs logs one Error line `chunk marked corrupt` (in its own log,
+`bwfs.log`: the server gives its writer and restore stores its logger) with `chunk_hash`,
 `file_versions_damaged` (the number of `FileData` rows newly flagged) and up to 5 `paths`; a chunk
 whose files were all flagged before is not reported again.
 

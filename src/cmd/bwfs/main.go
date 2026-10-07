@@ -100,7 +100,7 @@ func main() {
 		go watchStaleJobs(signalCtx, backupServer, time.Duration(conf.JobTimeoutSec)*time.Second)
 		startStoreGC(signalCtx, logger, backupServer.store, gcSettingsFrom(conf))
 
-		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
+		listStore, err := openReadOnlyStore(arguments.StoragePath, logger)
 		if err != nil {
 			logger.Error("List store initialization failed", "error", err)
 			os.Exit(1)
@@ -108,7 +108,7 @@ func main() {
 		defer listStore.Close()
 		listSrv := NewListServer(listStore, logger)
 
-		restoreStore, err := wfs.NewReadOnly(arguments.StoragePath)
+		restoreStore, err := openReadOnlyStore(arguments.StoragePath, logger)
 		if err != nil {
 			logger.Error("Restore store initialization failed", "error", err)
 			os.Exit(1)
@@ -177,4 +177,16 @@ func vacuumResultAttrs(res *storage.VacuumResult) []any {
 		"segments_compacted", res.SegmentsCompacted,
 		"bytes_reclaimed", res.BytesReclaimed,
 	}
+}
+
+// openReadOnlyStore opens a read-only Store that reports damage on logger.
+// The restore store marks corrupt chunks, and the damage line must land in
+// bwfs.log like every other line.
+func openReadOnlyStore(path string, logger *slog.Logger) (*wfs.Store, error) {
+	store, err := wfs.NewReadOnly(path)
+	if err != nil {
+		return nil, err
+	}
+	store.SetLogger(logger)
+	return store, nil
 }

@@ -324,3 +324,21 @@ func TestStoreInfo_ExcludesDamagedFileData(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), info.TotalFileData)
 }
+
+// The damage line must reach the logger bwfs gave the Store (its log file,
+// level and format), not the process default, which bwfs never configures.
+func TestMarkChunkCorrupted_LogsToTheStoreLoggerNotTheDefault(t *testing.T) {
+	var defaultBuf, storeBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&defaultBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s := newTestStore(t)
+	s.SetLogger(slog.New(slog.NewTextHandler(&storeBuf, nil)))
+	hashes := writeFile(t, s, damagedFileA, []byte("to be marked"))
+
+	require.NoError(t, s.MarkChunkCorrupted(hashes[0]))
+
+	assert.Contains(t, storeBuf.String(), "chunk marked corrupt")
+	assert.Empty(t, defaultBuf.String())
+}

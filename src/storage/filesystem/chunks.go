@@ -135,7 +135,7 @@ func (s *Store) MarkChunkCorrupted(chunkHash []byte) error {
 	if err != nil {
 		return err
 	}
-	d.log() // only once committed: a rolled-back drop damaged nothing
+	d.log(s.logOrDefault()) // only once committed: a rolled-back drop damaged nothing
 	return nil
 }
 
@@ -150,14 +150,13 @@ type damage struct {
 // thousands of files must not produce a log line of that size.
 const maxDamagedPaths = 5
 
-// log reports the damage at Error. The Store has no logger of its own, so it
-// uses the process default (bwfs sets it up). A chunk whose files were all
-// flagged before is not reported again.
-func (d damage) log() {
+// log reports the damage at Error on logger (the Store's, see SetLogger). A
+// chunk whose files were all flagged before is not reported again.
+func (d damage) log(logger *slog.Logger) {
 	if d.flagged == 0 {
 		return
 	}
-	slog.Error("chunk marked corrupt",
+	logger.Error("chunk marked corrupt",
 		"chunk_hash", d.hash,
 		"file_versions_damaged", d.flagged,
 		"paths", d.paths)

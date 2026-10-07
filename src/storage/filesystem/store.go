@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -30,6 +31,9 @@ type Store struct {
 	// opGuard separates backup-stream operations (shared) from cleanup/vacuum
 	// batches (exclusive); see BeginBackupOp and gc.go.
 	opGuard sync.RWMutex
+
+	// logger is where damage is reported; see SetLogger.
+	logger *slog.Logger
 }
 
 func New(basePath string) (*Store, error) {
@@ -134,3 +138,19 @@ func closeDB(db *gorm.DB) error {
 }
 
 var _ storage.BackupStore = (*Store)(nil)
+
+// SetLogger sets the logger the Store reports damage on (MarkChunkCorrupted
+// and compaction). bwfs passes its own, so those lines reach bwfs.log with
+// its level and format; without it they would go to slog.Default, which
+// bwfs never configures (stderr via the std log package). Call it right
+// after opening, before the Store is shared between goroutines.
+func (s *Store) SetLogger(l *slog.Logger) { s.logger = l }
+
+// logOrDefault returns the logger set by SetLogger, or slog.Default for a Store
+// nobody configured (tests, CLI tooling).
+func (s *Store) logOrDefault() *slog.Logger {
+	if s.logger != nil {
+		return s.logger
+	}
+	return slog.Default()
+}

@@ -41,11 +41,14 @@ type BackupStore interface {
 	ReadChunk(chunkHash []byte) (data []byte, err error)
 
 	// MarkChunkCorrupted reacts to a chunk found unusable (ErrChunkCorrupt or
-	// ErrChunkNotFound) during restore or compaction. It deletes the chunk's
-	// record and links and flags the FileData of every file that depended on
-	// it as damaged (kept, not deleted, so the loss stays visible until its
-	// versions expire). Dedup ignores damaged FileData, so the next backup
-	// uploads those files again instead of skipping them forever.
+	// ErrChunkNotFound) by a restore or verify read (compaction reacts the
+	// same way through the shared dropChunk, not through this method). It
+	// deletes the chunk's record and links and flags the FileData of every
+	// file that depended on it as damaged (kept, not deleted, so the loss
+	// stays visible until no file version references its file_id; a healed
+	// re-upload shares that file_id, so it can outlive the original versions).
+	// Dedup ignores damaged FileData, so the next backup uploads those files
+	// again instead of skipping them forever.
 	MarkChunkCorrupted(chunkHash []byte) error
 
 	// FileVersion operations - create metadata version for each backup

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +19,7 @@ import (
 	"lukechampine.com/blake3"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
+	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/storage"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"github.com/alex-sviridov/miniprotector/storage/pack"
@@ -322,4 +326,49 @@ func TestRestoreFile_ChunksMovedAfterLocatingAreStillRead(t *testing.T) {
 		assert.Equal(t, f.payloads[i], c.Data)
 	}
 	assert.True(t, f.fileStillValid(t), "a moved chunk is healthy and must not be marked")
+}
+
+// bwfs opens its restore store with the server's logger, so the damage line
+// a corrupt chunk produces lands in bwfs.log, not on the process default.
+func TestOpenReadOnlyStore_RestoreDamageLogsToTheServerLogger(t *testing.T) {
+	var defaultBuf, serverBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&defaultBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := newRestoreFixture(t, 2)
+	serverLogger := slog.New(slog.NewTextHandler(&serverBuf, nil))
+	ro, err := openReadOnlyStore(f.dir, serverLogger)
+	require.NoError(t, err)
+	t.Cleanup(func() { ro.Close() })
+	f.server = NewRestoreServer(ro, serverLogger)
+	require.NoError(t, f.writer.RawDB().Table("chunk_records").
+		Where("hash = ?", hex.EncodeToString(f.hashes[1])).Delete(nil).Error)
+
+	err = f.restore(t, &restoreStream{})
+
+	require.Equal(t, codes.DataLoss, status.Code(err), "got %v", err)
+	assert.Contains(t, serverBuf.String(), "chunk marked corrupt")
+	assert.NotContains(t, defaultBuf.String(), "chunk marked corrupt")
+}
+
+// The writer store (backups, GC, compaction) logs damage on the server's
+// logger too.
+func TestNewBackupServer_StoreLogsDamageToTheServerLogger(t *testing.T) {
+	var serverBuf bytes.Buffer
+	ctx := context.WithValue(context.Background(), config.ContextKey, &config.Config{})
+	srv, err := NewBackupServer(ctx, slog.New(slog.NewTextHandler(&serverBuf, nil)), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { srv.store.Close() })
+
+	data := []byte("chunk to be marked")
+	sum := blake3.Sum256(data)
+	require.NoError(t, srv.store.CreateFileData("fs://h:f:/x:1", int64(len(data))))
+	require.NoError(t, srv.store.StoreChunk(sum[:], data))
+	require.NoError(t, srv.store.LinkChunkToFileData(sum[:], "fs://h:f:/x:1", 0))
+	require.NoError(t, srv.store.FinalizeFileData("fs://h:f:/x:1", []byte{1, 2, 3, 4}))
+
+	require.NoError(t, srv.store.MarkChunkCorrupted(sum[:]))
+
+	assert.Contains(t, serverBuf.String(), "chunk marked corrupt")
 }

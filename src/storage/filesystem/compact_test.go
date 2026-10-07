@@ -1,10 +1,12 @@
 package filesystem
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -231,6 +233,8 @@ func TestReclaim_CompactsAcrossBatchesAndSurvivesCancellation(t *testing.T) {
 
 func TestReclaim_CorruptRecordIsDroppedLikeMarkChunkCorruptedAndCompactionContinues(t *testing.T) {
 	s := newSmallStore(t, 6)
+	var logBuf bytes.Buffer
+	s.SetLogger(slog.New(slog.NewTextHandler(&logBuf, nil)))
 	require.NoError(t, s.CreateFileData("F", chunkLen))
 	all := storeRaw(t, s, names("c", 6)...)
 	bad, good := all[0], all[1]
@@ -260,6 +264,7 @@ func TestReclaim_CorruptRecordIsDroppedLikeMarkChunkCorruptedAndCompactionContin
 	rows := fileDataRows(t, s, "F")
 	require.Len(t, rows, 1, "its file data is kept, flagged damaged")
 	assert.NotNil(t, rows[0].DamagedAt)
+	assert.Contains(t, logBuf.String(), "chunk marked corrupt", "compaction reports the damage on the Store's logger")
 	got, err := s.ReadChunk(good)
 	require.NoError(t, err)
 	assert.Equal(t, fixedChunk("c-1"), got)

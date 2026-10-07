@@ -171,7 +171,7 @@ func (s *Store) compactSegment(ctx context.Context, id uint32, batchSize int) (c
 			return copied, err
 		}
 		for _, d := range dropped {
-			d.log() // after the commit, like MarkChunkCorrupted
+			d.log(s.logOrDefault()) // after the commit, like MarkChunkCorrupted
 		}
 		copied += batchCopied
 		if n < batchSize {

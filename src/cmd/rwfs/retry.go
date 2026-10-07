@@ -45,9 +45,10 @@ var retryBackoffInitial = 500 * time.Millisecond
 // loop (restoreFileContent).
 //
 // logger should already be scoped with per-item fields (path, file_uuid,
-// dest_path, etc.) via .With() -- each retried attempt logs "stream
-// error, retrying" with "attempt" and "reason" (from the reason func) at
-// Warn, the same log line verifyFileWithRetry has always emitted.
+// dest_path, etc.) via .With() -- each retried attempt logs "transfer
+// failed, retrying" with "attempt" and "reason" (from the reason func) at
+// Warn. The message is neutral because a hash mismatch is retried too, not
+// only stream errors.
 //
 // attempt always runs at least once, whatever maxAttempts returns, so this
 // helper can never fabricate a zero-value result for a call it never made.
@@ -64,7 +65,7 @@ func withRetry[R any](
 		if i >= maxAttempts(result) || ctx.Err() != nil {
 			return result
 		}
-		logger.Warn("stream error, retrying", "attempt", i, "reason", reason(result))
+		logger.Warn("transfer failed, retrying", "attempt", i, "reason", reason(result))
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
