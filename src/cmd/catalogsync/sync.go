@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 )
 
@@ -146,6 +149,8 @@ type damagePass struct {
 
 	nextRun time.Time // zero: due on the first loop pass
 	backoff time.Duration
+	// unsupportedLogged: the catalog answered Unimplemented, already logged.
+	unsupportedLogged bool
 	// catalogHasEmptySet is true once a send of an empty set succeeded in
 	// this process, so an unchanged empty set need not be sent again. It
 	// starts false so the first pass after a restart always sends, clearing
@@ -178,6 +183,17 @@ func (d *damagePass) runIfDue(ctx context.Context, now time.Time) {
 		if ctx.Err() != nil {
 			return // shutting down; the failure is just the cancellation
 		}
+		if status.Code(err) == codes.Unimplemented {
+			// An old catalog without the RPC: not a fault that a retry soon
+			// fixes, so say so once and poll at the slowest rate.
+			if !d.unsupportedLogged {
+				d.logger.Info("catalog does not support damage reports yet", "error", err)
+				d.unsupportedLogged = true
+			}
+			d.nextRun = now.Add(max(d.backoff, d.maxBackoff))
+			return
+		}
+		d.unsupportedLogged = false
 		d.logger.Warn("send damaged file set failed, retrying later", "error", err, "backoff", d.backoff)
 		d.nextRun = now.Add(d.backoff)
 		d.backoff = min(d.backoff*2, d.maxBackoff)

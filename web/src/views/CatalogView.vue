@@ -166,7 +166,7 @@ function selectVersion(version) {
   versionsFor.value = null
 }
 
-function useLatestVersion() {
+function useLatestVersion(latestDamaged = false) {
   const target = versionsFor.value
   restoreCart.setVersionWindow(
     { host: target.sourceHost, path: target.path },
@@ -174,10 +174,8 @@ function useLatestVersion() {
     catalog.filters.receivedBefore
   )
   if (target.sourceHost !== null) {
-    const group = fileRows.value.find((g) => g.sourceHost === target.sourceHost && g.path === target.path)
-    // If the row is no longer in view the latest version's state is unknown;
-    // a stale "damaged" is worse than a missing one, so fall back to false.
-    restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, group ? group.damaged : false)
+    // The modal knows its newest version; a missing payload falls back to false.
+    restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, latestDamaged === true)
   }
   versionsFor.value = null
 }

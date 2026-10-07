@@ -44,7 +44,9 @@ function close() {
 }
 
 function useLatest() {
-  emit('use-latest')
+  // Versions are newest first; carry the latest one's damaged state so the
+  // cart flag matches what "latest" will actually restore.
+  emit('use-latest', versions.value[0]?.damaged === true)
 }
 
 function selectVersion(version) {

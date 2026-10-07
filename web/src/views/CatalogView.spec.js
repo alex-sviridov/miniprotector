@@ -511,15 +511,14 @@ describe('CatalogView', () => {
     await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('select-version', { store_created_at: 555, damaged: false })
     expect(restoreCart.setDamaged).toHaveBeenCalledWith({ host: 'web01', path: '/etc/hosts' }, false)
     await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
-    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('use-latest')
+    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('use-latest', true)
     expect(restoreCart.setDamaged).toHaveBeenLastCalledWith({ host: 'web01', path: '/etc/hosts' }, true)
   })
 
-  it('using latest for a file not in the current rows clears the damaged flag', async () => {
-    const { wrapper, catalog } = mountView({ entries: [entry({ path: '/etc/hosts', source_host: 'web01', damaged: true })] })
+  it('using latest without a damaged state from the modal falls back to healthy', async () => {
+    const { wrapper } = mountView({ entries: [entry({ path: '/etc/hosts', source_host: 'web01', damaged: true })] })
     const restoreCart = useRestoreCartStore()
     await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
-    catalog.entries = []
     await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('use-latest')
     expect(restoreCart.setDamaged).toHaveBeenLastCalledWith({ host: 'web01', path: '/etc/hosts' }, false)
   })

@@ -96,12 +96,11 @@ function selectVersion(version) {
 // fully unbounded (see toWireRule's truthy check, Task 5), which resolves
 // to a genuine "whatever's newest at restore time" -- the simplest correct
 // meaning "latest" can have on this page.
-function useLatestVersion() {
+function useLatestVersion(latestDamaged = false) {
   restoreCart.setVersionWindow({ host: versionsFor.value.host, path: versionsFor.value.path }, 0, 0)
-  // The latest version's damaged state is unknown on this page (no catalog
-  // rows in scope); a stale "damaged" is worse than a missing one, so clear it.
+  // The modal knows its newest version; a missing payload falls back to false.
   if (versionsFor.value.host !== null) {
-    restoreCart.setDamaged({ host: versionsFor.value.host, path: versionsFor.value.path }, false)
+    restoreCart.setDamaged({ host: versionsFor.value.host, path: versionsFor.value.path }, latestDamaged === true)
   }
   versionsFor.value = null
 }

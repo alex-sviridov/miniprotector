@@ -60,9 +60,9 @@ no data — there's no read-only "guest" mode.
   (tooltip: "Backup data for this version is damaged; restore may fail.") appears on a catalog file
   row when its latest version is damaged (`groupEntriesByFile` exposes this as `group.damaged`), on
   each damaged row of the versions modal, and on file rows of the restore cart (`restoreCart` keeps a
-  display-only `damaged` flag on file rules, refreshed when a version is pinned or reset, and cleared on
-  the cart page's "Use latest" since the latest state is unknown there; a missing flag counts as not
-  damaged). The confirm modal adds an amber line with the number of damaged
+  display-only `damaged` flag on file rules, refreshed when a version is pinned or reset: "Use latest" takes
+  the damaged state of the versions modal's newest version, falling back to not damaged when the
+  modal has no versions; a missing flag counts as not damaged). The confirm modal adds an amber line with the number of damaged
   selected files. These are warnings only: "Restore this version" and Restore stay enabled, and folder
   rules never show the badge or count because `rwfs` resolves them at restore time. There is no
   Playwright test: the demo lab cannot create real damage. A folder's

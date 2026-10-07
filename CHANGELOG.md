@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here, most recent first.
 
-## 2026-10-08 — The catalog and web UI show damaged backup data
+## 2026-10-07 — The catalog and web UI show damaged backup data
 
 Damage was flagged in the store (see the 2026-10-07 entry) but the catalog and web UI still offered a
 damaged version as restorable. The `bwfs` replica reader now lists the file ids that are currently

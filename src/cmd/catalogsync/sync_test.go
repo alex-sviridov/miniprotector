@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 )
@@ -107,7 +111,8 @@ type fakeSender struct {
 	// streamed, in order.
 	damagedSends    [][][]string
 	damagedAttempts int
-	failDamagedN    int // same as failN, for SendDamaged
+	failDamagedN    int   // same as failN, for SendDamaged
+	damagedErr      error // when set, every SendDamaged fails with it
 	// calls records the order of successful sends ("versions", "deletions",
 	// "damaged") so tests can check the pass order.
 	calls []string
@@ -134,6 +139,9 @@ func (f *fakeSender) SendDamaged(nextPage DamagedPages) error {
 	f.damagedAttempts++
 	if readErr != nil {
 		return readErr
+	}
+	if f.damagedErr != nil {
+		return f.damagedErr
 	}
 	if f.failDamagedN > 0 {
 		f.failDamagedN--
@@ -558,4 +566,28 @@ func TestDamagePass_FailedSendInvalidatesTheEmptySetBelief(t *testing.T) {
 	d.runIfDue(ctx, t0.Add(2*time.Hour))
 
 	assert.Equal(t, [][]string{{}, {}}, sender.damagedSendIDs(), "the empty set must be re-sent after a failed send")
+}
+
+// An old catalog without ReportDamagedFiles answers Unimplemented on every
+// attempt. That is a steady state, not a fault: log it once at Info and wait
+// the longest backoff between attempts, instead of a Warn every minute.
+func TestDamagePass_UnimplementedLogsOnceAndWaitsTheMaxBackoff(t *testing.T) {
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	sender := &fakeSender{damagedErr: fmt.Errorf("ReportDamagedFiles: %w", status.Error(codes.Unimplemented, "unknown method"))}
+	cfg := damageCfg(10, time.Minute)
+	d := newDamagePass(logger, &fakeReader{}, sender, cfg)
+	ctx := context.Background()
+	t0 := time.Unix(1_000_000, 0)
+
+	d.runIfDue(ctx, t0)
+	d.runIfDue(ctx, t0.Add(cfg.MaxBackoff))
+	d.runIfDue(ctx, t0.Add(2*cfg.MaxBackoff))
+
+	assert.Equal(t, 1, strings.Count(logs.String(), "catalog does not support damage reports yet"))
+	assert.NotContains(t, logs.String(), "level=WARN")
+	assert.Equal(t, 3, sender.damagedAttemptCount(), "retried once per max backoff, not sooner")
+
+	d.runIfDue(ctx, t0.Add(2*cfg.MaxBackoff+cfg.MaxBackoff/2))
+	assert.Equal(t, 3, sender.damagedAttemptCount(), "no attempt before the max backoff has passed")
 }

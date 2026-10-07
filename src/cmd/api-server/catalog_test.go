@@ -16,12 +16,12 @@ import (
 )
 
 type fakeCatalogQueryClient struct {
-	resp          *pb.ListEntriesResponse
-	err           error
-	lastReq       *pb.ListEntriesRequest
-	facetsResp    *pb.ListFacetsResponse
-	facetsErr     error
-	lastFacetsReq *pb.ListFacetsRequest
+	resp            *pb.ListEntriesResponse
+	err             error
+	lastReq         *pb.ListEntriesRequest
+	facetsResp      *pb.ListFacetsResponse
+	facetsErr       error
+	lastFacetsReq   *pb.ListFacetsRequest
 	childrenResp    *pb.ListDirectoryChildrenResponse
 	childrenErr     error
 	lastChildrenReq *pb.ListDirectoryChildrenRequest

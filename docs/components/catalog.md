@@ -13,8 +13,7 @@ path) — see [api-server](./api-server.md), the only intended caller today.
 ## Authorization
 
 `SyncFileVersions`, `DeleteFileVersions` and `ReportDamagedFiles` require the `store` role; the
-six read-only query RPCs require
-`control-plane`. See [Security Model](../SECURITY.md#role-based-rpc-authorization).
+six read-only query RPCs require `control-plane`. See [Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## Usage
 

@@ -283,11 +283,22 @@ describe('RestoreView', () => {
       expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(true)
     })
 
-    it('use latest clears a stale damaged flag (latest state is unknown here)', async () => {
+    it('use latest takes the damaged state of the latest version from the modal', async () => {
       const { wrapper, cart } = mountReal([dmg])
-      await pick(wrapper, 'use-latest')
+      await pick(wrapper, 'use-latest', true)
+      expect(cart.rules[0].damaged).toBe(true)
+      expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(true)
+    })
+
+    it('use latest of a healthy latest version clears the flag; no payload falls back to healthy', async () => {
+      const { wrapper, cart } = mountReal([dmg])
+      await pick(wrapper, 'use-latest', false)
       expect(cart.rules[0].damaged).toBe(false)
       expect(wrapper.find('[data-test="cart-damaged-web01:/etc/hosts"]').exists()).toBe(false)
+
+      await pick(wrapper, 'select-version', { store_created_at: 5, damaged: true })
+      await pick(wrapper, 'use-latest')
+      expect(cart.rules[0].damaged).toBe(false)
     })
 
     it('does not touch folder rules', async () => {

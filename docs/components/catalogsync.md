@@ -98,6 +98,8 @@ reads the set in pages of `CatalogSyncBatchSize` ids and streams them as one
 `ReportDamagedFiles` call (`Sender.SendDamaged`; `LoggingSender` only logs the count). The catalog
 replaces this node's set with it (see the
 [Catalog Sync Protocol](../protocols/catalog-sync.md#reportdamagedfiles)).
+A catalog that answers `Unimplemented` (an older build without the RPC) is logged once at Info and then retried
+once per `CatalogSyncMaxBackoffSec`; it never affects version or deletion replication.
 
 - **Stateless.** The set is a full snapshot, not a log, so there is no cursor file: a heal or vacuum
   on `bwfs` simply drops the id from the next snapshot, and the catalog clears it within one
