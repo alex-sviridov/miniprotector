@@ -167,12 +167,17 @@ Query parameters (all optional):
       "group": 999,
       "mod_time": 1752400000,
       "parent_directory": "/var/lib/dbdata",
-      "short_filename": "data.db"
+      "short_filename": "data.db",
+      "damaged": false
     }
   ],
   "has_more": false
 }
 ```
+
+`damaged` is always present. It is `true` when the store has reported the file's backup data as damaged.
+The flag is replicated from the store, so it can lag by up to about a minute. Restore is not blocked for
+damaged files.
 
 `400` if `limit` isn't an integer in `[1, 500]`, or `starting_after` isn't a non-negative integer.
 
