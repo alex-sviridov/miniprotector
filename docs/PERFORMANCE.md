@@ -155,20 +155,20 @@ runs, baseline built from the tree just before the change:
 
 | Phase | Before | After | Change |
 |---|---|---|---|
-| backup-cold | 12.00 s (14.4 MB/s) | 5.24 s (32.9 MB/s) | −56% |
-| backup-warm | 7.72 s | 4.54 s | −41% |
-| restore | 0.96 s (180 MB/s) | 1.23 s (140 MB/s) | +28% (slower) |
+| backup-cold | 12.00 s (14.4 MB/s) | 5.25 s (32.8 MB/s) | −56% |
+| backup-warm | 7.72 s | 4.53 s | −41% |
+| restore | 0.96 s (180 MB/s) | 1.07 s (161 MB/s) | +11% (slower) |
 
 Server memory is unchanged (about 45-70 MB RSS). Backup got faster because the per-chunk file creation and
-the two fsynced database commits per chunk are gone: durability is paid once per file. Restore got slower
-for two reasons: `bwfs` now checks every chunk's BLAKE3 hash before sending it, and it looked every chunk up
-in the index with its own query. The hash check is not what protects the restored data: `rwfs` already
+the two fsynced database commits per chunk are gone: durability is paid once per file. Restore is still
+somewhat slower, for two reasons: `bwfs` now checks every chunk's BLAKE3 hash before sending it, and (before
+the one-query change described below) it looked every chunk up in the index with its own query. Measured
+after that change the restore slowdown is +11%, against +28% with the per-chunk lookup. The hash check is not what protects the restored data: `rwfs` already
 verifies each chunk's BLAKE3 hash and the whole file's CRC32, so a flipped bit failed the restore before as
 well. The server-side check exists so that `bwfs` can tell which chunk is bad and heal it (mark it corrupt,
 so the next backup uploads the affected files again), and so that compaction and crash recovery never copy
-or keep corrupt bytes. On restore it is therefore a duplicate hash, and that duplicate plus the per-chunk
-lookup is the extra cost measured in the table above. The per-chunk lookup has since been replaced by one
-query per file (`LocateFileChunks`); in the `BenchmarkReadChunk` micro-benchmark
+or keep corrupt bytes. On restore it is therefore a duplicate hash, and that duplicate is the remaining extra cost in the
+table above. The per-chunk lookup was replaced by one query per file (`LocateFileChunks`); in the `BenchmarkReadChunk` micro-benchmark
 (`src/storage/filesystem`) the per-chunk lookup took about 40% of reading a 64 KB chunk, while the hash
 takes about a quarter of it and stays. Wire bytes are unchanged. Remeasure with the command under
 [How to measure your own link](#how-to-measure-your-own-link).
