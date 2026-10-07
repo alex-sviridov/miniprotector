@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-07 — Restore locates a file's chunks with one query
+
+A restore looked each chunk up in `chunk_records` with its own query before reading it; a micro-benchmark
+showed that lookup took about 40% of reading a 64 KB chunk. `bwfs` now locates all of a file's chunks with
+one query (links joined to chunk rows, in index order) and reads each chunk from that location, still
+verifying its BLAKE3 hash. The server-side hash is kept on purpose: `rwfs` already detects corruption, but
+only `bwfs` can mark the bad chunk so the next backup heals it. A link whose chunk row is gone is still
+reported and marked at its position, and a chunk that compaction moved after the lookup is looked up again
+instead of being reported lost. The documentation no longer claims the server-side hash is what catches
+corruption on restore.
+
 ## 2026-10-06 — Chunk storage in pack segments
 
 `bwfs` stored every chunk as its own file (`chunks/aa/bb/<hash>`), never fsynced it, trusted it on read and
@@ -17,7 +28,7 @@ Linux only. A restore now marks a chunk corrupt only when its data is really los
 on a possibly transient read error; an unreadable segment no longer stops compaction or the bwfs startup; and
 SQLite now applies its busy timeout and runs with `synchronous=FULL`, which the pack ordering relies on.
 
-Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.24 s, backup-warm 7.7 s to 4.5 s, restore 0.96 s to 1.23 s (slower, because reads are now hash-verified). See docs/PERFORMANCE.md.
+Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.24 s, backup-warm 7.7 s to 4.5 s, restore 0.96 s to 1.23 s (slower: the server now hashes every chunk, duplicating the check `rwfs` already does, and it looked every chunk up with its own index query). See docs/PERFORMANCE.md.
 
 ## 2026-10-06 — Backup and restore statistics
 

@@ -189,7 +189,7 @@ bwfs /home/user/backup list --filter nginx
 
 Provides file reconstruction via server-streaming gRPC RPC. Given a `file_uuid` (UUID from `ListService.ListFiles`), returns file metadata followed by all chunks in index order.
 
-**Lookup semantics:** The handler first queries `file_data_records` by the `file_uuid` (column `uuid`) to obtain the `file_id` (fs:// path reference — the natural key, distinct from `file_uuid`), then uses that `file_id` to query `file_data_chunk_records` in index order. The file must be finalized (with a non-NULL checksum) before restore is allowed.
+**Lookup semantics:** The handler first queries `file_data_records` by the `file_uuid` (column `uuid`) to obtain the `file_id` (fs:// path reference — the natural key, distinct from `file_uuid`), then locates all of the file's chunks with one query (`Store.LocateFileChunks`: `file_data_chunk_records` in index order, left-joined to `chunk_records`) and reads each chunk from that location (`Store.ReadLocatedChunk`, hash-verified). A link whose chunk row is missing is kept in place and fails, and is marked, at its position. The file must be finalized (with a non-NULL checksum) before restore is allowed.
 
 **Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.Internal` when a database error occurs or a chunk cannot be read or fails hash verification — a chunk-read failure also marks that chunk corrupted server-side (see [backup protocol](../protocols/backup.md)) so it heals on the next backup. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
 
@@ -244,7 +244,11 @@ an error. There is no migration: start a fresh store.
   segment that holds data refuses to open the store.
 - Every read verifies the record header and BLAKE3 hash. A read that finds its segment gone
   (compaction moved the chunk) re-locates the chunk and retries, up to 3 attempts in total, and only
-  while the chunk's location keeps changing.
+  while the chunk's location keeps changing. Restore locates a whole file's chunks up front without
+  holding the guard, so this re-locate is also what keeps a chunk compacted mid-restore readable.
+- The client (`rwfs`) verifies BLAKE3 and the file CRC32 as well, so on restore the server's hash
+  check does not protect the data; it lets `bwfs` identify and heal the bad chunk, and keeps
+  compaction and recovery from copying or keeping corrupt bytes.
 - Read failures are classified. Lost data -- a hash or header mismatch, a damaged index row, or a
   segment that is still missing after re-locating -- is `storage.ErrChunkCorrupt`. At restore or
   verify, only that or a chunk that is no longer indexed (`ErrChunkNotFound`) marks the chunk

@@ -3,9 +3,17 @@
 ## Core Concept
 
 A server-streaming gRPC RPC (`RestoreService.RestoreFile`) that sends file metadata
-followed by all chunks for a single file in index order. `bwfs` serves the data as-is;
-it does not verify integrity before sending. The caller is responsible for any
-integrity checks.
+followed by all chunks for a single file in index order. The client verifies every
+chunk's BLAKE3 hash and the whole file's CRC32; that is what protects the restored data.
+`bwfs` also checks each chunk's hash before sending it, so that it can identify a bad
+chunk and heal it (see [Error Handling](#error-handling)).
+
+`bwfs` locates all of a file's chunks with one database query (the file's links, in index
+order, left-joined to their chunk rows) and then reads each chunk from its segment. A link
+whose chunk row is gone stays in the list and fails at its position, which marks it. The
+restore does not hold the store's guard, so compaction may move a chunk after that query;
+a read that finds its segment gone looks the chunk up again instead of trusting the stale
+location.
 
 `RestoreService` is registered on the same `grpc.Server` as `BackupService` and
 `ListService`, so no additional port or process is needed.
@@ -123,9 +131,16 @@ handles concurrency without needing multiplexed bidi state.
 So the client can detect storage-level corruption (bytes that changed after the chunk was
 stored) without prior knowledge of the expected hash.
 
-**Why does bwfs not re-verify BLAKE3 before sending?**
-bwfs trusts its own storage. Detecting corruption after the fact is exactly the purpose
-of `rwfs verify`.
+**Why does bwfs verify BLAKE3 before sending, when the client verifies it too?**
+Not to protect the restored data: the client's per-chunk BLAKE3 and whole-file CRC32
+already catch corruption. Only bwfs can act on it, though: knowing which chunk is bad, it
+marks it corrupted so the next backup uploads the affected files again. The same read
+path is used by compaction and crash recovery, which must never copy or keep corrupt
+bytes. On restore the cost is one duplicate hash per chunk.
+
+**Why locate all chunks of a file in one query?**
+A separate index lookup per chunk was a large share of reading a 64 KB chunk (about 40%
+in `BenchmarkReadChunk`). One query per file removes that per-chunk cost.
 
 **Why is `expected_checksum` sent in `RestoreFileMeta` rather than a separate RPC?**
 Collocating the checksum with the stream eliminates an extra round-trip and lets the

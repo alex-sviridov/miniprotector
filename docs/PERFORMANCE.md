@@ -161,10 +161,17 @@ runs, baseline built from the tree just before the change:
 
 Server memory is unchanged (about 45-70 MB RSS). Backup got faster because the per-chunk file creation and
 the two fsynced database commits per chunk are gone: durability is paid once per file. Restore got slower
-because every chunk read is now verified against its BLAKE3 hash and looked up in the index first; the old
-path trusted whatever the file contained. That is a deliberate trade, reliability before speed: a flipped bit
-is now caught on read instead of restored. The restore is still about 140 MB/s on this machine. Wire bytes
-are unchanged. Remeasure with the command under [How to measure your own link](#how-to-measure-your-own-link).
+for two reasons: `bwfs` now checks every chunk's BLAKE3 hash before sending it, and it looked every chunk up
+in the index with its own query. The hash check is not what protects the restored data: `rwfs` already
+verifies each chunk's BLAKE3 hash and the whole file's CRC32, so a flipped bit failed the restore before as
+well. The server-side check exists so that `bwfs` can tell which chunk is bad and heal it (mark it corrupt,
+so the next backup uploads the affected files again), and so that compaction and crash recovery never copy
+or keep corrupt bytes. On restore it is therefore a duplicate hash, and that duplicate plus the per-chunk
+lookup is the extra cost measured in the table above. The per-chunk lookup has since been replaced by one
+query per file (`LocateFileChunks`); in the `BenchmarkReadChunk` micro-benchmark
+(`src/storage/filesystem`) the per-chunk lookup took about 40% of reading a 64 KB chunk, while the hash
+takes about a quarter of it and stays. Wire bytes are unchanged. Remeasure with the command under
+[How to measure your own link](#how-to-measure-your-own-link).
 
 ## A note on the bandwidth cap
 
