@@ -34,7 +34,9 @@ type FileDataRecord struct {
 	// ignores it, so the next backup uploads the file again.
 	// NULL = healthy. Nullable, so AutoMigrate adds it to existing stores
 	// without a backfill.
-	DamagedAt *time.Time
+	// Indexed because the damaged set is tiny next to the table: catalogsync
+	// lists it without scanning every row.
+	DamagedAt *time.Time `gorm:"index"`
 }
 
 type FileDataChunkRecord struct {

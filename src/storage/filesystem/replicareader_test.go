@@ -3,6 +3,7 @@ package filesystem
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,4 +96,127 @@ func TestReplicaReader_FileVersionDeletionsSince(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rest, 1)
 	assert.Equal(t, "c", rest[0].ObjectID)
+}
+
+// newDamagedFixture opens a real store (its AutoMigrate creates the schema
+// and indexes the read-only reader cannot) plus a reader over it.
+func newDamagedFixture(t *testing.T) (*Store, *ReplicaReader) {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := New(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	reader, err := OpenReplicaReader(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { reader.Close() })
+	return store, reader
+}
+
+// addFileDataRow inserts one file_data_records row for fileID: finalized
+// (checksum set) or in flight (checksum NULL), and damaged or healthy.
+func addFileDataRow(t *testing.T, s *Store, fileID string, finalized, damaged bool) {
+	t.Helper()
+	require.NoError(t, s.CreateFileData(fileID, 1))
+	update := map[string]any{}
+	if finalized {
+		update["checksum"] = []byte{1}
+	}
+	if damaged {
+		update["damaged_at"] = time.Now()
+	}
+	if len(update) == 0 {
+		return
+	}
+	// Target the newest row of the file_id (the one just created).
+	require.NoError(t, s.RawDB().Model(&FileDataRecord{}).
+		Where("uuid = (SELECT uuid FROM file_data_records WHERE file_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1)", fileID).
+		Updates(update).Error)
+}
+
+func TestReplicaReader_DamagedFileIDs_DamagedOnlyIsReturned(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	addFileDataRow(t, store, "healthy", true, false)
+	addFileDataRow(t, store, "damaged", true, true)
+
+	ids, err := reader.DamagedFileIDs(context.Background(), "", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"damaged"}, ids)
+}
+
+func TestReplicaReader_DamagedFileIDs_HealthyReuploadHidesIt(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	addFileDataRow(t, store, "f", true, true)
+	addFileDataRow(t, store, "f", true, false)
+
+	ids, err := reader.DamagedFileIDs(context.Background(), "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
+func TestReplicaReader_DamagedFileIDs_InFlightReuploadDoesNotHideIt(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	addFileDataRow(t, store, "f", true, true)
+	addFileDataRow(t, store, "f", false, false) // checksum NULL: not restorable yet
+
+	ids, err := reader.DamagedFileIDs(context.Background(), "", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"f"}, ids)
+}
+
+func TestReplicaReader_DamagedFileIDs_TwoDamagedRowsGiveOneID(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	addFileDataRow(t, store, "f", true, true)
+	addFileDataRow(t, store, "f", true, true)
+
+	ids, err := reader.DamagedFileIDs(context.Background(), "", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"f"}, ids)
+}
+
+func TestReplicaReader_DamagedFileIDs_PagesEveryIDExactlyOnce(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	want := []string{"a", "b", "c", "d", "e"}
+	for _, id := range want {
+		addFileDataRow(t, store, id, true, true)
+	}
+
+	var got []string
+	after := ""
+	for {
+		page, err := reader.DamagedFileIDs(context.Background(), after, 2)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		require.LessOrEqual(t, len(page), 2)
+		got = append(got, page...)
+		after = page[len(page)-1]
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestReplicaReader_DamagedFileIDs_NoneDamagedGivesEmptySlice(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	addFileDataRow(t, store, "healthy", true, false)
+
+	ids, err := reader.DamagedFileIDs(context.Background(), "", 10)
+	require.NoError(t, err)
+	assert.NotNil(t, ids)
+	assert.Empty(t, ids)
+}
+
+// The damaged set is a small fraction of a store that can hold millions of
+// rows, so the query must find it through the damaged_at index rather than
+// scanning every file_data_records row.
+func TestReplicaReader_DamagedFileIDs_UsesTheDamagedAtIndex(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	addFileDataRow(t, store, "f", true, true)
+
+	var plan []struct{ Detail string }
+	require.NoError(t, reader.db.Raw("EXPLAIN QUERY PLAN "+damagedFileIDsSQL, "", 10).Scan(&plan).Error)
+	var detail string
+	for _, p := range plan {
+		detail += p.Detail + "\n"
+	}
+	assert.Contains(t, detail, "idx_file_data_records_damaged_at", "plan was:\n"+detail)
 }
