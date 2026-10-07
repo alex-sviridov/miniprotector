@@ -361,22 +361,19 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 	}()
 
 	// Restore reads through its own NewReadOnly view; reads of completed kept
-	// files must never fail while compaction moves their chunks.
+	// files must never fail while compaction moves their chunks. Whether a
+	// read here actually hits a moved chunk depends on scheduling, so this
+	// test only asserts that nothing fails; the stale-location path itself is
+	// covered deterministically by TestReadLocatedChunk_StaleSnapshotFollowsCompaction.
 	ro := readOnlyView(t, s)
-	// Count the reader's re-locations (stale location, segment removed) to
-	// prove the test exercised that path.
-	var relocations atomic.Int64
-	setRelocateHook(t, func() { relocations.Add(1) })
+	// fullPasses counts reader passes that read every kept chunk, so the
+	// test can wait until the reader has really read all kept files.
+	var fullPasses atomic.Int64
 	readDone := make(chan error, 1)
 	go func() {
-		var reads int
 		for {
 			select {
 			case <-stop:
-				if reads == 0 {
-					readDone <- errors.New("the reader never read a chunk")
-					return
-				}
 				readDone <- nil
 				return
 			default:
@@ -413,7 +410,9 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 					readDone <- fmt.Errorf("read %s during compaction: %w", h, err)
 					return
 				}
-				reads++
+			}
+			if len(hashes) == kept*perFile {
+				fullPasses.Add(1)
 			}
 		}
 	}()
@@ -447,8 +446,18 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 	for g := 0; g < kept; g++ {
 		require.NoError(t, <-errs)
 	}
-	for deadline := time.Now().Add(10 * time.Second); relocations.Load() == 0 && time.Now().Before(deadline); {
-		time.Sleep(10 * time.Millisecond)
+	// With every kept file complete, wait for one whole reader pass over
+	// them while garbage and compaction keep running. This always happens;
+	// the deadline only turns a hang into a failure.
+	// A reader error ends the wait at once.
+	for deadline := time.Now().Add(30 * time.Second); fullPasses.Load() == 0; {
+		require.True(t, time.Now().Before(deadline), "the reader never completed a pass over the kept files")
+		select {
+		case err := <-readDone:
+			require.NoError(t, err)
+			require.Fail(t, "the reader stopped before a full pass")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	close(stopJunk)
 	for g := 0; g < garbage; g++ {
@@ -457,7 +466,6 @@ func TestReclaim_ConcurrentBackupsAndVacuumKeepEveryFileIntact(t *testing.T) {
 	close(stop)
 	require.NoError(t, <-vacDone)
 	require.NoError(t, <-readDone)
-	assert.Positive(t, relocations.Load(), "the reader never raced a compaction")
 
 	res, err := s.VacuumOnline(context.Background(), vacBatch, time.Hour)
 	require.NoError(t, err)
