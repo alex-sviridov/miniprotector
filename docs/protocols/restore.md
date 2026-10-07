@@ -77,13 +77,22 @@ the only legitimate caller. See
 | Condition | bwfs behaviour |
 |-----------|----------------|
 | `file_uuid` not found or not finalized | gRPC `NotFound` |
-| Chunk missing or corrupt (`ErrChunkNotFound` / `ErrChunkCorrupt`) | gRPC `Internal` (stream terminates); chunk marked corrupted |
+| `FileData` already flagged damaged (`damaged_at` set) | gRPC `DataLoss` ("backup data damaged ..."), returned before any event, not even the meta |
+| Chunk missing or corrupt (`ErrChunkNotFound` / `ErrChunkCorrupt`) | gRPC `DataLoss` (stream terminates); chunk marked corrupted, which flags the file damaged |
 | Other chunk read error (I/O, too many open files, database busy) | gRPC `Internal` (stream terminates); nothing is marked |
+| Database error looking up the file or its chunks | gRPC `Internal` |
 | Send error (network) | stream terminates; client retries entire `RestoreFile` call |
+
+`DataLoss` means the data is gone for good: retrying cannot help, and only the next backup of the
+file (which re-uploads it, since dedup ignores damaged rows) heals it. `Internal` is kept for errors
+that may be transient. A damaged version fails before the meta event because its links to the lost
+chunk are gone: streaming it would send a silently truncated file. The resolver
+(`ResolveRestoreFiles`) still lists damaged files, so a folder restore fails visibly on them instead
+of succeeding with the file missing; once a healthy re-upload exists, it is the newer row and wins.
 
 When the chunk is missing or corrupt (and only then), bwfs also marks it corrupted server-side (deletes its
 chunk record and links, and flags the `FileData` of every file that referenced it as damaged)
-before returning the `Internal` error — see the [backup
+before returning the `DataLoss` error — see the [backup
 protocol](./backup.md)'s "How does the system recover from a corrupted chunk?" section for
 the full recovery rationale. A `restore` or `verify` run doubles as the trigger for this
 self-healing: the next backup re-uploads the affected files. Other read errors may be transient, so

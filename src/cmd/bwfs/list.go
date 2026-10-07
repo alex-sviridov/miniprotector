@@ -32,12 +32,13 @@ func runList(logger *slog.Logger, storagePath, serverName, pathPrefix, output, f
 }
 
 type queryResult struct {
-	FileUUID   string    `gorm:"column:uuid"`
-	FileID     string    `gorm:"column:file_id"`
-	Size       int64     `gorm:"column:size"`
-	Chunks     int       `gorm:"column:chunks"`
-	CreatedAt  time.Time `gorm:"column:created_at"`
-	Versions   int64     `gorm:"column:versions"`
+	FileUUID  string    `gorm:"column:uuid"`
+	FileID    string    `gorm:"column:file_id"`
+	Size      int64     `gorm:"column:size"`
+	Chunks    int       `gorm:"column:chunks"`
+	CreatedAt time.Time `gorm:"column:created_at"`
+	Versions  int64     `gorm:"column:versions"`
+	Damaged   bool      `gorm:"column:damaged"`
 }
 
 // queryFileRows returns the latest finalized FileDataRecord per file_id,
@@ -48,10 +49,11 @@ func queryFileRows(store *wfs.Store, serverName, pathPrefix, filter string) ([]l
 	// so non-aggregated columns (id, size, chunk_count, created_at) are
 	// unambiguous even if multiple records share the same file_id.
 	// COUNT(DISTINCT fv.seq) avoids inflation from the cross-join when multiple
-	// FileDataRecords exist.
+	// FileDataRecords exist. Damaged rows stay listed (marked), so the loss is
+	// visible; a newer healthy re-upload of the same file_id replaces them.
 	query := store.RawDB().
 		Table("file_data_records fd").
-		Select("fd.uuid AS uuid, fd.file_id, fd.size, fd.chunk_count AS chunks, fd.created_at, COUNT(DISTINCT fv.seq) AS versions").
+		Select("fd.uuid AS uuid, fd.file_id, fd.size, fd.chunk_count AS chunks, fd.created_at, COUNT(DISTINCT fv.seq) AS versions, fd.damaged_at IS NOT NULL AS damaged").
 		Joins("LEFT JOIN file_version_records fv ON fv.object_id = fd.file_id").
 		Where("fd.checksum IS NOT NULL").
 		Where("fd.created_at = (SELECT MAX(fd2.created_at) FROM file_data_records fd2 WHERE fd2.file_id = fd.file_id AND fd2.checksum IS NOT NULL)").
@@ -86,6 +88,7 @@ func queryFileRows(store *wfs.Store, serverName, pathPrefix, filter string) ([]l
 			Chunks:    r.Chunks,
 			Versions:  r.Versions,
 			CreatedAt: r.CreatedAt,
+			Damaged:   r.Damaged,
 		})
 	}
 	return rows, nil

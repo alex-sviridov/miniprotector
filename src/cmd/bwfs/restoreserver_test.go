@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"lukechampine.com/blake3"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -75,11 +77,13 @@ func TestReadRestoreChunk_MarksOnlyLostChunks(t *testing.T) {
 // each chunk event is received.
 type restoreStream struct {
 	grpc.ServerStream
+	events  int // every event, the meta included
 	chunks  []*pb.RestoreChunk
 	onChunk func(n int)
 }
 
 func (r *restoreStream) Send(ev *pb.RestoreEvent) error {
+	r.events++
 	if c := ev.GetChunk(); c != nil {
 		r.chunks = append(r.chunks, c)
 		if r.onChunk != nil {
@@ -144,6 +148,24 @@ func (f *restoreFixture) fileStillValid(t *testing.T) bool {
 	return ok
 }
 
+// fileDamaged reports whether the restored file's FileData is flagged.
+func (f *restoreFixture) fileDamaged(t *testing.T) bool {
+	t.Helper()
+	var n int64
+	require.NoError(t, f.writer.RawDB().Table("file_data_records").
+		Where("uuid = ? AND damaged_at IS NOT NULL", f.uuid).Count(&n).Error)
+	return n == 1
+}
+
+// chunkIndexed reports whether chunk i still has its chunk row.
+func (f *restoreFixture) chunkIndexed(t *testing.T, i int) bool {
+	t.Helper()
+	var n int64
+	require.NoError(t, f.writer.RawDB().Table("chunk_records").
+		Where("hash = ?", hex.EncodeToString(f.hashes[i])).Count(&n).Error)
+	return n == 1
+}
+
 func (f *restoreFixture) segmentPath(id int64) string {
 	return filepath.Join(f.dir, "packs", fmt.Sprintf("%010d.pack", id))
 }
@@ -181,9 +203,10 @@ func TestRestoreFile_MissingChunkRowIsMarkedAndFailsAtItsPosition(t *testing.T) 
 
 	err := f.restore(t, stream)
 
-	require.Error(t, err)
+	assert.Equal(t, codes.DataLoss, status.Code(err), "a lost chunk is final, not a retryable Internal: %v", err)
 	assert.Len(t, stream.chunks, 1, "the chunk before the missing one is sent, nothing after")
 	assert.False(t, f.fileStillValid(t), "marking invalidates the file so the next backup uploads it")
+	assert.True(t, f.fileDamaged(t), "the file is flagged, not deleted")
 }
 
 func TestRestoreFile_CorruptChunkIsMarked(t *testing.T) {
@@ -201,8 +224,54 @@ func TestRestoreFile_CorruptChunkIsMarked(t *testing.T) {
 	err = f.restore(t, stream)
 
 	require.ErrorContains(t, err, "corrupt")
+	assert.Equal(t, codes.DataLoss, status.Code(err), "a corrupt chunk is final, not a retryable Internal: %v", err)
 	assert.Len(t, stream.chunks, 1)
 	assert.False(t, f.fileStillValid(t))
+	assert.True(t, f.fileDamaged(t), "the file is flagged, not deleted")
+	assert.False(t, f.chunkIndexed(t, 1), "the corrupt chunk is marked (dropped)")
+	assert.True(t, f.chunkIndexed(t, 0), "healthy chunks stay")
+}
+
+// Restoring a version already flagged damaged fails at once with DataLoss,
+// before the meta event: the client must not start writing a file that can
+// never be completed.
+func TestRestoreFile_DamagedFileDataFailsWithDataLossBeforeAnyEvent(t *testing.T) {
+	f := newRestoreFixture(t, 3)
+	require.NoError(t, f.writer.MarkChunkCorrupted(f.hashes[2]))
+	require.True(t, f.fileDamaged(t))
+	stream := &restoreStream{}
+
+	err := f.restore(t, stream)
+
+	assert.Equal(t, codes.DataLoss, status.Code(err), "got %v", err)
+	assert.ErrorContains(t, err, "backup data damaged")
+	assert.Zero(t, stream.events, "no event, not even the meta, is sent")
+}
+
+// A read error that may be transient (here: permission denied on the
+// segment) must not be reported as data loss, and must never drop data.
+func TestRestoreFile_TransientReadErrorIsInternalAndMarksNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	f := newRestoreFixture(t, 3)
+	seg := f.segmentPath(f.chunkSegment(t, 1))
+	t.Cleanup(func() { os.Chmod(seg, 0o644) })
+	stream := &restoreStream{onChunk: func(n int) {
+		if n == 1 {
+			require.NoError(t, os.Chmod(seg, 0))
+		}
+	}}
+
+	err := f.restore(t, stream)
+
+	assert.Equal(t, codes.Internal, status.Code(err), "got %v", err)
+	assert.Len(t, stream.chunks, 1)
+	assert.False(t, f.fileDamaged(t), "a possibly transient error must not flag the file")
+	assert.True(t, f.fileStillValid(t))
+	for i := range f.hashes {
+		assert.True(t, f.chunkIndexed(t, i), "chunk %d must not be marked", i)
+	}
 }
 
 // The restore locates all chunks up front but holds no guard, so compaction

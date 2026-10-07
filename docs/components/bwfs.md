@@ -181,9 +181,11 @@ bwfs /home/user/backup list --filter nginx
 | `--filter` | | Free-text substring filter on file path (composes with positional) |
 | `--debug` | false | Enable debug logging |
 
-**Table columns:** SOURCE, TYPE, PATH, TIMESTAMP, SIZE, CHUNKS, VERSIONS
+**Table columns:** SOURCE, TYPE, PATH, TIMESTAMP, SIZE, CHUNKS, VERSIONS, plus a DAMAGED marker column (`yes` on damaged rows) that appears only when at least one listed row is damaged, so the usual table is unchanged
 
-**JSON fields:** `file_uuid`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`
+**JSON fields:** `file_uuid`, `source`, `type`, `path`, `timestamp`, `size`, `chunks`, `versions`, `created_at`, and `"damaged": true` on damaged rows only (omitted otherwise)
+
+Each row is the latest finalized `FileData` of its file. A damaged one (see "Damaged file data" below) stays listed and marked until a newer backup re-uploads the file, which replaces it. The gRPC `ListService` (and so `rwfs list`) does not carry the damaged flag; its protocol is unchanged.
 
 ### RestoreService
 
@@ -191,7 +193,7 @@ Provides file reconstruction via server-streaming gRPC RPC. Given a `file_uuid` 
 
 **Lookup semantics:** The handler first queries `file_data_records` by the `file_uuid` (column `uuid`) to obtain the `file_id` (fs:// path reference — the natural key, distinct from `file_uuid`), then locates all of the file's chunks with one query (`Store.LocateFileChunks`: `file_data_chunk_records` in index order, left-joined to `chunk_records`) and reads each chunk from that location (`Store.ReadLocatedChunk`, hash-verified). A link whose chunk row is missing is kept in place; it is looked up again when read and, if still missing, fails, and is marked, at its position. The file must be finalized (with a non-NULL checksum) before restore is allowed.
 
-**Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.Internal` when a database error occurs or a chunk cannot be read or fails hash verification — a chunk-read failure also marks that chunk corrupted server-side (see [backup protocol](../protocols/backup.md)) so it heals on the next backup. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
+**Error codes:** Returns gRPC `codes.NotFound` when the `file_uuid` doesn't exist in `file_data_records` or the record is unfinalized. Returns gRPC `codes.DataLoss` when the data is gone for good: the `FileData` is already flagged damaged (checked with the lookup, before any event is sent), or a chunk is missing or fails hash verification mid-stream — such a chunk is also marked corrupted server-side, which flags the file damaged (see [backup protocol](../protocols/backup.md)), so it heals on the next backup. Returns gRPC `codes.Internal` only for errors that may be transient (a database error, or a chunk read failing with I/O, too many open files, database busy); these mark nothing. See [Restore Protocol](../protocols/restore.md) for detailed protocol flow and client-side verification responsibilities.
 
 ## Transport Security
 
@@ -267,6 +269,11 @@ of the same file shares them. bwfs logs one Error line `chunk marked corrupt` wi
 `file_versions_damaged` (the number of `FileData` rows newly flagged) and up to 5 `paths`; a chunk
 whose files were all flagged before is not reported again.
 
+- **Restore and list report it.** `RestoreFile` on a damaged `FileData` fails with gRPC
+  `DataLoss` before sending anything, and a chunk lost mid-stream also ends the stream with
+  `DataLoss` (not `Internal`), so clients know a retry cannot help. The restore resolver still lists
+  damaged files, so a folder restore fails visibly on them rather than skipping them; `bwfs list`
+  marks them (DAMAGED column, JSON `"damaged": true`).
 - **Dedup ignores damaged data.** `FileDataExists` and `FileData` only see rows with
   `damaged_at IS NULL`, so the next backup of an unchanged file uploads it again (chunk-level dedup
   still skips its intact chunks). The re-upload is a newer `FileData` for the same `file_id`, and

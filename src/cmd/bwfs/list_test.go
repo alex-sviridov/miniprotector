@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 )
 
 func TestParseFileID_ValidLinuxPath(t *testing.T) {
@@ -59,4 +62,31 @@ func TestParseFileID_EmptyString(t *testing.T) {
 	assert.Equal(t, "?", typ)
 	assert.Equal(t, "", path)
 	assert.Equal(t, int64(0), ts)
+}
+
+// bwfs list must show which versions are damaged, so an operator can see the
+// loss before a restore hits it; a healed (re-uploaded) file is healthy again.
+func TestQueryFileRows_MarksDamagedRows(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	seedFile(t, store, "fs://hosta:f:/data/ok.txt:1000", 10, []byte{1}, "job1", 5000)
+	seedDamagedFile(t, store, "fs://hosta:f:/data/lost.txt:1000", "job1", 5000)
+	const healedID = "fs://hosta:f:/data/healed.txt:1000"
+	seedDamagedFile(t, store, healedID, "job1", 5000)
+	reuploadFile(t, store, healedID)
+
+	rows, err := queryFileRows(store, "", "", "")
+	require.NoError(t, err)
+
+	damaged := map[string]bool{}
+	for _, r := range rows {
+		damaged[r.Path] = r.Damaged
+	}
+	assert.Equal(t, map[string]bool{
+		"/data/ok.txt":     false,
+		"/data/lost.txt":   true,
+		"/data/healed.txt": false,
+	}, damaged)
 }
