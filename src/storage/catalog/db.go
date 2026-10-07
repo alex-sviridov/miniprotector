@@ -26,7 +26,7 @@ func openDBs(basePath string) (writeDB, readDB *gorm.DB, err error) {
 
 	writeDB, err = sqlitedb.Open(sqlitedb.Options{
 		Path:   dbPath,
-		Models: []any{&EntryRecord{}, &DirectoryRecord{}},
+		Models: []any{&EntryRecord{}, &DirectoryRecord{}, &DamagedFileRecord{}},
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open catalog db: %w", err)

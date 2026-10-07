@@ -12,7 +12,8 @@ path) — see [api-server](./api-server.md), the only intended caller today.
 
 ## Authorization
 
-`SyncFileVersions` requires the `store` role; the six read-only query RPCs require
+`SyncFileVersions`, `DeleteFileVersions` and `ReportDamagedFiles` require the `store` role; the
+six read-only query RPCs require
 `control-plane`. See [Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## Usage
@@ -56,6 +57,13 @@ persisted keyed by `(store_node, job_id, object_id)`:
   the caller's own verified `store_node` — idempotent, an unknown entry is a no-op. The
   `catalog_directories` rows are left alone, so a directory that lost all its files can still appear
   in the directory list (a known limitation); entry listings never show a deleted version.
+- `ReportDamagedFiles` is the damage path: a client stream carrying the caller's complete set of
+  currently damaged file ids. After a clean end of stream `catalog` replaces that `store_node`'s
+  rows in a third table, `catalog_damaged_files(store_node, object_id)` (composite primary key), in
+  one transaction; an empty stream clears it, and a stream that breaks off changes nothing. Absent
+  means healthy, so heals and vacuum on `bwfs` need no extra event. `ListEntries` sets each entry's
+  `damaged` from that table by `(store_node, object_id)`, which also covers damage reported before
+  the version row arrived. A UI warning only; restores never consult it.
 - A batch containing an entry already stored for its `(store_node, job_id, object_id)` is a
   no-op for that entry (`ON CONFLICT DO NOTHING`) — safe for `catalogsync` to resend a batch it
   isn't sure was received.

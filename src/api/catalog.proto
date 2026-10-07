@@ -7,6 +7,7 @@ option go_package = "./proto";
 service CatalogService {
   rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
   rpc DeleteFileVersions(DeleteVersionsRequest) returns (DeleteVersionsResponse);
+  rpc ReportDamagedFiles(stream DamagedFilesChunk) returns (ReportDamagedFilesResponse);
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
@@ -44,6 +45,17 @@ message DeleteVersionsRequest {
 }
 
 message DeleteVersionsResponse {} // empty ack; deleting an entry the catalog never had is not an error
+
+// One piece of the sending node's complete set of currently damaged file ids
+// (object_id == bwfs file_id). The whole stream is one snapshot: on a clean
+// end of stream the catalog replaces that node's set with it (an empty stream
+// clears it); a stream that breaks off changes nothing. Absent means healthy.
+// The node is the verified mTLS peer, never a field.
+message DamagedFilesChunk {
+  repeated string object_ids = 1;
+}
+
+message ReportDamagedFilesResponse {} // empty ack, sent only after the set was replaced
 
 message ListEntriesRequest {
   string store_host     = 1; // exact match against the sending bwfs node's identity; empty = all
@@ -84,6 +96,7 @@ message Entry {
   string source_host = 14; // the real originating (backed-up) host, derived from Metadata at sync time
   string parent_directory = 15; // the file's immediate containing directory, derived from Metadata at sync time
   string short_filename   = 16; // the file's bare name (no directory), derived from Metadata at sync time; display only
+  bool   damaged          = 17; // the store node last reported this object_id as damaged: restoring it will fail. A warning, possibly up to one sync interval stale
 }
 
 message Facet {
