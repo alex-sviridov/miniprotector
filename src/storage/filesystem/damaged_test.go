@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,7 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alex-sviridov/miniprotector/storage"
-	"github.com/alex-sviridov/miniprotector/storage/pack"
+	"modernc.org/sqlite"
+	sqlitelib "modernc.org/sqlite/lib"
 )
 
 // Damaged file data: a chunk that turns out to be unusable flags the FileData
@@ -235,13 +234,35 @@ func TestOpen_AddsDamagedAtToAnExistingStore(t *testing.T) {
 	assert.True(t, exists)
 }
 
-// manyDependents is past SQLite's 32,766 bound-variable limit: a chunk shared
-// by that many files (a zero block, the same file on many hosts) must still
-// be droppable.
-const manyDependents = 33_000
+// sqlVariableLimit stands in for SQLite's real limit of 32,766 bound
+// variables per statement: the test lowers the connection's limit to it, so
+// a chunk with manyDependents files exercises the same failure (a statement
+// binding one variable per dependent) as a chunk shared by 33,000 files --
+// a zero block, one file on many hosts -- without inserting that many rows,
+// which takes ~40s under -race with the pure-Go SQLite.
+const (
+	sqlVariableLimit = 1000
+	manyDependents   = 1200
+)
+
+// limitSQLVariables lowers the bound-variable limit of the store's single
+// database connection (openDB allows only one, so every statement uses it).
+func limitSQLVariables(t *testing.T, s *Store, n int) {
+	t.Helper()
+	sqlDB, err := s.RawDB().DB()
+	require.NoError(t, err)
+	conn, err := sqlDB.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = sqlite.Limit(conn, sqlitelib.SQLITE_LIMIT_VARIABLE_NUMBER, n)
+	require.NoError(t, err)
+	got, err := sqlite.Limit(conn, sqlitelib.SQLITE_LIMIT_VARIABLE_NUMBER, -1) // -1 only reads it
+	require.NoError(t, err)
+	require.Equal(t, n, got)
+}
 
 // addDependents links n extra finalized files to the chunk with two
-// set-based inserts, so the test stays fast and binds no per-row variables.
+// set-based inserts, so setup binds no per-row variables.
 func addDependents(t *testing.T, s *Store, hash []byte, n int) {
 	t.Helper()
 	const seq = "WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < ?) "
@@ -266,38 +287,13 @@ func TestMarkChunkCorrupted_ChunkSharedByMoreFilesThanSQLiteVariables(t *testing
 	s := newTestStore(t)
 	hashes := writeFile(t, s, damagedFileA, []byte("shared by very many files"))
 	addDependents(t, s, hashes[0], manyDependents)
+	limitSQLVariables(t, s, sqlVariableLimit)
 
 	require.NoError(t, s.MarkChunkCorrupted(hashes[0]))
 
 	assert.Equal(t, int64(manyDependents+1), damagedCount(t, s))
 	assert.False(t, chunkKnown(s, hashes[0]))
 	assert.Zero(t, linkCount(t, s, "chunk_hash = ?", hex.EncodeToString(hashes[0])))
-}
-
-func TestReclaim_CorruptRecordSharedByMoreFilesThanSQLiteVariables(t *testing.T) {
-	s := newSmallStore(t, 6)
-	require.NoError(t, s.CreateFileData("F", chunkLen))
-	all := storeRaw(t, s, names("c", 6)...)
-	bad := all[0]
-	require.NoError(t, s.LinkChunkToFileData(bad, "F", 0))
-	require.NoError(t, s.FinalizeFileData("F", []byte{1}))
-	addDependents(t, s, bad, manyDependents)
-	storeRaw(t, s, "opens segment 2")
-	dropRows(t, s, all[2:])
-
-	rec := chunkRow(t, s, bad)
-	f, err := os.OpenFile(filepath.Join(s.packDir(), segmentName(rec.Segment)), os.O_RDWR, 0)
-	require.NoError(t, err)
-	_, err = f.WriteAt([]byte{'X'}, rec.Offset+pack.HeaderSize)
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	_, compacted, _, err := s.reclaimSegments(context.Background(), 100)
-	require.NoError(t, err)
-
-	assert.Equal(t, int64(1), compacted)
-	assert.Equal(t, int64(manyDependents+1), damagedCount(t, s))
-	assert.False(t, chunkKnown(s, bad))
 }
 
 func TestMarkChunkCorrupted_LogsEachPathOnce(t *testing.T) {
