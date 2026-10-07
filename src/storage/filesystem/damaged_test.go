@@ -223,7 +223,7 @@ func TestOpen_AddsDamagedAtToAnExistingStore(t *testing.T) {
 	writeFile(t, s, damagedFileA, []byte("written before the column existed"))
 	// A store from before the column has neither it nor its index (SQLite
 	// refuses to drop a column an index still uses).
-	require.NoError(t, s.RawDB().Exec("DROP INDEX idx_file_data_records_damaged_at").Error)
+	require.NoError(t, s.RawDB().Exec("DROP INDEX idx_file_data_damaged_file_id").Error)
 	require.NoError(t, s.RawDB().Exec("ALTER TABLE file_data_records DROP COLUMN damaged_at").Error)
 	require.NoError(t, s.Close())
 
@@ -232,7 +232,7 @@ func TestOpen_AddsDamagedAtToAnExistingStore(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 
 	assert.True(t, s.RawDB().Migrator().HasColumn(&FileDataRecord{}, "damaged_at"))
-	assert.True(t, s.RawDB().Migrator().HasIndex(&FileDataRecord{}, "idx_file_data_records_damaged_at"))
+	assert.True(t, s.RawDB().Migrator().HasIndex(&FileDataRecord{}, "idx_file_data_damaged_file_id"))
 	exists, err := s.FileDataExists(damagedFileA)
 	require.NoError(t, err)
 	assert.True(t, exists)

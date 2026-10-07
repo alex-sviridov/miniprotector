@@ -206,9 +206,9 @@ func TestReplicaReader_DamagedFileIDs_NoneDamagedGivesEmptySlice(t *testing.T) {
 }
 
 // The damaged set is a small fraction of a store that can hold millions of
-// rows, so the query must find it through the damaged_at index rather than
-// scanning every file_data_records row.
-func TestReplicaReader_DamagedFileIDs_UsesTheDamagedAtIndex(t *testing.T) {
+// rows, so the query must find it through the partial damaged-file_id index
+// (seeking to `after`) rather than scanning every file_data_records row.
+func TestReplicaReader_DamagedFileIDs_UsesThePartialDamagedIndex(t *testing.T) {
 	store, reader := newDamagedFixture(t)
 	addFileDataRow(t, store, "f", true, true)
 
@@ -218,5 +218,38 @@ func TestReplicaReader_DamagedFileIDs_UsesTheDamagedAtIndex(t *testing.T) {
 	for _, p := range plan {
 		detail += p.Detail + "\n"
 	}
-	assert.Contains(t, detail, "idx_file_data_records_damaged_at", "plan was:\n"+detail)
+	assert.Contains(t, detail, "USING INDEX idx_file_data_damaged_file_id (file_id>?)", "plan was:\n"+detail)
+	assert.NotContains(t, detail, "TEMP B-TREE", "a page must not sort the damaged set; plan was:\n"+detail)
+
+	// The index must be partial: only damaged rows, not the whole table.
+	var ddl string
+	require.NoError(t, reader.db.Raw("SELECT sql FROM sqlite_master WHERE name = 'idx_file_data_damaged_file_id'").Scan(&ddl).Error)
+	assert.Contains(t, ddl, "WHERE damaged_at IS NOT NULL")
+}
+
+// A shared chunk damages every file using it, so the damaged set can be huge.
+// Paging it must cost each page only its own rows: the old query re-walked
+// the whole damaged set per page (quadratic), blowing the stream deadline
+// around 120k ids.
+func TestReplicaReader_DamagedFileIDs_PagingALargeSetIsFast(t *testing.T) {
+	store, reader := newDamagedFixture(t)
+	const total, pageSize = 20000, 100
+	require.NoError(t, store.RawDB().Exec(`
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < ?)
+		INSERT INTO file_data_records (uuid, file_id, checksum, created_at, damaged_at)
+		SELECT 'u' || i, printf('file-%06d', i), x'01', datetime('now'), datetime('now') FROM n`, total).Error)
+
+	start := time.Now()
+	seen, after := 0, ""
+	for {
+		page, err := reader.DamagedFileIDs(context.Background(), after, pageSize)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		seen += len(page)
+		after = page[len(page)-1]
+	}
+	assert.Equal(t, total, seen)
+	assert.Less(t, time.Since(start), 15*time.Second, "paging must not rescan the damaged set per page")
 }

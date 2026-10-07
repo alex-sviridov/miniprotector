@@ -18,7 +18,7 @@ type ChunkRecord struct {
 
 type FileDataRecord struct {
 	UUID       string `gorm:"primaryKey"`
-	FileID     string `gorm:"index"` // retained for uniqueness/display; not parsed on the query path anymore
+	FileID     string `gorm:"index;index:idx_file_data_damaged_file_id,where:damaged_at IS NOT NULL"` // retained for uniqueness/display; not parsed on the query path anymore
 	SourceHost string `gorm:"index:idx_file_data_path_host,priority:2"`
 	Path       string `gorm:"index:idx_file_data_path_host,priority:1"`
 	Mtime      int64
@@ -34,9 +34,7 @@ type FileDataRecord struct {
 	// ignores it, so the next backup uploads the file again.
 	// NULL = healthy. Nullable, so AutoMigrate adds it to existing stores
 	// without a backfill.
-	// Indexed because the damaged set is tiny next to the table: catalogsync
-	// lists it without scanning every row.
-	DamagedAt *time.Time `gorm:"index"`
+	DamagedAt *time.Time
 }
 
 type FileDataChunkRecord struct {

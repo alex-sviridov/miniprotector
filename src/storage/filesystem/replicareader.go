@@ -63,12 +63,14 @@ func (r *ReplicaReader) FileVersionDeletionsSince(ctx context.Context, cursor in
 // flagged damaged_at and no row of the same file_id is a healthy finalized
 // copy (a healed re-upload shares the file_id; an in-flight one, with a NULL
 // checksum, cannot be restored yet and so heals nothing). The leading
-// damaged_at predicate is driven by the sparse damaged_at index, pinned with
-// INDEXED BY: without table statistics the planner prefers the file_id index
-// and would walk every row. The final ORDER BY then sorts only the damaged set.
+// damaged_at predicate is driven by the partial index on file_id over damaged
+// rows, pinned with INDEXED BY (without statistics the planner prefers the
+// full file_id index and walks every row). The index is ordered by file_id, so
+// each page seeks to `after` and reads only its own rows -- no per-page pass
+// over the whole damaged set, which made a full listing quadratic.
 const damagedFileIDsSQL = `
 SELECT DISTINCT d.file_id
-FROM file_data_records d INDEXED BY idx_file_data_records_damaged_at
+FROM file_data_records d INDEXED BY idx_file_data_damaged_file_id
 WHERE d.damaged_at IS NOT NULL
   AND d.file_id > ?
   AND NOT EXISTS (
