@@ -131,7 +131,7 @@ describe('VersionsModal', () => {
     await flushPromises()
     const badge = wrapper.get('[data-test="version-damaged-1"]')
     expect(badge.text()).toBe('Damaged')
-    expect(badge.attributes('title')).toBe('Backup data for this version is damaged; restore will fail.')
+    expect(badge.attributes('title')).toBe('Backup data for this version is damaged; restore may fail.')
     expect(wrapper.find('[data-test="version-damaged-2"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="version-damaged-3"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="restore-version-1"]').attributes('disabled')).toBeUndefined()

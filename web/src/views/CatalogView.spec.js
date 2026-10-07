@@ -514,4 +514,13 @@ describe('CatalogView', () => {
     await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('use-latest')
     expect(restoreCart.setDamaged).toHaveBeenLastCalledWith({ host: 'web01', path: '/etc/hosts' }, true)
   })
+
+  it('using latest for a file not in the current rows clears the damaged flag', async () => {
+    const { wrapper, catalog } = mountView({ entries: [entry({ path: '/etc/hosts', source_host: 'web01', damaged: true })] })
+    const restoreCart = useRestoreCartStore()
+    await wrapper.get('[data-test="captured-web01:/etc/hosts"]').trigger('click')
+    catalog.entries = []
+    await wrapper.findComponent({ name: 'VersionsModal' }).vm.$emit('use-latest')
+    expect(restoreCart.setDamaged).toHaveBeenLastCalledWith({ host: 'web01', path: '/etc/hosts' }, false)
+  })
 })

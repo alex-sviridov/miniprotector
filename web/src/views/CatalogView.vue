@@ -175,7 +175,9 @@ function useLatestVersion() {
   )
   if (target.sourceHost !== null) {
     const group = fileRows.value.find((g) => g.sourceHost === target.sourceHost && g.path === target.path)
-    if (group) restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, group.damaged)
+    // If the row is no longer in view the latest version's state is unknown;
+    // a stale "damaged" is worse than a missing one, so fall back to false.
+    restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, group ? group.damaged : false)
   }
   versionsFor.value = null
 }

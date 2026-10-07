@@ -81,6 +81,11 @@ function selectVersion(version) {
     version.store_created_at,
     version.store_created_at
   )
+  // The flag describes the version the rule now resolves to; folder rules
+  // are never flagged (rwfs resolves them at restore time).
+  if (versionsFor.value.host !== null) {
+    restoreCart.setDamaged({ host: versionsFor.value.host, path: versionsFor.value.path }, version.damaged === true)
+  }
   versionsFor.value = null
 }
 
@@ -93,6 +98,11 @@ function selectVersion(version) {
 // meaning "latest" can have on this page.
 function useLatestVersion() {
   restoreCart.setVersionWindow({ host: versionsFor.value.host, path: versionsFor.value.path }, 0, 0)
+  // The latest version's damaged state is unknown on this page (no catalog
+  // rows in scope); a stale "damaged" is worse than a missing one, so clear it.
+  if (versionsFor.value.host !== null) {
+    restoreCart.setDamaged({ host: versionsFor.value.host, path: versionsFor.value.path }, false)
+  }
   versionsFor.value = null
 }
 
