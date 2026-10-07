@@ -923,3 +923,89 @@ func TestVerifyFile_WatchdogCancelsAStalledRestoreFileStream(t *testing.T) {
 		t.Fatal("verifyFile never returned after the watchdog should have fired")
 	}
 }
+
+func TestVerifyFileWithRetry_DataLossIsFinalWithItsOwnReason(t *testing.T) {
+	srv := &damagedRestoreServer{afterChunk: true}
+	client := dialRestoreClient(t, srv)
+	row := &pb.FileRow{FileUuid: "x", Source: "hosta", Path: "/x"}
+
+	start := time.Now()
+	result := verifyFileWithRetry(context.Background(), discardLogger(), client, row, 3)
+	elapsed := time.Since(start)
+
+	assert.False(t, result.ok)
+	assert.Equal(t, "data_loss", result.reason)
+	assert.Equal(t, 1, srv.Calls(), "DataLoss must not be retried")
+	assert.Less(t, elapsed, 200*time.Millisecond, "no backoff wait for DataLoss")
+}
+
+func TestVerifyFileWithRetry_Blake3MismatchRetriedOnceThenSucceeds(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	data := []byte("content damaged in transit once")
+	srv := &badChunkRestoreServer{data: data, checksum: expectedCRC32(t, [][]byte{data}), badCalls: 1}
+	client := dialRestoreClient(t, srv)
+
+	result := verifyFileWithRetry(context.Background(), discardLogger(), client, &pb.FileRow{FileUuid: "x", Path: "/x"}, 1)
+	assert.True(t, result.ok, "reason: %s", result.reason)
+	assert.Equal(t, 2, srv.Calls())
+}
+
+func TestVerifyFileWithRetry_Blake3MismatchTwiceIsFinal(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	data := []byte("content damaged in transit every time")
+	srv := &badChunkRestoreServer{data: data, checksum: expectedCRC32(t, [][]byte{data}), badCalls: 100}
+	client := dialRestoreClient(t, srv)
+
+	result := verifyFileWithRetry(context.Background(), discardLogger(), client, &pb.FileRow{FileUuid: "x", Path: "/x"}, 5)
+	assert.False(t, result.ok)
+	assert.Equal(t, "blake3_mismatch", result.reason)
+	assert.Equal(t, 2, srv.Calls(), "a hash mismatch gets exactly one retry, whatever --retries allows")
+}
+
+func TestVerifyFileWithRetry_CRCMismatchNeverRetries(t *testing.T) {
+	client := dialRestoreClient(t, &crcMismatchRestoreServer{})
+
+	start := time.Now()
+	result := verifyFileWithRetry(context.Background(), discardLogger(), client, &pb.FileRow{FileUuid: "x", Path: "/x"}, 3)
+	elapsed := time.Since(start)
+
+	assert.Equal(t, "crc_mismatch", result.reason)
+	assert.Less(t, elapsed, 200*time.Millisecond, "a CRC mismatch must fail on the first attempt with no backoff wait")
+}
+
+func TestRunVerify_PlainPath_DamagedFileReportedAsDataLossAndRunContinues(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	uuidA := seedRestorableFile(t, store, "hosta", "/data/a.txt", "job1", 1000, []byte{1, 2, 3, 4})
+	uuidB := seedRestorableFile(t, store, "hosta", "/data/b.txt", "job1", 1000, []byte{5, 6, 7, 8})
+	uuidC := seedRestorableFile(t, store, "hosta", "/data/c.txt", "job1", 1000, []byte{9, 10, 11, 12})
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	healthy := &realRestoreServer{store: store}
+	restoreSrv := &damagedRestoreServer{healthy: healthy, damaged: map[string]bool{uuidB: true}}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, &testResolveServer{store: store})
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	err = runVerifyPlainWithDialer(t, logger, lis, "hosta", "", "", 1, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1 file(s) failed verification")
+	assert.ElementsMatch(t, []string{uuidA, uuidC}, healthy.Requested(), "the other files are still verified")
+
+	out := logBuf.String()
+	assert.Regexp(t, `verification failed.*path=/data/b.txt.*reason=data_loss`, out)
+	assert.Contains(t, out, "verified=3")
+	assert.Contains(t, out, "warnings=1")
+}

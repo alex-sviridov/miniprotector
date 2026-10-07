@@ -68,8 +68,13 @@ rwfs verify myhost:/var/log localhost:8080
 rwfs verify localhost:8080 --streams 8 --quiet
 ```
 
-Exits 0 if all files pass. Exits 1 if any file fails (BLAKE3 mismatch, CRC32 mismatch,
-or stream error after retries). Per-file results and a summary are written via `slog`.
+Exits 0 if all files pass. Exits 1 if any file fails (BLAKE3 mismatch after its one retry, CRC32
+mismatch, damaged backup data, or stream error after retries). Per-file results and a summary are
+written via `slog`. Each failure is logged as `verification failed` with a `reason`:
+`blake3_mismatch` (with `chunk_index`), `crc_mismatch`, `data_loss` (`bwfs` answered gRPC
+`DataLoss`: the backup data of that version is damaged, see [restore
+protocol](../protocols/restore.md#error-handling)), or `stream error: ...`. A failed file never
+stops the run; the rest are still verified and counted in the summary.
 
 ### Flags
 
@@ -77,7 +82,7 @@ or stream error after retries). Per-file results and a summary are written via `
 |------|---------|-------------|
 | `--filter` | | Substring filter on file path |
 | `--streams` | config `default_streams` (4 if unset) | Concurrent verification workers |
-| `--retries` | `RwfsRetries` config (default 3) | Max retry attempts per file on stream error |
+| `--retries` | `RwfsRetries` config (default 3) | Max attempts per file on stream error (a BLAKE3 mismatch always gets exactly one retry) |
 | `--quiet` | false | Suppress per-file success lines (warnings and summary always shown) |
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
 
@@ -96,9 +101,12 @@ inactivity only — time spent handing a received row to a busy consumer (a satu
 is explicitly excluded, so worker backpressure can never be mistaken for a stalled server.
 Both `verify` and `restore` share one retry implementation (`withRetry`, `retry.go`) that waits
 between retry attempts (capped, doubling backoff starting at 500ms) instead of retrying
-immediately, so a struggling `bwfs` isn't hammered -- `restore` retries only network/RPC-facing
-stream errors; an integrity mismatch or a local destination-side problem (existing directory,
-disk error) still fails immediately, no retry, exactly as before. See
+immediately, so a struggling `bwfs` isn't hammered. How many attempts a file gets depends on how it
+failed: a network/RPC-facing stream error is retried up to `--retries` attempts; a client-side BLAKE3
+mismatch is retried exactly once, whatever `--retries` says (`bwfs` verifies every chunk before
+sending it, so a mismatch at the client can only be a fault in transit, which a second try usually
+clears; a second mismatch is final); gRPC `DataLoss` (damaged backup data), a CRC32 mismatch, or a
+local destination-side problem (existing directory, disk error) fails immediately, no retry. See
 [Design: Restore Per-File Retry](../superpowers/specs/2026-08-27-restore-retry-design.md). Internally,
 `verify` uses a generic worker pool; `verify --rules-stdin` and `restore` share one resolved-row
 source for `ResolveRestoreFiles` consumption (`list` uses neither) — none of this is CLI-visible,
@@ -180,7 +188,7 @@ reused regardless of it; it governs phase 2 (file content), as described above.
 | `--rules-stdin` | | **Required.** Read `{"rules":[...]}` from stdin -- same shape `verify --rules-stdin` uses. |
 | `--overwrite` | false | A pre-existing destination file is skipped when false, overwritten when true. Has no effect on directories (always reused) or on a non-file occupying a destination path (always a hard error). |
 | `--streams` | config `default_streams` (4 if unset) | Concurrent file restore workers (phase 2 only; phase 1's directory creation is sequential). Raising it hides per-file round trips on high-latency links; see [performance tuning](../PERFORMANCE.md) |
-| `--retries` | `RwfsRetries` config (default 3) | Max retry attempts per file on stream error |
+| `--retries` | `RwfsRetries` config (default 3) | Max attempts per file on stream error (a BLAKE3 mismatch always gets exactly one retry) |
 | `--quiet` | false | Suppress per-file resolved lines (warnings and summary always shown) |
 | `--job-id` | auto-generated UUID | Correlation ID for this invocation's logs; also sent to `bwfs` as `job-id` gRPC metadata |
 
@@ -202,18 +210,33 @@ Phase 2 (file content) runs only once phase 1 has fully succeeded. It logs `rest
 once at start, fetches each resolved file's chunks via `RestoreFile` (concurrently, `--streams`
 workers wide), and writes them to its `dest_path`-renamed destination -- verifying every chunk's
 BLAKE3 hash and the whole-file CRC32 exactly as `rwfs verify` does. A stream error is retried first
-(up to `--retries` times, see the flag above); a mismatch or a local disk-write error still aborts on
-the first occurrence, with no retry. On the first terminal failure -- a mismatch or disk-write error,
-or a stream error whose retries are exhausted -- every other in-flight file transfer is cancelled
-immediately, the failing (partial) file is removed from disk, a `failed to restore file` error is
-logged for it, and no summary line is logged -- the same abort convention phase 1 already uses. On
-full success, a `restore complete` line reports `files_written`, `bytes_written`, `duration`,
-`throughput_mb_s` (bytes written over the content phase's wall time), and
-`skipped` (files left untouched because they already existed and `--overwrite` was false). Per-file
+(up to `--retries` attempts, see the flag above) and a BLAKE3 mismatch once; a CRC32 mismatch or a
+local disk-write error still aborts on the first occurrence, with no retry. On the first terminal
+failure -- a mismatch or disk-write error, or a stream error whose retries are exhausted -- every
+other in-flight file transfer is cancelled immediately, the failing (partial) file is removed from
+disk, a `failed to restore file` error is logged for it, and no summary line is logged -- the same
+abort convention phase 1 already uses. On full success, a `restore complete` line reports
+`files_written`, `bytes_written`, `duration`, `throughput_mb_s` (bytes written over the content
+phase's wall time), `skipped` (files left untouched because they already existed and `--overwrite`
+was false), and `damaged` (see below). Per-file
 success (`file verified` / `file skipped, already exists`) is logged at `Debug` level only -- pass
 `--debug` to see it; it is not controlled by `--quiet`. Every created or overwritten file uses a
 fixed default permission (`0o644`, directories use `0o755`) -- real captured-permission restore is
 still unbuilt, for both files and directories.
+
+**Damaged backup data does not abort the run.** When `bwfs` answers a file's `RestoreFile` with gRPC
+`DataLoss` (its backup data is lost for good; see [restore
+protocol](../protocols/restore.md#error-handling)), retrying cannot help and aborting would only cost
+the healthy files too. So that file alone is given up: it is logged at Error as `backup data damaged,
+file not restored` with `source`, `path`, `dest_path` and the reason, and counted. Nothing of it
+reaches the destination (its temp file is removed; with `--overwrite`, a file already at its
+destination is left as it was). Every other file is restored and committed as usual, `restore
+complete` reports the count as `damaged`, and then the run fails with `N file(s) not restored: backup
+data damaged`, so the exit status is non-zero. Any other failure still aborts the run as described
+above; if damaged files were already seen, the returned error mentions their count too. A file that
+is skipped because it already exists (`--overwrite` false) is never fetched, so its damage is not
+detected by `restore`. The next backup of an unchanged damaged file uploads it again; `bwfs list`
+marks damaged versions.
 
 ### Write contract
 

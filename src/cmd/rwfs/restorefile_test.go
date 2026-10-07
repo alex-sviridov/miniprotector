@@ -324,8 +324,8 @@ func TestWriteRestoreFileWithRetry_ExhaustsRetriesAndReturnsFinalError(t *testin
 	assert.True(t, os.IsNotExist(statErr))
 }
 
-func TestWriteRestoreFileWithRetry_IntegrityMismatchNeverRetries(t *testing.T) {
-	client := dialRestoreClient(t, &hashMismatchRestoreServer{})
+func TestWriteRestoreFileWithRetry_CRCMismatchNeverRetries(t *testing.T) {
+	client := dialRestoreClient(t, &crcMismatchRestoreServer{})
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	destPath := t.TempDir() + "/a.txt"
@@ -337,9 +337,9 @@ func TestWriteRestoreFileWithRetry_IntegrityMismatchNeverRetries(t *testing.T) {
 	elapsed := time.Since(start)
 
 	require.Error(t, result.Err)
-	assert.Contains(t, result.Err.Error(), "blake3_mismatch")
+	assert.Contains(t, result.Err.Error(), "crc_mismatch")
 	assert.False(t, result.Retryable)
-	assert.Less(t, elapsed, 200*time.Millisecond, "an integrity mismatch must fail on the first attempt with no backoff wait")
+	assert.Less(t, elapsed, 200*time.Millisecond, "a CRC mismatch must fail on the first attempt with no backoff wait")
 }
 
 func TestWriteRestoreFileWithRetry_BacksOffBetweenAttempts(t *testing.T) {
@@ -473,6 +473,177 @@ func TestWriteRestoreFile_AbortedQueueRemovesTempAndFails(t *testing.T) {
 	r := writeRestoreFile(context.Background(), client, restoreFile{FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: filepath.Join(dir, "a.txt")}, false, q)
 	require.Error(t, r.Err)
 	assert.False(t, r.Retryable, "an aborted run is not retried")
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries)
+}
+
+// damagedRestoreServer answers like bwfs does for damaged backup data: the
+// RestoreFile stream ends with codes.DataLoss. Without afterChunk it fails
+// before any event (a version already flagged damaged); with afterChunk it
+// first sends the meta and one valid chunk (a chunk found lost mid-stream),
+// so the client already has a temp file open when the failure arrives.
+// When healthy is set, only the file_uuids in damaged fail and every other
+// one is served by healthy, so one run can mix damaged and healthy files.
+type damagedRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	afterChunk bool
+	healthy    pb.RestoreServiceServer
+	damaged    map[string]bool
+
+	mu    sync.Mutex
+	calls int // RestoreFile calls answered with DataLoss
+}
+
+func (s *damagedRestoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	if s.healthy != nil && !s.damaged[req.GetFileUuid()] {
+		return s.healthy.RestoreFile(req, stream)
+	}
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+
+	if s.afterChunk {
+		data := []byte("first chunk of a damaged file")
+		if err := stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Meta{Meta: &pb.RestoreFileMeta{
+			Size: int64(2 * len(data)), ChunkCount: 2, ExpectedChecksum: []byte{0, 0, 0, 0},
+		}}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Chunk{Chunk: &pb.RestoreChunk{
+			Index: 0, Hash: blake3Sum(data), Data: data,
+		}}}); err != nil {
+			return err
+		}
+	}
+	return status.Error(codes.DataLoss, "backup data damaged: chunk lost")
+}
+
+func (s *damagedRestoreServer) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// badChunkRestoreServer serves a one-chunk file whose chunk hash is wrong
+// on the first badCalls calls and right afterwards: a fault in transit,
+// which a retry can fix.
+type badChunkRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	data     []byte
+	checksum []byte // the file's real CRC32, as finalize stored it
+	badCalls int
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *badChunkRestoreServer) RestoreFile(_ *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	s.mu.Lock()
+	s.calls++
+	bad := s.calls <= s.badCalls
+	s.mu.Unlock()
+
+	hash := blake3Sum(s.data)
+	if bad {
+		hash = []byte{0x00}
+	}
+	if err := stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Meta{Meta: &pb.RestoreFileMeta{
+		Size: int64(len(s.data)), ChunkCount: 1, ExpectedChecksum: s.checksum,
+	}}}); err != nil {
+		return err
+	}
+	return stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Chunk{Chunk: &pb.RestoreChunk{
+		Index: 0, Hash: hash, Data: s.data, Eof: true,
+	}}})
+}
+
+func (s *badChunkRestoreServer) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestWriteRestoreFileWithRetry_DataLossIsFinalAndFlaggedDamaged(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		afterChunk bool
+	}{
+		{"before any event", false},
+		{"mid-stream after a chunk", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &damagedRestoreServer{afterChunk: tc.afterChunk}
+			client := dialRestoreClient(t, srv)
+			dir := t.TempDir()
+			destPath := filepath.Join(dir, "a.txt")
+
+			start := time.Now()
+			result := writeRestoreFileWithRetryNow(context.Background(), discardLogger(), client, restoreFile{
+				FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+			}, false, 3)
+			elapsed := time.Since(start)
+
+			require.Error(t, result.Err)
+			assert.True(t, result.Damaged)
+			assert.False(t, result.Retryable, "DataLoss means the data is gone; a retry cannot help")
+			assert.Equal(t, 1, srv.Calls(), "DataLoss must not be retried")
+			assert.Less(t, elapsed, 200*time.Millisecond, "no backoff wait for DataLoss")
+			entries, _ := os.ReadDir(dir)
+			assert.Empty(t, entries, "neither the destination nor a temp file may remain")
+		})
+	}
+}
+
+func TestWriteRestoreFile_StreamErrorOtherThanDataLossIsNotDamaged(t *testing.T) {
+	client := dialRestoreClient(t, &recordingRestoreServer{})
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: t.TempDir() + "/a.txt",
+	}, false)
+	require.Error(t, result.Err)
+	assert.False(t, result.Damaged)
+}
+
+func TestWriteRestoreFileWithRetry_Blake3MismatchRetriedOnceThenSucceeds(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	data := []byte("content damaged in transit once")
+	// --retries 1 configures no retry at all: the one retry for a hash
+	// mismatch does not depend on it.
+	srv := &badChunkRestoreServer{data: data, checksum: expectedCRC32(t, [][]byte{data}), badCalls: 1}
+	client := dialRestoreClient(t, srv)
+	destPath := t.TempDir() + "/a.txt"
+
+	result := writeRestoreFileWithRetryNow(context.Background(), discardLogger(), client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 1)
+
+	require.NoError(t, result.Err)
+	assert.Equal(t, 2, srv.Calls())
+	got, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}
+
+func TestWriteRestoreFileWithRetry_Blake3MismatchTwiceIsFinal(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	data := []byte("content damaged in transit every time")
+	srv := &badChunkRestoreServer{data: data, checksum: expectedCRC32(t, [][]byte{data}), badCalls: 100}
+	client := dialRestoreClient(t, srv)
+	dir := t.TempDir()
+
+	result := writeRestoreFileWithRetryNow(context.Background(), discardLogger(), client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: filepath.Join(dir, "a.txt"),
+	}, false, 5)
+
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "blake3_mismatch")
+	assert.False(t, result.Damaged)
+	assert.Equal(t, 2, srv.Calls(), "a hash mismatch gets exactly one retry, whatever --retries allows")
 	entries, _ := os.ReadDir(dir)
 	assert.Empty(t, entries)
 }

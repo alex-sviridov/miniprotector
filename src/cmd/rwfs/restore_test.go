@@ -698,3 +698,100 @@ func TestRestoreFileContent_FailureLeavesNoTempFiles(t *testing.T) {
 		assert.False(t, isTempName(e.Name()), "leftover temp file %s", e.Name())
 	}
 }
+
+// damagedRunFixture seeds healthy files plus one file bwfs reports as
+// damaged (DataLoss mid-stream), for restoreFileContent tests.
+type damagedRunFixture struct {
+	client   pb.RestoreServiceClient
+	destBase string
+	healthy  []restoreFile
+	damaged  restoreFile
+}
+
+func newDamagedRunFixture(t *testing.T, healthyCount int) damagedRunFixture {
+	t.Helper()
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	fx := damagedRunFixture{destBase: t.TempDir()}
+	for i := 0; i < healthyCount; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		uuid := seedRestorableFileChunks(t, store, "hosta", "/data/"+name, "job1", 1000, [][]byte{[]byte("content " + name)})
+		fx.healthy = append(fx.healthy, restoreFile{FileUUID: uuid, Source: "hosta", Path: "/data/" + name, DestPath: filepath.Join(fx.destBase, name)})
+	}
+	fx.damaged = restoreFile{FileUUID: "damaged-uuid", Source: "hosta", Path: "/data/damaged.txt", DestPath: filepath.Join(fx.destBase, "damaged.txt")}
+	fx.client = dialRestoreClient(t, &damagedRestoreServer{
+		afterChunk: true,
+		healthy:    &realRestoreServer{store: store},
+		damaged:    map[string]bool{"damaged-uuid": true},
+	})
+	return fx
+}
+
+func TestRestoreFileContent_DamagedFileDoesNotAbortHealthyFiles(t *testing.T) {
+	fx := newDamagedRunFixture(t, 4)
+	// The damaged file sits between healthy ones, so files are pending in
+	// the commit queue on both sides of its failure.
+	files := []restoreFile{fx.healthy[0], fx.healthy[1], fx.damaged, fx.healthy[2], fx.healthy[3]}
+
+	saved := restoreCommit
+	t.Cleanup(func() { restoreCommit = saved })
+	setRestoreCommitLimits(100, 1<<40) // nothing commits before the final flush
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	err := restoreFileContent(context.Background(), logger, fx.client, files, false, 2, 3)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1 file(s)")
+	assert.Contains(t, err.Error(), "damaged")
+
+	for _, f := range fx.healthy {
+		got, readErr := os.ReadFile(f.DestPath)
+		require.NoError(t, readErr, "healthy file %s must be committed", f.DestPath)
+		assert.Equal(t, "content "+filepath.Base(f.DestPath), string(got))
+	}
+	assert.NoFileExists(t, fx.damaged.DestPath)
+	entries, _ := os.ReadDir(fx.destBase)
+	for _, e := range entries {
+		assert.False(t, isTempName(e.Name()), "leftover temp file %s", e.Name())
+	}
+	assert.Len(t, entries, len(fx.healthy))
+
+	out := logBuf.String()
+	assert.Regexp(t, `level=ERROR .*path=/data/damaged.txt`, out)
+	assert.Contains(t, out, "dest_path="+fx.damaged.DestPath)
+	assert.Contains(t, out, "restore complete", "the healthy files are summarized before the error is returned")
+	assert.Contains(t, out, "files_written=4")
+	assert.Contains(t, out, "damaged=1")
+}
+
+func TestRestoreFileContent_DamagedFileWithOverwriteKeepsExistingFile(t *testing.T) {
+	fx := newDamagedRunFixture(t, 1)
+	require.NoError(t, os.WriteFile(fx.damaged.DestPath, []byte("older but intact"), 0o644))
+
+	err := restoreFileContent(context.Background(), discardLogger(), fx.client,
+		[]restoreFile{fx.damaged, fx.healthy[0]}, true, 1, 1)
+	require.Error(t, err)
+
+	got, readErr := os.ReadFile(fx.damaged.DestPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "older but intact", string(got), "a damaged backup must not replace the file on disk")
+	assert.FileExists(t, fx.healthy[0].DestPath)
+}
+
+func TestRestoreFileContent_OtherFailureAfterDamagedStillAborts(t *testing.T) {
+	fx := newDamagedRunFixture(t, 0)
+	missing := restoreFile{FileUUID: "does-not-exist", Source: "hosta", Path: "/data/missing.txt", DestPath: filepath.Join(fx.destBase, "missing.txt")}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	// One stream keeps the order: the damaged file fails first, then the
+	// missing one fails with an ordinary (NotFound) error.
+	err := restoreFileContent(context.Background(), logger, fx.client, []restoreFile{fx.damaged, missing}, false, 1, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), missing.DestPath, "the aborting failure is the one returned")
+	assert.Contains(t, err.Error(), "1 file(s)", "the damaged count is still reported")
+	assert.Contains(t, logBuf.String(), "failed to restore file")
+	assert.NotContains(t, logBuf.String(), "restore complete")
+}

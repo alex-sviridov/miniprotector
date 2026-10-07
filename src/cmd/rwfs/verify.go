@@ -15,6 +15,8 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"lukechampine.com/blake3"
 )
 
@@ -251,12 +253,40 @@ func runVerifyWithConn(logger *slog.Logger, conn *grpc.ClientConn, serverName, p
 	return nil
 }
 
+// verifyFileWithRetry retries verifyFile on a stream error up to maxRetries
+// attempts and on a blake3_mismatch once (the same policy as restore's
+// restoreAttempts). data_loss and crc_mismatch are final.
 func verifyFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, row *pb.FileRow, maxRetries int) verifyResult {
-	return withRetry(ctx, logger.With("path", row.Path, "file_uuid", row.FileUuid), maxRetries,
+	return withRetry(ctx, logger.With("path", row.Path, "file_uuid", row.FileUuid),
 		func(ctx context.Context) verifyResult { return verifyFile(ctx, client, row) },
-		func(r verifyResult) bool { return !r.ok && r.reason != "blake3_mismatch" && r.reason != "crc_mismatch" },
+		func(r verifyResult) int { return verifyAttempts(r, maxRetries) },
 		func(r verifyResult) string { return r.reason },
 	)
+}
+
+// verifyAttempts is how many attempts in total r's outcome allows (see
+// withRetry).
+func verifyAttempts(r verifyResult, maxRetries int) int {
+	switch {
+	case r.ok:
+		return 1
+	case r.reason == "blake3_mismatch":
+		return hashMismatchAttempts
+	case r.reason == "crc_mismatch", r.reason == "data_loss":
+		return 1
+	default: // a stream error, possibly transient
+		return maxRetries
+	}
+}
+
+// streamFailureReason names an error from the RestoreFile stream. DataLoss
+// gets its own reason, data_loss, so the summary tells damaged backup data
+// apart from a network problem.
+func streamFailureReason(err error) string {
+	if status.Code(err) == codes.DataLoss {
+		return "data_loss"
+	}
+	return fmt.Sprintf("stream error: %v", err)
 }
 
 func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.FileRow) verifyResult {
@@ -273,13 +303,13 @@ func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.
 
 	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileUuid: row.FileUuid})
 	if err != nil {
-		base.reason = fmt.Sprintf("stream error: %v", err)
+		base.reason = streamFailureReason(err)
 		return base
 	}
 
 	firstEvent, err := stream.Recv()
 	if err != nil {
-		base.reason = fmt.Sprintf("stream error: %v", err)
+		base.reason = streamFailureReason(err)
 		return base
 	}
 	touch()
@@ -296,7 +326,7 @@ func verifyFile(parent context.Context, client pb.RestoreServiceClient, row *pb.
 	for {
 		event, err := stream.Recv()
 		if err != nil {
-			base.reason = fmt.Sprintf("stream error: %v", err)
+			base.reason = streamFailureReason(err)
 			return base
 		}
 		touch()

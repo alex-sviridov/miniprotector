@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -187,7 +188,11 @@ func createRestoreDirectoryStructure(logger *slog.Logger, dirs []restoreDirector
 // only once phase 1 has fully succeeded -- a file's destination directory
 // must already exist. On failure, no summary line is logged, mirroring
 // createRestoreDirectoryStructure's existing convention; the triggering
-// file's own logged error carries the diagnostic. Files are written to temp
+// file's own logged error carries the diagnostic. The one exception is a
+// file whose backup data bwfs reports as damaged (gRPC DataLoss): it is
+// logged at Error and counted, the other files are restored and committed
+// as usual, and the count is returned as an error after the summary, so
+// the run still exits non-zero. Files are written to temp
 // files and committed (fsync + rename + directory fsync) in batches by a
 // commitQueue; the summary counts only committed files.
 func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, files []restoreFile, overwrite bool, streams, retries int) error {
@@ -230,9 +235,24 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 	})
 
 	var firstErr error
-	skipped := 0
+	skipped, damaged := 0, 0
 	for result := range resultCh {
 		switch {
+		case result.Damaged:
+			// The backup data of this version is lost for good. Aborting
+			// would only cost the user the healthy files too, so it is
+			// counted, logged and the run goes on; nothing of it reaches
+			// the destination (writeRestoreFile removed its temp file, and
+			// an existing file there is left as it was). Checked before
+			// firstErr: a DataLoss is never fallout of cancel(), so it is
+			// counted even after an abort.
+			damaged++
+			logger.Error("backup data damaged, file not restored",
+				"source", result.Source,
+				"path", result.Path,
+				"dest_path", result.DestPath,
+				"reason", result.Err,
+			)
 		case result.Err != nil && firstErr == nil:
 			firstErr = fmt.Errorf("restore file %s: %w", result.DestPath, result.Err)
 			logger.Error("failed to restore file",
@@ -257,6 +277,9 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 	}
 
 	if firstErr != nil {
+		if damaged > 0 {
+			return fmt.Errorf("%w (and %s)", firstErr, damagedFilesMessage(damaged))
+		}
 		return firstErr
 	}
 	if err := q.Flush(); err != nil {
@@ -269,10 +292,20 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 		"files_written", committedFiles,
 		"bytes_written", committedBytes,
 		"skipped", skipped,
+		"damaged", damaged,
 		"duration", elapsed.Round(time.Millisecond).String(),
 		"throughput_mb_s", fmt.Sprintf("%.1f", float64(committedBytes)/1e6/max(elapsed.Seconds(), 1e-9)),
 	)
+	// Returned only now, after the healthy files are committed, so the
+	// run still exits non-zero for what it could not restore.
+	if damaged > 0 {
+		return errors.New(damagedFilesMessage(damaged))
+	}
 	return nil
+}
+
+func damagedFilesMessage(n int) string {
+	return fmt.Sprintf("%d file(s) not restored: backup data damaged", n)
 }
 
 // duplicateDestPath describes two resolved files that would collide at

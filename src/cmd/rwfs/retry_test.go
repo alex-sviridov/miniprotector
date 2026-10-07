@@ -25,7 +25,7 @@ func TestWithRetry_RecoversAfterRetryableFailures(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	attempts := 0
-	result := withRetry(context.Background(), logger, 3,
+	result := withRetry(context.Background(), logger,
 		func(ctx context.Context) retryTestResult {
 			attempts++
 			if attempts < 3 {
@@ -33,7 +33,7 @@ func TestWithRetry_RecoversAfterRetryableFailures(t *testing.T) {
 			}
 			return retryTestResult{ok: true}
 		},
-		func(r retryTestResult) bool { return !r.ok },
+		retryUpTo(3, func(r retryTestResult) bool { return !r.ok }),
 		func(r retryTestResult) string { return r.err.Error() },
 	)
 	require.True(t, result.ok)
@@ -47,12 +47,12 @@ func TestWithRetry_StopsAtMaxRetriesAndReturnsFinalResult(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	attempts := 0
-	result := withRetry(context.Background(), logger, 3,
+	result := withRetry(context.Background(), logger,
 		func(ctx context.Context) retryTestResult {
 			attempts++
 			return retryTestResult{err: errors.New("always fails")}
 		},
-		func(r retryTestResult) bool { return !r.ok },
+		retryUpTo(3, func(r retryTestResult) bool { return !r.ok }),
 		func(r retryTestResult) string { return r.err.Error() },
 	)
 	assert.False(t, result.ok)
@@ -63,12 +63,12 @@ func TestWithRetry_NonRetryableStopsImmediately(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	attempts := 0
 	start := time.Now()
-	result := withRetry(context.Background(), logger, 3,
+	result := withRetry(context.Background(), logger,
 		func(ctx context.Context) retryTestResult {
 			attempts++
 			return retryTestResult{err: errors.New("terminal")}
 		},
-		func(r retryTestResult) bool { return false }, // never retryable
+		retryUpTo(3, func(r retryTestResult) bool { return false }),
 		func(r retryTestResult) string { return r.err.Error() },
 	)
 	elapsed := time.Since(start)
@@ -80,9 +80,9 @@ func TestWithRetry_NonRetryableStopsImmediately(t *testing.T) {
 func TestWithRetry_BacksOffBetweenAttempts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	start := time.Now()
-	withRetry(context.Background(), logger, 3,
+	withRetry(context.Background(), logger,
 		func(ctx context.Context) retryTestResult { return retryTestResult{err: errors.New("fail")} },
-		func(r retryTestResult) bool { return true },
+		retryUpTo(3, func(r retryTestResult) bool { return true }),
 		func(r retryTestResult) string { return r.err.Error() },
 	)
 	elapsed := time.Since(start)
@@ -104,12 +104,12 @@ func TestWithRetry_RespectsContextCancellationDuringBackoffWait(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	result := withRetry(ctx, logger, 5,
+	result := withRetry(ctx, logger,
 		func(ctx context.Context) retryTestResult {
 			attempts++
 			return retryTestResult{err: errors.New("fail")}
 		},
-		func(r retryTestResult) bool { return true },
+		retryUpTo(5, func(r retryTestResult) bool { return true }),
 		func(r retryTestResult) string { return r.err.Error() },
 	)
 	elapsed := time.Since(start)
@@ -125,13 +125,13 @@ func TestWithRetry_NoSpuriousLogWhenContextAlreadyCancelledAfterAttempt(t *testi
 	attempts := 0
 
 	start := time.Now()
-	result := withRetry(ctx, logger, 5,
+	result := withRetry(ctx, logger,
 		func(ctx context.Context) retryTestResult {
 			attempts++
 			cancel() // simulate a sibling worker's failure aborting the whole run
 			return retryTestResult{err: errors.New("fail")}
 		},
-		func(r retryTestResult) bool { return true },
+		retryUpTo(5, func(r retryTestResult) bool { return true }),
 		func(r retryTestResult) string { return r.err.Error() },
 	)
 	elapsed := time.Since(start)
@@ -143,17 +143,52 @@ func TestWithRetry_NoSpuriousLogWhenContextAlreadyCancelledAfterAttempt(t *testi
 		"must not log a misleading retry line when the run is already being aborted out from under it")
 }
 
-func TestWithRetry_ClampsMaxRetriesBelowOneToOneAttempt(t *testing.T) {
+func TestWithRetry_CapBelowOneStillAttemptsOnce(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	attempts := 0
-	result := withRetry(context.Background(), logger, 0,
+	result := withRetry(context.Background(), logger,
 		func(ctx context.Context) retryTestResult {
 			attempts++
-			return retryTestResult{ok: true}
+			return retryTestResult{err: errors.New("fail")}
 		},
-		func(r retryTestResult) bool { return !r.ok },
+		func(r retryTestResult) int { return 0 },
 		func(r retryTestResult) string { return r.err.Error() },
 	)
-	assert.Equal(t, 1, attempts, "maxRetries <= 0 must still attempt once, not fabricate a zero-value result")
-	assert.True(t, result.ok)
+	assert.Equal(t, 1, attempts, "a cap <= 0 must still attempt once (and not loop), not fabricate a zero-value result")
+	assert.Error(t, result.err)
+}
+
+// retryUpTo is the old fixed-limit policy expressed as a maxAttempts func:
+// up to n attempts while retryable holds, otherwise final.
+func retryUpTo(n int, retryable func(retryTestResult) bool) func(retryTestResult) int {
+	return func(r retryTestResult) int {
+		if retryable(r) {
+			return n
+		}
+		return 1
+	}
+}
+
+func TestWithRetry_CapDependsOnTheLatestResult(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	// A failure kind allowing 2 attempts in total gets exactly one retry,
+	// even though another kind would allow 5.
+	attempts := 0
+	withRetry(context.Background(), discardLogger(),
+		func(ctx context.Context) retryTestResult {
+			attempts++
+			return retryTestResult{err: errors.New("capped")}
+		},
+		func(r retryTestResult) int {
+			if r.err.Error() == "capped" {
+				return 2
+			}
+			return 5
+		},
+		func(r retryTestResult) string { return r.err.Error() },
+	)
+	assert.Equal(t, 2, attempts)
 }

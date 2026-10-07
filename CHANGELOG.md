@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-07 — Damaged backup data is flagged, reported, and no longer stops a restore
+
+When `bwfs` found a corrupt chunk it deleted every `FileData` row that used it, so the loss was invisible:
+a folder restore could report success with those files simply missing, and nothing recorded which versions
+were gone. The stream also failed with a generic `Internal` that `rwfs` retried in vain, and one damaged
+file aborted the whole `rwfs restore`, healthy files included. Now the affected `FileData` rows are flagged
+damaged instead of deleted (one Error line names the chunk and up to five paths), deduplication ignores
+flagged rows so the next backup of an unchanged file uploads it again, and `RestoreFile` answers a damaged
+version with gRPC `DataLoss`. `rwfs` treats `DataLoss` as final: `verify` reports it with reason
+`data_loss`, and `restore` logs the damaged file at Error, restores and commits every other file, then
+exits non-zero with the number of damaged files. Any other restore failure still aborts the run. A
+client-side BLAKE3 mismatch, which can only be a fault in transit since `bwfs` checks every chunk before
+sending it, is now retried once (a CRC32 mismatch stays final). `bwfs list` marks damaged versions
+(`DAMAGED` column, JSON `"damaged": true`). Showing damage in the catalog and web UI is in `backlog.md`.
+
 ## 2026-10-07 — Restore locates a file's chunks with one query
 
 A restore looked each chunk up in `chunk_records` with its own query before reading it; a micro-benchmark

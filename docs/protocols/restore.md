@@ -99,6 +99,19 @@ the full recovery rationale. A `restore` or `verify` run doubles as the trigger 
 self-healing: the next backup re-uploads the affected files. Other read errors may be transient, so
 they only fail the request: marking would drop data that is still intact.
 
+### Client behaviour (`rwfs`)
+
+| What `rwfs` sees | `verify` | `restore` |
+|------------------|----------|-----------|
+| gRPC `DataLoss` (at the first or any later `Recv`) | no retry; reason `data_loss`; the other files are still verified | no retry; the file is logged at Error and counted, no temp or partial file is left, the other files are restored and committed, then the run fails with the damaged count (non-zero exit) |
+| BLAKE3 mismatch on a received chunk | retried exactly once, regardless of `--retries`; a second mismatch is final (`blake3_mismatch`) | same; a second mismatch aborts the run |
+| CRC32 mismatch on the whole file | final, no retry (`crc_mismatch`) | final, aborts the run |
+| Any other stream error (`Internal`, `NotFound`, network) | retried up to `--retries` attempts with backoff | same; once exhausted, aborts the run |
+
+`bwfs` verifies each chunk's BLAKE3 before sending it, so a client-side mismatch can only come from a
+fault in transit or in the client's memory: one more try usually clears it, and a repeat suggests
+something persistent rather than worth the full retry budget.
+
 ## CLI → RPC Mapping
 
 `rwfs verify` calls `ListService.ListFiles` first (same filters as `rwfs list`), then
