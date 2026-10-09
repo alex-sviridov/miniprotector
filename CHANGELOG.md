@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-09 — Only control-plane nodes can read fleet logs
+
+`log-gateway`'s `query_range` and `tail` routes accepted any operating-tier certificate, so one enrolled
+node could read every other node's logs. They now require the `control-plane` role through a new
+`mtls.RequireRolesHTTP` middleware, the HTTP counterpart of the gRPC `RequireRoles` interceptor, sharing
+its role-matching code; a node without the role gets `403`. Push stays open to every enrolled node, since
+each ships its own logs. Only `api-server` reads logs, so nothing in the demo changes, and the redundant
+per-handler identity checks were removed in favour of the one gate in `routes()`.
+
 ## 2026-10-09 — Smaller certificate lifecycle code: one RPC, shared identity helpers
 
 The security code carried duplicated and test-only plumbing. `common/mtls` lost its chains of wrapper

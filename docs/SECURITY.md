@@ -21,7 +21,9 @@ Unlike every other server in this project, `log-gateway` does not additionally r
 identity field from that certificate — it never parses the push body (which may be JSON or, e.g.
 Vector's own default, snappy-compressed protobuf), so a stream's `hostname` label is whatever the
 shipper itself set. The security boundary here is deliberately "must authenticate to push at all,"
-not "must not mislabel its own logs."
+not "must not mislabel its own logs." The read routes (`query_range`, `tail`) are different: they
+additionally require the `control-plane` role (`mtls.RequireRolesHTTP`), so one enrolled node cannot
+read the whole fleet's logs.
 
 Whenever a server-side handler needs to know which node is calling it, that identity is **always**
 derived from the verified mTLS peer certificate — never from a field the caller supplies on the

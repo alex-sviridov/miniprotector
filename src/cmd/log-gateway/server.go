@@ -108,6 +108,19 @@ func newLogGatewayServer(lokiBaseURL string, logger *slog.Logger) *logGatewaySer
 	}
 }
 
+// routes wires the three endpoints. Push is open to every node with a valid
+// operating certificate -- every node ships its own logs -- while the read
+// routes (query_range, tail) are restricted to control-plane (api-server), so
+// one enrolled node cannot read the whole fleet's logs.
+func (s *logGatewayServer) routes() http.Handler {
+	readers := mtls.RequireRolesHTTP("control-plane")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/loki/api/v1/push", s.ServeHTTP)
+	mux.Handle("/loki/api/v1/query_range", readers(http.HandlerFunc(s.ServeQuery)))
+	mux.Handle("/loki/api/v1/tail", readers(http.HandlerFunc(s.ServeTail)))
+	return mux
+}
+
 func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -178,18 +191,11 @@ func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ServeQuery proxies a caller's query_range parameters to Loki's real
 // query_range endpoint unmodified -- the read-path counterpart to
-// ServeHTTP's push forwarding, gated by the same operating-tier mTLS
-// check. Reachable by any operating-tier mesh node, not just api-server --
-// the same "any operating-tier cert may call any RPC it can reach"
-// convention already accepted for clientmanager-api/catalog/policy-server.
+// ServeHTTP's push forwarding. Role-gated to control-plane by routes(), so
+// ordinary nodes can ship logs but not read the fleet's.
 func (s *logGatewayServer) ServeQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if _, err := mtls.PeerHostnameFromConnState(r.TLS); err != nil {
-		http.Error(w, "determine caller identity: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -228,19 +234,13 @@ func (s *logGatewayServer) ServeQuery(w http.ResponseWriter, r *http.Request) {
 
 // ServeTail proxies a caller's WebSocket tail connection to Loki's real
 // tail endpoint -- the read-path live counterpart to ServeQuery's
-// query_range proxying, gated by the same operating-tier mTLS check.
+// query_range proxying, role-gated the same way by routes().
 // Query parameters (query, start, delay_for, limit) are forwarded
 // unmodified, same unexamined-passthrough philosophy as every other route
-// here. Reachable by any operating-tier mesh node, same convention already
-// accepted for the push/query routes.
+// here.
 func (s *logGatewayServer) ServeTail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if _, err := mtls.PeerHostnameFromConnState(r.TLS); err != nil {
-		http.Error(w, "determine caller identity: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 
