@@ -14,6 +14,9 @@ import (
 
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/ca"
+
+	"github.com/alex-sviridov/miniprotector/common/atomicfile"
+	"github.com/alex-sviridov/miniprotector/common/identity"
 )
 
 // signer is satisfied by *ca.Client. Isolating it lets bootstrap be unit
@@ -62,17 +65,13 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 	if !ok {
 		return fmt.Errorf("unexpected private key type %T", pk)
 	}
-	keyDER, err := x509.MarshalECPrivateKey(ecdsaKey)
-	if err != nil {
-		return fmt.Errorf("marshal private key: %w", err)
-	}
 
 	if err := os.MkdirAll(certsDir, 0o700); err != nil {
 		return fmt.Errorf("create certs dir: %w", err)
 	}
 
 	chain := append(pemCert(leaf), pemCert(intermediate)...)
-	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.crt"), chain, 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(certsDir, "bootstrap.crt"), chain); err != nil {
 		return fmt.Errorf("write bootstrap.crt: %w", err)
 	}
 
@@ -86,13 +85,12 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 	// because every other component here happens to present its full
 	// leaf+intermediate chain itself.
 	caPEM := append(pemCert(intermediate), pemCert(root)...)
-	if err := os.WriteFile(filepath.Join(certsDir, "ca.crt"), caPEM, 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(certsDir, "ca.crt"), caPEM); err != nil {
 		return fmt.Errorf("write ca.crt: %w", err)
 	}
 
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.key"), keyPEM, 0o600); err != nil {
-		return fmt.Errorf("write bootstrap.key: %w", err)
+	if err := identity.WriteKey(filepath.Join(certsDir, "bootstrap.key"), ecdsaKey); err != nil {
+		return err
 	}
 
 	return nil

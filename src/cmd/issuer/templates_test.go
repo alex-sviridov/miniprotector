@@ -86,8 +86,10 @@ func TestBootstrapTemplateIgnoresForgedTemplateData(t *testing.T) {
 // it does embed attributes -- and never the bootstrap marker.
 func TestOperatingTemplateEmbedsAttributes(t *testing.T) {
 	c := renderTemplate(t, "operating.tpl", map[string]any{
+		"sans":       []map[string]string{{"type": "dns", "value": "node1"}, {"type": "dns", "value": "alias.internal"}},
 		"attributes": map[string]string{"authz-role": "store"},
 	})
+	assert.Equal(t, []string{"node1", "alias.internal"}, c.DNSNames, "SANs come from issuer's templateData, not the CSR")
 	assert.False(t, hasUnknownEKU(c, issuerCallerO))
 	assert.ElementsMatch(t, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, c.ExtKeyUsage)
 	assert.True(t, hasExtension(c, attributeO))

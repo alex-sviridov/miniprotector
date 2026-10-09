@@ -10,6 +10,8 @@ import (
 
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/ca"
+
+	"github.com/alex-sviridov/miniprotector/common/atomicfile"
 )
 
 // renewer is satisfied by *ca.Client. Isolating it lets renew be unit
@@ -70,7 +72,7 @@ func writeRenewedCert(certsDir string, sign *api.SignResponse) error {
 		pemCert(leaf),
 		pemCert(intermediate)...,
 	)
-	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.crt"), chain, 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(certsDir, "bootstrap.crt"), chain); err != nil {
 		return fmt.Errorf("write bootstrap.crt: %w", err)
 	}
 	return nil

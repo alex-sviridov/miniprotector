@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-09 — Smaller certificate lifecycle code: one RPC, shared identity helpers
+
+The security code carried duplicated and test-only plumbing. `common/mtls` lost its chains of wrapper
+constructors and injectable clock, and its identity cache now reloads purely on file mtime change (still
+falling back to the last good certificate), cutting the file from 437 to about 330 lines. A new
+`common/identity` holds the persistent key and CSR builder that `certclient` and `issuer` each had their own
+copy of, and both now write certificates and keys atomically. `issuer` reuses one key for its own identity
+instead of swapping key and certificate together every refresh, which removes the torn-pair failure class
+behind an earlier outage. `certclient` also used the CommonName as a node's hostname while every server used
+the first DNS SAN; both now call `mtls.HostnameFromCert`. The `DescribeSANs` RPC is gone: `issuer` mints the
+token for the hostname alone and supplies the full SAN list through the operating provisioner's template
+data (safe because only `issuer` can mint those tokens), so `operating-refresh` is one call with no race
+between two. Breaking wire change with no migration; deploy the new CA templates, `issuer` and nodes together.
+
 ## 2026-10-09 — A token holder can no longer mint its own operating certificate
 
 A security review found that the CA template read the credential tier and the `authz-role` attribute from

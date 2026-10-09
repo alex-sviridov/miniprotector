@@ -11,12 +11,13 @@ option go_package = "./proto";
 // project.
 service IssuerService {
   rpc RequestOperatingCert(RequestOperatingCertRequest) returns (RequestOperatingCertResponse);
-  rpc DescribeSANs(DescribeSANsRequest) returns (DescribeSANsResponse);
 }
 
 message RequestOperatingCertRequest {
   // DER-encoded PKCS#10 certificate signing request. The caller's private
-  // key never leaves the caller -- only the CSR crosses the wire.
+  // key never leaves the caller -- only the CSR crosses the wire. It must
+  // name only the caller's own hostname (CommonName and a single DNS SAN);
+  // issuer decides any further SAN aliases and attributes itself.
   bytes csr_der = 1;
 }
 
@@ -24,19 +25,4 @@ message RequestOperatingCertResponse {
   // Full certificate chain (leaf + any intermediates), PEM-encoded,
   // concatenated in order -- ready to write directly to client.crt.
   bytes cert_chain_pem = 1;
-}
-
-message DescribeSANsRequest {}
-
-message DescribeSANsResponse {
-  // Current SAN aliases for the caller's own hostname (never including the
-  // hostname itself, which the caller always places in the CSR's own
-  // Subject.CommonName). Must be requested and used verbatim as a CSR's
-  // DNSNames before calling RequestOperatingCert: step-ca's OTT provisioner
-  // validates a CSR's requested DNS SANs against the signing token's
-  // authorized set with an exact match, not a subset (confirmed against
-  // smallstep/certificates@v0.30.2's authority/provisioner/sign_options.go
-  // dnsNamesValidator) -- there is no way to learn or guess this list
-  // without asking.
-  repeated string sans = 1;
 }

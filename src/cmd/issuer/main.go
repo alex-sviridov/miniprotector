@@ -91,7 +91,7 @@ func main() {
 	}
 
 	logger.Info("minting own server identity", "hostname", args.Hostname)
-	if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign, conf.IssuerSelfCertTTLSec); err != nil {
+	if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign); err != nil {
 		logger.Error("failed to mint own server identity", "error", err)
 		os.Exit(1)
 	}
@@ -110,7 +110,7 @@ func main() {
 			case <-signalCtx.Done():
 				return
 			case <-ticker.C:
-				if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign, conf.IssuerSelfCertTTLSec); err != nil {
+				if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign); err != nil {
 					logger.Error("self-identity refresh failed, keeping existing certificate", "error", err)
 				}
 			}

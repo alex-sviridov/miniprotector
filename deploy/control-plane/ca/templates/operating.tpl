@@ -1,6 +1,6 @@
 {
 	"subject": {{ toJson .Subject }},
-	"sans": {{ toJson .SANs }},
+	"sans": {{ toJson .Insecure.User.sans }},
 {{- if typeIs "*rsa.PublicKey" .Insecure.CR.PublicKey }}
 	"keyUsage": ["keyEncipherment", "digitalSignature"],
 {{- else }}

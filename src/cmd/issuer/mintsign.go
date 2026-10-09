@@ -18,14 +18,27 @@ import (
 )
 
 func mintAndSign(hostname string, sans []string, attributes map[string]string, csr *x509.CertificateRequest, opts certmint.Options, ttlSec int) ([]byte, error) {
-	token, err := certmint.Mint(hostname, sans, opts)
+	// The token authorizes the hostname only: step-ca requires the CSR's SANs to
+	// match it exactly, and the node's CSR names only itself. The full SAN list
+	// is set below through the operating template, which only issuer can reach.
+	token, err := certmint.Mint(hostname, nil, opts)
 	if err != nil {
 		return nil, fmt.Errorf("mint token: %w", err)
 	}
 
+	type san struct {
+		Type  string `json:"type"`
+		Value string `json:"value"`
+	}
+	allSANs := []san{{"dns", hostname}}
+	for _, alias := range sans {
+		allSANs = append(allSANs, san{"dns", alias})
+	}
 	templateData, err := json.Marshal(struct {
+		SANs       []san             `json:"sans"`
 		Attributes map[string]string `json:"attributes,omitempty"`
 	}{
+		SANs:       allSANs,
 		Attributes: attributes,
 	})
 	if err != nil {

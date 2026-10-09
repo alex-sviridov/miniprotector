@@ -26,8 +26,8 @@ const (
 )
 
 // oidEKUIssuerCaller marks a bootstrap-tier credential: a certificate whose
-// only legitimate purpose is authenticating to issuer's RequestOperatingCert/
-// DescribeSANs RPCs. Never present on an operating-tier certificate. See
+// only legitimate purpose is authenticating to issuer's RequestOperatingCert
+// RPC. Never present on an operating-tier certificate. See
 // docs/SECURITY.md and
 // docs/superpowers/specs/2026-07-05-credential-tier-enforcement-design.md.
 var oidEKUIssuerCaller = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 3}
@@ -82,140 +82,72 @@ func verifyPeerTier(tier requiredTier) func([][]byte, [][]*x509.Certificate) err
 	}
 }
 
-func loadIdentityCertFiles(certsDir, certFile, keyFile string) (tls.Certificate, error) {
-	cert, err := tls.LoadX509KeyPair(
-		filepath.Join(certsDir, certFile),
-		filepath.Join(certsDir, keyFile),
-	)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("load identity cert/key from %s: %w", certsDir, err)
-	}
-	return cert, nil
-}
-
-func loadIdentityCert(certsDir string) (tls.Certificate, error) {
-	return loadIdentityCertFiles(certsDir, identCertFile, identKeyFile)
-}
-
-// identityCacheTTL bounds how long cachedIdentity trusts an in-memory
-// identity before re-checking disk. See
-// docs/superpowers/specs/2026-08-07-mtls-credential-caching-design.md.
-const identityCacheTTL = 60 * time.Second
-
-// cachedIdentity caches a parsed tls.Certificate in memory, re-reading from
-// disk only once its validity window has elapsed -- capped at
-// identityCacheTTL or the certificate's own NotAfter, whichever is sooner --
-// and even then only re-parsing if the underlying files' mtimes actually
-// changed. This replaces a full disk read-and-parse on every single TLS
-// handshake with, in the common case, a single mutex-guarded memory read.
+// cachedIdentity serves a parsed tls.Certificate from memory and reloads it
+// only when the underlying files' mtimes change, replacing a full read and
+// parse on every TLS handshake with two stat calls. It works the same whether
+// the process that rewrites the files is this one (issuer's self-mint) or
+// another (agent execing certclient operating-refresh): it only observes the
+// filesystem.
 //
-// Works identically whether the process that rewrites certFile/keyFile is
-// this same process (issuer's self-mint) or a different one (agent execing
-// certclient operating-refresh) -- it only ever observes the filesystem,
-// never assumes a push from the writer.
+// If a reload fails (e.g. the cert and key are momentarily mismatched), Get
+// serves the last known-good identity while it has not expired, and -- since
+// the stored mtimes are left alone -- retries on the very next call.
 type cachedIdentity struct {
-	certsDir, certFile, keyFile string
-	now                         func() time.Time // time.Now in production; injectable for tests
+	crtPath, keyPath string
 
-	mu         sync.Mutex
-	loaded     bool
-	cert       tls.Certificate
-	crtModTime time.Time
-	keyModTime time.Time
-	validUntil time.Time
+	mu             sync.Mutex
+	loaded         bool
+	cert           tls.Certificate
+	crtMod, keyMod time.Time
 }
 
 func newCachedIdentity(certsDir, certFile, keyFile string) *cachedIdentity {
 	return &cachedIdentity{
-		certsDir: certsDir,
-		certFile: certFile,
-		keyFile:  keyFile,
-		now:      time.Now,
+		crtPath: filepath.Join(certsDir, certFile),
+		keyPath: filepath.Join(certsDir, keyFile),
 	}
 }
 
-// Get returns the cached identity, refreshing it from disk first if the
-// cache's validity window has elapsed. On a reload failure, it falls back
-// to the last known-good identity (if any) rather than failing the caller,
-// and deliberately leaves validUntil unadvanced so the very next call
-// retries -- self-healing without ever failing a live handshake on a
-// transient disk error.
 func (c *cachedIdentity) Get() (tls.Certificate, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	now := c.now()
-	if c.loaded && now.Before(c.validUntil) {
+	// Stat before loading: if a file changes in between, the stored mtime is
+	// older than the loaded content, which only causes one harmless extra
+	// reload.
+	crtMod, keyMod, err := modTimes(c.crtPath, c.keyPath)
+	if err == nil && c.loaded && crtMod.Equal(c.crtMod) && keyMod.Equal(c.keyMod) {
 		return c.cert, nil
 	}
-
-	crtPath := filepath.Join(c.certsDir, c.certFile)
-	keyPath := filepath.Join(c.certsDir, c.keyFile)
-
-	if c.loaded {
-		crtInfo, crtErr := os.Stat(crtPath)
-		keyInfo, keyErr := os.Stat(keyPath)
-		if crtErr == nil && keyErr == nil &&
-			crtInfo.ModTime().Equal(c.crtModTime) && keyInfo.ModTime().Equal(c.keyModTime) {
-			c.validUntil = c.nextValidUntil(now)
-			return c.cert, nil
+	if err == nil {
+		var cert tls.Certificate
+		if cert, err = tls.LoadX509KeyPair(c.crtPath, c.keyPath); err == nil {
+			c.cert, c.crtMod, c.keyMod, c.loaded = cert, crtMod, keyMod, true
+			return cert, nil
 		}
 	}
 
-	cert, err := tls.LoadX509KeyPair(crtPath, keyPath)
-	if err != nil {
-		if c.loaded {
-			return c.fallbackOrError(now, err)
-		}
+	if !c.loaded {
 		return tls.Certificate{}, err
 	}
-	crtInfo, err := os.Stat(crtPath)
-	if err != nil {
-		if c.loaded {
-			return c.fallbackOrError(now, err)
-		}
-		return tls.Certificate{}, err
-	}
-	keyInfo, err := os.Stat(keyPath)
-	if err != nil {
-		if c.loaded {
-			return c.fallbackOrError(now, err)
-		}
-		return tls.Certificate{}, err
-	}
-
-	c.cert = cert
-	c.crtModTime = crtInfo.ModTime()
-	c.keyModTime = keyInfo.ModTime()
-	c.loaded = true
-	c.validUntil = c.nextValidUntil(now)
-	return c.cert, nil
-}
-
-// fallbackOrError is called when a reload attempt fails and c.loaded is
-// true. If the cached identity has already expired, it propagates the
-// error rather than serving an expired certificate. Otherwise it logs the
-// reload failure and serves the last known-good identity -- validUntil is
-// deliberately left unadvanced by the caller, so the very next call
-// retries.
-func (c *cachedIdentity) fallbackOrError(now time.Time, err error) (tls.Certificate, error) {
-	if c.cert.Leaf != nil && !now.Before(c.cert.Leaf.NotAfter) {
+	if c.cert.Leaf != nil && !time.Now().Before(c.cert.Leaf.NotAfter) {
 		return tls.Certificate{}, fmt.Errorf("identity reload failed and the cached certificate has expired: %w", err)
 	}
 	slog.Default().Warn("mtls: identity reload failed, serving last known-good credential",
-		"certsDir", c.certsDir, "certFile", c.certFile, "keyFile", c.keyFile, "error", err)
+		"cert", c.crtPath, "key", c.keyPath, "error", err)
 	return c.cert, nil
 }
 
-// nextValidUntil caps the cache's validity window at c.cert's own
-// expiration, so a near-expiry certificate gets re-checked sooner than a
-// fresh one -- never serving a certificate past its own NotAfter.
-func (c *cachedIdentity) nextValidUntil(now time.Time) time.Time {
-	ttl := now.Add(identityCacheTTL)
-	if c.cert.Leaf != nil && c.cert.Leaf.NotAfter.Before(ttl) {
-		return c.cert.Leaf.NotAfter
+func modTimes(paths ...string) (a, b time.Time, err error) {
+	var mods [2]time.Time
+	for i, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			return a, b, err
+		}
+		mods[i] = info.ModTime()
 	}
-	return ttl
+	return mods[0], mods[1], nil
 }
 
 func loadCAPool(certsDir string) (*x509.CertPool, error) {
@@ -230,35 +162,10 @@ func loadCAPool(certsDir string) (*x509.CertPool, error) {
 	return caPool, nil
 }
 
-func loadCertAndPool(certsDir string) (tls.Certificate, *x509.CertPool, error) {
-	cert, err := loadIdentityCert(certsDir)
-	if err != nil {
-		return tls.Certificate{}, nil, err
-	}
-	caPool, err := loadCAPool(certsDir)
-	if err != nil {
-		return tls.Certificate{}, nil, err
-	}
-	return cert, caPool, nil
-}
-
-func serverTLSConfig(certsDir string) (*tls.Config, error) {
-	return serverTLSConfigForTier(certsDir, requireOperatingTier)
-}
-
-// serverTLSConfigForTier is serverTLSConfig, parameterized on which
-// credential tier the listener accepts from its peers.
+// serverTLSConfigForTier builds a server config requiring and verifying every
+// client's certificate against certsDir/ca.crt, then applying tier.
 func serverTLSConfigForTier(certsDir string, tier requiredTier) (*tls.Config, error) {
-	return serverTLSConfigForTierWithClock(certsDir, tier, time.Now)
-}
-
-// serverTLSConfigForTierWithClock is serverTLSConfigForTier, parameterized
-// on the clock cachedIdentity uses -- production always calls through
-// serverTLSConfigForTier with time.Now; tests use this directly to advance
-// past the cache TTL without a real sleep.
-func serverTLSConfigForTierWithClock(certsDir string, tier requiredTier, now func() time.Time) (*tls.Config, error) {
 	cache := newCachedIdentity(certsDir, identCertFile, identKeyFile)
-	cache.now = now
 	// Fail fast at build time if certsDir is missing/broken, rather than
 	// only on the first handshake. This also warms the cache.
 	if _, err := cache.Get(); err != nil {
@@ -318,16 +225,8 @@ func verifyChainOnly(caPool *x509.CertPool) func([][]byte, [][]*x509.Certificate
 	}
 }
 
-func clientTLSConfigWithIdentity(certsDir, certFile, keyFile, host string) (*tls.Config, error) {
-	return clientTLSConfigWithIdentityAndClock(certsDir, certFile, keyFile, host, time.Now)
-}
-
-// clientTLSConfigWithIdentityAndClock is clientTLSConfigWithIdentity,
-// parameterized on the clock cachedIdentity uses -- same rationale as
-// serverTLSConfigForTierWithClock.
-func clientTLSConfigWithIdentityAndClock(certsDir, certFile, keyFile, host string, now func() time.Time) (*tls.Config, error) {
+func clientTLSConfig(certsDir, certFile, keyFile, host string) (*tls.Config, error) {
 	cache := newCachedIdentity(certsDir, certFile, keyFile)
-	cache.now = now
 	// Fail fast at build time if certsDir is missing/broken, rather than
 	// only on the first dial. This also warms the cache.
 	if _, err := cache.Get(); err != nil {
@@ -361,10 +260,6 @@ func clientTLSConfigWithIdentityAndClock(certsDir, certFile, keyFile, host strin
 	}, nil
 }
 
-func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
-	return clientTLSConfigWithIdentity(certsDir, identCertFile, identKeyFile, host)
-}
-
 // LoadServerCredentials builds gRPC transport credentials for a server that
 // requires and verifies every client's certificate against certsDir/ca.crt.
 // Any client cert signed by that CA is trusted, EXCEPT a bootstrap/
@@ -372,7 +267,7 @@ func clientTLSConfig(certsDir, host string) (*tls.Config, error) {
 // those are rejected here. issuer is the one exception; see
 // LoadIssuerServerCredentials.
 func LoadServerCredentials(certsDir string) (credentials.TransportCredentials, error) {
-	cfg, err := serverTLSConfig(certsDir)
+	cfg, err := ServerTLSConfig(certsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +307,7 @@ func ServerTLSConfig(certsDir string) (*tls.Config, error) {
 // TTL-and-expiry-bounded certificate reload via GetClientCertificate -- see
 // cachedIdentity.
 func ClientTLSConfig(certsDir, host string) (*tls.Config, error) {
-	return clientTLSConfig(certsDir, host)
+	return clientTLSConfig(certsDir, identCertFile, identKeyFile, host)
 }
 
 // LoadClientCredentialsWithIdentity is LoadClientCredentials, parameterized
@@ -421,7 +316,7 @@ func ClientTLSConfig(certsDir, host string) (*tls.Config, error) {
 // certclient's operating-refresh, authenticating with bootstrap.crt/
 // bootstrap.key). Hostname/SAN verification rules are identical.
 func LoadClientCredentialsWithIdentity(certsDir, certFile, keyFile, host string) (credentials.TransportCredentials, error) {
-	cfg, err := clientTLSConfigWithIdentity(certsDir, certFile, keyFile, host)
+	cfg, err := clientTLSConfig(certsDir, certFile, keyFile, host)
 	if err != nil {
 		return nil, err
 	}

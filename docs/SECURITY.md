@@ -27,8 +27,7 @@ Whenever a server-side handler needs to know which node is calling it, that iden
 derived from the verified mTLS peer certificate — never from a field the caller supplies on the
 request. `common/mtls.PeerHostname` is the single implementation of this: it reads the first SAN
 entry (falling back to `Subject.CommonName`) off the peer certificate gRPC's transport credentials
-already verified against the CA's root. `issuer`'s `RequestOperatingCert` and `DescribeSANs` both
-work this way, and so does `catalog`'s handler for `catalogsync`'s uploads. A node cannot claim to
+already verified against the CA's root. `issuer`'s `RequestOperatingCert` works this way, and so does `catalog`'s handler for `catalogsync`'s uploads. A node cannot claim to
 be a different hostname than the one embedded in its own certificate; there is no request field to
 lie in.
 
@@ -83,10 +82,9 @@ precisely so that this frequent, fresh-`Sign` round trip doesn't also require re
 one-time enrollment token every cycle: it's a long-lived, cheaply-`/renew`-able identity whose only
 job is authenticating the node to `issuer` when asking for a fresh operating certificate.
 
-`certclient operating-refresh`'s CSR always requests `DNSNames` of `[hostname] + sans`, where
-`sans` comes from `issuer`'s `DescribeSANs` RPC, called immediately beforehand — see
-[Issuer Protocol: why `DescribeSANs` exists](protocols/issuer.md#why-describesans-exists) for the
-exact-match validation constraint that makes this call necessary rather than optional.
+`certclient operating-refresh`'s CSR names only the node's own hostname. `issuer` decides the
+certificate's full SAN list (hostname plus aliases) and passes it to the CA as template data — see
+[Issuer Protocol: where SANs come from](protocols/issuer.md#where-sans-come-from).
 
 ## Why two provisioners
 
@@ -103,7 +101,7 @@ So the CA runs two JWK provisioners, with different keys and different passwords
 |---|---|---|
 | Token minted by | `client-manager` (enrollment) | `issuer` only |
 | Password file | `secrets/password` | `secrets/operating_password`, mounted into `issuer` only |
-| Template | `bootstrap.tpl` — static; ignores `templateData` | `operating.tpl` — embeds the attributes `issuer` supplies |
+| Template | `bootstrap.tpl` — static; ignores `templateData` | `operating.tpl` — takes SANs and attributes from the `templateData` `issuer` supplies |
 | Resulting certificate | clientAuth + `EKUIssuerCaller`, no attributes | serverAuth + clientAuth, attributes extension |
 | Max duration | 2200h (`BootstrapCertTTLSec`) | 24h |
 
@@ -219,7 +217,7 @@ on their current (pre-fix, ~24h) lineage until re-bootstrapped with a fresh enro
 
 ## See Also
 
-- [Issuer Protocol](protocols/issuer.md) — `RequestOperatingCert`/`DescribeSANs` RPC shapes and
+- [Issuer Protocol](protocols/issuer.md) — `RequestOperatingCert` RPC shape and
   authorization rules
 - [issuer](components/issuer.md), [certclient](components/certclient.md), [agent](components/agent.md),
   [client-manager](components/client-manager.md) — the components that implement this model

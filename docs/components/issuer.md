@@ -23,22 +23,15 @@ issuer --ca-url https://localhost:9000 --root <path> --provisioner <name> --pass
 
 ## Behavior
 
-`issuer` exposes two RPCs (see [protocol](../protocols/issuer.md)): `RequestOperatingCert` and
-`DescribeSANs`. The caller's hostname is always the verified mTLS peer identity, never a request
+`issuer` exposes one RPC (see [protocol](../protocols/issuer.md)): `RequestOperatingCert`. The caller's hostname is always the verified mTLS peer identity, never a request
 field.
 
 - **`RequestOperatingCert`**: for a known, not-revoked hostname, mints a token via the same
-  mechanism `client-manager` uses, signs the caller's own submitted CSR against the CA directly
-  (the caller's private key never reaches `issuer`), embeds the hostname's current `attribute`
-  values via the sign request's `TemplateData`, and records `last_seen`. For a revoked or untracked
+  mechanism `client-manager` uses, signs the caller's own submitted CSR (hostname only) against the CA directly
+  (the caller's private key never reaches `issuer`), and sets the certificate's SAN list (hostname
+  plus aliases) and the hostname's current `attribute` values via the sign request's `TemplateData`, and records `last_seen`. For a revoked or untracked
   hostname: refuses outright, no certificate issued, `last_seen` untouched. A `last_seen` write
   failure is logged but never fails an otherwise-successful request.
-- **`DescribeSANs`**: returns the caller's own current SAN alias list, read live from the same
-  database. No revoked check — it reveals nothing the caller isn't already entitled to know about
-  itself, and mints/signs nothing. `certclient operating-refresh` calls this first and uses the
-  result verbatim as its CSR's `DNSNames`, since step-ca's OTT provisioner validates a CSR's
-  requested SANs against the signing token's authorized set with an exact match — see
-  [protocol: why `DescribeSANs` exists](../protocols/issuer.md#why-describesans-exists).
 
 ### Self-identity: minting its own server certificate
 
