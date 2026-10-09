@@ -80,4 +80,27 @@ describe('ClientsListView', () => {
     const revokedCell = wrapper.findAll('tbody td')[1]
     expect(revokedCell.find('span').classes()).toContain('bg-emerald-50')
   })
+
+  it('shows a bootstrap cert badge per expiry state', () => {
+    const now = Math.floor(Date.now() / 1000)
+    const day = 86400
+    const { wrapper } = mountView({
+      list: [
+        { hostname: 'fresh', revoked: false, last_seen_at: 0, bootstrap_not_after: now + 80 * day },
+        { hostname: 'soon', revoked: false, last_seen_at: 0, bootstrap_not_after: now + 20 * day },
+        { hostname: 'critical', revoked: false, last_seen_at: 0, bootstrap_not_after: now + 3 * day },
+        { hostname: 'gone', revoked: false, last_seen_at: 0, bootstrap_not_after: now - day },
+        { hostname: 'new', revoked: false, last_seen_at: 0 },
+      ],
+      loading: false,
+      error: null,
+    })
+    const badges = wrapper.findAll('[data-test="bootstrap-cert-badge"]')
+    expect(badges.map((b) => b.text())).toEqual(['79d left', '19d left', '2d left', 'Expired', '—'])
+    expect(badges[0].classes()).toContain('bg-emerald-50')
+    expect(badges[1].classes()).toContain('bg-amber-50')
+    expect(badges[2].classes()).toContain('bg-red-50')
+    expect(badges[3].classes()).toContain('bg-red-50')
+    expect(badges[4].classes()).toContain('bg-gray-100')
+  })
 })

@@ -7,24 +7,26 @@ import (
 )
 
 type clientDTO struct {
-	Hostname     string            `json:"hostname"`
-	Revoked      bool              `json:"revoked"`
-	RevokedAt    int64             `json:"revoked_at"`
-	LastSeenAt   int64             `json:"last_seen_at"`
-	Sans         []string          `json:"sans"`
-	Attributes   map[string]string `json:"attributes"`
-	Descriptions map[string]string `json:"descriptions"`
+	Hostname          string            `json:"hostname"`
+	Revoked           bool              `json:"revoked"`
+	RevokedAt         int64             `json:"revoked_at"`
+	LastSeenAt        int64             `json:"last_seen_at"`
+	BootstrapNotAfter int64             `json:"bootstrap_not_after"`
+	Sans              []string          `json:"sans"`
+	Attributes        map[string]string `json:"attributes"`
+	Descriptions      map[string]string `json:"descriptions"`
 }
 
 func toClientDTO(c *pb.Client) clientDTO {
 	return clientDTO{
-		Hostname:     c.GetHostname(),
-		Revoked:      c.GetRevoked(),
-		RevokedAt:    c.GetRevokedAt(),
-		LastSeenAt:   c.GetLastSeenAt(),
-		Sans:         c.GetSans(),
-		Attributes:   c.GetAttributes(),
-		Descriptions: c.GetDescriptions(),
+		Hostname:          c.GetHostname(),
+		Revoked:           c.GetRevoked(),
+		RevokedAt:         c.GetRevokedAt(),
+		LastSeenAt:        c.GetLastSeenAt(),
+		BootstrapNotAfter: c.GetBootstrapNotAfter(),
+		Sans:              c.GetSans(),
+		Attributes:        c.GetAttributes(),
+		Descriptions:      c.GetDescriptions(),
 	}
 }
 

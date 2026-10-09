@@ -87,7 +87,7 @@ func TestHandleGetClient_UnknownHostnameReturns404(t *testing.T) {
 }
 
 func TestHandleGetClient_ReturnsClientObject(t *testing.T) {
-	fake := &fakeClientManagerClient{getResp: &pb.Client{Hostname: "node-1", Revoked: true}}
+	fake := &fakeClientManagerClient{getResp: &pb.Client{Hostname: "node-1", Revoked: true, BootstrapNotAfter: 1800000000}}
 	srv := newServer(fake, nil, nil, testLogger())
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux, "test-token")
@@ -102,4 +102,5 @@ func TestHandleGetClient_ReturnsClientObject(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "node-1", body["hostname"])
 	assert.Equal(t, true, body["revoked"])
+	assert.EqualValues(t, 1800000000, body["bootstrap_not_after"])
 }

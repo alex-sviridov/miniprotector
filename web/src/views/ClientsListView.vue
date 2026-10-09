@@ -7,6 +7,7 @@ import StatusMessage from '../components/ui/StatusMessage.vue'
 import DataTable from '../components/ui/DataTable.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import Badge from '../components/ui/Badge.vue'
+import { bootstrapCertState } from '../utils/bootstrapCert'
 
 const clients = useClientsStore()
 
@@ -23,6 +24,13 @@ const columns = [
     sortable: true,
     type: 'number',
     formatFn: (v) => formatTimestamp(v) || 'Never',
+  },
+  {
+    label: 'Bootstrap cert',
+    field: 'bootstrap_not_after',
+    sortable: true,
+    type: 'number',
+    formatFn: (v) => bootstrapCertState(v).label,
   },
 ]
 </script>
@@ -53,6 +61,14 @@ const columns = [
           </router-link>
           <Badge v-else-if="column.field === 'revoked'" :variant="row.revoked ? 'bad' : 'ok'">
             {{ formattedRow[column.field] }}
+          </Badge>
+          <Badge
+            v-else-if="column.field === 'bootstrap_not_after'"
+            :variant="bootstrapCertState(row.bootstrap_not_after).variant"
+            :title="row.bootstrap_not_after ? 'Expires ' + formatTimestamp(row.bootstrap_not_after) : 'Not reported yet'"
+            data-test="bootstrap-cert-badge"
+          >
+            {{ bootstrapCertState(row.bootstrap_not_after).label }}
           </Badge>
           <span v-else>{{ formattedRow[column.field] }}</span>
         </template>

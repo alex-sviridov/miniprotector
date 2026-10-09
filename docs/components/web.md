@@ -16,11 +16,13 @@ no data — there's no read-only "guest" mode.
 ## Pages
 
 - `/` — placeholder landing page
-- `/clients` — every enrolled client (hostname, revoked, last seen), with client-side search/sort
+- `/clients` — every enrolled client (hostname, revoked, last seen, and a "Bootstrap cert" badge: green
+  above 30 days left, amber under 30, red under 7 or expired, grey when not reported yet), with client-side search/sort
   via `vue-good-table-next`, linking to:
 - `/clients/new` — enroll a new client (hostname + optional SANs); shows the resulting one-time
   enrollment token on the new client's detail page after redirecting
-- `/clients/:hostname` — one client's full record (SANs, attributes, descriptions), with actions to
+- `/clients/:hostname` — one client's full record (SANs, attributes, descriptions, the bootstrap
+  certificate's expiry and, from `cert-status`, why its renewal is failing), with actions to
   revoke/unrevoke, re-enroll (shows a fresh one-time token), and inline add/remove editing of
   description, attributes, and SANs, each gated by its own "Update" button that enables only once
   that section has a pending change

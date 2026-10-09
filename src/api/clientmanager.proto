@@ -23,6 +23,7 @@ message Client {
   repeated string sans           = 5;
   map<string, string> attributes    = 6;
   map<string, string> descriptions  = 7;
+  int64  bootstrap_not_after     = 8; // unix seconds; expiry of the bootstrap cert the client last used, 0 if unknown
 }
 
 message ListClientsRequest {}

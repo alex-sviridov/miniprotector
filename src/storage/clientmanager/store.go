@@ -110,11 +110,12 @@ func (s *Store) LoadClientView(ctx context.Context, hostname string) (*ClientVie
 	}
 
 	view := &ClientView{
-		Hostname:   rec.Hostname,
-		Revoked:    rec.Revoked,
-		RevokedAt:  rec.RevokedAt,
-		LastSeenAt: rec.LastSeenAt,
-		SANs:       rec.SANsList(),
+		Hostname:          rec.Hostname,
+		Revoked:           rec.Revoked,
+		RevokedAt:         rec.RevokedAt,
+		LastSeenAt:        rec.LastSeenAt,
+		BootstrapNotAfter: rec.BootstrapNotAfter,
+		SANs:              rec.SANsList(),
 	}
 
 	descs, err := s.KV(ctx, hostname, KindDescription)
@@ -166,11 +167,16 @@ func (s *Store) SetRevoked(ctx context.Context, hostname string, revoked bool, a
 }
 
 // UpdateLastSeen records the most recent time hostname successfully
-// obtained an operating certificate. Best-effort telemetry -- callers
+// obtained an operating certificate, and the expiry of the bootstrap
+// certificate it authenticated with (left unchanged if zero). Best-effort telemetry -- callers
 // should log rather than fail a request on this returning an error.
 // Returns ErrClientNotFound if hostname isn't tracked.
-func (s *Store) UpdateLastSeen(ctx context.Context, hostname string, at time.Time) error {
-	res := s.db.WithContext(ctx).Model(&ClientRecord{}).Where("hostname = ?", hostname).Update("last_seen_at", at)
+func (s *Store) UpdateLastSeen(ctx context.Context, hostname string, at, bootstrapNotAfter time.Time) error {
+	updates := map[string]any{"last_seen_at": at}
+	if !bootstrapNotAfter.IsZero() {
+		updates["bootstrap_not_after"] = bootstrapNotAfter
+	}
+	res := s.db.WithContext(ctx).Model(&ClientRecord{}).Where("hostname = ?", hostname).Updates(updates)
 	if res.Error != nil {
 		return res.Error
 	}

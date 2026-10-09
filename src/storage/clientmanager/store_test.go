@@ -252,7 +252,7 @@ func TestUpdateLastSeen_SetsTimestamp(t *testing.T) {
 	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	seenAt := time.Now().Truncate(time.Second)
 
-	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt, time.Time{}))
 
 	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
@@ -263,10 +263,10 @@ func TestUpdateLastSeen_SetsTimestamp(t *testing.T) {
 func TestUpdateLastSeen_OverwritesPreviousValue(t *testing.T) {
 	store := newTestStore(t)
 	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
-	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", time.Now().Add(-time.Hour)))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", time.Now().Add(-time.Hour), time.Time{}))
 
 	newSeenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", newSeenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", newSeenAt, time.Time{}))
 
 	got, err := store.GetClient(t.Context(), "node-1")
 	require.NoError(t, err)
@@ -275,7 +275,7 @@ func TestUpdateLastSeen_OverwritesPreviousValue(t *testing.T) {
 
 func TestUpdateLastSeen_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	store := newTestStore(t)
-	err := store.UpdateLastSeen(t.Context(), "ghost", time.Now())
+	err := store.UpdateLastSeen(t.Context(), "ghost", time.Now(), time.Time{})
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
 
@@ -380,4 +380,31 @@ func TestAddClient_RejectsCollidingSANsAndHostnames(t *testing.T) {
 
 	_, err := store.GetClient(t.Context(), "node-2")
 	assert.ErrorIs(t, err, ErrClientNotFound, "a rejected add must not leave a record")
+}
+
+func TestUpdateLastSeen_RecordsBootstrapNotAfter(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	expiry := time.Now().Add(80 * 24 * time.Hour).Truncate(time.Second)
+
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", time.Now(), expiry))
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	require.NotNil(t, view.BootstrapNotAfter)
+	assert.True(t, expiry.Equal(*view.BootstrapNotAfter))
+
+	// A refresh that cannot determine the expiry (zero value) keeps the last known one.
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", time.Now(), time.Time{}))
+	view, err = store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	require.NotNil(t, view.BootstrapNotAfter)
+	assert.True(t, expiry.Equal(*view.BootstrapNotAfter))
+}
+
+func TestLoadClientView_BootstrapNotAfterNilUntilReported(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Nil(t, view.BootstrapNotAfter)
 }

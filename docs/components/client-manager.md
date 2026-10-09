@@ -55,6 +55,9 @@ network interface at all.
   operating certificate to a revoked hostname on that hostname's next `RequestOperatingCert` call.
   `attribute`/`san` changes are likewise read by `issuer` on the client's next operating-certificate
   request, not applied retroactively to a certificate already issued.
+- On each such request `issuer` also records the expiry of the bootstrap certificate the client
+  presented (`bootstrap_not_after`, read from its verified peer certificate, never a request field),
+  shown in `list`-style views and the web UI so a bootstrap credential drifting toward expiry is visible.
 - On an already-enrolled, not-revoked node, `agent`'s `operating-refresh` policy execs `certclient
   operating-refresh` on a schedule (`OperatingCertFetchIntervalSec`, `local.conf`), so `revoke`,
   `attribute`, and `san` changes made here typically reach the node within that interval, without

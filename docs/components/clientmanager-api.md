@@ -25,7 +25,9 @@ clientmanager-api --port 9500
 
 `ListClients` and `GetClient` are the only RPCs. Both read directly from the same
 `storage/clientmanager` store `client-manager`'s CLI and `issuer` use — no caching, no independent
-state. `GetClient` returns `NotFound` for an unknown hostname.
+state. `GetClient` returns `NotFound` for an unknown hostname. The `Client` message carries
+`bootstrap_not_after` (unix seconds, `0` if unknown): the expiry of the bootstrap certificate the client
+last presented to `issuer`, recorded by `issuer` on each operating-certificate refresh.
 
 ## Authorization
 

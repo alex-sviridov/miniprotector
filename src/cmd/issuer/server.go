@@ -75,7 +75,10 @@ func (s *issuerServer) RequestOperatingCert(ctx context.Context, req *pb.Request
 		return nil, fmt.Errorf("issue certificate for %s: %w", hostname, err)
 	}
 
-	if err := s.store.UpdateLastSeen(ctx, hostname, time.Now()); err != nil {
+	// Best-effort telemetry; the expiry comes from the verified peer
+	// certificate, never from the request.
+	bootstrapNotAfter, _ := mtls.PeerNotAfter(ctx)
+	if err := s.store.UpdateLastSeen(ctx, hostname, time.Now(), bootstrapNotAfter); err != nil {
 		s.logger.Error("failed to update last_seen", "hostname", hostname, "job_id", jobID, "error", err)
 	}
 

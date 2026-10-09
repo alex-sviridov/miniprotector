@@ -9,11 +9,24 @@ import PageHeader from '../components/ui/PageHeader.vue'
 import StatusMessage from '../components/ui/StatusMessage.vue'
 import DetailList from '../components/ui/DetailList.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
+import Badge from '../components/ui/Badge.vue'
+import { bootstrapCertState } from '../utils/bootstrapCert'
 
 const route = useRoute()
 const clients = useClientsStore()
 const hostname = computed(() => route.params.hostname)
 const client = computed(() => clients.byHostname[hostname.value])
+const certStatus = computed(() => clients.certStatusByHostname[hostname.value])
+const bootstrapState = computed(() => bootstrapCertState(client.value?.bootstrap_not_after))
+
+// Why the bootstrap certificate is (not) renewing, from the node's own report.
+const renewalText = computed(() => {
+  const s = certStatus.value
+  if (!s) return 'Unknown'
+  const attempt = formatTimestamp(s.last_attempt_at)
+  if (s.last_error) return `Failing: ${s.last_error}${attempt ? ` (last attempt ${attempt})` : ''}`
+  return attempt ? `Renewing normally (last attempt ${attempt})` : 'No report yet'
+})
 
 const showToken = ref(false)
 const tokenValue = ref('')
@@ -27,6 +40,7 @@ function checkPendingToken() {
 }
 
 onMounted(async () => {
+  clients.fetchCertStatus(hostname.value) // in parallel; best-effort
   try {
     await clients.fetchOne(hostname.value)
   } catch {
@@ -99,6 +113,8 @@ const detailRows = computed(() => {
     { key: 'revoked', label: 'Revoked', value: client.value.revoked ? 'Yes' : 'No' },
     { key: 'revokedAt', label: 'Revoked At', value: formatTimestamp(client.value.revoked_at) || '—' },
     { key: 'lastSeen', label: 'Last Seen', value: formatTimestamp(client.value.last_seen_at) || 'Never' },
+    { key: 'bootstrapCert', label: 'Bootstrap Certificate', value: '' },
+    { key: 'bootstrapRenewal', label: 'Bootstrap Renewal', value: renewalText.value },
   ]
 })
 </script>
@@ -126,7 +142,18 @@ const detailRows = computed(() => {
           <BaseButton data-test="reenroll-button" variant="secondary" @click="reenroll">Re-enroll</BaseButton>
         </div>
 
-        <DetailList :rows="detailRows" class="mb-6" />
+        <DetailList :rows="detailRows" class="mb-6">
+          <template #bootstrapCert>
+            <Badge :variant="bootstrapState.variant" data-test="bootstrap-cert-badge">{{ bootstrapState.label }}</Badge>
+            <span v-if="client.bootstrap_not_after" class="ml-2" data-test="bootstrap-cert-expiry">
+              {{ bootstrapState.state === 'expired' ? 'expired' : 'expires' }} {{ formatTimestamp(client.bootstrap_not_after) }}
+            </span>
+            <span v-else class="ml-2 text-gray-500">not reported yet</span>
+          </template>
+          <template #bootstrapRenewal>
+            <span data-test="bootstrap-renewal" :class="certStatus?.last_error ? 'text-red-600' : ''">{{ renewalText }}</span>
+          </template>
+        </DetailList>
 
         <KeyValueEditor
           :model-value="client.descriptions || {}"

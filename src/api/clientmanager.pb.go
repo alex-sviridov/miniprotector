@@ -24,16 +24,17 @@ const (
 )
 
 type Client struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Hostname      string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	Revoked       bool                   `protobuf:"varint,2,opt,name=revoked,proto3" json:"revoked,omitempty"`
-	RevokedAt     int64                  `protobuf:"varint,3,opt,name=revoked_at,json=revokedAt,proto3" json:"revoked_at,omitempty"`      // unix seconds, 0 if never revoked
-	LastSeenAt    int64                  `protobuf:"varint,4,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"` // unix seconds, 0 if never seen
-	Sans          []string               `protobuf:"bytes,5,rep,name=sans,proto3" json:"sans,omitempty"`
-	Attributes    map[string]string      `protobuf:"bytes,6,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Descriptions  map[string]string      `protobuf:"bytes,7,rep,name=descriptions,proto3" json:"descriptions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Hostname          string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Revoked           bool                   `protobuf:"varint,2,opt,name=revoked,proto3" json:"revoked,omitempty"`
+	RevokedAt         int64                  `protobuf:"varint,3,opt,name=revoked_at,json=revokedAt,proto3" json:"revoked_at,omitempty"`      // unix seconds, 0 if never revoked
+	LastSeenAt        int64                  `protobuf:"varint,4,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"` // unix seconds, 0 if never seen
+	Sans              []string               `protobuf:"bytes,5,rep,name=sans,proto3" json:"sans,omitempty"`
+	Attributes        map[string]string      `protobuf:"bytes,6,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Descriptions      map[string]string      `protobuf:"bytes,7,rep,name=descriptions,proto3" json:"descriptions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	BootstrapNotAfter int64                  `protobuf:"varint,8,opt,name=bootstrap_not_after,json=bootstrapNotAfter,proto3" json:"bootstrap_not_after,omitempty"` // unix seconds; expiry of the bootstrap cert the client last used, 0 if unknown
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Client) Reset() {
@@ -113,6 +114,13 @@ func (x *Client) GetDescriptions() map[string]string {
 		return x.Descriptions
 	}
 	return nil
+}
+
+func (x *Client) GetBootstrapNotAfter() int64 {
+	if x != nil {
+		return x.BootstrapNotAfter
+	}
+	return 0
 }
 
 type ListClientsRequest struct {
@@ -243,7 +251,7 @@ var File_api_clientmanager_proto protoreflect.FileDescriptor
 
 const file_api_clientmanager_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/clientmanager.proto\x12\x17clientmanagerapiservice\"\xbb\x03\n" +
+	"\x17api/clientmanager.proto\x12\x17clientmanagerapiservice\"\xeb\x03\n" +
 	"\x06Client\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x18\n" +
 	"\arevoked\x18\x02 \x01(\bR\arevoked\x12\x1d\n" +
@@ -255,7 +263,8 @@ const file_api_clientmanager_proto_rawDesc = "" +
 	"\n" +
 	"attributes\x18\x06 \x03(\v2/.clientmanagerapiservice.Client.AttributesEntryR\n" +
 	"attributes\x12U\n" +
-	"\fdescriptions\x18\a \x03(\v21.clientmanagerapiservice.Client.DescriptionsEntryR\fdescriptions\x1a=\n" +
+	"\fdescriptions\x18\a \x03(\v21.clientmanagerapiservice.Client.DescriptionsEntryR\fdescriptions\x12.\n" +
+	"\x13bootstrap_not_after\x18\b \x01(\x03R\x11bootstrapNotAfter\x1a=\n" +
 	"\x0fAttributesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +

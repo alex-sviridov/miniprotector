@@ -112,6 +112,21 @@ func TestE2E_ClientLifecycle(t *testing.T) {
 		require.NoError(t, err, "certclient operating-refresh should succeed after unrevoke, output: %s", out)
 	})
 
+	t.Run("bootstrap_expiry_reported_after_refresh", func(t *testing.T) {
+		// The refresh above made issuer record the expiry of the bootstrap
+		// certificate the node authenticated with. A freshly enrolled node's is
+		// about BootstrapCertTTLSec (90 days) away, i.e. nowhere near the UI's
+		// 30-day warning threshold.
+		var client struct {
+			BootstrapNotAfter int64 `json:"bootstrap_not_after"`
+		}
+		resp := apiRequest(t, http.MethodGet, "/api/v1/clients/"+hostname, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		decodeJSON(t, resp, &client)
+		require.NotZero(t, client.BootstrapNotAfter, "issuer should have recorded the bootstrap certificate expiry")
+		require.Greater(t, client.BootstrapNotAfter, time.Now().Add(60*24*time.Hour).Unix())
+	})
+
 	var policyName string
 	t.Run("create_minute_policy_triggers_backup_job", func(t *testing.T) {
 		storagePolicyID := fetchStoragePolicyID(t, "store")
