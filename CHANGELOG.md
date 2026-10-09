@@ -24,7 +24,7 @@ token could call `/sign` directly, ask for `tier=operating` with any role and a 
 a certificate that bypassed `issuer`, so revocation never applied and `/renew` kept it alive indefinitely. The
 CA now has two provisioners: `admin@backup.internal` issues enrollment tokens and uses a static
 `bootstrap.tpl` that ignores caller data, while `operating@backup.internal` has its own password, mounted
-into `issuer` only, a 24h cap, and the attribute-embedding `operating.tpl`. `certclient bootstrap` and
+into `issuer` only, the same 2200h cap (it also covers `issuer`'s own 90-day server certificate), and the attribute-embedding `operating.tpl`. `certclient bootstrap` and
 `issuer` no longer send a tier. Verified against a real step-ca: a forged request now yields a bootstrap-only
 certificate, the enrollment password cannot mint operating tokens, and over-long operating requests are
 refused. Also, `client-manager` now rejects a SAN alias (or new hostname) that collides with another

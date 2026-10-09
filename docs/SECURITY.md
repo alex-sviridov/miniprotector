@@ -103,7 +103,7 @@ So the CA runs two JWK provisioners, with different keys and different passwords
 | Password file | `secrets/password` | `secrets/operating_password`, mounted into `issuer` only |
 | Template | `bootstrap.tpl` — static; ignores `templateData` | `operating.tpl` — takes SANs and attributes from the `templateData` `issuer` supplies |
 | Resulting certificate | clientAuth + `EKUIssuerCaller`, no attributes | serverAuth + clientAuth, attributes extension |
-| Max duration | 2200h (`BootstrapCertTTLSec`) | 24h |
+| Max duration | 2200h (`BootstrapCertTTLSec`) | 2200h (covers `IssuerSelfCertTTLSec`); only `issuer` can mint tokens for it |
 
 `client-manager` can therefore mint enrollment tokens but cannot mint a token the operating
 provisioner accepts. `cmd/issuer/templates_test.go` renders both templates with forged

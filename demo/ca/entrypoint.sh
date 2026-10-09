@@ -39,6 +39,6 @@ if ! grep -q '"name": "operating@backup.internal"' /home/step/config/ca.json; th
   step ca provisioner add operating@backup.internal --type=JWK --create --password-file=/home/step/secrets/operating_password
 fi
 step ca provisioner update admin@backup.internal --x509-template=/home/step/templates/bootstrap.tpl --x509-max-dur=2200h
-step ca provisioner update operating@backup.internal --x509-template=/home/step/templates/operating.tpl --x509-max-dur=24h
+step ca provisioner update operating@backup.internal --x509-template=/home/step/templates/operating.tpl --x509-max-dur=2200h
 
 exec step-ca /home/step/config/ca.json --password-file=/home/step/secrets/password
