@@ -53,6 +53,4 @@ a migration of existing links.
 
 `api-server` serves plain HTTP behind one shared static bearer token (see `docs/SECURITY.md`,
 "api-server transport"). Add optional TLS on its listener and replace the shared token with per-user
-credentials that can expire and be revoked. Also `log-gateway`'s `query_range`/`tail` routes are open
-to every operating-tier certificate, so any enrolled node can read the whole fleet's logs; gate them
-by role together with this.
+credentials that can expire and be revoked.

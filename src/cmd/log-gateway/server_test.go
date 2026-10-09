@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"io"
 	"log/slog"
 	"math/big"
@@ -49,6 +50,63 @@ func fakePeerCert(t *testing.T, hostname string) *x509.Certificate {
 	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
 	return cert
+}
+
+// fakeRolePeerCert is fakePeerCert carrying the attribute extension issuer
+// embeds, with the given authz-role ("" for no role attribute at all).
+func fakeRolePeerCert(t *testing.T, hostname, role string) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: hostname},
+		DNSNames:     []string{hostname},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	if role != "" {
+		template.ExtraExtensions = []pkix.Extension{{
+			Id:    asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 1},
+			Value: []byte(`{"authz-role":"` + role + `"}`),
+		}}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
+
+// The read routes are control-plane only; push stays open to any role.
+func TestRoutes_ReadRoutesRequireControlPlaneRole(t *testing.T) {
+	lokiStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer lokiStub.Close()
+	handler := newLogGatewayServer(lokiStub.URL, testLogger()).routes()
+
+	do := func(method, path, role string, withCert bool) int {
+		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+		if withCert {
+			req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fakeRolePeerCert(t, "node-1", role)}}
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w.Result().StatusCode
+	}
+
+	for _, path := range []string{"/loki/api/v1/query_range", "/loki/api/v1/tail"} {
+		assert.Equal(t, http.StatusUnauthorized, do(http.MethodGet, path, "", false), "%s: no peer certificate", path)
+		assert.Equal(t, http.StatusForbidden, do(http.MethodGet, path, "", true), "%s: no role attribute", path)
+		assert.Equal(t, http.StatusForbidden, do(http.MethodGet, path, "client", true), "%s: client role", path)
+		assert.Equal(t, http.StatusForbidden, do(http.MethodGet, path, "store", true), "%s: store role", path)
+	}
+	assert.Equal(t, http.StatusOK, do(http.MethodGet, "/loki/api/v1/query_range", "control-plane", true))
+
+	for _, role := range []string{"", "client", "store", "control-plane"} {
+		assert.Equal(t, http.StatusOK, do(http.MethodPost, "/loki/api/v1/push", role, true), "push must stay open to role %q", role)
+	}
 }
 
 func TestHandlePush_BodyForwardedUnmodifiedToLoki(t *testing.T) {
@@ -236,17 +294,6 @@ func TestHandleQuery_ForwardsToLokiAndReturnsBody(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"status":"success"`)
 }
 
-func TestHandleQuery_NoPeerCertificateRejected(t *testing.T) {
-	srv := newLogGatewayServer("http://unused.invalid", testLogger())
-
-	req := httptest.NewRequest(http.MethodGet, "/loki/api/v1/query_range", nil)
-	w := httptest.NewRecorder()
-
-	srv.ServeQuery(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
-}
-
 func TestHandleQuery_NonGetMethodRejected(t *testing.T) {
 	srv := newLogGatewayServer("http://unused.invalid", testLogger())
 
@@ -269,17 +316,6 @@ func TestHandleQuery_LokiUnreachablePropagatesBadGateway(t *testing.T) {
 	srv.ServeQuery(w, req)
 
 	assert.Equal(t, http.StatusBadGateway, w.Result().StatusCode)
-}
-
-func TestServeTail_NoPeerCertificateRejected(t *testing.T) {
-	srv := newLogGatewayServer("http://unused.invalid", testLogger())
-
-	req := httptest.NewRequest(http.MethodGet, "/loki/api/v1/tail", nil)
-	w := httptest.NewRecorder()
-
-	srv.ServeTail(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
 }
 
 func TestServeTail_NonGetMethodRejected(t *testing.T) {

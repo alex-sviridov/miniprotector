@@ -40,13 +40,15 @@ the cap despite a smaller/absent declared length fails the forward mid-stream (`
 `mtls.ServerTLSConfig`/`ServerTLSConfig`-equivalent tier check `bwfs`/`catalog` already enforce
 (via `common/mtls.LoadServerCredentials`) rejects a bootstrap/issuer-caller credential outright.
 
-`log-gateway` also proxies Loki's read path: `GET /loki/api/v1/query_range`, gated by the same
-operating-tier mTLS check, forwarding query parameters unmodified. See
+`log-gateway` also proxies Loki's read path: `GET /loki/api/v1/query_range`, restricted to
+callers whose certificate carries the `control-plane` role (`mtls.RequireRolesHTTP`, wired in
+`routes()`), forwarding query parameters unmodified. Push stays open to every node: each ships its
+own logs, but only `api-server` may read the fleet's. See
 [log-gateway Protocol](../protocols/log-gateway.md) and
 [Design: /jobs REST Endpoint](../superpowers/specs/2026-07-19-jobs-endpoint-design.md).
 
 `log-gateway` also proxies Loki's live path: `GET /loki/api/v1/tail`, a WebSocket upgrade rather
-than a plain request, gated by the same operating-tier mTLS check. `log-gateway` dials Loki's own
+than a plain request, with the same `control-plane` role restriction. `log-gateway` dials Loki's own
 tail endpoint with the caller's query parameters forwarded unmodified and relays frames
 byte-for-byte in both directions until either side disconnects — it never parses a tail frame, same
 as every other route here. See [log-gateway Protocol](../protocols/log-gateway.md) and

@@ -49,7 +49,9 @@ fails partway through instead, surfacing as `502 Bad Gateway` rather than `413` 
 
 ## `GET /loki/api/v1/query_range`
 
-Same mTLS operating-tier gate as the push path. Query parameters are forwarded to Loki's real
+Operating-tier mTLS like the push path, **plus** the caller's certificate must carry the
+`control-plane` role (`authz-role` attribute): `401` with no peer certificate, `403` for any other
+role or none. Query parameters are forwarded to Loki's real
 `query_range` endpoint unmodified; the response body is forwarded back unmodified, capped at 10MB
 (`502 Bad Gateway` if exceeded or if Loki is unreachable). `401 Unauthorized` if no verified peer
 certificate was presented. `405 Method Not Allowed` for anything other than `GET`. Added for
@@ -58,7 +60,8 @@ certificate was presented. `405 Method Not Allowed` for anything other than `GET
 
 ## `GET /loki/api/v1/tail`
 
-Same mTLS operating-tier gate as the push and `query_range` paths, but a WebSocket upgrade rather
+Same gate as `query_range` (operating-tier mTLS and the `control-plane` role, `401`/`403` before
+the upgrade), but a WebSocket upgrade rather
 than a plain request/response — Loki's own tail endpoint is itself a WS route. Query parameters
 (`query`, `start`, `delay_for`, `limit`) are forwarded unmodified in the upgrade request's query
 string when `log-gateway` dials Loki's real tail endpoint. Once both sides are connected,

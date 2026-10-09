@@ -2,6 +2,10 @@ package mtls
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,4 +130,39 @@ func TestRequireRoles_StreamAllowsMatchingRole(t *testing.T) {
 	err := stream(nil, &fakeServerStream{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: "/svc/Stream"}, handler)
 	require.NoError(t, err)
 	assert.True(t, called)
+}
+
+func httpRequestWithRole(t *testing.T, attrs map[string]string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	if attrs != nil {
+		req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{selfSignedCertWithAttributes(t, "node-1", attrs)}}
+	}
+	return req
+}
+
+func TestRequireRolesHTTP(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs map[string]string // nil = no peer certificate at all
+		want  int
+	}{
+		{"no peer certificate", nil, http.StatusUnauthorized},
+		{"no role attribute", map[string]string{}, http.StatusForbidden},
+		{"other role", map[string]string{"authz-role": "client"}, http.StatusForbidden},
+		{"matching role", map[string]string{"authz-role": "control-plane"}, http.StatusOK},
+		{"matching among several roles", map[string]string{"authz-role": "store,control-plane"}, http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			h := RequireRolesHTTP("control-plane")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+			}))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httpRequestWithRole(t, tc.attrs))
+			assert.Equal(t, tc.want, w.Result().StatusCode)
+			assert.Equal(t, tc.want == http.StatusOK, called, "handler must run only when the role matches")
+		})
+	}
 }

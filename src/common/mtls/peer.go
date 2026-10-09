@@ -84,7 +84,19 @@ func PeerAttributes(ctx context.Context) (map[string]string, error) {
 	if len(tlsInfo.State.PeerCertificates) == 0 {
 		return nil, fmt.Errorf("no peer certificate presented")
 	}
-	cert := tlsInfo.State.PeerCertificates[0]
+	return attributesFromCert(tlsInfo.State.PeerCertificates[0])
+}
+
+// PeerAttributesFromConnState is PeerAttributes' plain-HTTP equivalent, for a
+// server (like log-gateway) that terminates TLS via net/http.Server.
+func PeerAttributesFromConnState(state *tls.ConnectionState) (map[string]string, error) {
+	if state == nil || len(state.PeerCertificates) == 0 {
+		return nil, fmt.Errorf("no peer certificate presented")
+	}
+	return attributesFromCert(state.PeerCertificates[0])
+}
+
+func attributesFromCert(cert *x509.Certificate) (map[string]string, error) {
 	for _, ext := range cert.Extensions {
 		if !ext.Id.Equal(attributeExtensionOID) {
 			continue
