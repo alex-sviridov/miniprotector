@@ -219,5 +219,8 @@ func toProtoClient(v *clientmanagerstore.ClientView) *pb.Client {
 	if v.LastSeenAt != nil {
 		client.LastSeenAt = v.LastSeenAt.Unix()
 	}
+	if v.BootstrapNotAfter != nil {
+		client.BootstrapNotAfter = v.BootstrapNotAfter.Unix()
+	}
 	return client
 }

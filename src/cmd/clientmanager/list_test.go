@@ -70,7 +70,7 @@ func TestRunList_ShowsRealLastSeenTimestamp(t *testing.T) {
 	store := newTestManagerStore(t)
 	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	seenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt, time.Time{}))
 
 	var out bytes.Buffer
 	require.NoError(t, runList(t.Context(), store, &out))
@@ -81,7 +81,7 @@ func TestRunShow_ShowsRealLastSeenTimestamp(t *testing.T) {
 	store := newTestManagerStore(t)
 	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
 	seenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt, time.Time{}))
 
 	var out bytes.Buffer
 	require.NoError(t, runShow(t.Context(), store, &Arguments{Hostname: "node-1"}, &out))

@@ -7,6 +7,7 @@ import (
 	"encoding/asn1"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -34,18 +35,38 @@ func HostnameFromCert(cert *x509.Certificate) (string, error) {
 // reflects the CA-verified node identity rather than anything the caller
 // could self-report over the wire.
 func PeerHostname(ctx context.Context) (string, error) {
+	cert, err := peerCert(ctx)
+	if err != nil {
+		return "", err
+	}
+	return HostnameFromCert(cert)
+}
+
+// PeerNotAfter returns the expiry of the verified client certificate
+// presented on ctx's gRPC peer connection.
+func PeerNotAfter(ctx context.Context) (time.Time, error) {
+	cert, err := peerCert(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return cert.NotAfter, nil
+}
+
+// peerCert returns the leaf of the verified client certificate on ctx's gRPC
+// peer connection.
+func peerCert(ctx context.Context) (*x509.Certificate, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
-		return "", fmt.Errorf("no peer information in context")
+		return nil, fmt.Errorf("no peer information in context")
 	}
 	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok {
-		return "", fmt.Errorf("peer connection is not authenticated via TLS")
+		return nil, fmt.Errorf("peer connection is not authenticated via TLS")
 	}
 	if len(tlsInfo.State.PeerCertificates) == 0 {
-		return "", fmt.Errorf("no peer certificate presented")
+		return nil, fmt.Errorf("no peer certificate presented")
 	}
-	return HostnameFromCert(tlsInfo.State.PeerCertificates[0])
+	return tlsInfo.State.PeerCertificates[0], nil
 }
 
 // PeerHostnameFromConnState is PeerHostname's plain-HTTP equivalent, for a
@@ -73,18 +94,11 @@ var attributeExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 61183, 1, 1}
 // an error -- when the peer certificate carries no such extension, since
 // that's the normal case for a hostname with no attributes set.
 func PeerAttributes(ctx context.Context) (map[string]string, error) {
-	p, ok := peer.FromContext(ctx)
-	if !ok {
-		return nil, fmt.Errorf("no peer information in context")
+	cert, err := peerCert(ctx)
+	if err != nil {
+		return nil, err
 	}
-	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
-	if !ok {
-		return nil, fmt.Errorf("peer connection is not authenticated via TLS")
-	}
-	if len(tlsInfo.State.PeerCertificates) == 0 {
-		return nil, fmt.Errorf("no peer certificate presented")
-	}
-	return attributesFromCert(tlsInfo.State.PeerCertificates[0])
+	return attributesFromCert(cert)
 }
 
 // PeerAttributesFromConnState is PeerAttributes' plain-HTTP equivalent, for a

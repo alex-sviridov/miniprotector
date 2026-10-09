@@ -57,11 +57,13 @@ func TestGetClient_RevokedAndLastSeenTimestampsRoundTrip(t *testing.T) {
 	revokedAt := time.Now().Truncate(time.Second)
 	require.NoError(t, store.SetRevoked(t.Context(), "node-1", true, revokedAt))
 	seenAt := time.Now().Truncate(time.Second)
-	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt))
+	bootstrapNotAfter := time.Now().Add(80 * 24 * time.Hour).Truncate(time.Second)
+	require.NoError(t, store.UpdateLastSeen(t.Context(), "node-1", seenAt, bootstrapNotAfter))
 
 	client, err := srv.GetClient(context.Background(), &pb.GetClientRequest{Hostname: "node-1"})
 	require.NoError(t, err)
 	assert.True(t, client.GetRevoked())
 	assert.Equal(t, revokedAt.Unix(), client.GetRevokedAt())
 	assert.Equal(t, seenAt.Unix(), client.GetLastSeenAt())
+	assert.Equal(t, bootstrapNotAfter.Unix(), client.GetBootstrapNotAfter())
 }

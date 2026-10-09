@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-09 — Clients page flags bootstrap certificates nearing expiry
+
+A node offline for longer than its bootstrap certificate's lifetime cannot renew it and needs a fresh
+enrollment token, but nothing showed that coming. `issuer` now records, on every operating-certificate
+refresh, the expiry of the bootstrap certificate the node presented (`bootstrap_not_after`, read from the
+verified peer certificate), exposed through `clientmanager-api` and the REST client object. The Clients
+list shows a "Bootstrap cert" badge (amber under 30 days left, red under 7 or expired, grey until a node
+has refreshed), and the client detail page shows the expiry date plus the reason renewal is failing from the
+existing `cert-status` endpoint. A healthily renewing credential always sits near its full lifetime, so a
+short remaining time is itself the warning. Existing clients show no value until their next refresh, within
+about 15 minutes.
+
 ## 2026-10-09 — Only control-plane nodes can read fleet logs
 
 `log-gateway`'s `query_range` and `tail` routes accepted any operating-tier certificate, so one enrolled

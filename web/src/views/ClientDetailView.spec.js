@@ -202,4 +202,48 @@ describe('ClientDetailView', () => {
 
     expect(clients.updateSans).toHaveBeenCalledWith('webserver', ['new.internal'], [])
   })
+
+  it('fetches the bootstrap renewal status on mount', () => {
+    const { clients } = mountView({ byHostname: {}, loading: false, error: null, pendingToken: null })
+    expect(clients.fetchCertStatus).toHaveBeenCalledWith('webserver')
+  })
+
+  it('shows the bootstrap expiry and why renewal is failing', () => {
+    const notAfter = Math.floor(Date.now() / 1000) + 10 * 86400
+    const { wrapper } = mountView({
+      byHostname: { webserver: baseClient({ bootstrap_not_after: notAfter }) },
+      certStatusByHostname: { webserver: { hostname: 'webserver', last_error: 'renew request: connection refused', last_attempt_at: 1790000000 } },
+      loading: false,
+      error: null,
+      pendingToken: null,
+    })
+    const badge = wrapper.find('[data-test="bootstrap-cert-badge"]')
+    expect(badge.text()).toBe('9d left')
+    expect(badge.classes()).toContain('bg-amber-50')
+    expect(wrapper.find('[data-test="bootstrap-cert-expiry"]').text()).toContain('expires')
+    const renewal = wrapper.find('[data-test="bootstrap-renewal"]')
+    expect(renewal.text()).toContain('Failing: renew request: connection refused')
+    expect(renewal.classes()).toContain('text-red-600')
+  })
+
+  it('shows renewing normally, and unknown/not-reported fallbacks', () => {
+    const healthy = mountView({
+      byHostname: { webserver: baseClient({ bootstrap_not_after: Math.floor(Date.now() / 1000) + 85 * 86400 }) },
+      certStatusByHostname: { webserver: { hostname: 'webserver', last_attempt_at: 1790000000 } },
+      loading: false,
+      error: null,
+      pendingToken: null,
+    })
+    expect(healthy.wrapper.find('[data-test="bootstrap-renewal"]').text()).toContain('Renewing normally')
+
+    const unknown = mountView({
+      byHostname: { webserver: baseClient() },
+      loading: false,
+      error: null,
+      pendingToken: null,
+    })
+    expect(unknown.wrapper.find('[data-test="bootstrap-cert-badge"]').text()).toBe('—')
+    expect(unknown.wrapper.text()).toContain('not reported yet')
+    expect(unknown.wrapper.find('[data-test="bootstrap-renewal"]').text()).toBe('Unknown')
+  })
 })

@@ -13,6 +13,11 @@ describe('Badge', () => {
     expect(wrapper.classes()).toContain('bg-gray-100')
   })
 
+  it('applies warn variant classes', () => {
+    const wrapper = mount(Badge, { props: { variant: 'warn' } })
+    expect(wrapper.classes()).toContain('bg-amber-50')
+  })
+
   it('applies ok variant classes', () => {
     const wrapper = mount(Badge, { props: { variant: 'ok' } })
     expect(wrapper.classes()).toContain('bg-emerald-50')

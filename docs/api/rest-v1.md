@@ -33,6 +33,7 @@ curl -H "Authorization: Bearer dev-placeholder-token-change-me" http://localhost
       "revoked": false,
       "revoked_at": 0,
       "last_seen_at": 1784318519,
+      "bootstrap_not_after": 1792000000,
       "sans": null,
       "attributes": {"role": "web"},
       "descriptions": null
@@ -43,6 +44,14 @@ curl -H "Authorization: Bearer dev-placeholder-token-change-me" http://localhost
 
 `sans`, `attributes`, and `descriptions` are `null` (not `{}`/`[]`) when a client has none set —
 these fields are never defaulted to empty collections.
+
+`bootstrap_not_after` is the expiry (unix seconds) of the bootstrap certificate the client last
+authenticated to `issuer` with, taken from its verified peer certificate on each operating-certificate
+refresh (about every 15 minutes). `0` until the client has refreshed since this was introduced. A
+healthily renewing bootstrap credential always sits near its full lifetime (about 90 days), so a short
+remaining time means renewal is failing; pair it with
+[`cert-status`](#get-apiv1clientshostnamecert-status) for the reason. The web UI warns under 30 days
+and flags under 7 days or expired.
 
 ## `GET /api/v1/clients/{hostname}`
 

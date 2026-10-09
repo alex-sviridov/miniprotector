@@ -209,9 +209,12 @@ There's a second, distinct failure mode this doesn't cover: a bootstrap credenti
 allowed to lapse (missed renewals exceeding its own `BootstrapCertTTLSec` lifetime) is
 unrecoverable via `/renew` — an expired client certificate is rejected at the TLS handshake, before
 any application code runs — and requires a fresh `certclient bootstrap` with a new enrollment
-token. This failure is now visible via `GetNodeCertStatus` (`GET
-/api/v1/clients/{hostname}/cert-status`) for up to `OperatingCertTTLSec` after `bootstrap-refresh`
-starts failing, since reporting rides the independently-scheduled operating credential.
+token. This failure is visible in two ways. `issuer` records the bootstrap certificate's expiry on
+every operating-certificate refresh (`bootstrap_not_after` on the client record), and the web UI's Clients page flags it as it nears expiry (amber under 30 days, red under 7 or expired).
+The reason renewal is failing comes from `GetNodeCertStatus` (`GET
+/api/v1/clients/{hostname}/cert-status`), shown on the client's detail page, which keeps reporting for
+up to `OperatingCertTTLSec` after `bootstrap-refresh` starts failing, since reporting rides the
+independently-scheduled operating credential.
 
 **Rollout note:** the `BootstrapCertTTLSec` fix above is forward-only. A node's certificate lineage
 keeps whatever duration its *original* `bootstrap` call was granted — existing enrolled nodes stay

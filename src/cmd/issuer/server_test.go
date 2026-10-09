@@ -223,3 +223,20 @@ func TestRequestOperatingCert_MintSignFailurePropagatesAndSkipsLastSeen(t *testi
 	require.NoError(t, err)
 	assert.Nil(t, got.LastSeenAt)
 }
+
+func TestRequestOperatingCert_RecordsBootstrapExpiryFromPeerCertificate(t *testing.T) {
+	store := newTestIssuerStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	mintSign := func(string, []string, map[string]string, *x509.CertificateRequest) ([]byte, error) {
+		return []byte("chain"), nil
+	}
+	srv := newIssuerServer(store, mintSign, testLogger())
+
+	_, err := srv.RequestOperatingCert(fakeAuthContext(t, "node-1"), &pb.RequestOperatingCertRequest{CsrDer: testCSR(t).Raw})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	require.NotNil(t, view.BootstrapNotAfter, "the peer certificate's NotAfter must be recorded")
+	assert.WithinDuration(t, time.Now().Add(time.Hour), *view.BootstrapNotAfter, time.Minute)
+}

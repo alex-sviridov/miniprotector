@@ -205,4 +205,18 @@ describe('clients store', () => {
     })
     expect(clients.byHostname['node-1']).toEqual(updated)
   })
+
+  it('fetchCertStatus stores the status, and clears it on failure without raising an error', async () => {
+    apiFetch.mockResolvedValue({ hostname: 'webserver', last_error: 'renew failed', last_attempt_at: 5 })
+    const clients = useClientsStore()
+
+    await clients.fetchCertStatus('webserver')
+    expect(apiFetch).toHaveBeenCalledWith('/clients/webserver/cert-status')
+    expect(clients.certStatusByHostname.webserver.last_error).toBe('renew failed')
+
+    apiFetch.mockRejectedValue(new Error('boom'))
+    await clients.fetchCertStatus('webserver')
+    expect(clients.certStatusByHostname.webserver).toBeUndefined()
+    expect(clients.error).toBeNull()
+  })
 })

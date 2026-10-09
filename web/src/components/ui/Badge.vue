@@ -5,6 +5,7 @@ defineProps({
 
 const VARIANT_CLASSES = {
   ok: 'bg-emerald-50 text-emerald-600',
+  warn: 'bg-amber-50 text-amber-700',
   bad: 'bg-red-50 text-red-600',
   neutral: 'bg-gray-100 text-gray-600',
 }

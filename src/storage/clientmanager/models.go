@@ -13,6 +13,11 @@ type ClientRecord struct {
 	Revoked    bool
 	RevokedAt  *time.Time
 	LastSeenAt *time.Time
+	// BootstrapNotAfter is the expiry of the bootstrap certificate the client
+	// last authenticated to issuer with, taken from its verified peer
+	// certificate. A healthily renewing bootstrap credential always sits
+	// near its full lifetime, so a short remaining time means renewal is failing.
+	BootstrapNotAfter *time.Time
 }
 
 // SANsList decodes rec.SANs (JSON-encoded) back into a string slice. A
@@ -53,11 +58,13 @@ type ClientKVRecord struct {
 // key/value pairs -- the full shape both clientmanager-api and
 // clientmanager-admin-api expose over gRPC.
 type ClientView struct {
-	Hostname     string
-	Revoked      bool
-	RevokedAt    *time.Time
-	LastSeenAt   *time.Time
-	SANs         []string
-	Descriptions map[string]string
-	Attributes   map[string]string
+	Hostname   string
+	Revoked    bool
+	RevokedAt  *time.Time
+	LastSeenAt *time.Time
+	// BootstrapNotAfter: see ClientRecord. Nil until the client next refreshes.
+	BootstrapNotAfter *time.Time
+	SANs              []string
+	Descriptions      map[string]string
+	Attributes        map[string]string
 }

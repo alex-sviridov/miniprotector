@@ -9,6 +9,7 @@ export const useClientsStore = defineStore('clients', {
     loading: false,
     error: null,
     pendingToken: null,
+    certStatusByHostname: {},
   }),
   actions: {
     async fetchAll() {
@@ -31,6 +32,15 @@ export const useClientsStore = defineStore('clients', {
         this.byHostname[hostname] = client
         return client
       })
+    },
+    // Why a node's bootstrap-certificate renewal is (not) working. Best-effort:
+    // a failure leaves the status unknown rather than flagging the whole page.
+    async fetchCertStatus(hostname) {
+      try {
+        this.certStatusByHostname[hostname] = await apiFetch(`/clients/${encodeURIComponent(hostname)}/cert-status`)
+      } catch {
+        delete this.certStatusByHostname[hostname]
+      }
     },
     async enroll(hostname, sans) {
       return withRequest(this, async () => {
