@@ -1,0 +1,286 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"text/tabwriter"
+	"time"
+)
+
+const toolVersion = "1"
+
+type PhaseResult struct {
+	Name         string  `json:"name"`
+	Seconds      float64 `json:"seconds"`
+	PayloadBytes int64   `json:"payload_bytes"`
+	Files        int     `json:"files"`
+	MBPerSec     float64 `json:"mb_per_s"`
+	FilesPerSec  float64 `json:"files_per_s"`
+	WireUp       int64   `json:"wire_up_bytes"`    // client -> server
+	WireDown     int64   `json:"wire_down_bytes"`  // server -> client
+	ClientRSS    int64   `json:"client_rss_bytes"` // peak RSS of brfs/rwfs for this phase
+	ServerRSS    int64   `json:"server_rss_bytes"` // peak RSS of bwfs during this phase
+}
+
+type RunResult struct {
+	Index        int           `json:"index"`
+	DatasetFiles int           `json:"dataset_files"`
+	DatasetBytes int64         `json:"dataset_bytes"`
+	Phases       []PhaseResult `json:"phases"`
+}
+
+func newPhaseResult(name string, seconds float64, payloadBytes int64, files int, wireUp, wireDown int64) PhaseResult {
+	p := PhaseResult{Name: name, Seconds: seconds, PayloadBytes: payloadBytes, Files: files, WireUp: wireUp, WireDown: wireDown}
+	if seconds > 0 {
+		p.MBPerSec = float64(payloadBytes) / 1e6 / seconds
+		p.FilesPerSec = float64(files) / seconds
+	}
+	return p
+}
+
+type PhaseSummary struct {
+	Name              string  `json:"name"`
+	Runs              int     `json:"runs"`
+	PayloadBytes      int64   `json:"payload_bytes"`
+	MedianSeconds     float64 `json:"median_seconds"`
+	MinSeconds        float64 `json:"min_seconds"`
+	MaxSeconds        float64 `json:"max_seconds"`
+	MedianMBPerSec    float64 `json:"median_mb_per_s"`
+	MedianFilesPerSec float64 `json:"median_files_per_s"`
+	MedianWireUp      int64   `json:"median_wire_up_bytes"`
+	MedianWireDown    int64   `json:"median_wire_down_bytes"`
+	MedianClientRSS   int64   `json:"median_client_rss_bytes"`
+	MaxClientRSS      int64   `json:"max_client_rss_bytes"`
+	MedianServerRSS   int64   `json:"median_server_rss_bytes"`
+	MaxServerRSS      int64   `json:"max_server_rss_bytes"`
+}
+
+func median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	if len(s)%2 == 1 {
+		return s[len(s)/2]
+	}
+	return (s[len(s)/2-1] + s[len(s)/2]) / 2
+}
+
+func maxOf(xs []float64) float64 {
+	m := 0.0
+	for _, x := range xs {
+		m = max(m, x)
+	}
+	return m
+}
+
+// memCell formats "median / max" of a peak-RSS metric, or "-" when it was not
+// measured.
+func memCell(median, max int64) string {
+	if max == 0 {
+		return "-"
+	}
+	return humanBytes(median) + " / " + humanBytes(max)
+}
+
+// Summarize reduces the runs to one summary per phase, in the first run's
+// phase order.
+func Summarize(runs []RunResult) []PhaseSummary {
+	if len(runs) == 0 {
+		return nil
+	}
+	var out []PhaseSummary
+	for i, first := range runs[0].Phases {
+		var secs, mb, fps, up, down, crss, srss []float64
+		for _, r := range runs {
+			if i >= len(r.Phases) {
+				continue
+			}
+			p := r.Phases[i]
+			secs = append(secs, p.Seconds)
+			mb = append(mb, p.MBPerSec)
+			fps = append(fps, p.FilesPerSec)
+			up = append(up, float64(p.WireUp))
+			down = append(down, float64(p.WireDown))
+			crss = append(crss, float64(p.ClientRSS))
+			srss = append(srss, float64(p.ServerRSS))
+		}
+		sortedSecs := append([]float64(nil), secs...)
+		sort.Float64s(sortedSecs)
+		out = append(out, PhaseSummary{
+			Name:              first.Name,
+			Runs:              len(secs),
+			PayloadBytes:      first.PayloadBytes,
+			MedianSeconds:     median(secs),
+			MinSeconds:        sortedSecs[0],
+			MaxSeconds:        sortedSecs[len(sortedSecs)-1],
+			MedianMBPerSec:    median(mb),
+			MedianFilesPerSec: median(fps),
+			MedianWireUp:      int64(median(up)),
+			MedianWireDown:    int64(median(down)),
+			MedianClientRSS:   int64(median(crss)),
+			MaxClientRSS:      int64(maxOf(crss)),
+			MedianServerRSS:   int64(median(srss)),
+			MaxServerRSS:      int64(maxOf(srss)),
+		})
+	}
+	return out
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.1f GB", float64(n)/1e9)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1f MB", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1f kB", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+func WriteTable(w io.Writer, header string, s []PhaseSummary) {
+	fmt.Fprintln(w, header)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "phase\tmedian s\tmin s\tmax s\tMB/s\tfiles/s\twire up\twire down\tclient RSS med/max\tserver RSS med/max")
+	for _, p := range s {
+		fmt.Fprintf(tw, "%s\t%.2f\t%.2f\t%.2f\t%.2f\t%.1f\t%s\t%s\t%s\t%s\n",
+			p.Name, p.MedianSeconds, p.MinSeconds, p.MaxSeconds, p.MedianMBPerSec, p.MedianFilesPerSec,
+			humanBytes(p.MedianWireUp), humanBytes(p.MedianWireDown),
+			memCell(p.MedianClientRSS, p.MaxClientRSS), memCell(p.MedianServerRSS, p.MaxServerRSS))
+	}
+	tw.Flush()
+}
+
+type ReportConfig struct {
+	Files              int      `json:"files"`
+	Profile            string   `json:"profile"`
+	DupRatio           float64  `json:"dup_ratio"`
+	Seed               uint64   `json:"seed"`
+	RTTMillis          float64  `json:"rtt_ms"`
+	BandwidthBytesPerS int64    `json:"bandwidth_bytes_per_s"`
+	Streams            int      `json:"streams"`
+	Window             int      `json:"window"`
+	BrfsArgs           []string `json:"brfs_args"`
+	RwfsArgs           []string `json:"rwfs_args"`
+	ConfLines          []string `json:"conf_lines"`
+	Runs               int      `json:"runs"`
+}
+
+func configOf(a Args) ReportConfig {
+	return ReportConfig{
+		Files: a.Files, Profile: a.Profile, DupRatio: a.DupRatio, Seed: a.Seed,
+		RTTMillis: float64(a.RTT) / float64(time.Millisecond), BandwidthBytesPerS: a.Bandwidth,
+		Streams: a.Streams, Window: a.Window, BrfsArgs: a.BrfsArgs, RwfsArgs: a.RwfsArgs, ConfLines: a.ConfLines, Runs: a.Runs,
+	}
+}
+
+type ReportDataset struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+// VariantResult is the outcome of one swept configuration.
+type VariantResult struct {
+	Label   string
+	Args    Args
+	Runs    []RunResult
+	Summary []PhaseSummary
+}
+
+type VariantReport struct {
+	Label   string         `json:"label"`
+	Config  ReportConfig   `json:"config"`
+	Runs    []RunResult    `json:"runs"`
+	Summary []PhaseSummary `json:"summary"`
+}
+
+type Report struct {
+	Tool      string            `json:"tool"`
+	StartedAt time.Time         `json:"started_at"`
+	Dataset   ReportDataset     `json:"dataset"`
+	Binaries  map[string]string `json:"binaries_sha256"`
+	Variants  []VariantReport   `json:"variants"`
+}
+
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// BuildReport assembles the JSON record, including the SHA-256 of the three
+// binaries used so a comparison can show what was actually measured.
+func BuildReport(a *Args, started time.Time, variants []VariantResult) (Report, error) {
+	bins := map[string]string{}
+	for _, name := range []string{"brfs", "bwfs", "rwfs"} {
+		h, err := sha256File(filepath.Join(a.BinDir, name))
+		if err != nil {
+			return Report{}, fmt.Errorf("hash %s: %w", name, err)
+		}
+		bins[name] = h
+	}
+	rep := Report{Tool: "mpbench " + toolVersion, StartedAt: started, Binaries: bins}
+	for _, v := range variants {
+		rep.Variants = append(rep.Variants, VariantReport{Label: v.Label, Config: configOf(v.Args), Runs: v.Runs, Summary: v.Summary})
+	}
+	if len(variants) > 0 && len(variants[0].Runs) > 0 {
+		r := variants[0].Runs[0]
+		rep.Dataset = ReportDataset{Files: r.DatasetFiles, Bytes: r.DatasetBytes}
+	}
+	return rep, nil
+}
+
+func WriteJSON(path string, r Report) error {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// WriteComparison prints one row per phase and one column per variant with the
+// median wall time, and each later variant's change against the first. It
+// prints nothing for a single variant.
+func WriteComparison(w io.Writer, variants []VariantResult) {
+	if len(variants) < 2 {
+		return
+	}
+	fmt.Fprintf(w, "\ncomparison (median seconds, change vs %q):\n", variants[0].Label)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	header := "phase"
+	for _, v := range variants {
+		header += "\t" + v.Label
+	}
+	fmt.Fprintln(tw, header)
+	for i, base := range variants[0].Summary {
+		row := base.Name
+		for k, v := range variants {
+			if i >= len(v.Summary) {
+				row += "\t-"
+				continue
+			}
+			cell := fmt.Sprintf("%.2fs", v.Summary[i].MedianSeconds)
+			if k > 0 && base.MedianSeconds > 0 {
+				cell += fmt.Sprintf(" (%+.0f%%)", (v.Summary[i].MedianSeconds/base.MedianSeconds-1)*100)
+			}
+			row += "\t" + cell
+		}
+		fmt.Fprintln(tw, row)
+	}
+	tw.Flush()
+}

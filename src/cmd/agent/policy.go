@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -30,6 +31,11 @@ type Policy struct {
 	// rules to `rwfs verify --rules-stdin`. Every other policy/task leaves
 	// this nil.
 	Stdin []byte
+	// Prepare, when non-nil, runs immediately before this task's exec (so only
+	// when it is actually due) and returns extra args appended to Args. An
+	// error fails the attempt without exec'ing, with the usual backoff. Used by
+	// backup tasks to resolve and hand brfs its retention matrix at job start.
+	Prepare func(logger *slog.Logger) ([]string, error)
 }
 
 // policies returns agent's three embedded policies, their intervals read
@@ -38,7 +44,7 @@ type Policy struct {
 // frequent), and policy-update (fetches this node's applicable backup
 // policies from policy-server into a local cache). Each gets a fresh
 // per-invocation JobID (also embedded in Args as --job-id) every time this
-// function is called -- policiesFunc calls it fresh every reconcile tick,
+// function is called -- derivedFunc calls it fresh every reconcile tick,
 // the same way backupTasks already does for backup jobs, so an unused
 // policy's JobID (one not actually due this tick) is simply discarded.
 func policies(conf *config.Config) []Policy {

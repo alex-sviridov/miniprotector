@@ -3,9 +3,12 @@
 `api-server` → `clientmanager-admin-api`'s sole RPC surface: CA-admin-equivalent writes onto the
 same `clientmanager.sqlite` file `client-manager`'s CLI, `issuer`, and `clientmanager-api` already
 share. mTLS (`common/mtls`, same transport every other gRPC call in this project uses). `api-server`
-is the sole intended caller — see [Design: clientmanager-admin-api](../superpowers/specs/2026-07-19-clientmanager-admin-api-design.md)
-for why this isn't enforced at the transport layer (the existing mesh-wide "any operating-tier cert
-may call any RPC it can reach" convention applies here too, deliberately).
+is the sole intended caller, and every RPC on this service now requires the caller's operating
+certificate to carry the `control-plane` authorization role — enforced by a
+`common/mtls.RequireRoles` gRPC interceptor, rejecting any other role (e.g. an ordinary
+`bwfs`/`brfs`/`rwfs` node's `client` role) with `codes.PermissionDenied` before any handler runs.
+See [Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md)
+and [Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## RPC
 
@@ -18,6 +21,18 @@ service ClientManagerAdminService {
   rpc UpdateDescription(UpdateClientKVRequest) returns (clientmanagerapiservice.Client);
   rpc UpdateAttributes(UpdateClientKVRequest) returns (clientmanagerapiservice.Client);
   rpc UpdateSANs(UpdateClientSANsRequest) returns (clientmanagerapiservice.Client);
+}
+
+message AddClientRequest {
+  string hostname = 1;
+  repeated string sans = 2;
+  string role = 3; // authorization role to assign; empty resolves to "client"
+}
+
+message ReEnrollClientRequest {
+  string hostname = 1;
+  repeated string sans = 2; // empty means keep the hostname's currently stored SANs
+  string role = 3; // empty means keep the hostname's currently stored role, unchanged
 }
 ```
 
@@ -36,6 +51,10 @@ duplicated) — the caller sees the record's new state immediately, without a fo
   otherwise). `sans`, if given, overrides the stored SAN list for this token only and is **not**
   persisted back to the record — matches `client-manager re-enroll`'s existing behavior exactly. Use
   `UpdateSANs` for a persistent SAN change.
+- **`role`** (both `AddClient`/`ReEnrollClient`): the node's authorization role — `control-plane`,
+  `store`, or `client`. Empty resolves to `client` on `AddClient` (the same default
+  `client-manager add` uses); empty means "keep the currently stored role" on `ReEnrollClient`. An
+  unrecognized value returns `codes.InvalidArgument` before minting a token.
 - **`RevokeClient`/`UnrevokeClient`**: flip the stored `revoked` flag/timestamp. `codes.NotFound` for
   an untracked hostname. Enforcement (refusing a revoked hostname's next operating-certificate
   request) remains [`issuer`](../components/issuer.md)'s job, unchanged by this service.

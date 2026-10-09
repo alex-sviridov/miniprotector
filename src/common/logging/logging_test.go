@@ -13,10 +13,10 @@ import (
 )
 
 func testContext(logDir, appName string) context.Context {
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, &config.Config{LogDir: logDir})
-	ctx = context.WithValue(ctx, "debugMode", false)
-	ctx = context.WithValue(ctx, "quietMode", true)
+	ctx = WithDebugMode(ctx, false)
+	ctx = WithQuietMode(ctx, true)
 	return ctx
 }
 
@@ -88,4 +88,20 @@ func TestNewLogger_DifferentBinariesGetDifferentFiles(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, "binary-b.log"))
 	assert.NoError(t, err)
+}
+
+func TestNewLogger_JobIDAttachedWhenSet(t *testing.T) {
+	dir := t.TempDir()
+	ctx := WithJobID(testContext(dir, "testbinary"), "job-123")
+
+	logger, closer := NewLogger(ctx)
+	logger.Info("hello")
+	require.NoError(t, closer.Close())
+
+	data, err := os.ReadFile(filepath.Join(dir, "testbinary.log"))
+	require.NoError(t, err)
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(data, &entry))
+	assert.Equal(t, "job-123", entry["job_id"])
 }

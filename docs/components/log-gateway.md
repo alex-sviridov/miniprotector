@@ -32,6 +32,10 @@ presenting no verified peer certificate is rejected outright — nothing is forw
 failure (unreachable, or a non-2xx response) is surfaced back to the caller (`502` if unreachable,
 Loki's own status/body proxied through otherwise) rather than swallowed.
 
+The request body streams straight through to Loki rather than being buffered in memory first; a
+declared `Content-Length` over the 10MB cap is rejected before any read, and an actual body exceeding
+the cap despite a smaller/absent declared length fails the forward mid-stream (`502`, not `413`).
+
 `log-gateway`'s listener requires an operating-tier peer certificate — the same
 `mtls.ServerTLSConfig`/`ServerTLSConfig`-equivalent tier check `bwfs`/`catalog` already enforce
 (via `common/mtls.LoadServerCredentials`) rejects a bootstrap/issuer-caller credential outright.

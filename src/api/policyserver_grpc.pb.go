@@ -19,12 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PolicyService_GetPolicies_FullMethodName       = "/policyserverservice.PolicyService/GetPolicies"
-	PolicyService_ListPolicies_FullMethodName      = "/policyserverservice.PolicyService/ListPolicies"
-	PolicyService_CreatePolicy_FullMethodName      = "/policyserverservice.PolicyService/CreatePolicy"
-	PolicyService_UpdatePolicy_FullMethodName      = "/policyserverservice.PolicyService/UpdatePolicy"
-	PolicyService_DeletePolicy_FullMethodName      = "/policyserverservice.PolicyService/DeletePolicy"
-	PolicyService_GetNodeCertStatus_FullMethodName = "/policyserverservice.PolicyService/GetNodeCertStatus"
+	PolicyService_GetPolicies_FullMethodName              = "/policyserverservice.PolicyService/GetPolicies"
+	PolicyService_ListPolicies_FullMethodName             = "/policyserverservice.PolicyService/ListPolicies"
+	PolicyService_CreatePolicy_FullMethodName             = "/policyserverservice.PolicyService/CreatePolicy"
+	PolicyService_UpdatePolicy_FullMethodName             = "/policyserverservice.PolicyService/UpdatePolicy"
+	PolicyService_DeletePolicy_FullMethodName             = "/policyserverservice.PolicyService/DeletePolicy"
+	PolicyService_GetNodeCertStatus_FullMethodName        = "/policyserverservice.PolicyService/GetNodeCertStatus"
+	PolicyService_ReorderRetentionPolicies_FullMethodName = "/policyserverservice.PolicyService/ReorderRetentionPolicies"
 )
 
 // PolicyServiceClient is the client API for PolicyService service.
@@ -43,6 +44,7 @@ type PolicyServiceClient interface {
 	UpdatePolicy(ctx context.Context, in *UpdatePolicyRequest, opts ...grpc.CallOption) (*Policy, error)
 	DeletePolicy(ctx context.Context, in *DeletePolicyRequest, opts ...grpc.CallOption) (*DeletePolicyResponse, error)
 	GetNodeCertStatus(ctx context.Context, in *GetNodeCertStatusRequest, opts ...grpc.CallOption) (*NodeCertStatus, error)
+	ReorderRetentionPolicies(ctx context.Context, in *ReorderRetentionPoliciesRequest, opts ...grpc.CallOption) (*ReorderRetentionPoliciesResponse, error)
 }
 
 type policyServiceClient struct {
@@ -113,6 +115,16 @@ func (c *policyServiceClient) GetNodeCertStatus(ctx context.Context, in *GetNode
 	return out, nil
 }
 
+func (c *policyServiceClient) ReorderRetentionPolicies(ctx context.Context, in *ReorderRetentionPoliciesRequest, opts ...grpc.CallOption) (*ReorderRetentionPoliciesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReorderRetentionPoliciesResponse)
+	err := c.cc.Invoke(ctx, PolicyService_ReorderRetentionPolicies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PolicyServiceServer is the server API for PolicyService service.
 // All implementations must embed UnimplementedPolicyServiceServer
 // for forward compatibility.
@@ -129,6 +141,7 @@ type PolicyServiceServer interface {
 	UpdatePolicy(context.Context, *UpdatePolicyRequest) (*Policy, error)
 	DeletePolicy(context.Context, *DeletePolicyRequest) (*DeletePolicyResponse, error)
 	GetNodeCertStatus(context.Context, *GetNodeCertStatusRequest) (*NodeCertStatus, error)
+	ReorderRetentionPolicies(context.Context, *ReorderRetentionPoliciesRequest) (*ReorderRetentionPoliciesResponse, error)
 	mustEmbedUnimplementedPolicyServiceServer()
 }
 
@@ -156,6 +169,9 @@ func (UnimplementedPolicyServiceServer) DeletePolicy(context.Context, *DeletePol
 }
 func (UnimplementedPolicyServiceServer) GetNodeCertStatus(context.Context, *GetNodeCertStatusRequest) (*NodeCertStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeCertStatus not implemented")
+}
+func (UnimplementedPolicyServiceServer) ReorderRetentionPolicies(context.Context, *ReorderRetentionPoliciesRequest) (*ReorderRetentionPoliciesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReorderRetentionPolicies not implemented")
 }
 func (UnimplementedPolicyServiceServer) mustEmbedUnimplementedPolicyServiceServer() {}
 func (UnimplementedPolicyServiceServer) testEmbeddedByValue()                       {}
@@ -286,6 +302,24 @@ func _PolicyService_GetNodeCertStatus_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PolicyService_ReorderRetentionPolicies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReorderRetentionPoliciesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PolicyServiceServer).ReorderRetentionPolicies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PolicyService_ReorderRetentionPolicies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PolicyServiceServer).ReorderRetentionPolicies(ctx, req.(*ReorderRetentionPoliciesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PolicyService_ServiceDesc is the grpc.ServiceDesc for PolicyService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -316,6 +350,10 @@ var PolicyService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetNodeCertStatus",
 			Handler:    _PolicyService_GetNodeCertStatus_Handler,
+		},
+		{
+			MethodName: "ReorderRetentionPolicies",
+			Handler:    _PolicyService_ReorderRetentionPolicies_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -167,12 +167,17 @@ Query parameters (all optional):
       "group": 999,
       "mod_time": 1752400000,
       "parent_directory": "/var/lib/dbdata",
-      "short_filename": "data.db"
+      "short_filename": "data.db",
+      "damaged": false
     }
   ],
   "has_more": false
 }
 ```
+
+`damaged` is always present. It is `true` when the store has reported the file's backup data as damaged.
+The flag is replicated from the store, so it can lag by up to about a minute. Restore is not blocked for
+damaged files.
 
 `400` if `limit` isn't an integer in `[1, 500]`, or `starting_after` isn't a non-negative integer.
 
@@ -261,7 +266,7 @@ matching files of its own but does have matching descendants further down.
 
 Returns every policy, unfiltered by any client identity (unlike `policy-server`'s own `GetPolicies`
 RPC, which every mesh node calls and which is scoped to its own matching policies). Not paginated.
-Accepts an optional `?type=backup`, `?type=storage`, or `?type=restore` query parameter to restrict
+Accepts an optional `?type=backup`, `?type=storage`, `?type=restore`, or `?type=retention` query parameter to restrict
 the response to one policy type; omitted returns every type.
 
 ```json
@@ -294,7 +299,13 @@ the response to one policy type; omitted returns every type.
 `created_at`/`updated_at` are Unix seconds, matching every other timestamp field in this API.
 `checkins` lists every host that has received this policy from `GetPolicies`, each with its most
 recent check-in time (Unix seconds) -- not a full history, one entry per host. Empty for a policy no
-host has polled yet.
+host has polled yet. A restore/verify-typed policy also carries `"job_id"` (e.g.
+`"job_id": "restore:r1:1"`), generated synchronously at creation and stamped onto every later
+response for it -- a plain backup/storage policy never has one, and the field is omitted entirely
+rather than sent as `null` or empty. A retention-typed policy carries its single rule as `"retention"`
+(`{"backup_type": "filesystem", "path": "/var/log", "include": ["*.log"], "keep_seconds": 2592000,
+"priority": 2}`, `include` omitted when empty), and `?type=retention` returns them in evaluation order
+(ascending `priority`); the field is omitted for every other type.
 
 ## `GET /api/v1/policies/{id}`
 
@@ -398,6 +409,42 @@ change. `400` on the same validation failures as `POST`. `404` if `id` doesn't m
 `PUT /api/v1/policies/{id}` above: the web UI's storage policy edit form doesn't read or send
 `disabled_at`, so an edit made through the UI always clears it.
 
+## `POST /api/v1/retention-policies`
+
+Creates a new `"retention"`-typed policy: one retention rule for the clients `client_filters`
+selects. Body:
+
+```json
+{
+  "name": "keep-logs",
+  "client_filters": {"hostnames": ["web-*"], "labels": {"env": "prod"}},
+  "retention": {"backup_type": "filesystem", "path": "/var/log", "include": ["*.log"], "keep_seconds": 2592000}
+}
+```
+
+`retention.backup_type` must be `"filesystem"`; `path` an absolute, clean, slash-separated prefix
+without `..`; each `include` entry a valid glob without a `/` (file-name patterns only);
+`keep_seconds` non-negative, `0` meaning never expire. There is no `priority` input: the rule is
+appended after the existing ones and its server-assigned `priority` is returned in the response;
+use `POST /api/v1/retention-policies/reorder` to change order. Optional `disabled_at` (Unix seconds)
+behaves as for every other type. `201` with the created policy; `400` on a validation failure (no
+file is written).
+
+## `PUT /api/v1/retention-policies/{id}`
+
+Full replacement of an existing retention policy's editable fields (same body as `POST`); `priority`,
+`id`, `created_at` and `type` never change. `200` with the updated policy; `400` on the same
+validation failures as `POST`; `404` if `id` doesn't match any policy.
+
+## `POST /api/v1/retention-policies/reorder`
+
+Sets the evaluation order of retention policies. Body: `{"ids": ["<id>", ...]}` — **every**
+retention policy's id, exactly once, first-evaluated first. `policy-server` rewrites priorities
+`1..n` in that order and `200` returns `{"data": [...]}` — the policies in their new order. `400`
+if the list is missing a retention policy, names an unknown or non-retention id, or repeats one
+(nothing is changed), which is how a client whose view is stale learns to refetch. Delete a retention
+policy with `DELETE /api/v1/policies/{id}`.
+
 ## `POST /api/v1/restore`
 
 Creates a new `"restore"`-typed policy -- the only way to create one; there is no
@@ -408,7 +455,7 @@ Creates a new `"restore"`-typed policy -- the only way to create one; there is n
   "name": "web01-emergency",
   "client_filters": {"hostnames": ["web-01"], "labels": {}},
   "storage_policy_id": "<id of an existing \"storage\" policy>",
-  "rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true}],
+  "rules": [{"host": "web-01", "path": "/var/www/index.html", "include": true, "not_before": 1752400000, "not_after": 1752400000}],
   "mode": "verify",
   "overwrite": false
 }
@@ -451,7 +498,7 @@ Query parameters (all optional):
 
 | Param | Type | Description |
 |-------|------|--------------|
-| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update`, `restore` |
+| `kind` | string | One of `backup`, `bootstrap-refresh`, `operating-refresh`, `policy-update`, `verify`, `restore`, `cleanup`, `vacuum` (the last two are `bwfs`'s scheduled store maintenance runs) |
 | `source_host` | string | Exact match on the job's start-line hostname. Must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
 | `state` | string | Exact match on the job's terminal status (e.g. `success`, `failure`); jobs still running never match, since they have no finish line yet |
 | `since` | int, unix seconds | Start of the query window, default `now - 24h` |
@@ -492,19 +539,29 @@ underlying Loki queries hit its own line cap and the result may be incomplete; n
 | Param | Type | Description |
 |-------|------|--------------|
 | `since` | unix seconds | Only lines after this timestamp. Default: 24h before now |
+| `limit` | int | Page size. Default and max: 500. `400` if outside `[1, 500]` |
+| `ending_before` | unix nanoseconds | Opaque cursor — the timestamp of the oldest line already loaded. Returns the `limit` lines immediately before it (exclusive). Omit for the most recent page |
 | `source_host` / `store_host` | string | Optional — narrows the query to the hosts involved, if already known from a prior `/jobs` response. Each must match `^[a-zA-Z0-9.-]+$` — `400` on invalid characters |
 
 `job_id` must match `^[a-zA-Z0-9:._-]+$` — `400` otherwise.
+
+Without `ending_before`, returns the most recent `limit` lines in the `since`-to-now window. With
+`ending_before`, returns the `limit` lines immediately before that cursor, still floored at `since` —
+paging can't run past the window. An `ending_before` at or before the window floor returns an empty
+page (`has_more: false`), not an error.
 
 ```json
 {
   "data": [
     {"timestamp": 1752400000123456789, "hostname": "database", "binary": "brfs", "line": "{...raw json log line...}"}
-  ]
+  ],
+  "has_more": true
 }
 ```
 
-A client polling with an advancing `since` cursor gets a near-real-time tail.
+A client polling with an advancing `since` cursor gets a near-real-time tail; a client paging
+backward with `ending_before` gets progressively older history. See
+[Design: Job Log Pagination & Bounded Retention](../superpowers/specs/2026-08-22-job-log-pagination-design.md).
 
 ## `POST /api/v1/ws-tickets`
 

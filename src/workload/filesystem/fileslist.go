@@ -44,14 +44,14 @@ func Discover(root string, include, exclude []string) (FilesList, error) {
 			return fmt.Errorf("failed to compute relative path for %s: %w", path, relErr)
 		}
 
-		if matchesAny(exclude, relPath) {
+		if MatchesAny(exclude, relPath) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		if !d.IsDir() && !matchesAny(include, relPath) {
+		if !d.IsDir() && !MatchesAny(include, relPath) {
 			return nil
 		}
 
@@ -68,10 +68,10 @@ func Discover(root string, include, exclude []string) (FilesList, error) {
 	return result, err
 }
 
-// matchesAny reports whether relPath matches any pattern: a pattern with
+// MatchesAny reports whether relPath matches any pattern: a pattern with
 // no "/" is matched against relPath's basename (so it matches at any
 // depth); a pattern containing "/" is matched against relPath itself.
-func matchesAny(patterns []string, relPath string) bool {
+func MatchesAny(patterns []string, relPath string) bool {
 	base := filepath.Base(relPath)
 	for _, pattern := range patterns {
 		target := base

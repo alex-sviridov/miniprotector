@@ -1,6 +1,7 @@
 // restore.go derives agent's dynamic "restore verification" tasks from
-// policies-cache.json -- one task per cached "restore" policy, one-shot:
-// due until it succeeds once, never again after. See
+// policies-cache.json -- one task per cached "restore" policy, run exactly
+// once ever: due until it's been attempted once, success or failure, never
+// again after -- see PolicyState.LastAttemptAt. See
 // docs/superpowers/specs/2026-08-10-restore-policy-verification-design.md.
 package main
 
@@ -40,17 +41,6 @@ func restoreTaskID(policyName, mode string) string {
 	return fmt.Sprintf("verify:%s", policyName)
 }
 
-// restoreJobID is the --job-id passed to the dispatched rwfs subcommand
-// for one run -- includes a timestamp so a retry after failure gets a
-// distinct id, mirroring backup.go's backupJobID. Same prefix convention
-// as restoreTaskID.
-func restoreJobID(policyName, mode string, now time.Time) string {
-	if mode == "restore" {
-		return fmt.Sprintf("restore:%s:%d", policyName, now.Unix())
-	}
-	return fmt.Sprintf("verify:%s:%d", policyName, now.Unix())
-}
-
 // rulesStdinPayload is the JSON shape piped to `rwfs verify --rules-stdin`
 // / `rwfs restore --rules-stdin` -- {"rules": [...]}, matching
 // policy-server's RestorePolicy.Rules field name exactly (see
@@ -61,14 +51,10 @@ type rulesStdinPayload struct {
 }
 
 // restoreTasks derives one Policy per cached "restore" policy from
-// policiesCachePath, valid at the instant it's called -- callers that need
+// cachedPolicies, valid at the instant it's called -- callers that need
 // to notice policies-cache.json changing over time (agent serve's
 // reconcile loop) must call this fresh every tick, exactly like
 // backupTasks/storageTasks.
-//
-// ok=false mirrors backupTasks's contract: it means this tick's read of
-// policiesCachePath failed, and callers must never treat that as "there
-// are zero restore tasks."
 //
 // A policy whose Destinations is empty (its storage policy has no live
 // checkins yet, or storage_policy_id is dangling) contributes no task --
@@ -92,12 +78,7 @@ type rulesStdinPayload struct {
 // with --overwrite appended iff p.Overwrite. Every other mode (unset or
 // "verify") dispatches `rwfs verify`, byte-for-byte what this policy type
 // has always run.
-func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool) {
-	cachedPolicies, ok := readCachedPolicies(policiesCachePath)
-	if !ok {
-		return nil, false
-	}
-
+func restoreTasks(cachedPolicies []cachedPolicy, logger *slog.Logger) []Policy {
 	var tasks []Policy
 	for _, p := range cachedPolicies {
 		if p.Type != "restore" {
@@ -122,7 +103,7 @@ func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool
 			continue
 		}
 
-		jobID := restoreJobID(p.Name, p.Mode, time.Now())
+		jobID := p.JobID
 		args := []string{"verify", p.Destinations[0], "--rules-stdin", "--job-id", jobID}
 		if p.Mode == "restore" {
 			args = []string{"restore", p.Destinations[0], "--rules-stdin", "--job-id", jobID}
@@ -139,9 +120,9 @@ func restoreTasks(policiesCachePath string, logger *slog.Logger) ([]Policy, bool
 			Stdin:      payload,
 			Background: true,
 			Due: func(s PolicyState, now time.Time) bool {
-				return s.LastSuccessAt == nil
+				return s.LastAttemptAt == nil
 			},
 		})
 	}
-	return tasks, true
+	return tasks
 }

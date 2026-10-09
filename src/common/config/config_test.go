@@ -155,6 +155,37 @@ func TestParseConfig_CatalogSyncMaxBackoffSecParsed(t *testing.T) {
 	assert.Equal(t, 120, conf.CatalogSyncMaxBackoffSec)
 }
 
+func TestParseConfig_CatalogSyncDamageIntervalSecDefaultsTo60(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 60, conf.CatalogSyncDamageIntervalSec)
+}
+
+func TestParseConfig_CatalogSyncDamageIntervalSecParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nCatalogSyncDamageIntervalSec=300\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 300, conf.CatalogSyncDamageIntervalSec)
+}
+
+func TestParseConfig_CatalogSyncDamageIntervalSecRejectsNonInteger(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nCatalogSyncDamageIntervalSec=soon\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := ParseConfig(path)
+	assert.ErrorContains(t, err, "invalid CatalogSyncDamageIntervalSec")
+}
+
 func TestParseConfig_CatalogHostOptional(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
@@ -658,4 +689,207 @@ func TestParseConfig_CheckinRetentionSecRejectsZeroOrNegative(t *testing.T) {
 
 	_, err := ParseConfig(path)
 	require.Error(t, err)
+}
+
+func TestParseConfig_RwfsRetriesDefaultsTo3(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 3, conf.RwfsRetries)
+}
+
+func TestParseConfig_RwfsRetriesParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRwfsRetries=5\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, conf.RwfsRetries)
+}
+
+func TestParseConfig_RwfsRetriesRejectsZeroOrNegative(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRwfsRetries=0\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := ParseConfig(path)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "must be positive")
+
+	dir2 := t.TempDir()
+	path2 := filepath.Join(dir2, "local.conf")
+	content2 := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRwfsRetries=-1\n"
+	require.NoError(t, os.WriteFile(path2, []byte(content2), 0o644))
+
+	_, err2 := ParseConfig(path2)
+	require.Error(t, err2)
+	assert.ErrorContains(t, err2, "must be positive")
+}
+
+func TestParseConfig_RetentionDefaultDaysDefaultsTo7(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 7, conf.RetentionDefaultDays)
+}
+
+func TestParseConfig_RetentionDefaultDaysParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nRetentionDefaultDays=30\n"), 0o644))
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 30, conf.RetentionDefaultDays)
+}
+
+func parseStoreConf(t *testing.T, extra string) (*Config, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"+extra), 0o644))
+	return ParseConfig(path)
+}
+
+func TestParseConfig_StoreGCDefaults(t *testing.T) {
+	conf, err := parseStoreConf(t, "")
+	require.NoError(t, err)
+	assert.Equal(t, 3600, conf.StoreCleanupIntervalSec)
+	assert.Equal(t, 86400, conf.StoreVacuumIntervalSec)
+	assert.Equal(t, 500, conf.StoreGCBatchSize)
+	assert.False(t, conf.StoreCleanupDryRun)
+	assert.Equal(t, 86400, conf.StoreIncompleteFileDataGraceSec)
+	assert.Equal(t, 2592000, conf.StoreDeletionLogRetentionSec)
+}
+
+func TestParseConfig_StoreGCParsesEveryKey(t *testing.T) {
+	conf, err := parseStoreConf(t, "StoreCleanupIntervalSec=60\nStoreVacuumIntervalSec=0\nStoreGCBatchSize=50\nStoreCleanupDryRun=true\nStoreIncompleteFileDataGraceSec=7200\nStoreDeletionLogRetentionSec=3600\n")
+	require.NoError(t, err)
+	assert.Equal(t, 60, conf.StoreCleanupIntervalSec)
+	assert.Equal(t, 0, conf.StoreVacuumIntervalSec, "0 disables a loop")
+	assert.Equal(t, 50, conf.StoreGCBatchSize)
+	assert.True(t, conf.StoreCleanupDryRun)
+	assert.Equal(t, 7200, conf.StoreIncompleteFileDataGraceSec)
+	assert.Equal(t, 3600, conf.StoreDeletionLogRetentionSec)
+}
+
+func TestParseConfig_StoreGCRejectsInvalidValues(t *testing.T) {
+	for _, line := range []string{
+		"StoreCleanupIntervalSec=-1", "StoreCleanupIntervalSec=abc",
+		"StoreVacuumIntervalSec=-5",
+		"StoreGCBatchSize=0", "StoreGCBatchSize=-1",
+		"StoreCleanupDryRun=maybe",
+		"StoreIncompleteFileDataGraceSec=-1",
+		"StoreDeletionLogRetentionSec=-1",
+	} {
+		_, err := parseStoreConf(t, line+"\n")
+		assert.Error(t, err, line)
+	}
+}
+
+func TestParseConfig_DefaultWindowDefaultsTo16(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 16, conf.DefaultWindow)
+}
+
+func TestParseConfig_DefaultWindowParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ndefault_window=32\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 32, conf.DefaultWindow)
+}
+
+func TestParseConfig_DefaultWindowRejectsZeroOrNegative(t *testing.T) {
+	for _, v := range []string{"0", "-1", "abc"} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "local.conf")
+		content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ndefault_window=" + v + "\n"
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+		_, err := ParseConfig(path)
+		require.Error(t, err, v)
+	}
+}
+
+func TestParseConfig_GrpcWindowBytesDefaultsToZero(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 0, conf.GrpcWindowBytes)
+}
+
+func TestParseConfig_GrpcWindowBytesParsesCorrectly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ngrpc_window_bytes=4194304\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 4194304, conf.GrpcWindowBytes)
+}
+
+func TestParseConfig_GrpcWindowBytesRejectsOutOfRange(t *testing.T) {
+	for _, v := range []string{"-1", "1024", "65535", "1073741825", "abc"} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "local.conf")
+		require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ngrpc_window_bytes="+v+"\n"), 0o644))
+
+		_, err := ParseConfig(path)
+		require.Error(t, err, v)
+	}
+}
+
+func writeTestConf(t *testing.T, extra string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n" + extra
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	return path
+}
+
+func TestParseConfig_RestoreCommitDefaults(t *testing.T) {
+	conf, err := ParseConfig(writeTestConf(t, ""))
+	require.NoError(t, err)
+	assert.Equal(t, 64, conf.RestoreCommitFiles)
+	assert.EqualValues(t, 64<<20, conf.RestoreCommitBytes)
+}
+
+func TestParseConfig_RestoreCommitParsesCorrectly(t *testing.T) {
+	conf, err := ParseConfig(writeTestConf(t, "restore_commit_files=0\nrestore_commit_bytes=1048576\n"))
+	require.NoError(t, err)
+	assert.Equal(t, 0, conf.RestoreCommitFiles)
+	assert.EqualValues(t, 1048576, conf.RestoreCommitBytes)
+}
+
+func TestParseConfig_RestoreCommitRejectsInvalid(t *testing.T) {
+	for _, extra := range []string{
+		"restore_commit_files=-1\n",
+		"restore_commit_files=1025\n",
+		"restore_commit_files=abc\n",
+		"restore_commit_bytes=-5\n",
+		"restore_commit_bytes=abc\n",
+	} {
+		_, err := ParseConfig(writeTestConf(t, extra))
+		require.Error(t, err, extra)
+	}
 }

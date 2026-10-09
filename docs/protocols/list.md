@@ -2,7 +2,7 @@
 
 ## Core Concept
 
-A server-streaming gRPC RPC that emits every finalized file record from a `bwfs` storage, one `FileRow` per message, with optional filtering by source hostname, path prefix, and free-text substring. Both `bwfs list` (local SQLite read) and `rwfs list` (remote gRPC call) produce identical output for identical data, sharing the same query logic and rendering code (`common/listformat`).
+A server-streaming gRPC RPC that emits every finalized file record from a `bwfs` storage, one `FileRow` per message, with optional filtering by source hostname, path prefix, and free-text substring. Both `bwfs list` (local SQLite read) and `rwfs list` (remote gRPC call) produce identical output for identical data, sharing the same query logic and rendering code (`common/listformat`). One exception: `bwfs list` marks damaged file data (a `DAMAGED` table column, JSON `"damaged": true`); `FileRow` has no such field, so `rwfs list` never shows it.
 
 ## Protocol Definition
 
@@ -49,6 +49,12 @@ sequenceDiagram
 ```
 
 The RPC streams one `FileRow` per matching row rather than returning a single batched response, removing any hard cap on how many rows a listing can contain on the wire.
+
+## Authorization
+
+`ListFiles` and `ResolveRestoreFiles` require the caller's operating certificate to carry the
+`client` role — `rwfs` is the only legitimate caller. See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
 
 ## Filter Semantics
 

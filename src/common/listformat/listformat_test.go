@@ -1,6 +1,7 @@
 package listformat
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -67,4 +68,51 @@ func TestRenderJSON_CreatedAtIsRFC3339UTC(t *testing.T) {
 	assert.Contains(t, s, `"source": "workstation"`)
 	assert.Contains(t, s, `"created_at": "2026-06-29T08:10:42Z"`)
 	assert.Contains(t, s, `"timestamp": 1782605538`)
+}
+
+func sampleRows() []Row {
+	ts, _ := time.Parse(time.RFC3339, "2026-06-29T08:10:42Z")
+	return []Row{
+		{FileUUID: "u1", Source: "ws", Type: "f", Path: "/a", Timestamp: 1, Size: 10, Chunks: 1, Versions: 1, CreatedAt: ts},
+		{FileUUID: "u2", Source: "ws", Type: "f", Path: "/bb", Timestamp: 2, Size: 2048, Chunks: 2, Versions: 3, CreatedAt: ts},
+	}
+}
+
+// The table without damaged rows must stay byte-for-byte what it always was,
+// so scripts parsing it keep working.
+func TestWriteTable_NoDamagedRowsKeepsTheExistingLayout(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, writeTable(&buf, sampleRows()))
+
+	want := "" +
+		"SOURCE  TYPE  PATH  TIMESTAMP  SIZE  CHUNKS  VERSIONS\n" +
+		"ws      f     /a    1          10 B  1       1\n" +
+		"ws      f     /bb   2          2 KB  2       3\n"
+	assert.Equal(t, want, buf.String())
+}
+
+func TestWriteTable_DamagedRowGetsAMarkerColumn(t *testing.T) {
+	rows := sampleRows()
+	rows[1].Damaged = true
+	var buf bytes.Buffer
+	require.NoError(t, writeTable(&buf, rows))
+
+	want := "" +
+		"SOURCE  TYPE  PATH  TIMESTAMP  SIZE  CHUNKS  VERSIONS  DAMAGED\n" +
+		"ws      f     /a    1          10 B  1       1         \n" +
+		"ws      f     /bb   2          2 KB  2       3         yes\n"
+	assert.Equal(t, want, buf.String())
+}
+
+func TestWriteJSON_DamagedIsSetOnlyOnDamagedRows(t *testing.T) {
+	rows := sampleRows()
+	rows[1].Damaged = true
+	var buf bytes.Buffer
+	require.NoError(t, writeJSON(&buf, rows))
+
+	var got []map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.Len(t, got, 2)
+	assert.NotContains(t, got[0], "damaged", "a healthy row omits the field")
+	assert.Equal(t, true, got[1]["damaged"])
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +14,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/logging"
+	"github.com/alex-sviridov/miniprotector/storage"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"google.golang.org/grpc"
 )
@@ -19,7 +22,7 @@ import (
 func main() {
 	const appName = "bwfs"
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 
 	configPath, err := config.ResolveConfigPath()
 	if err != nil {
@@ -34,14 +37,15 @@ func main() {
 	}
 
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
+	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
 
 	arguments, err := parseArguments(conf)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Arguments error: %v\n", err)
 		os.Exit(1)
 	}
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", arguments.Quiet)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, arguments.Quiet)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -71,20 +75,18 @@ func main() {
 			logger.Error("Server initialization failed", "error", err)
 			os.Exit(1)
 		}
-		defer backupServer.store.Close()
+		defer func() {
+			// Close flushes pending chunks; a failure means the last writes
+			// may not be durable, which the operator must be able to see.
+			if err := backupServer.store.Close(); err != nil {
+				logger.Error("Closing the store failed", "error", err)
+			}
+		}()
 
-		vacuumResult, err := backupServer.store.Vacuum()
-		if err != nil {
+		if err := startupVacuum(logger, backupServer.store); err != nil {
 			logger.Error("Startup vacuum failed", "error", err)
 			os.Exit(1)
 		}
-		logger.Info("Startup vacuum completed",
-			"orphaned_file_data_removed", vacuumResult.OrphanedFileDataRemoved,
-			"orphaned_chunk_links_removed", vacuumResult.OrphanedChunkLinksRemoved,
-			"orphaned_chunks_removed", vacuumResult.OrphanedChunksRemoved,
-			"incomplete_file_data_removed", vacuumResult.IncompleteFileData,
-			"bytes_reclaimed", vacuumResult.BytesReclaimed,
-		)
 
 		staleCount, err := backupServer.store.FailStaleInProgressJobs()
 		if err != nil {
@@ -96,8 +98,9 @@ func main() {
 		}
 
 		go watchStaleJobs(signalCtx, backupServer, time.Duration(conf.JobTimeoutSec)*time.Second)
+		startStoreGC(signalCtx, logger, backupServer.store, gcSettingsFrom(conf))
 
-		listStore, err := wfs.NewReadOnly(arguments.StoragePath)
+		listStore, err := openReadOnlyStore(arguments.StoragePath, logger)
 		if err != nil {
 			logger.Error("List store initialization failed", "error", err)
 			os.Exit(1)
@@ -105,7 +108,7 @@ func main() {
 		defer listStore.Close()
 		listSrv := NewListServer(listStore, logger)
 
-		restoreStore, err := wfs.NewReadOnly(arguments.StoragePath)
+		restoreStore, err := openReadOnlyStore(arguments.StoragePath, logger)
 		if err != nil {
 			logger.Error("Restore store initialization failed", "error", err)
 			os.Exit(1)
@@ -119,11 +122,20 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
+		connCounter := &connCounter{}
+		startStatusReporter(signalCtx, logger, conf, certsDir, statusSource{
+			policyID: arguments.PolicyID,
+			port:     arguments.Port,
+			root:     arguments.StoragePath,
+			conns:    connCounter,
+			jobs:     backupServer.liveness,
+		})
+
+		if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
 			pb.RegisterBackupServiceServer(s, backupServer)
 			pb.RegisterListServiceServer(s, listSrv)
 			pb.RegisterRestoreServiceServer(s, restoreSrv)
-		}); err != nil {
+		}, grpc.StatsHandler(connCounter)); err != nil {
 			logger.Error("Server failed", "error", err)
 			os.Exit(1)
 		}
@@ -134,4 +146,47 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// startupVacuum runs the startup Vacuum and logs its result. A failure while
+// reclaiming segment space (say, one unreadable sector) only warns: the
+// database cleanup is committed and the store is consistent, and refusing to
+// start would turn a space problem into a crash loop. Any other failure is
+// returned and is fatal.
+func startupVacuum(logger *slog.Logger, store storage.BackupStore) error {
+	res, err := store.Vacuum()
+	if errors.Is(err, storage.ErrReclaimIncomplete) && res != nil {
+		logger.Warn("Startup vacuum could not reclaim all segment space; continuing",
+			append(vacuumResultAttrs(res), "error", err)...)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	logger.Info("Startup vacuum completed", vacuumResultAttrs(res)...)
+	return nil
+}
+
+func vacuumResultAttrs(res *storage.VacuumResult) []any {
+	return []any{
+		"orphaned_file_data_removed", res.OrphanedFileDataRemoved,
+		"orphaned_chunk_links_removed", res.OrphanedChunkLinksRemoved,
+		"orphaned_chunks_removed", res.OrphanedChunksRemoved,
+		"incomplete_file_data_removed", res.IncompleteFileData,
+		"segments_removed", res.SegmentsRemoved,
+		"segments_compacted", res.SegmentsCompacted,
+		"bytes_reclaimed", res.BytesReclaimed,
+	}
+}
+
+// openReadOnlyStore opens a read-only Store that reports damage on logger.
+// The restore store marks corrupt chunks, and the damage line must land in
+// bwfs.log like every other line.
+func openReadOnlyStore(path string, logger *slog.Logger) (*wfs.Store, error) {
+	store, err := wfs.NewReadOnly(path)
+	if err != nil {
+		return nil, err
+	}
+	store.SetLogger(logger)
+	return store, nil
 }

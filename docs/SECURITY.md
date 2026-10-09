@@ -27,8 +27,7 @@ Whenever a server-side handler needs to know which node is calling it, that iden
 derived from the verified mTLS peer certificate — never from a field the caller supplies on the
 request. `common/mtls.PeerHostname` is the single implementation of this: it reads the first SAN
 entry (falling back to `Subject.CommonName`) off the peer certificate gRPC's transport credentials
-already verified against the CA's root. `issuer`'s `RequestOperatingCert` and `DescribeSANs` both
-work this way, and so does `catalog`'s handler for `catalogsync`'s uploads. A node cannot claim to
+already verified against the CA's root. `issuer`'s `RequestOperatingCert` works this way, and so does `catalog`'s handler for `catalogsync`'s uploads. A node cannot claim to
 be a different hostname than the one embedded in its own certificate; there is no request field to
 lie in.
 
@@ -83,10 +82,74 @@ precisely so that this frequent, fresh-`Sign` round trip doesn't also require re
 one-time enrollment token every cycle: it's a long-lived, cheaply-`/renew`-able identity whose only
 job is authenticating the node to `issuer` when asking for a fresh operating certificate.
 
-`certclient operating-refresh`'s CSR always requests `DNSNames` of `[hostname] + sans`, where
-`sans` comes from `issuer`'s `DescribeSANs` RPC, called immediately beforehand — see
-[Issuer Protocol: why `DescribeSANs` exists](protocols/issuer.md#why-describesans-exists) for the
-exact-match validation constraint that makes this call necessary rather than optional.
+`certclient operating-refresh`'s CSR names only the node's own hostname. `issuer` decides the
+certificate's full SAN list (hostname plus aliases) and passes it to the CA as template data — see
+[Issuer Protocol: where SANs come from](protocols/issuer.md#where-sans-come-from).
+
+## Why two provisioners
+
+step-ca hands a sign request's `templateData` to the certificate template as `.Insecure.User` — the
+name is literal: it is whatever the caller sent. A single provisioner whose template read the
+credential tier and attributes from it would let anyone who redeems an enrollment token call `/sign`
+directly, claim `tier=operating` and any `authz-role`, and pick their own lifetime up to the
+provisioner's maximum. That certificate would bypass `issuer` (and so revocation), and `/renew` would
+extend it forever.
+
+So the CA runs two JWK provisioners, with different keys and different passwords:
+
+| | `admin@backup.internal` | `operating@backup.internal` |
+|---|---|---|
+| Token minted by | `client-manager` (enrollment) | `issuer` only |
+| Password file | `secrets/password` | `secrets/operating_password`, mounted into `issuer` only |
+| Template | `bootstrap.tpl` — static; ignores `templateData` | `operating.tpl` — takes SANs and attributes from the `templateData` `issuer` supplies |
+| Resulting certificate | clientAuth + `EKUIssuerCaller`, no attributes | serverAuth + clientAuth, attributes extension |
+| Max duration | 2200h (`BootstrapCertTTLSec`) | 2200h (covers `IssuerSelfCertTTLSec`); only `issuer` can mint tokens for it |
+
+`client-manager` can therefore mint enrollment tokens but cannot mint a token the operating
+provisioner accepts. `cmd/issuer/templates_test.go` renders both templates with forged
+`templateData` and asserts the bootstrap one still yields a bootstrap-tier certificate.
+
+## SAN alias uniqueness
+
+Peers verify a server by the SANs in its certificate, so a SAN alias equal to another client's
+hostname or alias would let the aliased node present a server certificate valid for that other name.
+`client-manager` therefore rejects any `san add` / `add --san` whose name is already some other
+client's hostname or alias (`ErrSANConflict`, gRPC `AlreadyExists` on the admin API).
+
+## api-server transport (known gap)
+
+`api-server` serves its REST API over plain HTTP, authenticated by one shared static bearer token
+(no expiry, no rotation, no per-user identity), and acts with its own mesh credential on the caller's
+behalf. It is meant to sit behind a TLS-terminating proxy on a trusted network; do not expose it
+directly. Native TLS and per-user authentication are tracked in `backlog.md`.
+
+## Role-based RPC authorization
+
+The two-tier credential model above governs *which stage* of a node's lifecycle a certificate is
+valid for (bootstrap vs. operating); it says nothing about *which RPCs* an operating certificate
+may call. Historically, every operating-tier certificate was interchangeable: any enrolled node —
+including the least-privileged thing in the fleet, an ordinary `bwfs`/`brfs`/`rwfs` backup-agent
+host — could call any RPC on any control-plane service it could reach, including
+`clientmanager-admin-api`'s CA-admin-equivalent writes (mint enrollment tokens, revoke arbitrary
+nodes, rewrite SAN/attribute data).
+
+Every node is now additionally assigned one of three closed roles at enrollment —
+`control-plane`, `store`, or `client` — stored as the reserved `authz-role` attribute
+(`client-manager attribute set <hostname> authz-role=...`, or the `--role` flag on
+`add`/`re-enroll`) and carried in every issued operating certificate via the existing `attribute`
+X.509 extension described above. Every gRPC server (`clientmanager-api`,
+`clientmanager-admin-api`, `catalog`, `policy-server`, `bwfs`) enforces a per-RPC allowed-role
+list via a `common/mtls.RequireRoles` gRPC interceptor, reading the caller's role off its
+already-verified peer certificate — never a request field. A caller whose role isn't in an RPC's
+allow-list is rejected with `codes.PermissionDenied` before any handler logic runs. `issuer`'s own
+listener is untouched — it's already gated by the orthogonal EKU bootstrap/operating tier check
+above.
+
+No backward-compatibility path exists for this: a node without a matching `authz-role` attribute
+is denied every role-gated RPC (though `GetPolicies` stays open to every role, so its own
+certificate lifecycle keeps functioning) until it's backfilled or re-enrolled. See
+[Design: Role-Based gRPC Authorization](superpowers/specs/2026-08-22-role-based-grpc-authz-design.md)
+for the full per-RPC matrix.
 
 ## Revocation and its trust-model costs
 
@@ -101,9 +164,9 @@ every operating-refresh is a fresh `Sign` with a fresh CSR.
 
 `attribute` values land in the certificate itself as a real, non-critical X.509 extension (OID
 `1.3.6.1.4.1.61183.1.1`, JSON-encoded), not just in the `Sign` request sent to the CA — see
-[issuer](components/issuer.md#behavior). Nothing in this codebase yet reads or enforces that
-extension; it exists so a future authorization check can, without another round of
-certificate-issuance changes.
+[issuer](components/issuer.md#behavior). The role-based authorization
+described above reads the `authz-role` entry of this extension from the verified peer
+certificate.
 
 The same mechanism now also gates log shipping: `agent`'s supervised Vector process authenticates
 to `log-gateway` with the node's operating credential, restarted immediately after every successful
@@ -154,7 +217,7 @@ on their current (pre-fix, ~24h) lineage until re-bootstrapped with a fresh enro
 
 ## See Also
 
-- [Issuer Protocol](protocols/issuer.md) — `RequestOperatingCert`/`DescribeSANs` RPC shapes and
+- [Issuer Protocol](protocols/issuer.md) — `RequestOperatingCert` RPC shape and
   authorization rules
 - [issuer](components/issuer.md), [certclient](components/certclient.md), [agent](components/agent.md),
   [client-manager](components/client-manager.md) — the components that implement this model

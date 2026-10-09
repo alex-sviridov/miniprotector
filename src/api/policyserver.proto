@@ -18,6 +18,7 @@ service PolicyService {
   rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
   rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
   rpc GetNodeCertStatus(GetNodeCertStatusRequest) returns (NodeCertStatus);
+  rpc ReorderRetentionPolicies(ReorderRetentionPoliciesRequest) returns (ReorderRetentionPoliciesResponse);
 }
 
 // Set only when this node's bootstrap-refresh task is currently failing
@@ -105,6 +106,17 @@ message RestoreRule {
   int64  not_after  = 6;
 }
 
+// One retention rule: how long file versions under `path` are kept. A
+// "retention" policy is exactly one of these plus the usual client_filters.
+// Rules are evaluated in ascending priority; the first match wins.
+message RetentionRule {
+  string backup_type = 1;      // "filesystem" -- the only value accepted today
+  string path = 2;             // absolute, slash-separated prefix, matched on a segment boundary
+  repeated string include = 3; // optional basename globs that must also match; a "/" is rejected
+  int64  keep_seconds = 4;     // 0 = never expire
+  int32  priority = 5;         // server-assigned, lower is evaluated first; ignored on Create/Update requests
+}
+
 message Policy {
   string name = 1;
   google.protobuf.Timestamp created_at = 2;
@@ -184,6 +196,17 @@ message Policy {
   // docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md),
   // so it is simply inert for a verify submission.
   bool overwrite = 21;
+  // "restore" policy only. Generated once by policy-server at CreatePolicy
+  // time (stable for the policy's whole lifecycle -- a restore/verify task
+  // now runs exactly once, so there is no per-attempt id to distinguish).
+  // Shared with agent (which uses it verbatim as rwfs's --job-id) and with
+  // policy-server's own "created"/"deleted" lifecycle log lines, so every
+  // Loki line for one restore policy's execution correlates under this one
+  // id. Not settable via CreatePolicyRequest -- server-computed, like id
+  // (field 8).
+  string job_id = 22;
+  // "retention" policy only.
+  RetentionRule retention = 23;
 }
 
 message CreatePolicyRequest {
@@ -221,6 +244,9 @@ message CreatePolicyRequest {
   string mode = 15;
   // "restore" policy only. See Policy.overwrite above.
   bool overwrite = 16;
+  // "retention" policy only, required. retention.priority is ignored: a new
+  // retention policy is always appended after the existing ones.
+  RetentionRule retention = 17;
 }
 
 message UpdatePolicyRequest {
@@ -250,6 +276,9 @@ message UpdatePolicyRequest {
   google.protobuf.Timestamp disabled_at = 11;
   // "backup" only, required.
   string storage_policy_id = 12;
+  // "retention" only, required. Full replacement; retention.priority is
+  // ignored -- a policy's position changes only via ReorderRetentionPolicies.
+  RetentionRule retention = 13;
 }
 
 message DeletePolicyRequest {
@@ -257,3 +286,15 @@ message DeletePolicyRequest {
 }
 
 message DeletePolicyResponse {}
+
+// ids must be exactly the set of every existing "retention" policy id, in the
+// desired evaluation order; a missing, unknown or duplicate id rejects the
+// whole request so a stale caller can never silently drop or reorder rules it
+// did not see. Priorities are rewritten 1..n in that order.
+message ReorderRetentionPoliciesRequest {
+  repeated string ids = 1;
+}
+
+message ReorderRetentionPoliciesResponse {
+  repeated Policy policies = 1; // in the new order
+}

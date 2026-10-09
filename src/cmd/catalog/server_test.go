@@ -20,9 +20,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
@@ -195,7 +197,7 @@ func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- connection.StartServer(ctx, logger, port, fixtureCertsDir, func(s *grpc.Server) {
+		errCh <- connection.StartServer(ctx, logger, port, fixtureCertsDir, nil, func(s *grpc.Server) {
 			pb.RegisterCatalogServiceServer(s, srv)
 		})
 	}()
@@ -226,6 +228,58 @@ func TestSyncFileVersions_RealMTLSRoundTrip(t *testing.T) {
 	count, err := store.Count(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
+}
+
+// TestSyncFileVersions_RealMTLSRoundTrip_NonStoreRoleDenied proves role
+// enforcement over the same real mTLS + gRPC round trip
+// TestSyncFileVersions_RealMTLSRoundTrip uses, but with roleRequirements()
+// wired in (production behavior) instead of nil.
+func TestSyncFileVersions_RealMTLSRoundTrip_NonStoreRoleDenied(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- connection.StartServer(ctx, logger, port, fixtureCertsDir, roleRequirements(), func(s *grpc.Server) {
+			pb.RegisterCatalogServiceServer(s, srv)
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-errCh
+	})
+
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		conn.Close()
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "server did not start listening")
+
+	// fixtureCertsDir's client.crt carries no authz-role attribute --
+	// must be denied "store"-only SyncFileVersions.
+	conn, err := connection.Connect("localhost", port, 5, fixtureCertsDir)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := pb.NewCatalogServiceClient(conn)
+	_, err = client.SyncFileVersions(context.Background(), &pb.SyncRequest{
+		Entries: []*pb.FileVersionEntry{{JobId: "job-1", ObjectId: "obj-1"}},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	count, err := store.Count(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count, "the denied SyncFileVersions must not have written anything")
 }
 
 func TestListEntries_ReturnsPersistedEntriesNewestFirst(t *testing.T) {
@@ -713,4 +767,68 @@ func TestSyncFileVersions_MalformedMetadataLogsError(t *testing.T) {
 	assert.Contains(t, logOutput, "metadata decode failed")
 	assert.Contains(t, logOutput, "job-1")
 	assert.Contains(t, logOutput, "obj-1")
+}
+
+func TestSyncFileVersions_PersistsExpireAt(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	req := &pb.SyncRequest{Entries: []*pb.FileVersionEntry{
+		{JobId: "job-1", ObjectId: "obj-1", ExpireAt: 1_700_000_000, CreatedAt: time.Now().Unix()},
+		{JobId: "job-1", ObjectId: "obj-2", CreatedAt: time.Now().Unix()},
+	}}
+	_, err := srv.SyncFileVersions(ctx, req)
+	require.NoError(t, err)
+
+	recs, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	byObj := map[string]catalogstore.EntryRecord{}
+	for _, r := range recs {
+		byObj[r.ObjectID] = r
+	}
+	require.NotNil(t, byObj["obj-1"].ExpireAt)
+	assert.Equal(t, int64(1_700_000_000), *byObj["obj-1"].ExpireAt)
+	assert.Nil(t, byObj["obj-2"].ExpireAt)
+}
+
+func TestDeleteFileVersions_DeletesUnderPeerHostnameOnly(t *testing.T) {
+	srv, store := newTestCatalogServer(t)
+	require.NoError(t, store.EnsureEntries(t.Context(), []catalogstore.Entry{
+		{StoreNode: "bwfs-a.internal", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-a.internal", JobID: "job-1", ObjectID: "obj-2", StoreCreatedAt: time.Now()},
+		{StoreNode: "bwfs-b.internal", JobID: "job-1", ObjectID: "obj-1", StoreCreatedAt: time.Now()},
+	}))
+
+	_, err := srv.DeleteFileVersions(fakeAuthContext(t, "bwfs-a.internal"), &pb.DeleteVersionsRequest{
+		Entries: []*pb.FileVersionRef{{JobId: "job-1", ObjectId: "obj-1"}},
+	})
+	require.NoError(t, err)
+
+	recs, _, err := store.ListEntries(t.Context(), catalogstore.ListEntriesFilter{})
+	require.NoError(t, err)
+	var left []string
+	for _, r := range recs {
+		left = append(left, r.StoreNode+"/"+r.ObjectID)
+	}
+	assert.ElementsMatch(t, []string{"bwfs-a.internal/obj-2", "bwfs-b.internal/obj-1"}, left,
+		"another node's entry with the same ids must be untouched")
+}
+
+func TestDeleteFileVersions_IsIdempotent(t *testing.T) {
+	srv, _ := newTestCatalogServer(t)
+	req := &pb.DeleteVersionsRequest{Entries: []*pb.FileVersionRef{{JobId: "job-1", ObjectId: "never-synced"}}}
+	ctx := fakeAuthContext(t, "bwfs-a.internal")
+
+	_, err := srv.DeleteFileVersions(ctx, req)
+	require.NoError(t, err)
+	_, err = srv.DeleteFileVersions(ctx, req)
+	require.NoError(t, err)
+}
+
+func TestDeleteFileVersions_NoPeerIdentityReturnsError(t *testing.T) {
+	srv, _ := newTestCatalogServer(t)
+	_, err := srv.DeleteFileVersions(context.Background(), &pb.DeleteVersionsRequest{
+		Entries: []*pb.FileVersionRef{{JobId: "j", ObjectId: "o"}},
+	})
+	require.Error(t, err)
 }

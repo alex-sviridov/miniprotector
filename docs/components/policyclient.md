@@ -89,6 +89,10 @@ additive convention as the RPC response. `agent` is the consumer that actually b
 (see [agent](./agent.md#policy-driven-backup-execution) for backup policies,
 [agent](./agent.md#storage-policy-supervision) for storage ones).
 
+A `"retention"`-typed policy carries its single rule as a `retention` object (`backup_type`,
+`path`, `include`, `keep_seconds`, `priority`), absent for every other type; `agent` is the consumer
+(see [agent](./agent.md#retention-matrix)), `policyclient` just passes it through.
+
 `disabled_at` is likewise carried through verbatim to `policies-cache.json` for every policy type --
 `policyclient` itself never interprets it; `agent` is what acts on it (see
 [agent](./agent.md#policy-driven-backup-execution)). A never-disabled policy's cache entry carries

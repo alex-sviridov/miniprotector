@@ -1,14 +1,15 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './helpers/test.js'
 import { seedRestoreCartCatalogData } from './helpers/policySeeding.js'
+import { drillInto } from './helpers/restoreUi.js'
 
 test.describe.configure({ mode: 'serial' })
 
-test('restore cart selection', async ({ page, context }) => {
+test('restore cart selection', async ({ page, context, trackPolicy }) => {
   await context.addInitScript(() => {
     localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
   })
 
-  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page)
+  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page, trackPolicy)
   const [firstFile, secondFile] = files
   const segments = dirPath.split('/').filter(Boolean) // ['var', 'lib', 'dbdata']
 
@@ -25,25 +26,9 @@ test('restore cart selection', async ({ page, context }) => {
   // user browsing the app. (Task 3's seeding helper uses page.goto() freely
   // for its own polling loops -- that's fine there, because it all happens
   // before any restore-cart selection exists to lose.)
-
-  async function goToCatalogHome(page) {
-    await page.getByRole('link', { name: 'Catalog' }).click()
-    await page.getByTestId('crumb-home').click()
-    // The catalog's directory tree has a synthetic root "/" folder row
-    // between Home and the first real path segment (parent_path="" returns
-    // {name: "/"} before e.g. "var" appears as its child) -- confirmed live
-    // against /api/v1/catalog/directories/children (see Task 3's
-    // policySeeding.js for the same fix applied to its own drill-down).
-    // Renders as "//" since the row template appends "/" to row.name.
-    await page.getByText('//', { exact: true }).click()
-  }
-
-  async function drillInto(page, pathSegments) {
-    await goToCatalogHome(page)
-    for (const segment of pathSegments) {
-      await page.getByText(`${segment}/`, { exact: true }).click()
-    }
-  }
+  //
+  // goToCatalogHome/drillInto live in ./helpers/restoreUi.js, shared with
+  // this file's second test and restore-verify.spec.js.
 
   await test.step('selecting a file checks it, highlights the sidebar, and lists it on /restore', async () => {
     await drillInto(page, segments)
@@ -111,4 +96,49 @@ test('restore cart selection', async ({ page, context }) => {
     await page.getByRole('link', { name: 'Restore' }).click()
     await expect(page.getByText('No files selected for restore yet.')).toBeVisible()
   })
+})
+
+test('picking an older version pins the cart entry to it instead of "Latest"', async ({ page, context, trackPolicy }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('mp_api_token', 'dev-placeholder-token-change-me')
+  })
+
+  // Two separate ad-hoc backup runs of the same fixture file, each its own
+  // FileVersionRecord row (storage/filesystem/models.go) regardless of
+  // content -- genuinely two distinct, pickable versions.
+  const { sourceHost, dirPath, files } = await seedRestoreCartCatalogData(page, trackPolicy)
+  await new Promise((resolve) => setTimeout(resolve, 1000)) // ensure a distinct store_created_at from the second run
+  await seedRestoreCartCatalogData(page, trackPolicy)
+  const [firstFile] = files
+  const filePath = `${dirPath}/${firstFile}`
+
+  const segments = dirPath.split('/').filter(Boolean)
+  await drillInto(page, segments)
+
+  await page.getByTestId(`captured-${sourceHost}:${filePath}`).click()
+  // VersionsModal renders as an overlay on top of CatalogView's own table
+  // (CatalogView.vue), which stays mounted (just visually covered) while
+  // the modal is open -- an unscoped `tbody tr` locator would also match
+  // that background table's rows, so scope to the modal itself.
+  const modal = page.getByTestId('versions-modal')
+  const rows = modal.locator('tbody tr')
+  // Not toHaveCount(2): /var/lib/dbdata is also targeted by the demo's own
+  // seeded hourly "database-backup" policy
+  // (demo/policy-server/policies/backup/database-backup.json), and this
+  // spec file's own preceding "restore cart selection" test seeds the same
+  // fixture once more -- so more than this test's own two versions can
+  // exist by the time this runs, on a demo stack that's been up a while.
+  // Newest-first sort (catalog.js's fetchPathVersions) still guarantees
+  // index 0 is this test's second (newest) seed and index 1 is its first,
+  // regardless of how many older rows also exist -- nothing else can land
+  // between two calls 1s apart in serial mode.
+  const olderRow = rows.nth(1) // newest-first, so index 1 is the older of this test's own two seeded versions
+  await expect(olderRow).toBeVisible()
+  const olderTimestampText = await olderRow.locator('td').first().innerText()
+  await olderRow.getByRole('button', { name: 'Restore this version' }).click()
+
+  await page.getByRole('link', { name: 'Restore' }).click()
+  const capturedCell = page.getByTestId(`captured-${sourceHost}:${filePath}`)
+  await expect(capturedCell).not.toHaveText('Latest')
+  await expect(capturedCell).toHaveText(olderTimestampText)
 })

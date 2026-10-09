@@ -9,6 +9,8 @@ rather than by `catalogsync` — see [ListEntries](#listentries) below.
 ```protobuf
 service CatalogService {
   rpc SyncFileVersions(SyncRequest) returns (SyncResponse);
+  rpc DeleteFileVersions(DeleteVersionsRequest) returns (DeleteVersionsResponse);
+  rpc ReportDamagedFiles(stream DamagedFilesChunk) returns (ReportDamagedFilesResponse);
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
   rpc ListClientFacets(ListFacetsRequest) returns (ListFacetsResponse);
   rpc ListJobFacets(ListFacetsRequest) returns (ListFacetsResponse);
@@ -33,6 +35,7 @@ message FileVersionEntry {
   int64  ctime      = 4;
   int64  store_seq  = 5; // bwfs's local file_versions.seq — informational only
   int64  created_at = 6; // unix seconds; bwfs's original recording time
+  int64  expire_at  = 7; // unix seconds; 0 = no expiry recorded / never expires
 }
 
 message SyncRequest {
@@ -41,6 +44,81 @@ message SyncRequest {
 
 message SyncResponse {} // empty ack
 ```
+
+`expire_at` is the per-file retention expiry `brfs` stamped at backup time (see
+[Backup Protocol](backup.md#retention-expiry-expire_at)). `catalogsync` forwards it from
+`file_versions.expire_at` (NULL becomes `0`) and `catalog` stores `0` as NULL again, so the
+catalog can show it. The catalog does not expire anything itself: when `bwfs` deletes a version
+(see below) it tells the catalog, so the two never disagree.
+
+## DeleteFileVersions
+
+`catalogsync` → `catalog`, role `store` (like `SyncFileVersions`). Tells the catalog which file
+versions `bwfs` has deleted — expired by its scheduled cleanup, or purged with a failed backup job —
+so the web UI never offers a version that no longer exists.
+
+```protobuf
+message FileVersionRef {
+  string job_id    = 1;
+  string object_id = 2;
+}
+
+message DeleteVersionsRequest {
+  repeated FileVersionRef entries = 1;
+}
+
+message DeleteVersionsResponse {} // empty ack
+```
+
+As with `SyncFileVersions`, the sending node is the CA-verified mTLS peer, never a request field:
+`catalog` deletes only entries stored under that peer's own `store_node`, so one node can never
+delete another's entries even when `job_id`/`object_id` collide. The call is idempotent — an entry
+the catalog never had (the version was deleted before `catalogsync` replicated it) or has already
+dropped is simply not counted — which is what makes `catalogsync`'s at-least-once retries safe. One
+unary call per batch, all-or-nothing, like `SyncFileVersions`. Directory rows
+(`catalog_directories`) are not pruned: a directory whose last file was deleted may remain listed.
+
+## ReportDamagedFiles
+
+`catalogsync` → `catalog`, role `store` (like `SyncFileVersions`). Replicates which file ids `bwfs`
+currently considers damaged (a `FileDataRecord` flagged `damaged_at` with no healthy copy), so the
+web UI can warn that restoring them will fail. A client stream:
+
+```protobuf
+message DamagedFilesChunk {
+  repeated string object_ids = 1; // bwfs file_id == catalog object_id
+}
+
+message ReportDamagedFilesResponse {} // empty ack, sent only after the set was replaced
+```
+
+- **A snapshot, not an event log.** The whole stream is the sending node's *complete* current
+  damaged set. On a clean end of stream `catalog` replaces that node's rows in
+  `catalog_damaged_files` with it in one transaction (delete the node's rows, insert the ids in
+  batches; duplicates are stored once). **Absent means healthy**: a heal (healthy re-upload) or
+  vacuum on `bwfs` simply drops the id from the next snapshot, and an empty stream clears the node.
+  A damaged flag is an UPDATE on an old `bwfs` row, which the seq cursors behind
+  `SyncFileVersions`/`DeleteFileVersions` never see — so this is a periodic full send, not a cursor.
+- **All or nothing.** `catalog` reads the whole stream before touching the database. A stream that
+  breaks off (client cancelled, connection lost, any `Recv` error other than end of stream) is a
+  partial set: nothing changes and the error is returned, so `catalogsync` retries. The ids are
+  held in memory until the end of stream (damage is rare, the set small), so the single catalog
+  writer is held only for the replace itself.
+- **Per node.** The node is the CA-verified mTLS peer, never a field (see [Identity](#identity)), so
+  a node replaces only its own set.
+- Rows are matched to versions by `(store_node, object_id)` only, with no foreign key: damage
+  reported before `catalogsync` replicated the version row still shows once the row arrives (see
+  `Entry.damaged` under [ListEntries](#listentries)).
+
+**Client behaviour.** `catalogsync` runs this as a third pass after the versions and deletions
+passes, at most once every `CatalogSyncDamageIntervalSec` (default 60). It pages
+`ReplicaReader.DamagedFileIDs` and sends one chunk per `CatalogSyncBatchSize` ids over a single
+stream, then `CloseAndRecv`. It keeps no cursor. It skips the send only when the set is empty and
+its previous successful send in this process was empty too, so the first pass after a restart always
+sends and clears any stale rows. A store read that fails mid-stream aborts the stream (the catalog
+keeps its old set) instead of closing it cleanly. Any failure (read, `Send`, `CloseAndRecv`) counts
+as not sent: the damage pass retries with its own exponential backoff, and versions and deletions
+keep replicating on schedule. See [catalogsync](../components/catalogsync.md#damaged-files).
 
 ## Identity
 
@@ -67,6 +145,15 @@ but a path may have been recorded by a Windows-origin `bwfs` node. A root-level 
 `parent_directory` is `/` (or `C:\` on Windows), never empty — empty is reserved to mean an
 undecoded/failed entry, consistent with `source_host`'s existing convention. A metadata decode
 failure leaves both fields empty for that entry rather than failing the whole batch.
+
+## Authorization
+
+`SyncFileVersions`, `DeleteFileVersions` and `ReportDamagedFiles` require the caller's operating
+certificate to carry the `store` role —
+`catalogsync` always runs on the same host as the `bwfs` node it replicates from, enrolled with
+`authz-role=store`. `ListEntries`/`ListClientFacets`/`ListJobFacets`/`ListDirectoryFacets`/
+`ListStoreFacets`/`ListDirectoryChildren` require `control-plane` (`api-server`'s role). See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
 
 ## ListEntries
 
@@ -112,6 +199,7 @@ message Entry {
   string source_host = 14; // the real originating (backed-up) host, derived from Metadata at sync time
   string parent_directory = 15; // the file's exact immediate containing directory, derived from Metadata at sync time
   string short_filename   = 16; // the file's bare name, derived from Metadata at sync time; display only, not a filter
+  bool   damaged          = 17; // the store node last reported this object_id as damaged: restoring it will fail
 }
 ```
 
@@ -129,6 +217,12 @@ message Entry {
   opaque `metadata` blob `SyncFileVersions` stores verbatim — `ListEntries` is the first RPC to
   interpret that blob's contents rather than just persisting it (`source_host` is decoded once,
   at sync time, not on every `ListEntries` call — see [Identity](#identity)).
+- `damaged` — `true` when `catalog_damaged_files` has a row for this entry's
+  `(store_host, object_id)`, i.e. the node's last [ReportDamagedFiles](#reportdamagedfiles)
+  snapshot named this file id. One damaged file id marks every version (every `job_id`) of it on
+  that node, and nothing on other nodes. Computed per row in the same query as the page (a
+  correlated `EXISTS` on the table's primary key, no N+1). It is a warning, not a restore gate, and
+  may be up to one `catalogsync` damage interval stale. Not a filter.
 - `parent_directories` — OR-matched against `parent_directory`, an exact match against a file's
   *immediate* containing directory only (not a recursive subtree/prefix match); empty applies no
   filter, additive to every other active filter.
@@ -225,7 +319,9 @@ message ListDirectoryChildrenResponse {
 ## See Also
 
 - [catalog](../components/catalog.md)
-- [catalogsync](../components/catalogsync.md)
+- [catalogsync](../components/catalogsync.md) — calls `SyncFileVersions`, `DeleteFileVersions` and
+  `ReportDamagedFiles`
+- [Design: catalog damage replication](../superpowers/specs/2026-10-08-catalog-damage-replication-design.md)
 - [api-server](../components/api-server.md) — calls `ListEntries`, the only intended caller today
 - [REST API v1](../api/rest-v1.md) — `GET /api/v1/catalog` (`ListEntries`), `GET /api/v1/catalog/clients`
   (`ListClientFacets`), `GET /api/v1/catalog/jobs` (`ListJobFacets`), `GET /api/v1/catalog/directories`

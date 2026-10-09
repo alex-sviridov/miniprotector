@@ -11,6 +11,6 @@ export function groupEntriesByFile(entries) {
 
   return Array.from(groups.values()).map((group) => {
     const versions = [...group.versions].sort((a, b) => b.store_created_at - a.store_created_at)
-    return { sourceHost: group.sourceHost, path: group.path, versions, representative: versions[0] }
+    return { sourceHost: group.sourceHost, path: group.path, versions, representative: versions[0], damaged: versions[0].damaged === true }
   })
 }

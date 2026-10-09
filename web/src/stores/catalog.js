@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { apiFetch } from '../api/client'
 import { withRequest } from './helpers'
+import { splitPath } from '../utils/pathSplit'
 
 const MAX_PAGE_LIMIT = 500
 const DEFAULT_RANGE_SECONDS = 7 * 24 * 60 * 60
@@ -139,6 +140,22 @@ export const useCatalogStore = defineStore('catalog', {
         },
         { rethrow: false, loadingKey: 'directoryChildrenLoading', errorKey: 'directoryChildrenError' }
       )
+    },
+    // fetchPathVersions returns every captured version of exactly one path
+    // (a file's or a folder's own row -- both are FileVersionRecord rows
+    // server-side, see storage/filesystem/models.go), newest first.
+    // Deliberately ignores the active date-range filter: the whole point is
+    // to let a user reach further back than what's currently browsed.
+    async fetchPathVersions(path, sourceHost) {
+      const { parentPath } = splitPath(path)
+      const params = new URLSearchParams()
+      params.set('parent_directories', parentPath)
+      params.set('limit', String(MAX_PAGE_LIMIT))
+      if (sourceHost) params.set('source_hosts', sourceHost)
+      const body = await apiFetch(`/catalog?${params.toString()}`)
+      return body.data
+        .filter((e) => e.path === path)
+        .sort((a, b) => b.store_created_at - a.store_created_at)
     },
     // refresh re-fetches whatever the current view needs: a pattern
     // search is a flat, cross-directory mode (no folder rows, entries

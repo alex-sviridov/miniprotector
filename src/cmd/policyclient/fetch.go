@@ -64,6 +64,18 @@ type RestoreRule struct {
 	NotAfter  int64  `json:"not_after,omitempty"`
 }
 
+// RetentionRule is a "retention" policy's single rule, in policy-server's
+// own proto shape (api/policyserver.proto's RetentionRule). Priority is
+// server-assigned; agent sorts by it when resolving a job's retention
+// matrix.
+type RetentionRule struct {
+	BackupType  string   `json:"backup_type"`
+	Path        string   `json:"path"`
+	Include     []string `json:"include,omitempty"`
+	KeepSeconds int64    `json:"keep_seconds"`
+	Priority    int32    `json:"priority"`
+}
+
 // CachedPolicy is the on-disk representation of one policy-server Policy --
 // the same fields the GetPolicies RPC response already defines, converted
 // directly from the protobuf message.
@@ -85,6 +97,17 @@ type CachedPolicy struct {
 	Rules     []RestoreRule `json:"rules,omitempty"`
 	Mode      string        `json:"mode,omitempty"`
 	Overwrite bool          `json:"overwrite,omitempty"`
+	// "restore" policy only, empty for every other type. Generated once by
+	// policy-server at CreatePolicy time and consumed verbatim by agent
+	// (cmd/agent/backup.go's cachedPolicy.JobID, cmd/agent/restore.go's
+	// restoreTasks) as the dispatched rwfs exec's --job-id -- the
+	// mechanism that correlates a restore/verify policy's whole lifecycle
+	// (created -> executed -> deleted) under one Loki job_id. Without this
+	// field, agent always sees an empty JobID and rwfs falls back to
+	// generating its own random one, breaking that correlation entirely.
+	JobID string `json:"job_id,omitempty"`
+	// "retention" policy only, nil for every other type.
+	Retention *RetentionRule `json:"retention,omitempty"`
 	// Derived by policy-server from the subfolder the policy file was
 	// loaded from (e.g. "backup"). Pure passthrough here -- policyclient
 	// itself never branches on it; agent does (see
@@ -215,6 +238,16 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 				NotAfter:  r.GetNotAfter(),
 			})
 		}
+		var retentionRule *RetentionRule
+		if r := p.GetRetention(); r != nil {
+			retentionRule = &RetentionRule{
+				BackupType:  r.GetBackupType(),
+				Path:        r.GetPath(),
+				Include:     r.GetInclude(),
+				KeepSeconds: r.GetKeepSeconds(),
+				Priority:    r.GetPriority(),
+			}
+		}
 		out = append(out, CachedPolicy{
 			ID:            p.GetId(),
 			Name:          p.GetName(),
@@ -229,6 +262,8 @@ func toCachedPolicies(policies []*pb.Policy) []CachedPolicy {
 			Rules:         rules,
 			Mode:          p.GetMode(),
 			Overwrite:     p.GetOverwrite(),
+			JobID:         p.GetJobId(),
+			Retention:     retentionRule,
 			Type:          p.GetType(),
 			DisabledAt:    disabledAtFromProto(p.GetDisabledAt()),
 		})

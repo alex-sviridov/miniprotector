@@ -63,10 +63,10 @@ func main() {
 	}
 	defer store.Close()
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", args.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = logging.WithDebugMode(ctx, args.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -91,7 +91,7 @@ func main() {
 	}
 
 	logger.Info("minting own server identity", "hostname", args.Hostname)
-	if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign, conf.IssuerSelfCertTTLSec); err != nil {
+	if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign); err != nil {
 		logger.Error("failed to mint own server identity", "error", err)
 		os.Exit(1)
 	}
@@ -110,7 +110,7 @@ func main() {
 			case <-signalCtx.Done():
 				return
 			case <-ticker.C:
-				if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign, conf.IssuerSelfCertTTLSec); err != nil {
+				if err := mintSelfIdentity(args.Hostname, certsDir, args.RootFile, selfMintSign); err != nil {
 					logger.Error("self-identity refresh failed, keeping existing certificate", "error", err)
 				}
 			}
@@ -125,7 +125,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := connection.StartServerWithCredentials(signalCtx, logger, conf.IssuerPort, creds, func(s *grpc.Server) {
+	if err := connection.StartServerWithCredentials(signalCtx, logger, conf.IssuerPort, creds, nil, func(s *grpc.Server) {
 		pb.RegisterIssuerServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("serve failed", "error", err)

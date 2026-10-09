@@ -33,6 +33,19 @@ func slugify(name string) string {
 	return strings.Trim(slug, "-")
 }
 
+// restorePolicyJobID builds the stable job_id for a restore policy's whole
+// lifecycle -- generated once, here, at CreatePolicy time. Prefix
+// determines the job's "kind" everywhere downstream (agent, api-server's
+// kindFromJobID): "restore:" for mode=="restore" (rwfs restore), "verify:"
+// for every other mode (rwfs verify) -- mirrors the prefix convention
+// cmd/agent/restore.go's restoreTaskID already uses for the task id.
+func restorePolicyJobID(name, mode string, now time.Time) string {
+	if mode == "restore" {
+		return fmt.Sprintf("restore:%s:%d", name, now.UnixNano())
+	}
+	return fmt.Sprintf("verify:%s:%d", name, now.UnixNano())
+}
+
 // uniqueFilename returns a filename in dir based on slug that doesn't
 // already exist: "<slug>.json" if free, otherwise "<slug>-2.json",
 // "<slug>-3.json", etc.
@@ -121,6 +134,39 @@ func restoreFieldsSet(rules []*pb.RestoreRule) bool {
 	return len(rules) > 0
 }
 
+// retentionFieldsSet reports whether the retention-only field is set --
+// used to reject a request mixing it into a non-retention policy.
+func retentionFieldsSet(r *pb.RetentionRule) bool {
+	return r != nil
+}
+
+// fromProtoRetention converts a request's retention rule to a
+// RetentionPolicy's own fields. The rule's priority is deliberately not
+// carried: it is always server-managed (see nextRetentionPriority and
+// UpdatePolicy), so whatever the caller sent is ignored.
+func fromProtoRetention(base PolicyBase, r *pb.RetentionRule) *RetentionPolicy {
+	return &RetentionPolicy{
+		PolicyBase:  base,
+		BackupType:  r.GetBackupType(),
+		PathPrefix:  r.GetPath(),
+		Include:     r.GetInclude(),
+		KeepSeconds: r.GetKeepSeconds(),
+	}
+}
+
+// nextRetentionPriority returns the priority a newly created retention
+// policy gets: one past the highest existing retention priority, so a new
+// rule is always evaluated last.
+func nextRetentionPriority(policies []Policy) int {
+	highest := 0
+	for _, p := range policies {
+		if rp, ok := p.(*RetentionPolicy); ok && rp.Priority > highest {
+			highest = rp.Priority
+		}
+	}
+	return highest + 1
+}
+
 // policyFieldsGetter is the subset of pb.CreatePolicyRequest/
 // pb.UpdatePolicyRequest that buildPolicy needs to construct a concrete
 // Policy -- both proto messages implement it with identical getters, so one
@@ -132,6 +178,7 @@ type policyFieldsGetter interface {
 	GetStoragePolicyId() string
 	GetPort() int32
 	GetConfig() string
+	GetRetention() *pb.RetentionRule
 }
 
 // buildPolicy constructs the concrete "backup" or "storage" Policy kind
@@ -149,6 +196,9 @@ func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, 
 		if storageFieldsSet(req.GetPort(), req.GetConfig()) {
 			return nil, fmt.Errorf("a backup policy must not set port/config")
 		}
+		if retentionFieldsSet(req.GetRetention()) {
+			return nil, fmt.Errorf("a backup policy must not set retention")
+		}
 		return &BackupPolicy{
 			PolicyBase:      base,
 			ObjectFilters:   fromProtoObjectFilters(req.GetObjectFilters()),
@@ -160,11 +210,22 @@ func buildPolicy(kind string, base PolicyBase, req policyFieldsGetter) (Policy, 
 		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetStoragePolicyId()) {
 			return nil, fmt.Errorf("a storage policy must not set object_filters/rpo/backup_window/storage_policy_id")
 		}
+		if retentionFieldsSet(req.GetRetention()) {
+			return nil, fmt.Errorf("a storage policy must not set retention")
+		}
 		return &StoragePolicy{
 			PolicyBase: base,
 			Port:       int(req.GetPort()),
 			Config:     json.RawMessage(req.GetConfig()),
 		}, nil
+	case "retention":
+		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), req.GetStoragePolicyId()) || storageFieldsSet(req.GetPort(), req.GetConfig()) {
+			return nil, fmt.Errorf("a retention policy must not set object_filters/rpo/backup_window/storage_policy_id/port/config")
+		}
+		if !retentionFieldsSet(req.GetRetention()) {
+			return nil, fmt.Errorf("a retention policy requires retention")
+		}
+		return fromProtoRetention(base, req.GetRetention()), nil
 	default:
 		return nil, fmt.Errorf("unknown policy type %q", kind)
 	}
@@ -192,6 +253,9 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 		if backupFieldsSet(req.GetObjectFilters(), req.GetRpo(), req.GetBackupWindow(), "") || storageFieldsSet(req.GetPort(), req.GetConfig()) {
 			return nil, fmt.Errorf("a restore policy must not set object_filters/rpo/backup_window/port/config")
 		}
+		if retentionFieldsSet(req.GetRetention()) {
+			return nil, fmt.Errorf("a restore policy must not set retention")
+		}
 		rules := make([]RestoreRule, len(req.GetRules()))
 		for i, r := range req.GetRules() {
 			// Every field of pb.RestoreRule must be carried here: this is
@@ -214,6 +278,7 @@ func buildPolicyForCreate(req *pb.CreatePolicyRequest, now time.Time) (Policy, e
 			Rules:           rules,
 			Mode:            req.GetMode(),
 			Overwrite:       req.GetOverwrite(),
+			JobID:           restorePolicyJobID(req.GetName(), req.GetMode(), now),
 		}, nil
 	}
 	// A non-restore request setting rules is rejected here, once, for every
@@ -233,7 +298,7 @@ func buildPolicyForUpdate(req *pb.UpdatePolicyRequest, kind string, existingMeta
 	if kind == "restore" {
 		return nil, fmt.Errorf("restore policies cannot be updated")
 	}
-	if kind != "backup" && kind != "storage" {
+	if kind != "backup" && kind != "storage" && kind != "retention" {
 		return nil, fmt.Errorf("existing policy has unknown type %q", kind)
 	}
 	base := PolicyBase{
@@ -263,6 +328,9 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 	if err != nil {
 		s.logger.Error("CreatePolicy: validation failed", "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if rp, ok := p.(*RetentionPolicy); ok {
+		rp.Priority = nextRetentionPriority(s.cache.Policies())
 	}
 	if err := p.Validate(); err != nil {
 		s.logger.Error("CreatePolicy: validation failed", "error", err)
@@ -312,6 +380,10 @@ func (s *policyServerServer) CreatePolicy(ctx context.Context, req *pb.CreatePol
 		return nil, status.Error(codes.Internal, "policy not found in cache after create")
 	}
 	s.logger.Info("CreatePolicy", "id", created.Meta().ID, "name", created.Meta().Name, "path", filePath)
+	if rp, ok := created.(*RestorePolicy); ok {
+		s.logger.Info("restore policy created, waiting for client to connect",
+			"policy", rp.Meta().ID, "job_id", rp.JobID, "event", "created")
+	}
 	pp := created.ToProto(true)
 	attachDestination(ctx, pp, s.cache, s.checkins, s.logger)
 	return pp, nil
@@ -335,6 +407,10 @@ func (s *policyServerServer) UpdatePolicy(ctx context.Context, req *pb.UpdatePol
 	if err != nil {
 		s.logger.Error("UpdatePolicy: validation failed", "id", req.GetId(), "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if rp, ok := p.(*RetentionPolicy); ok {
+		// Position is only ever changed by ReorderRetentionPolicies.
+		rp.Priority = existing.(*RetentionPolicy).Priority
 	}
 	if err := p.Validate(); err != nil {
 		s.logger.Error("UpdatePolicy: validation failed", "id", req.GetId(), "error", err)

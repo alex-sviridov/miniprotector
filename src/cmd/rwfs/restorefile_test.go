@@ -2,16 +2,23 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"lukechampine.com/blake3"
 )
@@ -102,7 +109,7 @@ func TestWriteRestoreFile_WritesFileContent(t *testing.T) {
 	client := dialRestoreClient(t, &realRestoreServer{store: store})
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -122,7 +129,7 @@ func TestWriteRestoreFile_SkipsWhenExistsAndNotOverwrite(t *testing.T) {
 	destPath := t.TempDir() + "/a.txt"
 	require.NoError(t, os.WriteFile(destPath, []byte("original"), 0o644))
 
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "does-not-matter", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
@@ -146,7 +153,7 @@ func TestWriteRestoreFile_OverwritesWhenExistsAndOverwriteTrue(t *testing.T) {
 	destPath := t.TempDir() + "/a.txt"
 	require.NoError(t, os.WriteFile(destPath, []byte("stale content, longer than the replacement"), 0o644))
 
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, true)
 
@@ -165,41 +172,48 @@ func TestWriteRestoreFile_DirectoryAtDestinationIsHardError(t *testing.T) {
 	destPath := t.TempDir() + "/a-directory"
 	require.NoError(t, os.Mkdir(destPath, 0o755))
 
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "does-not-matter", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
 	require.Error(t, result.Err)
 	assert.Contains(t, result.Err.Error(), "directory")
 	assert.Empty(t, restoreSrv.Requested(), "RestoreFile must never be called when the destination is a directory")
+	assert.False(t, result.Retryable)
 }
 
 func TestWriteRestoreFile_BlakeMismatchAbortsAndRemovesPartialFile(t *testing.T) {
 	client := dialRestoreClient(t, &hashMismatchRestoreServer{})
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
 	require.Error(t, result.Err)
 	assert.Contains(t, result.Err.Error(), "blake3_mismatch")
+	assert.False(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a BLAKE3 mismatch must remove the partial file")
+	entries, _ := os.ReadDir(filepath.Dir(destPath))
+	assert.Empty(t, entries, "no temp file may remain")
 }
 
 func TestWriteRestoreFile_CRCMismatchAbortsAndRemovesPartialFile(t *testing.T) {
 	client := dialRestoreClient(t, &crcMismatchRestoreServer{})
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
 	require.Error(t, result.Err)
 	assert.Contains(t, result.Err.Error(), "crc_mismatch")
+	assert.False(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a CRC32 mismatch must remove the partial file")
+	entries, _ := os.ReadDir(filepath.Dir(destPath))
+	assert.Empty(t, entries, "no temp file may remain")
 }
 
 func TestWriteRestoreFile_StreamErrorReturnsErrorAndCreatesNoFile(t *testing.T) {
@@ -207,11 +221,12 @@ func TestWriteRestoreFile_StreamErrorReturnsErrorAndCreatesNoFile(t *testing.T) 
 	client := dialRestoreClient(t, restoreSrv)
 
 	destPath := t.TempDir() + "/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
 	require.Error(t, result.Err)
+	assert.True(t, result.Retryable)
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "a stream error before any chunk arrives must never create a file")
 }
@@ -225,11 +240,124 @@ func TestWriteRestoreFile_MissingParentDirectoryIsHardError(t *testing.T) {
 	client := dialRestoreClient(t, &realRestoreServer{store: store})
 
 	destPath := t.TempDir() + "/missing-parent/a.txt"
-	result := writeRestoreFile(context.Background(), client, restoreFile{
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
 		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
 	}, false)
 
 	require.Error(t, result.Err)
+	assert.False(t, result.Retryable)
+}
+
+// flakyRestoreServer fails RestoreFile with a stream-level error the
+// first failuresBeforeSuccess calls, then delegates to wrapped -- proving
+// writeRestoreFileWithRetry actually recovers a transient failure rather
+// than merely detecting one.
+type flakyRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	mu                    sync.Mutex
+	calls                 int
+	failuresBeforeSuccess int
+	wrapped               pb.RestoreServiceServer
+}
+
+func (s *flakyRestoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	s.mu.Lock()
+	s.calls++
+	shouldFail := s.calls <= s.failuresBeforeSuccess
+	s.mu.Unlock()
+	if shouldFail {
+		return status.Error(codes.Unavailable, "simulated transient failure")
+	}
+	return s.wrapped.RestoreFile(req, stream)
+}
+
+func (s *flakyRestoreServer) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestWriteRestoreFileWithRetry_RecoversAfterTransientFailures(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFile(t, store, "hosta", "/data/a.txt", "job1", 1000, []byte("recovered content"))
+
+	flakySrv := &flakyRestoreServer{failuresBeforeSuccess: 2, wrapped: &realRestoreServer{store: store}}
+	client := dialRestoreClient(t, flakySrv)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+	result := writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
+		FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+
+	require.NoError(t, result.Err)
+	assert.Equal(t, 3, flakySrv.Calls(), "must have failed twice then succeeded on the third attempt")
+	got, readErr := os.ReadFile(destPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "recovered content", string(got))
+}
+
+func TestWriteRestoreFileWithRetry_ExhaustsRetriesAndReturnsFinalError(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	restoreSrv := &recordingRestoreServer{} // always fails RestoreFile with codes.Unimplemented
+	client := dialRestoreClient(t, restoreSrv)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+	result := writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+
+	require.Error(t, result.Err)
+	assert.True(t, result.Retryable, "a stream error stays marked Retryable even once retries are exhausted")
+	assert.Len(t, restoreSrv.Requested(), 3, "must attempt exactly maxRetries times")
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestWriteRestoreFileWithRetry_CRCMismatchNeverRetries(t *testing.T) {
+	client := dialRestoreClient(t, &crcMismatchRestoreServer{})
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+
+	start := time.Now()
+	result := writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+	elapsed := time.Since(start)
+
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "crc_mismatch")
+	assert.False(t, result.Retryable)
+	assert.Less(t, elapsed, 200*time.Millisecond, "a CRC mismatch must fail on the first attempt with no backoff wait")
+}
+
+func TestWriteRestoreFileWithRetry_BacksOffBetweenAttempts(t *testing.T) {
+	restoreSrv := &recordingRestoreServer{}
+	client := dialRestoreClient(t, restoreSrv)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	destPath := t.TempDir() + "/a.txt"
+
+	start := time.Now()
+	writeRestoreFileWithRetryNow(context.Background(), logger, client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 3)
+	elapsed := time.Since(start)
+
+	if elapsed < 1300*time.Millisecond {
+		t.Fatalf("expected at least ~1.5s of backoff across 2 waits, took %v", elapsed)
+	}
 }
 
 // blake3Sum is a tiny local wrapper so crcMismatchRestoreServer above
@@ -238,4 +366,284 @@ func TestWriteRestoreFile_MissingParentDirectoryIsHardError(t *testing.T) {
 func blake3Sum(data []byte) []byte {
 	sum := blake3.Sum256(data)
 	return sum[:]
+}
+
+// writeRestoreFileNow runs writeRestoreFile and then a final checkpoint, so
+// tests that assert on the finished destination see the committed file.
+func writeRestoreFileNow(ctx context.Context, client pb.RestoreServiceClient, f restoreFile, overwrite bool) restoreFileResult {
+	q := newCommitQueue(commitLimits{Files: 1000, Bytes: 1 << 40}, defaultCommitHooks())
+	r := writeRestoreFile(ctx, client, f, overwrite, q)
+	if r.Err != nil {
+		q.Abort()
+		return r
+	}
+	if err := q.Flush(); err != nil {
+		r.Err = err
+	}
+	return r
+}
+
+func writeRestoreFileWithRetryNow(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int) restoreFileResult {
+	q := newCommitQueue(commitLimits{Files: 1000, Bytes: 1 << 40}, defaultCommitHooks())
+	r := writeRestoreFileWithRetry(ctx, logger, client, f, overwrite, maxRetries, q)
+	if r.Err != nil {
+		q.Abort()
+		return r
+	}
+	if err := q.Flush(); err != nil {
+		r.Err = err
+	}
+	return r
+}
+
+func TestWriteRestoreFile_FileAppearsOnlyAfterCommit(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFileChunks(t, store, "hosta", "/data/a.txt", "job1", 1000, [][]byte{[]byte("hello")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "a.txt")
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 40}, defaultCommitHooks())
+
+	r := writeRestoreFile(context.Background(), client, restoreFile{FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: dest}, false, q)
+	require.NoError(t, r.Err)
+
+	assert.NoFileExists(t, dest, "not visible before the checkpoint")
+	entries, _ := os.ReadDir(dir)
+	require.Len(t, entries, 1)
+	assert.True(t, isTempName(entries[0].Name()), entries[0].Name())
+
+	require.NoError(t, q.Flush())
+	got, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(got))
+	entries, _ = os.ReadDir(dir)
+	assert.Len(t, entries, 1, "temp file is gone after the rename")
+}
+
+func TestWriteRestoreFile_OverwriteKeepsOldContentUntilCommit(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFileChunks(t, store, "hosta", "/data/a.txt", "job1", 1000, [][]byte{[]byte("new content")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	dest := filepath.Join(t.TempDir(), "a.txt")
+	require.NoError(t, os.WriteFile(dest, []byte("old content"), 0o644))
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 40}, defaultCommitHooks())
+
+	r := writeRestoreFile(context.Background(), client, restoreFile{FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: dest}, true, q)
+	require.NoError(t, r.Err)
+	got, _ := os.ReadFile(dest)
+	assert.Equal(t, "old content", string(got), "old file untouched until the checkpoint")
+
+	require.NoError(t, q.Flush())
+	got, _ = os.ReadFile(dest)
+	assert.Equal(t, "new content", string(got))
+}
+
+func TestWriteRestoreFile_FailedOverwriteKeepsOldFileAndLeavesNoTemp(t *testing.T) {
+	client := dialRestoreClient(t, &hashMismatchRestoreServer{})
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "a.txt")
+	require.NoError(t, os.WriteFile(dest, []byte("precious"), 0o644))
+
+	r := writeRestoreFileNow(context.Background(), client, restoreFile{FileUUID: "x", Source: "h", Path: "/a.txt", DestPath: dest}, true)
+	require.Error(t, r.Err)
+
+	got, _ := os.ReadFile(dest)
+	assert.Equal(t, "precious", string(got))
+	entries, _ := os.ReadDir(dir)
+	assert.Len(t, entries, 1, "partial temp file removed")
+}
+
+func TestWriteRestoreFile_AbortedQueueRemovesTempAndFails(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	fileUUID := seedRestorableFileChunks(t, store, "hosta", "/data/a.txt", "job1", 1000, [][]byte{[]byte("hello")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	dir := t.TempDir()
+	q := newCommitQueue(commitLimits{Files: 100, Bytes: 1 << 40}, defaultCommitHooks())
+	q.Abort()
+
+	r := writeRestoreFile(context.Background(), client, restoreFile{FileUUID: fileUUID, Source: "hosta", Path: "/data/a.txt", DestPath: filepath.Join(dir, "a.txt")}, false, q)
+	require.Error(t, r.Err)
+	assert.False(t, r.Retryable, "an aborted run is not retried")
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries)
+}
+
+// damagedRestoreServer answers like bwfs does for damaged backup data: the
+// RestoreFile stream ends with codes.DataLoss. Without afterChunk it fails
+// before any event (a version already flagged damaged); with afterChunk it
+// first sends the meta and one valid chunk (a chunk found lost mid-stream),
+// so the client already has a temp file open when the failure arrives.
+// When healthy is set, only the file_uuids in damaged fail and every other
+// one is served by healthy, so one run can mix damaged and healthy files.
+type damagedRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	afterChunk bool
+	healthy    pb.RestoreServiceServer
+	damaged    map[string]bool
+
+	mu    sync.Mutex
+	calls int // RestoreFile calls answered with DataLoss
+}
+
+func (s *damagedRestoreServer) RestoreFile(req *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	if s.healthy != nil && !s.damaged[req.GetFileUuid()] {
+		return s.healthy.RestoreFile(req, stream)
+	}
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+
+	if s.afterChunk {
+		data := []byte("first chunk of a damaged file")
+		if err := stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Meta{Meta: &pb.RestoreFileMeta{
+			Size: int64(2 * len(data)), ChunkCount: 2, ExpectedChecksum: []byte{0, 0, 0, 0},
+		}}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Chunk{Chunk: &pb.RestoreChunk{
+			Index: 0, Hash: blake3Sum(data), Data: data,
+		}}}); err != nil {
+			return err
+		}
+	}
+	return status.Error(codes.DataLoss, "backup data damaged: chunk lost")
+}
+
+func (s *damagedRestoreServer) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// badChunkRestoreServer serves a one-chunk file whose chunk hash is wrong
+// on the first badCalls calls and right afterwards: a fault in transit,
+// which a retry can fix.
+type badChunkRestoreServer struct {
+	pb.UnimplementedRestoreServiceServer
+	data     []byte
+	checksum []byte // the file's real CRC32, as finalize stored it
+	badCalls int
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *badChunkRestoreServer) RestoreFile(_ *pb.RestoreRequest, stream pb.RestoreService_RestoreFileServer) error {
+	s.mu.Lock()
+	s.calls++
+	bad := s.calls <= s.badCalls
+	s.mu.Unlock()
+
+	hash := blake3Sum(s.data)
+	if bad {
+		hash = []byte{0x00}
+	}
+	if err := stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Meta{Meta: &pb.RestoreFileMeta{
+		Size: int64(len(s.data)), ChunkCount: 1, ExpectedChecksum: s.checksum,
+	}}}); err != nil {
+		return err
+	}
+	return stream.Send(&pb.RestoreEvent{Payload: &pb.RestoreEvent_Chunk{Chunk: &pb.RestoreChunk{
+		Index: 0, Hash: hash, Data: s.data, Eof: true,
+	}}})
+}
+
+func (s *badChunkRestoreServer) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestWriteRestoreFileWithRetry_DataLossIsFinalAndFlaggedDamaged(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		afterChunk bool
+	}{
+		{"before any event", false},
+		{"mid-stream after a chunk", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &damagedRestoreServer{afterChunk: tc.afterChunk}
+			client := dialRestoreClient(t, srv)
+			dir := t.TempDir()
+			destPath := filepath.Join(dir, "a.txt")
+
+			start := time.Now()
+			result := writeRestoreFileWithRetryNow(context.Background(), discardLogger(), client, restoreFile{
+				FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+			}, false, 3)
+			elapsed := time.Since(start)
+
+			require.Error(t, result.Err)
+			assert.True(t, result.Damaged)
+			assert.False(t, result.Retryable, "DataLoss means the data is gone; a retry cannot help")
+			assert.Equal(t, 1, srv.Calls(), "DataLoss must not be retried")
+			assert.Less(t, elapsed, 200*time.Millisecond, "no backoff wait for DataLoss")
+			entries, _ := os.ReadDir(dir)
+			assert.Empty(t, entries, "neither the destination nor a temp file may remain")
+		})
+	}
+}
+
+func TestWriteRestoreFile_StreamErrorOtherThanDataLossIsNotDamaged(t *testing.T) {
+	client := dialRestoreClient(t, &recordingRestoreServer{})
+	result := writeRestoreFileNow(context.Background(), client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: t.TempDir() + "/a.txt",
+	}, false)
+	require.Error(t, result.Err)
+	assert.False(t, result.Damaged)
+}
+
+func TestWriteRestoreFileWithRetry_Blake3MismatchRetriedOnceThenSucceeds(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	data := []byte("content damaged in transit once")
+	// --retries 1 configures no retry at all: the one retry for a hash
+	// mismatch does not depend on it.
+	srv := &badChunkRestoreServer{data: data, checksum: expectedCRC32(t, [][]byte{data}), badCalls: 1}
+	client := dialRestoreClient(t, srv)
+	destPath := t.TempDir() + "/a.txt"
+
+	result := writeRestoreFileWithRetryNow(context.Background(), discardLogger(), client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: destPath,
+	}, false, 1)
+
+	require.NoError(t, result.Err)
+	assert.Equal(t, 2, srv.Calls())
+	got, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}
+
+func TestWriteRestoreFileWithRetry_Blake3MismatchTwiceIsFinal(t *testing.T) {
+	original := retryBackoffInitial
+	retryBackoffInitial = time.Millisecond
+	t.Cleanup(func() { retryBackoffInitial = original })
+
+	data := []byte("content damaged in transit every time")
+	srv := &badChunkRestoreServer{data: data, checksum: expectedCRC32(t, [][]byte{data}), badCalls: 100}
+	client := dialRestoreClient(t, srv)
+	dir := t.TempDir()
+
+	result := writeRestoreFileWithRetryNow(context.Background(), discardLogger(), client, restoreFile{
+		FileUUID: "x", Source: "hosta", Path: "/data/a.txt", DestPath: filepath.Join(dir, "a.txt"),
+	}, false, 5)
+
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "blake3_mismatch")
+	assert.False(t, result.Damaged)
+	assert.Equal(t, 2, srv.Calls(), "a hash mismatch gets exactly one retry, whatever --retries allows")
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries)
 }

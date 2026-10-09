@@ -1,6 +1,7 @@
 # catalogsync
 
-Replicates a `bwfs` node's `file_versions` records to a central backup catalog, asynchronously
+Replicates a `bwfs` node's `file_versions` records (plus its deletions and its current set of
+damaged files) to a central backup catalog, asynchronously
 and independently of the `bwfs` server's own availability. `catalogsync` selects its `Sender` at
 startup based on configuration: if `catalog_host` is unset in `local.conf`, it uses
 `LoggingSender`, which logs each batch and always succeeds — an intentional no-op for deployments
@@ -39,6 +40,8 @@ host.
 
 ## How It Works
 
+Each replicated entry includes the row's `expire_at` (NULL sent as `0`).
+
 `catalogsync` polls `file_versions` for rows newer than its own local cursor, in batches, and
 hands each batch to a `Sender`:
 
@@ -67,14 +70,61 @@ not guarantee.
 
 **Note:** file versions replicate as soon as they're written, regardless of their parent job's
 `backup_jobs.status`. If a job later fails, `bwfs` purges its local `file_versions` rows for that
-job, but a batch already sent to the catalog may reference them — reconciling that is the
-catalog's responsibility, not `catalogsync`'s.
+job, but a batch already sent to the catalog may reference them — which is why every version `bwfs`
+deletes (failed-job purge or retention cleanup) is also written to its `file_version_deletions`
+log, replicated as described below.
+
+### Deletions
+
+After each versions pass, `catalogsync` also reads `file_version_deletions` rows newer than a
+second, independent cursor (`catalogsync-deletions.cursor`, next to `catalogsync.cursor`) and sends
+them with `Sender.SendDeletions` (`DeleteFileVersions` on the catalog, see the
+[Catalog Sync Protocol](../protocols/catalog-sync.md#deletefileversions)). The same discipline as
+versions applies: the cursor advances only after a successful send, and a failed send backs off and
+retries from the unadvanced cursor; deletes are idempotent at the catalog, so a resend is harmless.
+Deletions are sent only after the versions send of the same pass succeeded, so a deletion can never
+overtake a version whose send hasn't been acknowledged (a retried send could otherwise re-create an
+entry the catalog had just dropped). A backlog drains without sleeping, as for versions. `bwfs`
+prunes deletion-log rows older than `StoreDeletionLogRetentionSec` (30 days by default), which is how
+long `catalogsync` can be down without the catalog keeping versions `bwfs` already deleted.
+
+### Damaged files
+
+A third pass runs after the versions and deletions passes, at most once every
+`CatalogSyncDamageIntervalSec`. It sends the catalog the set of file ids `bwfs` currently considers
+damaged (`ReplicaReader.DamagedFileIDs`: flagged `damaged_at` with no healthy finalized copy, see
+[bwfs](bwfs.md#damaged-file-data)), so the web UI can warn that restoring them will fail. The pass
+reads the set in pages of `CatalogSyncBatchSize` ids and streams them as one
+`ReportDamagedFiles` call (`Sender.SendDamaged`; `LoggingSender` only logs the count). The catalog
+replaces this node's set with it (see the
+[Catalog Sync Protocol](../protocols/catalog-sync.md#reportdamagedfiles)).
+A catalog that answers `Unimplemented` (an older build without the RPC) is logged once at Info and then retried
+once per `CatalogSyncMaxBackoffSec`; it never affects version or deletion replication.
+
+- **Stateless.** The set is a full snapshot, not a log, so there is no cursor file: a heal or vacuum
+  on `bwfs` simply drops the id from the next snapshot, and the catalog clears it within one
+  interval.
+- **Skip rule.** The send is skipped only when the set is empty *and* the previous successful send
+  in this process was also empty. That flag is in memory, so the first pass after a restart always
+  sends, which clears rows a previous run may have left in the catalog. A failed send also clears
+  the flag, because the catalog may have applied the stream before the error reached
+  `catalogsync`, so the next empty set is sent again.
+- **Failures stay in this pass.** A failed store read or send is logged and retried with the pass's
+  own exponential backoff (from 1s, capped at `CatalogSyncMaxBackoffSec`). It never sleeps the loop
+  and never `continue`s it, so versions and deletions keep replicating on schedule. A failed send
+  does not count as a successful empty send, so the skip rule cannot hide a retry.
+- The pass can lag by up to one poll interval, because it only runs when the loop wakes up.
+- One `ConnectionTimeOutSec` deadline covers the whole `ReportDamagedFiles` stream, not each chunk.
+  That is enough for the set this pass expects, which is small because damage is rare.
 
 ## Configuration Keys
 
 - `CatalogSyncBatchSize` — max rows per poll/send batch *(default: 500)*
 - `CatalogSyncPollIntervalSec` — idle poll cadence in seconds *(default: 5)*
 - `CatalogSyncMaxBackoffSec` — cap for retry backoff in seconds when a send fails *(default: 60)*
+- `CatalogSyncDamageIntervalSec` — minimum seconds between two sends of the damaged file set
+  *(default: 60)*; must be an integer, and `0` or a negative value runs the damage pass on every
+  loop pass. Like the other `CatalogSync*` keys, no further range check is applied
 - `catalog_host` — hostname of the `catalog` service to send batches to; unset means `catalogsync`
   falls back to `LoggingSender`
 - `catalog_port` — port to dial on `catalog_host` *(default: 15723)*
@@ -87,7 +137,7 @@ make catalogsync
 
 ## See Also
 
-- [bwfs](./bwfs.md) — the component whose `file_versions` table this replicates
+- [bwfs](./bwfs.md) — the component whose `file_versions` table (and damaged file set) this replicates
 - [catalog](./catalog.md) — the service `catalogsync` replicates to
 - [agent](./agent.md#storage-policy-supervision) — starts and supervises this process for a "storage"-typed policy
 - [Catalog Sync Protocol](../protocols/catalog-sync.md)

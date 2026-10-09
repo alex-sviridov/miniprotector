@@ -5,13 +5,33 @@ import (
 	"hash/crc32"
 	"io"
 	"iter"
-	"os"
+	"sync"
 
+	chunkers "github.com/PlakarKorp/go-cdc-chunkers"
+	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/fastcdc"
 	"github.com/alex-sviridov/miniprotector/workload"
 	"lukechampine.com/blake3"
 )
 
-const ChunkSize = 64 * 1024 // 64KB
+// FastCDC content-defined chunking: boundaries follow the data, so inserting
+// or deleting bytes in a file only changes the chunks around the edit.
+// NormalChunkSize must be a power of two (library requirement).
+const (
+	MinChunkSize    = 16 * 1024
+	NormalChunkSize = 64 * 1024
+	MaxChunkSize    = 256 * 1024
+
+	// "fastcdc" alone is the library's legacy variant; the versioned name is the current one.
+	cdcAlgorithm = "fastcdc-v1.0.0"
+)
+
+// scanBufPool holds the chunker scan buffers (MaxChunkSize each). Without it
+// every file read would allocate 2×MaxSize. Buffers are returned when the
+// iterator ends; chunks are copied before being yielded so nothing aliases them.
+var scanBufPool = sync.Pool{New: func() any {
+	b := make([]byte, MaxChunkSize)
+	return &b
+}}
 
 type Chunk struct {
 	hash     []byte // blake3 hash for dedup
@@ -68,13 +88,12 @@ func (c Chunk) Size() int {
 	return len(c.data)
 }
 
-// ChunkIterator returns an iterator that reads the file in 64KB chunks,
-// yielding each chunk with its BLAKE3 hash and CRC32 checksum.
-// EOF is true on the last chunk. File must be locked before calling.
+// ChunkIterator returns an iterator that reads the file in content-defined chunks
+// of 16-256 KB, average 64 KB, yielding each chunk with its BLAKE3 hash and CRC32
+// checksum. EOF is true on the last chunk. File must be locked before calling.
 func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 	return func(yield func(workload.Chunk, error) bool) {
-
-		file, err := os.Open(fi.path)
+		file, err := openForRead(fi.path)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -88,51 +107,46 @@ func (fi FileInfo) ChunkIterator() iter.Seq2[workload.Chunk, error] {
 		}
 		fileSize := fileInfo.Size()
 
+		bufp := scanBufPool.Get().(*[]byte)
+		defer scanBufPool.Put(bufp)
+
+		chunker, err := chunkers.NewChunkerBuffer(cdcAlgorithm, file, &chunkers.ChunkerOpts{
+			MinSize:    MinChunkSize,
+			NormalSize: NormalChunkSize,
+			MaxSize:    MaxChunkSize,
+		}, *bufp)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+
 		position := int64(0)
 		for {
-			chunk, err := loadChunk(file, position, fileSize)
-			if err != nil {
-				if err != io.EOF {
-					yield(nil, err)
+			data, err := chunker.Next()
+			if err != nil && err != io.EOF {
+				yield(nil, err)
+				return
+			}
+			if len(data) > 0 {
+				// data aliases the chunker's scan buffer and is overwritten by the
+				// next call; chunks outlive that (they sit in the send window).
+				owned := make([]byte, len(data))
+				copy(owned, data)
+				eof := err == io.EOF || position+int64(len(owned)) >= fileSize
+				chunk := NewChunk(nil, position, eof, owned)
+				if !yield(*chunk, nil) {
+					return
 				}
+				position += int64(len(owned))
+				if eof {
+					return
+				}
+			}
+			if err == io.EOF {
 				return
 			}
-
-			if !yield(*chunk, nil) {
-				return
-			}
-
-			if chunk.eof {
-				return
-			}
-
-			position += int64(len(chunk.data))
 		}
 	}
-}
-
-func loadChunk(file *os.File, position int64, fileSize int64) (*Chunk, error) {
-	buffer := make([]byte, ChunkSize)
-	bytesRead, err := io.ReadFull(file, buffer)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-		return nil, err
-	}
-
-	if bytesRead == 0 {
-		return nil, io.EOF
-	}
-
-	data := buffer[:bytesRead]
-	hash32 := blake3.Sum256(data)
-	isEOF := position+int64(bytesRead) >= fileSize
-
-	return &Chunk{
-		hash:     hash32[:],
-		checksum: crc32.ChecksumIEEE(data),
-		index:    position,
-		data:     data,
-		eof:      isEOF,
-	}, nil
 }
 
 // Ensure Chunk implements workload.Chunk interface

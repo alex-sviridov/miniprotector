@@ -18,6 +18,9 @@ const (
 	defaultJobsLimit   = 100
 	maxJobsLimit       = 500
 	jobsQueryLineLimit = 5000
+
+	defaultJobLogsLimit = 500
+	maxJobLogsLimit     = 500
 )
 
 var validJobKinds = map[string]bool{
@@ -27,6 +30,11 @@ var validJobKinds = map[string]bool{
 	"policy-update":     true,
 	"verify":            true,
 	"restore":           true,
+	// bwfs's own scheduled store maintenance (cmd/bwfs/gc.go): one job per
+	// cleanup/vacuum run, logged by bwfs itself with the same start/finish
+	// events as every other job.
+	"cleanup": true,
+	"vacuum":  true,
 }
 
 // kindFromJobID derives a job's kind from its own id, per the prefix
@@ -49,10 +57,14 @@ func binariesForKind(kind string) string {
 	switch kind {
 	case "backup":
 		return "brfs|bwfs"
-	case "bootstrap-refresh", "operating-refresh", "policy-update", "verify", "restore":
+	case "verify", "restore":
+		return "agent|policy-server"
+	case "bootstrap-refresh", "operating-refresh", "policy-update":
 		return "agent"
+	case "cleanup", "vacuum":
+		return "bwfs"
 	default:
-		return "agent|brfs|bwfs"
+		return "agent|brfs|bwfs|policy-server"
 	}
 }
 
@@ -171,6 +183,20 @@ func (a *jobEventAccumulator) ApplyStart(e jobEventLine) jobDTO {
 	return *j
 }
 
+// ApplyCreated folds one event=created line in (policy-server's "restore
+// policy created, waiting for client to connect" log) -- like ApplyStart,
+// it seeds StartedAt/State, but unlike ApplyStart it never sets SourceHost:
+// the line's own hostname is policy-server's, not the node that will
+// eventually execute the restore, so attributing the job to it here would
+// be wrong. SourceHost for restore/verify comes from the finish line
+// instead -- see ApplyFinish.
+func (a *jobEventAccumulator) ApplyCreated(e jobEventLine) jobDTO {
+	j := a.get(e.JobID)
+	ts := e.Timestamp
+	j.StartedAt = &ts
+	return *j
+}
+
 // ApplyFinish folds one event=finish line in, returning the affected job's
 // current summary. For kind=backup, StoreHost comes from the finish
 // line's hostname (bwfs, the destination) -- every other kind leaves it
@@ -184,6 +210,9 @@ func (a *jobEventAccumulator) ApplyFinish(e jobEventLine) jobDTO {
 		host := e.Hostname
 		j.StoreHost = &host
 	}
+	if j.Kind == "restore" || j.Kind == "verify" {
+		j.SourceHost = e.Hostname
+	}
 	return *j
 }
 
@@ -195,12 +224,16 @@ func (a *jobEventAccumulator) All() []jobDTO {
 	return out
 }
 
-// pairJobEvents groups start/finish lines by job_id into one jobDTO each.
-// A job_id with only a start line is in_progress; one with only a finish
-// line (its start fell outside the queried window) gets a nil StartedAt --
-// never guessed.
-func pairJobEvents(starts, finishes []jobEventLine) []jobDTO {
+// pairJobEvents groups start/created/finish lines by job_id into one
+// jobDTO each. created and start are mutually exclusive per job kind
+// (restore/verify use created; every other kind uses start) so applying
+// both here is never a real conflict -- whichever is present for a given
+// job_id seeds StartedAt/State, and finish always applies last.
+func pairJobEvents(starts, finishes, createds []jobEventLine) []jobDTO {
 	acc := newJobEventAccumulator()
+	for _, e := range createds {
+		acc.ApplyCreated(e)
+	}
 	for _, e := range starts {
 		acc.ApplyStart(e)
 	}
@@ -252,7 +285,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	kind := q.Get("kind")
 	if kind != "" && !validJobKinds[kind] {
-		writeJSONError(w, http.StatusBadRequest, "kind must be one of backup, bootstrap-refresh, operating-refresh, policy-update, verify, restore")
+		writeJSONError(w, http.StatusBadRequest, "kind must be one of backup, bootstrap-refresh, operating-refresh, policy-update, verify, restore, cleanup, vacuum")
 		return
 	}
 	sourceHost := q.Get("source_host")
@@ -287,6 +320,11 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	// selector is a pure Loki-side performance narrowing, not required for
 	// correctness, so it only applies where it can't cause data loss.
 	finishLabelSelector := fmt.Sprintf(`{binary=~"%s"}`, binarySelector)
+	// created lines are policy-server's own -- never narrowed by
+	// source_host, same reasoning as finishLabelSelector: source_host names
+	// the eventual executing node, not policy-server, so narrowing by it
+	// here would silently exclude every created line.
+	createdLabelSelector := fmt.Sprintf(`{binary=~"%s"}`, binarySelector)
 
 	starts, startsTruncated, err := queryEvent(r.Context(), s.loki, startLabelSelector, "start", since, until)
 	if err != nil {
@@ -300,8 +338,14 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
 		return
 	}
+	createds, createdsTruncated, err := queryEvent(r.Context(), s.loki, createdLabelSelector, "created", since, until)
+	if err != nil {
+		s.logger.Error("handleListJobs: query created events failed", "error", err)
+		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
+		return
+	}
 
-	jobs := pairJobEvents(starts, finishes)
+	jobs := pairJobEvents(starts, finishes, createds)
 
 	filtered := make([]jobDTO, 0, len(jobs))
 	for _, j := range jobs {
@@ -321,7 +365,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		filtered = filtered[:limit]
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": filtered, "truncated": startsTruncated || finishesTruncated})
+	writeJSON(w, http.StatusOK, map[string]any{"data": filtered, "truncated": startsTruncated || finishesTruncated || createdsTruncated})
 }
 
 var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9:._-]+$`)
@@ -354,6 +398,35 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 		since = time.Unix(parsed, 0)
 	}
 
+	limit := defaultJobLogsLimit
+	if raw := q.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > maxJobLogsLimit {
+			writeJSONError(w, http.StatusBadRequest, "limit must be an integer between 1 and 500")
+			return
+		}
+		limit = parsed
+	}
+
+	if raw := q.Get("ending_before"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "ending_before must be a unix-nanosecond integer")
+			return
+		}
+		// ending_before is the timestamp of the oldest line already loaded on
+		// the client -- exclusive, so the next page stops strictly before it
+		// instead of re-returning that same line.
+		until = time.Unix(0, 0).Add(time.Duration(parsed - 1))
+	}
+
+	if !until.After(since) {
+		// Paged back past the window floor -- not an error, just nothing
+		// left to return.
+		writeJSON(w, http.StatusOK, map[string]any{"data": []logLineDTO{}, "has_more": false})
+		return
+	}
+
 	sourceHost := q.Get("source_host")
 	if sourceHost != "" && !jobHostnamePattern.MatchString(sourceHost) {
 		writeJSONError(w, http.StatusBadRequest, "source_host contains invalid characters")
@@ -369,18 +442,18 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	// start/finish pairing), so rwfs's lines are useful signal here even
 	// though handleListJobs excludes rwfs to avoid pairing noise (rwfs never
 	// emits event=start/event=finish).
-	labelSelector := `{binary=~"agent|brfs|bwfs|rwfs"}`
+	labelSelector := `{binary=~"agent|brfs|bwfs|rwfs|policy-server"}`
 	switch {
 	case sourceHost != "" && storeHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"%s|%s"}`, sourceHost, storeHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname=~"%s|%s"}`, sourceHost, storeHost)
 	case sourceHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, sourceHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname="%s"}`, sourceHost)
 	case storeHost != "":
-		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs", hostname="%s"}`, storeHost)
+		labelSelector = fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname="%s"}`, storeHost)
 	}
 
 	query := fmt.Sprintf(`%s | job_id="%s"`, labelSelector, jobID)
-	streams, err := s.loki.QueryRange(r.Context(), query, since, until, jobsQueryLineLimit)
+	streams, err := s.loki.QueryRange(r.Context(), query, since, until, limit)
 	if err != nil {
 		s.logger.Error("handleGetJobLogs: query failed", "error", err)
 		writeJSONError(w, http.StatusBadGateway, "query loki: "+err.Error())
@@ -400,5 +473,5 @@ func (s *server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(lines, func(i, k int) bool { return lines[i].Timestamp < lines[k].Timestamp })
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": lines})
+	writeJSON(w, http.StatusOK, map[string]any{"data": lines, "has_more": len(lines) >= limit})
 }

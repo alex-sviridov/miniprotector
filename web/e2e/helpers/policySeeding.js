@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { expect } from '@playwright/test'
+import { expect, AUTH_HEADERS } from './test.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const COMPOSE_FILE = path.resolve(__dirname, '../../../demo/docker-compose.yml')
@@ -19,7 +19,7 @@ const STORAGE_OPTION_LABEL = 'store (store:8080)'
 // without this it wouldn't be discovered for up to policyclient's default
 // 900s fetch interval. This is the one step with no UI/API surface, exactly
 // like src/e2e/lifecycle_test.go's own two CLI-only steps.
-export async function seedRestoreCartCatalogData(page) {
+export async function seedRestoreCartCatalogData(page, trackPolicy) {
   const policyName = `e2e-restore-cart-${Date.now()}`
 
   await page.goto('/policies')
@@ -41,6 +41,16 @@ export async function seedRestoreCartCatalogData(page) {
 
   await page.getByTestId('backup-policy-run-now').click()
   await page.waitForURL('**/jobs')
+
+  // The UI gives no way to read back the ad-hoc backup policy's id, so look
+  // it up by the name we just gave it and hand it to trackPolicy -- this is
+  // the same lookup-by-name-after-creation pattern used everywhere else in
+  // this suite that a submission's id isn't directly visible. The API returns
+  // ad-hoc policies with an "adhoc_" prefix prepended to the name we entered.
+  const policiesResp = await page.request.get('/api/v1/policies?type=backup', { headers: AUTH_HEADERS })
+  const { data: backupPolicies } = await policiesResp.json()
+  const backupPolicy = backupPolicies.find((p) => p.name === `adhoc_${policyName}`)
+  if (backupPolicy) trackPolicy(backupPolicy.id)
 
   // policyclient isn't on $PATH inside the container (only /app/policyclient
   // exists); docker compose exec's default cwd is the image's WORKDIR (/app),

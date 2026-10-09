@@ -65,6 +65,36 @@ type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
 
+// ctxKey is an unexported context key type so values set here can never
+// collide with another package's string-keyed context.WithValue call.
+type ctxKey int
+
+const (
+	appNameKey ctxKey = iota
+	debugModeKey
+	quietModeKey
+	jobIDKey
+)
+
+// WithAppName, WithDebugMode, WithQuietMode, and WithJobID attach the
+// values NewLogger reads back out. Every cmd/*/main.go calls these instead
+// of context.WithValue(ctx, "appName", ...) directly.
+func WithAppName(ctx context.Context, appName string) context.Context {
+	return context.WithValue(ctx, appNameKey, appName)
+}
+
+func WithDebugMode(ctx context.Context, debugMode bool) context.Context {
+	return context.WithValue(ctx, debugModeKey, debugMode)
+}
+
+func WithQuietMode(ctx context.Context, quietMode bool) context.Context {
+	return context.WithValue(ctx, quietModeKey, quietMode)
+}
+
+func WithJobID(ctx context.Context, jobID string) context.Context {
+	return context.WithValue(ctx, jobIDKey, jobID)
+}
+
 func getLevel(debugMode bool) slog.Level {
 	if debugMode {
 		return slog.LevelDebug
@@ -75,9 +105,9 @@ func getLevel(debugMode bool) slog.Level {
 func NewLogger(ctx context.Context) (*slog.Logger, io.Closer) {
 	conf := config.GetConfigFromContext(ctx)
 
-	level := getLevel(ctx.Value("debugMode").(bool))
-	quietMode := ctx.Value("quietMode").(bool)
-	appName := ctx.Value("appName").(string)
+	level := getLevel(ctx.Value(debugModeKey).(bool))
+	quietMode := ctx.Value(quietModeKey).(bool)
+	appName := ctx.Value(appNameKey).(string)
 
 	var logFile io.Closer = nopCloser{}
 	handler := &multiHandler{}
@@ -126,7 +156,7 @@ func NewLogger(ctx context.Context) (*slog.Logger, io.Closer) {
 		slog.Int("pid", os.Getpid()),
 	)
 
-	if jobId := ctx.Value("jobId"); jobId != nil {
+	if jobId := ctx.Value(jobIDKey); jobId != nil {
 		logger = logger.With(slog.String("job_id", jobId.(string)))
 	}
 

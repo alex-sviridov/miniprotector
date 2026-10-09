@@ -6,11 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"hash/crc32"
 	"log/slog"
 
-	"github.com/alex-sviridov/miniprotector/common/checksum"
 	"github.com/alex-sviridov/miniprotector/common/config"
 	"github.com/alex-sviridov/miniprotector/storage"
 	"github.com/alex-sviridov/miniprotector/workload/filesystem"
@@ -21,14 +19,15 @@ import (
 type RequestHandlerFunc func(context.Context, pb.BackupService_ProcessBackupStreamServer, *pb.FileRequest) error
 
 type streamHandler struct {
-	config             *config.Config
-	store              storage.BackupStore
-	logger             *slog.Logger
-	jobID              string
-	currentFile        *filesystem.FileInfo
-	fileChecksumHasher hash.Hash32 // incremental CRC32 over chunk checksums
-	EOF                bool
-	handlerMap         map[string]RequestHandlerFunc
+	config          *config.Config
+	store           storage.BackupStore
+	logger          *slog.Logger
+	jobID           string
+	currentFile     *filesystem.FileInfo
+	currentExpireAt int64       // client-computed expiry for currentFile, from FileInfo.expire_at
+	order           *chunkOrder // folds chunk CRCs into the file CRC32 in index order
+	EOF             bool
+	handlerMap      map[string]RequestHandlerFunc
 }
 
 func newStreamHandler(ctx context.Context, logger *slog.Logger, store storage.BackupStore, jobID string) *streamHandler {
@@ -47,7 +46,41 @@ func newStreamHandler(ctx context.Context, logger *slog.Logger, store storage.Ba
 	return handler
 }
 
+// guardedStream releases the store operation guard (see
+// storage.BackupStore.BeginBackupOp) at the first Send, or when the handler
+// call returns, whichever comes first. Every handler finishes its store work
+// before it replies, so the guard only needs to cover that part; holding it
+// across a Send would let one client that has stopped reading keep a
+// scheduled cleanup/vacuum batch waiting -- and a waiting exclusive lock
+// blocks every other stream's next message too.
+type guardedStream struct {
+	pb.BackupService_ProcessBackupStreamServer
+	end func()
+}
+
+func (g *guardedStream) release() {
+	if g.end != nil {
+		g.end()
+		g.end = nil
+	}
+}
+
+func (g *guardedStream) Send(m *pb.FileResponse) error {
+	g.release()
+	return g.BackupService_ProcessBackupStreamServer.Send(m)
+}
+
+// guarded takes the store operation guard for one handler call and wraps
+// server so the guard is dropped before any reply goes out. The caller must
+// defer the returned stream's release.
+func (h *streamHandler) guarded(server pb.BackupService_ProcessBackupStreamServer) *guardedStream {
+	return &guardedStream{BackupService_ProcessBackupStreamServer: server, end: h.store.BeginBackupOp()}
+}
+
 func (h *streamHandler) handleRequest(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer, request *pb.FileRequest) error {
+	guarded := h.guarded(server)
+	defer guarded.release()
+	server = guarded
 	requestType := fmt.Sprintf("%T", request.RequestType)
 	handler, ok := h.handlerMap[requestType]
 	if !ok {
@@ -67,7 +100,8 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 		return err
 	}
 	h.currentFile = fileInfo
-	h.fileChecksumHasher = crc32.NewIEEE()
+	h.currentExpireAt = fi.GetExpireAt()
+	h.order = newChunkOrder()
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 	fileLogger.Debug("Received file metadata", "file_info", fmt.Sprintf("%s", h.currentFile))
 
@@ -106,13 +140,14 @@ func (h *streamHandler) handleFileInfoRequest(ctx context.Context, server pb.Bac
 			fmt.Sprintf("%c", h.currentFile.GetType()),
 			h.currentFile.MetadataBlob(),
 			h.currentFile.Ctime(),
+			h.currentExpireAt,
 		); err != nil {
 			return fmt.Errorf("ensure file version: %w", err)
 		}
 		// Reset state before sending responses — fileWritten must not be called for skip-path
 		// files because no FileDataRecord was created and fileWritten would create a duplicate FileVersion.
 		fileID := fi.FileId
-		h.fileChecksumHasher = nil
+		h.order = nil
 		h.currentFile = nil
 		h.EOF = false
 		// brfs always calls getFileStatus after sendFileMetadata, so we must send both
@@ -162,9 +197,13 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 		}
 	} else {
 		needed = false
-		// Chunk already stored — feed its checksum into the running file hash.
+		// Chunk already stored — account for its checksum in the file hash.
 		// brfs sent the checksum alongside the hash so we don't need the data.
-		checksum.FeedChunk(h.fileChecksumHasher, chunk.Checksum)
+		// With a window it may arrive ahead of an earlier chunk whose data is
+		// still in flight; chunkOrder restores index order.
+		if err := h.order.add(chunk.Index, chunk.Size, chunk.Checksum, chunk.Eof); err != nil {
+			return err
+		}
 		// Must still link this chunk to the current file even though the data is
 		// already stored; without this the restore server can't find it later.
 		if err := h.store.LinkChunkToFileData(chunk.Hash, h.currentFile.ID(), chunk.Index); err != nil {
@@ -182,9 +221,7 @@ func (h *streamHandler) handleChunkHashRequest(ctx context.Context, server pb.Ba
 			},
 		},
 	}
-	if chunk.Eof && !needed {
-		h.EOF = true
-	}
+	h.EOF = h.order.done
 	return server.Send(response)
 }
 
@@ -202,7 +239,9 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 		return err
 	}
 	// Compute CRC32 from the received data — the authoritative source for new chunks.
-	checksum.FeedChunk(h.fileChecksumHasher, crc32.ChecksumIEEE(chunk.Data))
+	if err := h.order.add(chunk.Index, int64(len(chunk.Data)), crc32.ChecksumIEEE(chunk.Data), chunk.Eof); err != nil {
+		return err
+	}
 	chunkLogger.Debug("Chunk written")
 
 	if err := h.store.LinkChunkToFileData(chunk.Hash, h.currentFile.ID(), chunk.Index); err != nil {
@@ -218,18 +257,21 @@ func (h *streamHandler) handleChunkDataRequest(ctx context.Context, server pb.Ba
 			},
 		},
 	}
-	if chunk.Eof {
-		chunkLogger.Debug("EOF received")
+	if h.order.done {
+		chunkLogger.Debug("All chunks received")
 		h.EOF = true
 	}
 	return server.Send(response)
 }
 
 func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService_ProcessBackupStreamServer) error {
+	guarded := h.guarded(server)
+	defer guarded.release()
+	server = guarded
 	fileLogger := h.logger.With(slog.String("file_id", h.currentFile.ID()))
 
 	var buf [4]byte
-	binary.BigEndian.PutUint32(buf[:], h.fileChecksumHasher.Sum32())
+	binary.BigEndian.PutUint32(buf[:], h.order.sum32())
 	fileHash := buf[:]
 
 	if err := h.store.FinalizeFileData(h.currentFile.ID(), fileHash); err != nil {
@@ -244,6 +286,7 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 		fmt.Sprintf("%c", h.currentFile.GetType()),
 		h.currentFile.MetadataBlob(),
 		h.currentFile.Ctime(),
+		h.currentExpireAt,
 	); err != nil {
 		return fmt.Errorf("ensure file version: %w", err)
 	}
@@ -257,7 +300,7 @@ func (h *streamHandler) fileWritten(ctx context.Context, server pb.BackupService
 			},
 		},
 	})
-	h.fileChecksumHasher = nil
+	h.order = nil
 	h.currentFile = nil
 	h.EOF = false
 	return message

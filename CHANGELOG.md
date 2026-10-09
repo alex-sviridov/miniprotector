@@ -2,6 +2,437 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-09 — Smaller certificate lifecycle code: one RPC, shared identity helpers
+
+The security code carried duplicated and test-only plumbing. `common/mtls` lost its chains of wrapper
+constructors and injectable clock, and its identity cache now reloads purely on file mtime change (still
+falling back to the last good certificate), cutting the file from 437 to about 330 lines. A new
+`common/identity` holds the persistent key and CSR builder that `certclient` and `issuer` each had their own
+copy of, and both now write certificates and keys atomically. `issuer` reuses one key for its own identity
+instead of swapping key and certificate together every refresh, which removes the torn-pair failure class
+behind an earlier outage. `certclient` also used the CommonName as a node's hostname while every server used
+the first DNS SAN; both now call `mtls.HostnameFromCert`. The `DescribeSANs` RPC is gone: `issuer` mints the
+token for the hostname alone and supplies the full SAN list through the operating provisioner's template
+data (safe because only `issuer` can mint those tokens), so `operating-refresh` is one call with no race
+between two. Breaking wire change with no migration; deploy the new CA templates, `issuer` and nodes together.
+
+## 2026-10-09 — A token holder can no longer mint its own operating certificate
+
+A security review found that the CA template read the credential tier and the `authz-role` attribute from
+the sign request's `templateData`, which step-ca treats as caller input. Anyone who redeemed an enrollment
+token could call `/sign` directly, ask for `tier=operating` with any role and a lifetime up to 2200h, and get
+a certificate that bypassed `issuer`, so revocation never applied and `/renew` kept it alive indefinitely. The
+CA now has two provisioners: `admin@backup.internal` issues enrollment tokens and uses a static
+`bootstrap.tpl` that ignores caller data, while `operating@backup.internal` has its own password, mounted
+into `issuer` only, the same 2200h cap (it also covers `issuer`'s own 90-day server certificate), and the attribute-embedding `operating.tpl`. `certclient bootstrap` and
+`issuer` no longer send a tier. Verified against a real step-ca: a forged request now yields a bootstrap-only
+certificate, the enrollment password cannot mint operating tokens, and over-long operating requests are
+refused. Also, `client-manager` now rejects a SAN alias (or new hostname) that collides with another
+client's hostname or alias, and the stale "nothing reads the attribute extension" claim and the
+`api-server` plain-HTTP gap are documented. This is a breaking change with no migration: re-create the CA
+(or re-run the entrypoint) and re-enroll nodes.
+
+## 2026-10-07 — The catalog and web UI show damaged backup data
+
+Damage was flagged in the store (see the 2026-10-07 entry) but the catalog and web UI still offered a
+damaged version as restorable. The `bwfs` replica reader now lists the file ids that are currently
+damaged, and `catalogsync` streams that set periodically as a state snapshot (no cursor), so a repaired
+file disappears from it. The catalog's `ReportDamagedFiles` replaces the stored set atomically and
+annotates `Entry.damaged`; the api-server exposes `damaged` on catalog entries. The web UI shows a red
+`Damaged` badge on catalog file rows (latest version) and on versions, marks damaged file rules in the
+restore cart, and the confirm modal gives an amber count of damaged selected files. The flag lags the
+store by up to about a minute, so it is a warning, not a guarantee, and restore is never blocked. Folder
+rules cannot be checked (`rwfs` resolves them at restore time) and show nothing. No Playwright test was
+added because the demo lab cannot create real damage.
+
+## 2026-10-07 — Damaged backup data is flagged, reported, and no longer stops a restore
+
+When `bwfs` found a corrupt chunk it deleted every `FileData` row that used it, so the loss was invisible:
+a folder restore could report success with those files simply missing, and nothing recorded which versions
+were gone. The stream also failed with a generic `Internal` that `rwfs` retried in vain, and one damaged
+file aborted the whole `rwfs restore`, healthy files included. Now the affected `FileData` rows are flagged
+damaged instead of deleted (one Error line names the chunk and up to five paths), deduplication ignores
+flagged rows so the next backup of an unchanged file uploads it again, and `RestoreFile` answers a damaged
+version with gRPC `DataLoss`. `rwfs` treats `DataLoss` as final: `verify` reports it with reason
+`data_loss`, and `restore` logs the damaged file at Error, restores and commits every other file, then
+exits non-zero with the number of damaged files. Any other restore failure still aborts the run. A
+client-side BLAKE3 mismatch, which can only be a fault in transit since `bwfs` checks every chunk before
+sending it, is now retried once (a CRC32 mismatch stays final). `bwfs list` marks damaged versions
+(`DAMAGED` column, JSON `"damaged": true`). Showing damage in the catalog and web UI is in `backlog.md`.
+
+## 2026-10-07 — Restore locates a file's chunks with one query
+
+A restore looked each chunk up in `chunk_records` with its own query before reading it; a micro-benchmark
+showed that lookup took about 40% of reading a 64 KB chunk. `bwfs` now locates all of a file's chunks with
+one query (links joined to chunk rows, in index order) and reads each chunk from that location, still
+verifying its BLAKE3 hash. The server-side hash is kept on purpose: `rwfs` already detects corruption, but
+only `bwfs` can mark the bad chunk so the next backup heals it. A link whose chunk row is gone is still
+reported and marked at its position, and a chunk that compaction moved after the lookup is looked up again
+instead of being reported lost. The documentation no longer claims the server-side hash is what catches
+corruption on restore.
+
+## 2026-10-06 — Chunk storage in pack segments
+
+`bwfs` stored every chunk as its own file (`chunks/aa/bb/<hash>`), never fsynced it, trusted it on read and
+paid several filesystem operations plus two SQLite commits per chunk. Chunks now go into append-only pack
+segments (`packs/NNNNNNNNNN.pack`, 256 MiB) indexed in SQLite by segment and offset, which means far fewer
+files and inodes (about 16M per TB before). Durability is paid once per file (group commit): a file becomes
+complete only after its chunk bytes are fsynced and its rows committed in one transaction, so a crash leaves
+dead bytes but never an index row pointing at missing data. Reads verify the BLAKE3 hash, opening recovers a
+torn segment tail, and an fsync failure fails requests until restart. Vacuum now also compacts segments under
+50% live and removes dead ones (new log fields `segments_removed`, `segments_compacted`). This is a format
+break with no migration: a store with a `chunks/` directory is rejected and a fresh store must be started.
+Linux only. A restore now marks a chunk corrupt only when its data is really lost (corrupt or missing), not
+on a possibly transient read error; an unreadable segment no longer stops compaction or the bwfs startup; and
+SQLite now applies its busy timeout and runs with `synchronous=FULL`, which the pack ordering relies on.
+
+Benchmark (LAN, 500 files, 3 runs): backup-cold 12.0 s to 5.25 s, backup-warm 7.7 s to 4.5 s, restore 0.96 s to 1.07 s (slower: the server now hashes every chunk, duplicating the check `rwfs` already does; a restored file's chunks are located with one query). See docs/PERFORMANCE.md.
+
+## 2026-10-06 — Backup and restore statistics
+
+`brfs` now ends a job with its totals on the `Backup finished` line: bytes read, bytes actually sent,
+bytes deduplicated, the deduplication ratio, and how many files were sent or already unchanged. `rwfs
+restore` adds the duration and throughput to `restore complete`. Everything is derived from replies the
+protocol already carries, counted with plain per-file integers summed once at the end, so there is no
+protocol change and no measurable cost on the transfer path.
+
+## 2026-10-06 — Content-defined chunking (FastCDC)
+
+`brfs` used to cut every file into fixed 64 KB chunks, so inserting a few bytes at the front of a file
+shifted every later boundary and nothing after the edit deduplicated. It now cuts with FastCDC
+(`go-cdc-chunkers`): boundaries follow the data, with chunks of 16 KB to 256 KB averaging 64 KB, so only
+the chunks around an edit change. Chunk size, offsets and hashes are carried on the wire exactly as
+before, so there is no protocol or store change and existing backups restore as usual; old fixed-size
+chunks simply do not deduplicate against new ones, so the first backup after upgrading re-uploads data.
+The window memory bound is now worst case `streams × window × 256 KB` (32 MB at 8 × 16), typically
+64 KB per slot, plus one pooled 256 KB chunker scan buffer per stream reading a file. `mpbench` gains `--shift` (a short random prefix per file, so duplicates sit off
+alignment) and `--dup-block-kb` (size of the duplicated blocks), because its default 64 KB duplicate
+unit equals the average chunk and hides the benefit.
+
+Measured with `mpbench` (seed 1, same flags, baseline built from the previous commit, 3 runs, median).
+Files whose duplicated 1 MiB blocks sit at a random offset (`large`, 40 files, 226 MB, `--dup-ratio 0.5
+--dup-block-kb 1024 --shift`): cold backup sent 221.5 MB before and 144.1 MB now, 12.8 s down to 9.0 s,
+restore unchanged. Duplicates aligned to the block grid, the case fixed chunks handle well: 136.4 MB
+before and 144.9 MB now (about 6% more on the wire, edge chunks no longer dedup), time 10.0 s down to
+8.8 s. Default `mixed` data with 64 KB duplicate blocks, where almost no chunk fits inside a duplicate:
+79.5 MB before and 109.8 MB now (that dataset is the artifact described above, not a typical tree).
+`small` files and the 20 ms RTT run are unchanged within noise (cold backup 4.07 s both, restore 1.10 s
+and 1.07 s); `large` with the default 64 KB duplicate blocks (`--dup-ratio 0.3`) ran 10.6 s both and sent 157.8 MB before
+against 219.7 MB now, for the same reason. Restore is unchanged or slightly faster throughout. Client
+peak memory is a few MB higher (about 54 to 60 MB on `mixed`).
+
+## 2026-10-06 — rwfs restore: atomic, durable, batched writes
+
+`rwfs restore` used to write straight into the destination with `O_TRUNC` and never fsync, so
+`--overwrite` destroyed the old file before the new one was verified and a crash left torn files under
+their final names. It now writes to hidden `.mptmp-*` temp files and commits them in batches (fsync,
+rename, one directory fsync per parent), so a file appears only once durable and the old file survives
+a failed run; a crash leaves only temp files, which the next restore sweeps. It also preallocates with
+`fallocate` for early `ENOSPC`, starts writeback as data arrives and drops the page cache after sync.
+Batching is set by the new `restore_commit_files` and `restore_commit_bytes` keys. On a cold cache the
+contract costs about 7-8% on small and mixed trees and nothing on large files, while per-file fsync
+took roughly 30-85% longer than batching on small and mixed trees (neutral on large); `fallocate` and cache hygiene were within noise and are adopted
+for their non-throughput benefits (cache hygiene is borderline, revisit). A replaced file now takes
+mode 0644 instead of keeping its old mode.
+
+## 2026-10-06 — Per-OS reader/writer files; mpbench sparse profile and cold cache
+
+Reader and writer I/O now live in per-OS files (`reader_{linux,windows}.go`, `writer_*`, `storelock_*`,
+`diskspace_*`), which also makes `bwfs`'s store lock and disk-usage report build on Windows; behavior
+is unchanged. `mpbench` gains a `sparse` profile and `--cold-cache`. A read-path tuning attempt
+(adaptive read-ahead, cache hints, hole skipping) was built and measured on a cold cache; it gave no
+measurable gain and cost memory, so it was not adopted — see the design doc for numbers.
+
+## 2026-10-06 — mpbench: peak memory per phase
+
+`mpbench` now reports peak resident memory next to wall time: for each phase, the client (`brfs`/`rwfs`)
+and `bwfs`, as median and max across runs, in the table and the JSON. The client figure comes from the
+child's `ru_maxrss`; the server figure is `VmHWM` reset before each phase, so each phase gets its own
+peak. It is deliberately coarse, enough to see how a change moves memory (for example a larger window
+or more streams) without a profiler. Timing is unchanged against the previous build at identical flags.
+
+## 2026-10-06 — mpbench: bandwidth cap delivered only ~57% of its rate
+
+The "restore plateau" recorded in the performance guide (restore stuck at 12–13 MB/s at 50 ms RTT
+whatever the streams or window) was a benchmark artifact, not a restore-path problem. `mpbench`'s
+proxy paced a capped link by forgetting its sleep overshoot after every block, so a 25 MB/s cap
+delivered about 14 MB/s; a plain TCP copy through the proxy showed the same, and uncapped restore
+scaled normally. The pacer now carries the overshoot forward and delivers the configured rate, with a
+regression test. Capped results change: restore at 8 streams, 50 ms, 200 Mbit/s goes from 4.7 s to
+3.1 s, a fixed `grpc_window_bytes` of 4 MiB now shows −12% restore at 8 streams (was −6%), and backup
+is within noise because it is latency-bound. The tables in the performance guide were re-measured and
+the open finding was replaced by a note. No change to `brfs`, `bwfs` or `rwfs`.
+
+## 2026-10-05 — Performance tuning: stream and window defaults, opt-in gRPC window
+
+Using `mpbench` to look for the optimum, `default_window` is now 16 (the measured knee at 8 streams and
+50 ms RTT: −22% cold backup against window 4, nothing further at 32, no cost on a LAN), and the
+shipped demo config uses `default_streams=8`: at 50 ms RTT, 8 streams cut backup time by 42% against
+4 and by about 70% against 2 for small files, again with no cost on a LAN. `rwfs` used to hard-code 4
+streams for `verify` and `restore`; it now follows `default_streams` like `brfs` does. A new opt-in
+config key, `grpc_window_bytes`, fixes the gRPC flow-control window on `brfs`, `bwfs` and `rwfs`; it
+is off by default because the gain is small with several streams (−6% restore at 8 streams) and a
+window below the bandwidth-delay product is slower than gRPC's own dynamic sizing, but with one
+stream at 100 ms RTT a 4 MiB window cut restore by 24%. `mpbench` can now sweep window, streams and RTT
+in one command and set any config key (`--conf`). The new [performance tuning](docs/PERFORMANCE.md)
+page explains what to adjust and records the numbers, including an open finding: restore plateaus at
+about 12–13 MB/s at 50 ms RTT regardless of streams.
+
+## 2026-10-05 — mpbench: end-to-end backup/restore benchmark
+
+New development tool `mpbench` runs the full cycle against the real `brfs`, `bwfs` and `rwfs`
+binaries — cold backup, warm (hash-only) backup, restore, then a byte-for-byte comparison of the
+restored tree — and reports per-phase time, throughput and wire bytes as a table and JSON. A
+built-in userspace proxy adds a configurable round-trip time and bandwidth cap, so latency-bound
+gains such as the `brfs` sliding window are visible without root or `tc`. Datasets are seeded and
+byte-identical between runs, and the JSON records the SHA-256 of the binaries used, so two builds can
+be compared fairly. `--sweep-window`, `--sweep-streams` and `--sweep-rtt` run several configurations in
+one command and print a comparison table. It is a development aid, not part of the runtime topology.
+
+## 2026-10-05 — Sliding window for brfs chunk transfer
+
+`brfs` no longer waits for a reply to every chunk before sending the next. Each stream now keeps up
+to `--window` chunks in flight, so a round trip is shared by the whole window instead of paid per
+chunk — what limited throughput on high-latency links and on incremental backups, where nearly every
+chunk is already stored and only hashes cross the wire. The default comes from the new `default_window`
+config key (16); the code's own default and `--window 1` are the previous one-chunk-at-a-time behavior.
+The window is static; sizing it automatically is in the backlog. The wire format is unchanged, but
+`bwfs` had to stop assuming chunks arrive in index order: it now rebuilds the file checksum in index
+order through a small bounded reorder buffer (memory scales with the window, not the file size) and
+finalizes a file only once its last chunk is folded in. A `bwfs` from before this change must be used
+with `--window 1`.
+
+## 2026-10-05 — Storage server status on the storage policy page
+
+Every `bwfs server` now posts a status report to `api-server` once a minute — serving state, disk
+usage of the store's filesystem, open gRPC connections, in-progress backup jobs and uptime — and the
+storage policy page has a new **Status** tab showing one card per reporting node, with an
+online/stale/offline badge derived from the report's age. Reports travel over a new
+`StorageStatusService` on `api-server`'s existing mTLS port, role-gated to `store`, with the host taken
+from the certificate. `api-server` keeps only the latest report per policy and node in memory
+(refilled within a minute of a restart), so it gains no database. Reporting is best-effort and never
+affects backups. `agent` now passes `--policy-id` to `bwfs`; store nodes need `api_server_host` in
+their config, and are silently not reported without it.
+
+## 2026-10-05 — Scheduled store cleanup and vacuum
+
+`bwfs` now maintains its own store. Two regular background loops run inside `bwfs server`:
+**cleanup** (hourly by default) deletes file versions whose `expire_at` has passed — never those
+of a job still running — and **vacuum** (daily by default) reclaims the file data, chunk records and
+chunk files nothing references any more. Intervals, batch size, a dry-run switch (`StoreCleanupDryRun`
+logs what would be deleted without deleting), the incomplete-file grace period and the deletion-log
+retention are all config keys (`Store*`), and an interval of `0` disables a loop. They are safe next
+to live backups: the old startup vacuum would have corrupted in-flight backups if simply scheduled
+(it could delete a chunk between a backup finding it present and linking it, or a file's data
+between a backup finding it known and recording its version), so backup handlers now run under a
+shared operation guard that each short cleanup/vacuum batch excludes; a stress test of back-to-back
+cleanup/vacuum against concurrent backups reproduces that corruption without the guard. Deletions
+(including a failed job's purged versions, previously left behind in the catalog) are logged in
+`bwfs` and replicated by `catalogsync` to a new `catalog.DeleteFileVersions` RPC, so the web UI never
+offers a version that no longer exists; an emptied directory may still appear in the catalog's
+directory list. Every run appears as a job in the Jobs view (`cleanup:` / `vacuum:`, with start and finish
+statistics or the error, and a summary banner on the job page); hourly cleanups that find nothing expired
+are not listed. Retention is plain `expire_at` semantics: a host that stops backing up loses its
+backups once their retention passes. See
+`docs/superpowers/specs/2026-10-05-store-cleanup-vacuum-design.md`.
+
+## 2026-10-05 — Retention policies and web UI
+
+Retention is now configurable. A new `retention` policy type holds one rule — which clients it
+applies to (the same host/label matching as every other policy), a backup type (`filesystem`), a
+path prefix, optional file-name globs, and how long to keep (`0` = forever) — and rules are
+evaluated in an explicit order where the first match wins. Order is managed by `policy-server`:
+a new rule is appended, edits keep its place, and a new `ReorderRetentionPolicies` RPC rewrites
+priorities from a complete ordered id list (rejecting an incomplete or stale one, so two operators
+can never silently clobber each other's rules). `agent` now feeds the rules that match its node into
+the per-job retention matrix introduced with expiry stamping, so `expire_at` reflects them instead of
+always being the 7-day default. `api-server` gained `POST /retention-policies`,
+`PUT /retention-policies/{id}` and `POST /retention-policies/reorder`, and the web UI a **Retention**
+page: rules in evaluation order, create/edit/delete, drag-and-drop or arrow reordering, and a fixed
+last row for the built-in default. Still nothing deletes data based on `expire_at`. See
+`docs/superpowers/specs/2026-10-05-retention-policies-design.md`.
+
+## 2026-10-05 — Retention expiry stamping
+
+Every new file version now carries an `expire_at`, decided per file at backup time. When a backup
+task is due, `agent` resolves a retention rule matrix for the job (today just the built-in default,
+`RetentionDefaultDays`, 7), logs it as a `retention_matrix` event under the job's id and hands it to
+`brfs` via `--retention-file`; `brfs` evaluates it per file (first matching rule wins, path prefix
+plus optional glob) and sends `expire_at` with the file's metadata, `bwfs` stores it on
+`file_versions`, and `catalogsync` replicates it to the catalog. Nothing deletes anything yet: this
+lays the data foundation for retention policies (separate, ordered, matched by host/attributes like
+backup policies) and a later cleanup process. Versions recorded before this change keep a NULL
+`expire_at`, which is never treated as expired. Also fixed a stale `ListFiles` call in `bwfs`'s
+integration test that kept the package's integration tests from compiling. See
+`docs/superpowers/specs/2026-10-05-retention-expiry-stamping-design.md` and the new "Retention
+Expiry" section of `docs/protocols/backup.md`.
+
+## 2026-08-28 — Agent reliability/readability/performance refactor
+
+Unified `agent`'s two independently-written process supervisors (for its bundled Vector process and
+for `bwfs`/`catalogsync` storage-policy supervision) into one shared implementation, fixing two bugs
+the drift between them had introduced: `Stop()` no longer waits out a pending crash-backoff window
+before taking effect, and a `Stop()` racing a concurrent respawn can no longer leave an unsignalled
+process running. Also: `agent` now reads `policies-cache.json` once per reconcile tick instead of
+three times; backoff/stability-window tuning moved out of test-mutated package globals into
+per-instance config; `main.go`'s fatal startup errors are now guaranteed to reach the log file before
+the process exits; and every binary in the repo now uses typed `context.Context` keys for its
+app-name/debug/quiet/job-id logging values instead of raw strings. As part of the supervisor
+unification, Vector's crash-related log lines changed from the Vector-specific strings `"vector
+process error"` and `"vector exited unexpectedly, restarting with backoff"` to a generic
+`"supervised process exited unexpectedly, restarting with backoff"` with structured
+`binary`/`failures`/`error` attributes -- update any existing Loki alert or saved log query keyed on
+the old exact strings.
+
+## 2026-08-27 — Restore retries transient per-file stream errors
+
+`rwfs restore` now retries a transient `RestoreFile` stream error per file (network blip, momentary
+`bwfs` hiccup) instead of immediately aborting the whole run -- the same retry-with-backoff `rwfs
+verify` already had, now shared by both commands through one implementation (`withRetry`,
+`cmd/rwfs/retry.go`). This matters more than it used to: since restore/verify policies now run at
+most once ever (`agent`'s one-shot semantics, 2026-08-23), a single blip on one file out of
+thousands used to permanently sacrifice the entire policy with no automatic recovery. Only
+network/RPC-facing failures are retried -- an integrity mismatch (BLAKE3/CRC) or a local
+destination-side problem still aborts immediately, unchanged. The retry count defaults from a new
+`RwfsRetries` config key (default 3) for both commands, overridable per-invocation via `--retries`
+on either. See `docs/superpowers/specs/2026-08-27-restore-retry-design.md`.
+
+## 2026-08-27 — Restore workflow UI clarity
+
+Reworked the restore cart and submission flow for clarity: the cart no longer groups or reveals
+which storage host anything lives on, Restore now requires confirming a summary before it fires,
+each selected item shows its own live submission status linked to its job instead of a flat unlinked
+results list, and the job detail view shows a human-readable outcome banner for restore/verify jobs
+instead of only a raw log tail. Selecting a file or folder now defaults to the latest version within
+the catalog's current date filter (previously an unbounded true-latest), and a specific historical
+version -- of a file or a folder -- can be picked directly from the catalog or cart via a shared,
+now-interactive version picker. See
+`docs/superpowers/specs/2026-08-27-restore-ui-clarity-design.md`.
+
+## 2026-08-23 — Restore policy lifecycle: one-shot execution, job correlation, automatic cleanup
+
+A restore/verify task now runs at most once per policy, ever — `agent` records an attempt
+(success or failure) and never retries it again, instead of retrying indefinitely on failure as
+before. `policy-server` generates a stable `job_id` for each restore policy at creation time and
+logs `event="created"` under it; `agent` now runs the task under that same `job_id` (instead of
+minting its own) and no longer emits its own `event="start"` for it, so the Jobs UI shows the job
+as `in_progress` from the moment the policy is created, not only once a node connects and starts
+running it — creation, execution, and deletion all correlate under one `job_id` in the log
+timeline. `policy-server` also gained a background sweep (`RestoreCleanupIntervalSec`,
+`RestoreCleanupGracePeriodSec` config keys) that polls a new mTLS `GetPolicyJobStatus` RPC —
+`api-server`'s first gRPC listener, restricted to the `control-plane` role — and automatically
+deletes a restore policy once its job is confirmed finished and a grace period has elapsed, so a
+completed restore policy no longer needs manual cleanup. A legacy restore policy predating the
+`job_id` field is now skipped by the sweep (logged once per tick at `Info`, not `Error` — an empty
+`job_id` can never resolve through `GetPolicyJobStatus`, so treating it as a retryable failure was
+both permanent log spam and never actually eligible for automatic cleanup), and `event="deleted"`
+is now logged only after `DeletePolicy` actually succeeds, so the log timeline never claims a
+deletion that failed. See
+`docs/superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md` and the new
+`docs/protocols/jobstatus.md`.
+
+## 2026-08-23 — Job log lines ordered by app log time, not Vector read time
+
+Fixed job log lines occasionally appearing out of order in the web UI, with the displayed
+timestamp not matching the timestamp visible inside the log entry itself once expanded. Root
+cause: Vector's file source stamped each shipped line's `.timestamp` with the moment *it* read
+the line from disk, not the moment the app actually logged it (the `time` field slog's JSON
+handler already writes into every line) — and both `api-server` (`GET /jobs/{job_id}/logs`, the
+live tail) and the web UI sort and display strictly by that timestamp. Read time and log time are
+normally near-identical, but diverge — inconsistently across hosts and binaries — whenever a
+node's Vector process falls behind and catches up in a burst (an agent/Vector restart, or the
+disk buffer's `when_full: block` backpressure), which is what produced the visible reordering.
+`agent`'s Vector config (`cmd/agent/vector.go`) now parses the app's own `time` field back out of
+each line and overrides `.timestamp` with it, falling back to Vector's read time whenever a line
+isn't JSON or `time` doesn't parse — the same fallback the frontend's `parseLogLine` already uses
+for malformed lines.
+
+## 2026-08-23 — E2E policy cleanup fixture
+
+Fixed a leaked e2e-test policy: `restore-verify.spec.js` created a verify-mode restore policy in
+its first `test.step` but never deleted it, unlike its sibling steps — the cause of the untracked
+files accumulating in `demo/policy-server/policies/restore/`. Replaced every manually-written
+`try/finally`-delete cleanup block across `web/e2e` with a shared `trackPolicy` Playwright fixture
+(`web/e2e/helpers/test.js`) that deletes every policy a test creates once that test finishes, pass
+or fail — the same guarantee Go's `t.Cleanup` already gave `src/e2e`. This also closes a second,
+previously invisible leak: the ad-hoc backup policies created by the "Run now" UI flow
+(`seedRestoreCartCatalogData`, `runAdhocBackupPolicy`) are now cleaned up too, not just hidden from
+`git status` by a `.gitignore` pattern.
+
+## 2026-08-22 — Role-based gRPC authorization
+
+Any node holding a valid operating certificate — including the least-privileged thing in the
+fleet, an ordinary backup-agent host — could previously call any RPC on any control-plane service
+it could reach, including `clientmanager-admin-api`'s CA-admin-equivalent writes (mint enrollment
+tokens, revoke arbitrary nodes). Every node is now assigned one of three closed roles
+(`control-plane`, `store`, `client`) at enrollment, carried in its operating certificate via the
+existing `attribute` extension and enforced per RPC by a new gRPC interceptor across
+`clientmanager-api`, `clientmanager-admin-api`, `catalog`, `policy-server`, and `bwfs`. See
+`docs/SECURITY.md#role-based-rpc-authorization`. There is no backward-compatibility path: an
+existing demo deployment provisioned before this change must be torn down (`make demo-down`) and
+re-provisioned from scratch, since already-enrolled nodes carry no `authz-role` attribute and will
+be denied by every role-gated RPC.
+
+## 2026-08-22 — Fix demo reset instructions leaving stale ad-hoc policies behind
+
+`demo/up.sh`'s own "Reset with:" banner told users to run a bare `docker compose down -v`,
+which skips the `rm -f demo/policy-server/policies/backup/adhoc-*.json` cleanup that
+`make demo-down` performs. Since the e2e specs create real, disk-persisted `adhoc_*` backup
+policies through the UI and rely entirely on teardown to remove them, following the script's
+own advice left them accumulating indefinitely — surfacing later as a growing pile of
+unrelated-looking policies in the web UI's Policies page. The banner now points at
+`make demo-down` instead.
+
+## 2026-08-22 — Bound job log viewer memory and DOM growth
+
+`web`'s job log viewer (`/jobs/:job_id`) had no cap on retained log lines and re-sorted its entire
+in-memory log array on every single incoming WebSocket line — for a long-running or verbose job,
+both memory and per-line merge cost grew without bound. `GET /api/v1/jobs/{job_id}/logs` now
+supports `limit`/`ending_before` cursor pagination (closing a related silent-truncation gap: the
+endpoint previously returned up to a fixed 5000-line Loki cap with no indication when more existed).
+The frontend caps resident log lines at 2000 while following the live tail, evicting from the oldest
+end only while the user is actually watching the bottom of the log — history a user has scrolled
+back to view is never evicted out from under them — and a new "Load older lines" affordance pages
+further history in on demand. See
+[Design: Job Log Pagination & Bounded Retention](docs/superpowers/specs/2026-08-22-job-log-pagination-design.md).
+
+Follow-up fixes from the branch review: the "N new lines — jump to latest" count now tracks a
+tail-only sequence counter rather than the log array's length, so paging older history in no longer
+offers to scroll the reader away from the history they just asked for; the bottom sentinel is
+observed with 200px of slack and the view auto-scrolls while following, so appending a line no
+longer knocks the viewer out of follow mode (which had been disabling the 2000-line cap in exactly
+the live-tail case it exists for); and "Load older lines" now guards against concurrent requests and
+surfaces a failed page as an inline error instead of an unhandled rejection.
+
+## 2026-08-22 — Fix live job-log tail connection leak
+
+`GET /api/v1/jobs/{job_id}/logs/stream` leaked its upstream Loki tail connection every time a
+browser navigated away from a job detail page whose tail had nothing left to send (the common
+case, since most jobs finish almost instantly) -- `r.Context()` never becomes `Done` for a hijacked
+WebSocket connection, and this handler had no independent way to notice the browser had
+disconnected. Over a session's worth of browsing, leaked connections accumulated until Loki's
+`max_concurrent_tail_requests` limit (10) was hit, after which every new live tail was rejected
+immediately and the whole live job/log-updates feature degraded into an endless
+Connecting/Reconnecting loop. Fixed by adding the same client-disconnect-detection read loop
+already used by the fleet-wide jobs list stream and `log-gateway`'s tail relay. Also fixed a related
+test race in `live-job-updates.spec.js` that assumed a demo backup job stays observably
+"in-progress" long enough to see a transient connecting state before it finishes.
+
+## 2026-08-22 — Logging flow hardening
+
+Three fixes found by auditing the client-push and server-delivery logging paths end to end. Vector's
+disk buffer now blocks (pausing local log shipping) instead of dropping the newest lines once full --
+its old `drop_newest` setting meant a prolonged `log-gateway`/Loki outage discarded exactly the
+freshest, most operationally relevant log lines while stale ones sat queued. `api-server`'s
+`jobAggregator` no longer runs its periodic 24h, fleet-wide Loki reconcile query while no browser has
+`/api/v1/jobs/stream` open, cutting the periodic fleet-wide query load to zero when nobody's watching
+(the shared tail connection and its own reattach-triggered reconcile are unaffected); the first
+browser to reconnect after an idle stretch now triggers one synchronous reconcile so it never sees
+stale data. `log-gateway`'s push route now streams request bodies straight through to Loki instead of
+fully buffering them in memory first, cutting per-push latency and peak memory on the one process
+every node's logs pass through. See
+`docs/superpowers/specs/2026-08-22-logging-flow-hardening-design.md`.
+
 ## 2026-08-17 — Live job & log updates
 
 `/jobs` and `/jobs/:job_id` in the web UI now update live instead of only on page load: a

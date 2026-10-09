@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/config"
@@ -16,9 +17,13 @@ type BackupResult struct {
 	FileID   string
 	Success  bool
 	Error    error
+	Stats    jobStats
 }
 
-func processFilesList(ctx context.Context, logger *slog.Logger, client pb.BackupServiceClient, fileList []filesystem.FileInfo, streams int) <-chan BackupResult {
+func processFilesList(ctx context.Context, logger *slog.Logger, client pb.BackupServiceClient, fileList []filesystem.FileInfo, streams, window int, st *stamper) <-chan BackupResult {
+	if window < 1 {
+		window = defaultWindow
+	}
 	resultChan := make(chan BackupResult)
 	// attributes validation
 	if streams <= 0 || len(fileList) == 0 {
@@ -37,7 +42,7 @@ func processFilesList(ctx context.Context, logger *slog.Logger, client pb.Backup
 
 	for i := 0; i < streams; i++ {
 		wg.Add(1)
-		go stream(ctx, logger, client, workChan, resultChan, cancelAllStreams, &wg)
+		go stream(ctx, logger, client, workChan, resultChan, cancelAllStreams, &wg, st, window)
 	}
 	go func() {
 		defer func() {
@@ -59,7 +64,7 @@ func processFilesList(ctx context.Context, logger *slog.Logger, client pb.Backup
 	return resultChan
 }
 
-func stream(ctx context.Context, logger *slog.Logger, client pb.BackupServiceClient, workChan <-chan filesystem.FileInfo, resultChan chan<- BackupResult, cancelAll context.CancelFunc, wg *sync.WaitGroup) {
+func stream(ctx context.Context, logger *slog.Logger, client pb.BackupServiceClient, workChan <-chan filesystem.FileInfo, resultChan chan<- BackupResult, cancelAll context.CancelFunc, wg *sync.WaitGroup, st *stamper, window int) {
 	defer wg.Done()
 
 	conf := config.GetConfigFromContext(ctx)
@@ -83,12 +88,14 @@ func stream(ctx context.Context, logger *slog.Logger, client pb.BackupServiceCli
 		cancelAll()
 		return
 	}
+	rd := newResponseReader(stream, window)
 	grpc_stream_id := fmt.Sprintf("%p", stream)
 	logger = logger.With(slog.String("stream_id", grpc_stream_id))
 
 	for f := range workChan {
 		fileLogger := logger.With(slog.String("file_id", f.ID()))
-		err := processOneFile(ctx, fileLogger, stream, f)
+		var fileStats jobStats
+		err := processOneFile(ctx, fileLogger, stream, rd, f, st.expireAt(f, time.Now()), window, &fileStats)
 		if err != nil {
 			logger.Error("Failed to process file", "error", err)
 			if conf.StopStreamOnFileError {
@@ -100,6 +107,7 @@ func stream(ctx context.Context, logger *slog.Logger, client pb.BackupServiceCli
 			FileID:   f.ID(),
 			Success:  err == nil,
 			Error:    err,
+			Stats:    fileStats,
 		}
 	}
 	if err := stream.CloseSend(); err != nil {

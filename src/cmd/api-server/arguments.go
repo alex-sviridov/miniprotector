@@ -10,9 +10,10 @@ import (
 )
 
 type Arguments struct {
-	Port  int
-	Token string
-	Debug bool
+	Port          int
+	JobStatusPort int
+	Token         string
+	Debug         bool
 }
 
 func parseArguments(conf *config.Config) (*Arguments, error) {
@@ -24,6 +25,7 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 		Args:  cobra.NoArgs,
 	}
 	cmd.Flags().IntVar(&args.Port, "port", conf.APIServerPort, "Port to listen on")
+	cmd.Flags().IntVar(&args.JobStatusPort, "job-status-port", conf.APIServerJobStatusPort, "Port the internal control-plane-only job-status gRPC service listens on")
 	cmd.Flags().StringVar(&args.Token, "token", conf.APIServerToken, "Bearer token required on every REST request")
 	cmd.Flags().BoolVar(&args.Debug, "debug", false, "Enable debug logging")
 
@@ -33,6 +35,9 @@ func parseArguments(conf *config.Config) (*Arguments, error) {
 
 	if err := common.ValidatePort(args.Port); err != nil {
 		return nil, fmt.Errorf("port error: %w", err)
+	}
+	if err := common.ValidatePort(args.JobStatusPort); err != nil {
+		return nil, fmt.Errorf("job-status-port error: %w", err)
 	}
 	if args.Token == "" {
 		return nil, fmt.Errorf("bearer token must be set (--token flag or api_server_token in local.conf)")

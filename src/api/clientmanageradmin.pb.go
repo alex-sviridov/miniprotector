@@ -24,9 +24,13 @@ const (
 )
 
 type AddClientRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Hostname      string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	Sans          []string               `protobuf:"bytes,2,rep,name=sans,proto3" json:"sans,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Hostname string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Sans     []string               `protobuf:"bytes,2,rep,name=sans,proto3" json:"sans,omitempty"`
+	// Authorization role to assign at enrollment: "control-plane", "store",
+	// or "client". Empty resolves to "client". See
+	// docs/superpowers/specs/2026-08-22-role-based-grpc-authz-design.md.
+	Role          string `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -73,6 +77,13 @@ func (x *AddClientRequest) GetSans() []string {
 		return x.Sans
 	}
 	return nil
+}
+
+func (x *AddClientRequest) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
 }
 
 type AddClientResponse struct {
@@ -123,7 +134,10 @@ type ReEnrollClientRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Hostname string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	// Empty means keep the hostname's currently stored SANs.
-	Sans          []string `protobuf:"bytes,2,rep,name=sans,proto3" json:"sans,omitempty"`
+	Sans []string `protobuf:"bytes,2,rep,name=sans,proto3" json:"sans,omitempty"`
+	// Authorization role to assign. Empty means keep the hostname's
+	// currently stored role, unchanged.
+	Role          string `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -170,6 +184,13 @@ func (x *ReEnrollClientRequest) GetSans() []string {
 		return x.Sans
 	}
 	return nil
+}
+
+func (x *ReEnrollClientRequest) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
 }
 
 type ReEnrollClientResponse struct {
@@ -428,15 +449,17 @@ var File_api_clientmanageradmin_proto protoreflect.FileDescriptor
 
 const file_api_clientmanageradmin_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/clientmanageradmin.proto\x12\x19clientmanageradminservice\x1a\x17api/clientmanager.proto\"B\n" +
+	"\x1capi/clientmanageradmin.proto\x12\x19clientmanageradminservice\x1a\x17api/clientmanager.proto\"V\n" +
 	"\x10AddClientRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
-	"\x04sans\x18\x02 \x03(\tR\x04sans\")\n" +
+	"\x04sans\x18\x02 \x03(\tR\x04sans\x12\x12\n" +
+	"\x04role\x18\x03 \x01(\tR\x04role\")\n" +
 	"\x11AddClientResponse\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\"G\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\"[\n" +
 	"\x15ReEnrollClientRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
-	"\x04sans\x18\x02 \x03(\tR\x04sans\".\n" +
+	"\x04sans\x18\x02 \x03(\tR\x04sans\x12\x12\n" +
+	"\x04role\x18\x03 \x01(\tR\x04role\".\n" +
 	"\x16ReEnrollClientResponse\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"1\n" +
 	"\x13RevokeClientRequest\x12\x1a\n" +

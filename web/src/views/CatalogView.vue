@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useCatalogStore } from '../stores/catalog'
 import { useRestoreCartStore } from '../stores/restoreCart'
+import { useRestoreSubmissionStore } from '../stores/restoreSubmission'
 import { resolveFile, resolveFolderState } from '../utils/restoreRules'
 import { formatBytes, formatTimestamp } from '../utils/format'
 import { groupEntriesByFile } from '../utils/catalogGrouping'
@@ -12,12 +13,15 @@ import DateRangePanel from '../components/catalog/DateRangePanel.vue'
 import FacetPanel from '../components/catalog/FacetPanel.vue'
 import DirectoryPathBar from '../components/catalog/DirectoryPathBar.vue'
 import VersionsModal from '../components/VersionsModal.vue'
+import Badge from '../components/ui/Badge.vue'
+import { DAMAGED_TOOLTIP } from '../utils/damaged'
 import TriStateCheckbox from '../components/ui/TriStateCheckbox.vue'
 
 const catalog = useCatalogStore()
 const restoreCart = useRestoreCartStore()
+const submission = useRestoreSubmissionStore()
 const activePanel = ref('date')
-const selectedGroup = ref(null)
+const versionsFor = ref(null) // { path, sourceHost } | null
 
 // browsing is true whenever we're not in the flat, cross-directory
 // pattern-search mode -- the two are mutually exclusive (see the
@@ -53,9 +57,47 @@ function checkboxProps(row) {
   return { checked: resolveFile(restoreCart.rules, row.sourceHost, row.path), indeterminate: false }
 }
 
+// capturedLabel mirrors checkboxProps' per-row cart lookup: if an *exact*
+// rule for this row is already pinned to a specific version (notBefore ===
+// notAfter, both set), reflect that pin here instead of always showing the
+// representative/last-seen default -- otherwise pinning an older version
+// from the picker and then looking back at the catalog table shows no
+// visual change at all. Only an exact rule counts (not one inherited from
+// an ancestor folder) since a pin is always applied at the exact path it
+// was picked for (see restoreCart's ensureFileSelected/ensureFolderSelected).
+function capturedLabel(row) {
+  const rule = row.isFolder
+    ? restoreCart.rules.find((r) => r.host === null && r.path === row.path)
+    : restoreCart.rules.find((r) => r.host === row.sourceHost && r.path === row.path)
+  if (rule && rule.notBefore && rule.notAfter && rule.notBefore === rule.notAfter) {
+    return formatTimestamp(rule.notBefore)
+  }
+  return formatTimestamp(row.isFolder ? row.last_seen : row.representative.store_created_at)
+}
+
+// Toggling here is the other path (besides RestoreView.vue's remove()) that
+// can add/remove a rule at a given (host, path) -- so it needs the same
+// stale-status clear: a checked/verified/unchecked/re-checked file must not
+// surface a leftover badge from the earlier selection at this key. Cleared
+// unconditionally on every toggle (both directions) since clearEntry is a
+// no-op when nothing is recorded, so there's no need to distinguish check
+// from uncheck.
 function toggleSelection(row) {
-  if (row.isFolder) restoreCart.toggleFolder(row.path)
-  else restoreCart.toggleFile(row.sourceHost, row.path, row.representative?.store_host, row.representative?.size)
+  if (row.isFolder) {
+    restoreCart.toggleFolder(row.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
+    submission.clearEntry({ host: null, path: row.path })
+  } else {
+    restoreCart.toggleFile(
+      row.sourceHost,
+      row.path,
+      row.representative?.store_host,
+      row.representative?.size,
+      catalog.filters.receivedAfter,
+      catalog.filters.receivedBefore,
+      row.damaged
+    )
+    submission.clearEntry({ host: row.sourceHost, path: row.path })
+  }
 }
 
 function summaryLabel(names, allLabel) {
@@ -75,11 +117,67 @@ function togglePanel(name) {
 }
 
 function onRowClick(row) {
-  if (row.isFolder) {
-    catalog.navigateTo(row.path)
-    return
+  if (row.isFolder) catalog.navigateTo(row.path)
+}
+
+function openVersions(row) {
+  versionsFor.value = row.isFolder ? { path: row.path, sourceHost: null } : { path: row.path, sourceHost: row.sourceHost }
+}
+
+// selectVersion needs to guarantee an *exact* rule exists at (sourceHost,
+// path) before pinning it -- setVersionWindow only mutates an exact
+// matching rule and silently no-ops otherwise. resolveFile/
+// resolveFolderState return the *resolved* selection state, which is
+// true/'checked' even when the path is only covered by an ancestor
+// folder rule with no rule of its own at this exact path. So the gate
+// here is "does an exact rule already exist," not "is this resolved as
+// selected":
+//   - no exact rule, not resolved as selected -> toggleFile/toggleFolder
+//     (creates a fresh include rule, same as checking the box).
+//   - no exact rule, but already resolved as selected via an ancestor ->
+//     ensureFileSelected/ensureFolderSelected (materializes the implicit
+//     selection into a real rule -- toggling here would incorrectly flip
+//     it to an exclusion, since toggle flips based on resolved state).
+//   - exact rule already exists -> either path is a no-op; setVersionWindow
+//     below does the only work needed.
+function selectVersion(version) {
+  const target = versionsFor.value
+  if (target.sourceHost === null) {
+    if (resolveFolderState(restoreCart.rules, target.path) === 'checked') {
+      restoreCart.ensureFolderSelected(target.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
+    } else {
+      restoreCart.toggleFolder(target.path, catalog.filters.receivedAfter, catalog.filters.receivedBefore)
+    }
+  } else if (resolveFile(restoreCart.rules, target.sourceHost, target.path)) {
+    restoreCart.ensureFileSelected(
+      target.sourceHost, target.path, version.store_host, version.size,
+      catalog.filters.receivedAfter, catalog.filters.receivedBefore, version.damaged === true
+    )
+  } else {
+    restoreCart.toggleFile(
+      target.sourceHost, target.path, version.store_host, version.size,
+      catalog.filters.receivedAfter, catalog.filters.receivedBefore, version.damaged === true
+    )
   }
-  if (row.versions.length > 1) selectedGroup.value = row
+  if (target.sourceHost !== null) {
+    restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, version.damaged === true)
+  }
+  restoreCart.setVersionWindow({ host: target.sourceHost, path: target.path }, version.store_created_at, version.store_created_at)
+  versionsFor.value = null
+}
+
+function useLatestVersion(latestDamaged = false) {
+  const target = versionsFor.value
+  restoreCart.setVersionWindow(
+    { host: target.sourceHost, path: target.path },
+    catalog.filters.receivedAfter,
+    catalog.filters.receivedBefore
+  )
+  if (target.sourceHost !== null) {
+    // The modal knows its newest version; a missing payload falls back to false.
+    restoreCart.setDamaged({ host: target.sourceHost, path: target.path }, latestDamaged === true)
+  }
+  versionsFor.value = null
 }
 
 function onPathBarNavigate(path) {
@@ -139,7 +237,7 @@ const baseColumns = [
   { label: 'Size', field: 'representative.size', sortable: true, type: 'number' },
   { label: 'Mode', field: 'representative.mode', sortable: true },
   { label: 'Modified', field: 'representative.mod_time', sortable: true, type: 'number' },
-  { label: 'Versions', field: 'versions', sortable: false },
+  { label: 'Captured', field: 'captured', sortable: false },
 ]
 // Sorting is disabled while browsing so folder rows stay pinned above
 // file rows -- vue-good-table's per-column sort has no notion of
@@ -240,21 +338,55 @@ const columns = computed(() => (browsing.value ? baseColumns.map((c) => ({ ...c,
           <template v-else-if="row.isFolder">
             <span v-if="column.field === 'path'" class="font-semibold">{{ row.name }}/</span>
             <span v-else-if="column.field === 'representative.mod_time'">{{ formatTimestamp(row.last_seen) || '—' }}</span>
-            <span v-else-if="column.field === 'versions'">{{ row.file_count || '' }}</span>
+            <span v-else-if="column.field === 'captured'">
+              <button
+                type="button"
+                :data-test="`captured-${row.path}`"
+                class="text-blue-600 hover:underline"
+                @click.stop="openVersions(row)"
+              >
+                {{ capturedLabel(row) || '—' }}
+              </button>
+            </span>
             <span v-else></span>
           </template>
           <template v-else>
-            <span v-if="column.field === 'path'">{{ browsing ? row.representative.short_filename : row.path }}</span>
+            <span v-if="column.field === 'path'">
+              {{ browsing ? row.representative.short_filename : row.path }}
+              <Badge
+                v-if="row.damaged"
+                variant="bad"
+                class="ml-2"
+                :data-test="`file-damaged-${row.sourceHost}:${row.path}`"
+                :title="DAMAGED_TOOLTIP"
+              >Damaged</Badge>
+            </span>
             <span v-else-if="column.field === 'sourceHost'">{{ row.sourceHost }}</span>
             <span v-else-if="column.field === 'representative.store_host'">{{ row.representative.store_host }}</span>
             <span v-else-if="column.field === 'representative.size'">{{ formatBytes(row.representative.size) }}</span>
             <span v-else-if="column.field === 'representative.mode'">{{ row.representative.mode }}</span>
             <span v-else-if="column.field === 'representative.mod_time'">{{ formatTimestamp(row.representative.mod_time) || '—' }}</span>
-            <span v-else-if="column.field === 'versions'">{{ row.versions.length > 1 ? row.versions.length : '' }}</span>
+            <span v-else-if="column.field === 'captured'">
+              <button
+                type="button"
+                :data-test="`captured-${row.sourceHost}:${row.path}`"
+                class="text-blue-600 hover:underline"
+                @click.stop="openVersions(row)"
+              >
+                {{ capturedLabel(row) || '—' }}
+              </button>
+            </span>
           </template>
         </template>
       </DataTable>
     </StatusMessage>
-    <VersionsModal v-if="selectedGroup" :group="selectedGroup" @close="selectedGroup = null" />
+    <VersionsModal
+      v-if="versionsFor"
+      :path="versionsFor.path"
+      :source-host="versionsFor.sourceHost"
+      @close="versionsFor = null"
+      @select-version="selectVersion"
+      @use-latest="useLatestVersion"
+    />
   </div>
 </template>

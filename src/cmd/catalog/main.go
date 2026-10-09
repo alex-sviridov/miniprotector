@@ -37,10 +37,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -65,7 +65,7 @@ func main() {
 
 	logger.Info("catalog started", "storage_path", arguments.StoragePath, "port", arguments.Port)
 
-	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
+	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
 		pb.RegisterCatalogServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("Server failed", "error", err)

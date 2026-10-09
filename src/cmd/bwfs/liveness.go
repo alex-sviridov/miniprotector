@@ -62,3 +62,10 @@ func (l *jobLiveness) StaleJobs(timeout time.Duration) []string {
 	}
 	return stale
 }
+
+// Active returns how many jobs have recorded activity and not been finalized.
+func (l *jobLiveness) Active() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.lastSeen)
+}

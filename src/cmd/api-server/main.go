@@ -21,6 +21,7 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/logging"
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"github.com/gorilla/websocket"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -43,10 +44,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -114,6 +115,15 @@ func main() {
 	defer stop()
 
 	go srv.aggregator.Start(signalCtx)
+
+	go func() {
+		if err := connection.StartServer(signalCtx, logger, arguments.JobStatusPort, certsDir, roleRequirements(), func(s *grpc.Server) {
+			pb.RegisterJobStatusServiceServer(s, srv)
+			pb.RegisterStorageStatusServiceServer(s, newStorageStatusServer(srv.storageStatus))
+		}); err != nil {
+			logger.Error("job-status server failed", "error", err)
+		}
+	}()
 
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", arguments.Port), Handler: handler}
 	go func() {

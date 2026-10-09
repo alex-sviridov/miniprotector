@@ -84,3 +84,64 @@ func TestParseArguments_ExcludeFlag_SplitsOnComma(t *testing.T) {
 		assert.Equal(t, []string{"node_modules", "*.tmp"}, args.Exclude)
 	})
 }
+
+func TestParseArguments_RetentionFileFlag_ParsesValue(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir, "--retention-file", "/x/m.json"}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Equal(t, "/x/m.json", args.RetentionFile)
+	})
+}
+
+func TestParseArguments_RetentionFileFlag_DefaultsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir}, func() {
+		args, err := parseArguments(testConfig())
+		require.NoError(t, err)
+		assert.Empty(t, args.RetentionFile)
+	})
+}
+
+func TestParseArguments_Window_DefaultsToConfig(t *testing.T) {
+	dir := t.TempDir()
+	conf := testConfig()
+	conf.DefaultWindow = 8
+	withArgs(t, []string{"brfs", dir}, func() {
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 8, args.Window)
+	})
+}
+
+func TestParseArguments_Window_FallsBackToCodeDefaultWhenConfigUnset(t *testing.T) {
+	dir := t.TempDir()
+	withArgs(t, []string{"brfs", dir}, func() {
+		args, err := parseArguments(testConfig()) // DefaultWindow == 0
+		require.NoError(t, err)
+		assert.Equal(t, defaultWindow, args.Window)
+		assert.Equal(t, 1, args.Window)
+	})
+}
+
+func TestParseArguments_Window_FlagOverridesConfig(t *testing.T) {
+	dir := t.TempDir()
+	conf := testConfig()
+	conf.DefaultWindow = 8
+	withArgs(t, []string{"brfs", dir, "--window", "2"}, func() {
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 2, args.Window)
+	})
+}
+
+func TestParseArguments_Window_RejectsZeroAndNegative(t *testing.T) {
+	for _, v := range []string{"0", "-3"} {
+		dir := t.TempDir()
+		withArgs(t, []string{"brfs", dir, "--window", v}, func() {
+			_, err := parseArguments(testConfig())
+			require.Error(t, err, v)
+			assert.ErrorContains(t, err, "window")
+		})
+	}
+}

@@ -107,6 +107,23 @@ On `agent serve` shutdown (`SIGTERM`), in-flight backup execs are terminated cle
 orphaned — the resulting `bwfs` job simply never completes, the same outcome already assigned to a
 crashed `brfs`.
 
+### Retention matrix
+
+Each backup task has a `Prepare` hook that runs just before its `brfs` exec (so only when the
+task is actually due, not every tick) and resolves that job's retention matrix: the ordered
+retention rules that can apply to this job's root path, with the built-in default last (`/`, no
+glob, `RetentionDefaultDays`, default 7). Rules that cannot overlap the job root are dropped, the
+rest rewritten relative to the root, and everything after a rule that covers the whole root
+unconditionally is cut. `agent` logs the matrix once under the job's `job_id` as a structured
+`retention_matrix` event, writes the same JSON to `<VarDir>/retention/<task>.json` (one file per
+task, overwritten each run) and appends `--retention-file <that path>` to the `brfs` args. If the
+file cannot be written the attempt fails with the usual backoff and `brfs` is not started. `brfs`
+applies the matrix per file; see [brfs](brfs.md#retention). The rules come from the cached `"retention"`-typed policies that target this node (`policy-server`
+has already matched their `client_filters`): those for `backup_type` `"filesystem"` that aren't
+disabled, sorted by ascending `priority` (ties by name), each becoming a row `{path prefix, include
+globs, keep}`; the built-in default is appended last. With no retention policies the matrix is just
+the default row. See [Policy Server](policy-server.md) for how rules are managed.
+
 A policy with an unparseable `rpo`, or no valid `backup_window` entry at all, contributes no tasks.
 A policy whose `destinations` is empty (its storage policy has no live checkins yet, or
 `storage_policy_id` is dangling) likewise contributes no task, for any of its object filters — rather
@@ -146,7 +163,9 @@ A storage policy's `config` is opaque JSON to `policy-server`, but `agent` inter
 `{"backend": "filesystem", "root": "/data/storage"}`. Any other or missing `backend` value is
 skipped with a logged error (contributing neither task), the same fail-safe direction as an
 unparseable `rpo` or missing `backup_window` for backup tasks. A matching policy becomes two
-processes: `bwfs <root> server --port <port>` and `catalogsync <root>`.
+processes: `bwfs <root> server --port <port> --policy-id <policy-id>` and `catalogsync <root>`. The
+policy id lets `bwfs` report its status to `api-server` (see
+[Storage Status Protocol](../protocols/storagestatus.md)).
 
 A storage policy whose `disabled_at` has passed is skipped the same way, contributing neither the
 `bwfs` nor the `catalogsync` ensure-running task -- an already-running pair is stopped via the same
@@ -164,7 +183,7 @@ start is recorded as success (not "exited successfully" — neither is expected 
 only once the process has stayed running for a short stability window (a few seconds) — a crash
 faster than that never resets the failure count, so a persistently crash-looping process accumulates
 failures instead of bouncing back to "1 failure" on every restart. An unexpected exit is recorded as
-a failure with the same jittered `backoff()` reconcile.go already uses elsewhere, and a policy that's
+a failure with the same jittered `backoffPolicy` reconcile.go already uses elsewhere, and a policy that's
 edited (port/path changed) or removed causes both running processes to be stopped (`SIGTERM`, a
 graceful drain for `bwfs` — see [bwfs](./bwfs.md) — and for `catalogsync`, which already honors it)
 and, for an edit, fresh ones started with the new arguments; a `Stop()` issued while a supervisor is
@@ -186,18 +205,25 @@ rule can be host-agnostic). A policy whose `destinations` is empty (its `storage
 live checkins yet, or is dangling) contributes no task, logged the same way an unresolved backup
 destination already is.
 
-A restore task is **one-shot**: due until it first succeeds, retried with the same jittered
-backoff every other failing policy uses, and never dispatched again afterward for as long as this
-exact policy still appears in `policies-cache.json` (a restore policy is deletable — deleting it
-removes its task the same way any orphaned task's `agent-state.json` entry is pruned).
+A restore task is **one-shot**: due until it has been attempted once — success or failure — and
+never dispatched again afterward, for as long as this exact policy still appears in
+`policies-cache.json` (`Due` checks `PolicyState.LastAttemptAt == nil`, not `LastSuccessAt`, so
+there is no retry-until-success loop and no backoff for this task kind; a failed attempt is just
+as final as a successful one). A restore policy is deletable — deleting it removes its task the
+same way any orphaned task's `agent-state.json` entry is pruned.
 
-When due, `agent` execs `rwfs verify <destinations[0]> --rules-stdin --job-id
-verify:<policy>:<timestamp>`, piping the policy's `rules` as `{"rules": [...]}` on the child's
-standard input — see [rwfs](./rwfs.md)'s `--rules-stdin` mode for how that's resolved into an
-actual pass/fail. `list-policies` shows each restore task as an additional row
-(`verify:<policy>`), same columns as everything else; a permanently-succeeded one-shot task's
-`NEXT RUN` column reads "due now" even though it will never run again — a known, accepted display
-quirk (see [Design: Restore Policy Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md)), not a functional bug.
+When due, `agent` execs `rwfs verify <destinations[0]> --rules-stdin --job-id <p.JobID>`, piping
+the policy's `rules` as `{"rules": [...]}` on the child's standard input — see
+[rwfs](./rwfs.md)'s `--rules-stdin` mode for how that's resolved into an actual pass/fail. The
+job-id is not generated by `agent`: it's read verbatim off the cached policy (`p.JobID`), which
+[policy-server](./policy-server.md) assigns once, at `CreatePolicy` time, and never regenerates —
+see "Logging and correlation" below and
+[policy-server's restore-policy docs](./policy-server.md) for where that value comes from.
+`list-policies` shows each restore task as an additional row (`verify:<policy>`), same columns as
+everything else; a permanently-attempted one-shot task's `NEXT RUN` column reads "due now" even
+though it will never run again — a known, accepted display quirk (see [Design: Restore Policy
+Verification Execution](../superpowers/specs/2026-08-10-restore-policy-verification-design.md)),
+not a functional bug.
 This path has browser-driven integration coverage in `web/e2e/restore-verify.spec.js`
 (`docs/superpowers/specs/2026-08-13-restore-verification-e2e-design.md`) — a real backed-up file
 verifying successfully, and a rule naming a file that was never backed up failing — both read from
@@ -206,10 +232,11 @@ the real, rendered `/jobs/:job_id` log.
 ## Policy-driven restore execution
 
 A `"restore"`-typed policy whose `mode` is `"restore"` gets a task with a `restore:<policy-name>`
-ID instead -- otherwise identical to restore verification above (one task per policy, one-shot,
-same failure backoff, `list-policies` row). `agent` execs `rwfs restore <destinations[0]>
---rules-stdin --job-id restore:<policy>:<timestamp>`, with `--overwrite` appended when the policy's
-`overwrite` field is set, piping the same `{"rules": [...]}` payload verification uses.
+ID instead -- otherwise identical to restore verification above (one task per policy, one-shot on
+`LastAttemptAt`, no retry backoff, same policy-provided job-id, `list-policies` row). `agent` execs
+`rwfs restore <destinations[0]> --rules-stdin --job-id <p.JobID>`, with `--overwrite` appended when
+the policy's `overwrite` field is set, piping the same `{"rules": [...]}` payload verification
+uses.
 
 `rwfs restore` resolves the policy's rules against the live store, creates the resolved directory
 structure on the destination filesystem (parent before child, aborting on the first failure), then
@@ -222,11 +249,34 @@ File Content Phase](../superpowers/specs/2026-08-17-restore-file-content-design.
 
 Every binary `agent` execs writes structured JSON logs to `<log_dir>/<binary-name>.log` (one
 stable, rotated file per binary — not one file per invocation), and every exec `agent` dispatches
-now carries a `--job-id` (auto-generated per invocation if not explicitly set): `<policy-id>:
-<unix-timestamp>` for the three static policies, `backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>`
-for backup tasks, `verify:<policy>:<timestamp>` for restore *verification* tasks,
-`restore:<policy>:<timestamp>` for restore *execution* tasks. That same job-id
-rides as outgoing gRPC metadata to whatever server the
+now carries a `--job-id`. For the three static policies and backup tasks this is auto-generated
+per invocation if not explicitly set: `<policy-id>:<unix-timestamp>` for the three static
+policies, `backup:<policy>:<slug(path)>:<short-filter-id>:<timestamp>` for backup tasks. Restore
+*verification* (`verify:<policy>`) and restore *execution* (`restore:<policy>`) tasks are
+different: `agent` does not mint a job-id for them at all anymore. Their job-id is generated once,
+server-side, by [policy-server](./policy-server.md) at `CreatePolicy` time and stored on the
+policy; `agent`'s `restoreTasks` (see `src/cmd/agent/restore.go`) reads it verbatim off the cached
+policy (`p.JobID`) on every tick instead. That value stays fixed for the policy's whole lifetime,
+which is what makes the task genuinely one-shot: since the id never changes across ticks, there's
+nothing to regenerate even if agent were to retry, and `Due` enforces the actual one-shot rule
+independently by keying off `PolicyState.LastAttemptAt` rather than `LastSuccessAt` (see "Policy-driven
+restore verification"/"execution" above) — a failed attempt is just as final as a successful one,
+with no retry-until-success loop.
+
+`agent`'s own start/completion log lines tag most dispatched execs with `event="start"` /
+`event="finish"` (plus `status="success"`/`"failure"` on the finish line), but two kinds are
+deliberately exempted from the *start* tag, because their real start marker lives elsewhere:
+scheduled backup tasks (`backup:` — `brfs`'s own "Backup reader started" line is that job kind's
+sole `event=start` source) and restore/verify tasks (`restore:`/`verify:` — policy-server's own
+`event="created"` line, logged when the restore policy is first written, is that job kind's start
+marker now; see [policy-server's restore-policy docs](./policy-server.md)). Both still get a plain,
+untagged "policy execution started" line in `agent.log` itself for local troubleshooting — only the
+structured `event`/`status` fields consumed by log aggregation are omitted. `logExecCompletion` is
+unaffected by either exemption: the finish line, with `event="finish"`/`status`, is unconditional
+for every non-backup task, restore/verify included — see `isBackupPolicy`/`isRestorePolicy` in
+`src/cmd/agent/reconcile.go`.
+
+That same job-id rides as outgoing gRPC metadata to whatever server the
 exec calls (`issuer` for `certclient operating-refresh`, `policy-server` for `policyclient`, `bwfs`
 for `brfs`, and `bwfs` again for `rwfs verify`'s `ListFiles`/`RestoreFile` calls on the
 restore-verification path — `bwfs`'s list/restore handlers don't read that metadata back yet, so
@@ -244,7 +294,7 @@ when available) for every dispatched exec, not just failures.
 `agent` also bundles, configures, and directly supervises a Vector process that tails `log_dir`
 and ships every line to `log-gateway` over mTLS, using this node's own operating certificate --
 restarted immediately after every successful `operating-refresh` (so a rotated cert is always
-picked up promptly) and crash-restarted with backoff otherwise, the same `backoff()` failing
+picked up promptly) and crash-restarted with backoff otherwise, the same `backoffPolicy` failing
 policies already use. Vector's own HTTP API is never enabled, so this adds no listening socket to
 `agent`'s footprint, which stays outbound-only. `log-gateway` authenticates the push but never
 inspects its body (see [Security Model](../SECURITY.md)), so `agent` is the one that sets each
@@ -253,7 +303,16 @@ same source `certclient`'s `operating-refresh` already uses to know its own host
 sink's `encoding.codec: text` stores only each event's own log line (the app's slog JSON) as the
 shipped line text, since `binary`/`hostname`/`job_id`/`event`/`status` are already carried
 separately as Loki labels/structured metadata -- `codec: json` would instead wrap the whole Vector
-event, including those already-duplicated fields, into the stored line. See
+event, including those already-duplicated fields, into the stored line. The same remap step also
+overrides Vector's own `.timestamp` (which otherwise defaults to the moment Vector *read* the
+line) with the app's own `time` field parsed back out of that JSON, whenever it parses as a
+timestamp -- `api-server` and the web UI both sort and display log lines strictly by
+`.timestamp` (see [job-log-viewer](../superpowers/specs/2026-07-20-job-log-viewer-design.md)), so
+using Vector's read time there would show lines out of order any time a Vector process falls
+behind and catches up in a burst (restart, or the disk buffer's `when_full: block`
+backpressure), inconsistently across hosts/binaries. Falls back to Vector's read time whenever
+the line isn't JSON or `time` doesn't parse, same fallback `web/src/utils/logLine.js`'s
+`parseLogLine` already uses for malformed lines. See
 [Design: Fleet Log Aggregation](../superpowers/specs/2026-07-11-fleet-log-aggregation-design.md).
 
 ## Configuration Keys
@@ -266,6 +325,7 @@ event, including those already-duplicated fields, into the stored line. See
 | `OperatingCertFetchIntervalSec` | 900 (15 minutes) | How often the `operating-refresh` policy runs `certclient operating-refresh` |
 | `PolicyFetchIntervalSec` | 900 (15 minutes) | How often the `policy-update` policy runs `policyclient fetch` |
 | `BackupWindowGraceSec` | 3600 (1 hour) | How long after a `backup_window` cron trigger a backup task's window stays "open" |
+| `RetentionDefaultDays` | 7 | Keep duration of the built-in default retention rule, which applies to every file no other rule matches; `0` means never expire |
 | `MaxConcurrentBackupJobs` | 2 | Upper bound on simultaneously in-flight `brfs` execs launched by backup tasks |
 | `BootstrapCertTTLSec` | 7776000 (90 days) | Intended requested validity for the bootstrap credential. Parsed and defaulted by `common/config`, but not yet consumed by any request path — `certclient bootstrap`/`renew` don't currently pass a requested TTL to the CA, so actual bootstrap credential lifetime is governed entirely by the CA provisioner's own claims today |
 | `log_gateway_host` / `log_gateway_port` | none / 9400 | Where agent's supervised Vector process pushes logs, via `log-gateway` |
@@ -278,6 +338,7 @@ make agent
 
 ## See Also
 
+- [Storage Status Protocol](../protocols/storagestatus.md) — what `bwfs`'s `--policy-id` is for
 - [brfs](./brfs.md) — the binary backup tasks exec
 - [certclient](./certclient.md) — the binary both of `agent`'s credential-refresh policies exec
 - [issuer](./issuer.md) — what `operating-refresh` ultimately talks to

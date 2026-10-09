@@ -15,6 +15,11 @@ piece of local state: a SQLite database recording check-ins (see
 already embeds a hostname's current `attribute` key/value pairs as a custom X.509 extension on
 every operating certificate it mints.
 
+## Authorization
+
+`GetPolicies` is open to every role. `ListPolicies`/`CreatePolicy`/`UpdatePolicy`/`DeletePolicy`
+require the `control-plane` role. See [Security Model](../SECURITY.md#role-based-rpc-authorization).
+
 ## Usage
 
 ```bash
@@ -46,10 +51,10 @@ are opaque strings, stored and returned verbatim for a future consumer to interp
 
 A policy's type is derived from the name of the immediate subfolder its file lives in under
 `$MP_CONFIG_PATH/policies/` — `policies/backup/*.json` are type `"backup"`, `policies/storage/*.json`
-are type `"storage"`, and `policies/restore/*.json` are type `"restore"`. Type is never read from or
+are type `"storage"`, `policies/restore/*.json` are type `"restore"`, and `policies/retention/*.json` are type `"retention"`. Type is never read from or
 written to the on-disk policy JSON itself; it's purely a function of file location, computed at load
 time the same way `policy-server` already computes each policy's `id`. Each type is a distinct Go
-type internally (`BackupPolicy`, `StoragePolicy`, `RestorePolicy`) implementing a shared `Policy`
+type internally (`BackupPolicy`, `StoragePolicy`, `RestorePolicy`, `RetentionPolicy`) implementing a shared `Policy`
 interface, with its own on-disk schema, validation,
 and wire conversion — adding a further type means writing one more such type and registering its
 parser, not changing `policy-server`'s directory-walking or RPC-handling code. A `*.json` sitting
@@ -57,9 +62,9 @@ directly under `policies/`, outside any type subfolder, is skipped and logged �
 don't block the rest" treatment applied to a malformed file. **A subfolder name that isn't a
 registered type is also skipped and logged**, the same way — there's no schema to load an
 unrecognized type's file into, so it can no longer be loaded generically the way an earlier design
-allowed. `CreatePolicy` requires a `type` (`"backup"`, `"storage"`, or `"restore"`) and writes into the matching
+allowed. `CreatePolicy` requires a `type` (`"backup"`, `"storage"`, `"restore"`, or `"retention"`) and writes into the matching
 `policies/<type>/`, creating that subdirectory if missing; a request that sets fields belonging to
-the other type is rejected. `ListPolicies` additionally accepts an optional `type` filter — `"backup"`, `"storage"`, or `"restore"` restricts
+the other type is rejected. `ListPolicies` additionally accepts an optional `type` filter — `"backup"`, `"storage"`, `"restore"`, or `"retention"` restricts
 the response to that type; empty returns every type, unchanged from before this filter existed. See
 [Design: Policy Type Subfolders](../superpowers/specs/2026-07-20-policy-type-subfolders-design.md)
 and [Design: Storage Policy Type](../superpowers/specs/2026-07-28-storage-policy-type-design.md).
@@ -79,6 +84,19 @@ to this type; see
 [Design: agent storage-policy supervision](../superpowers/specs/2026-07-28-agent-storage-supervision-design.md),
 which is the first actual consumer of `storage`-typed policies. See
 [Design: link backup policies to storage policies by id](../superpowers/specs/2026-08-03-backup-policy-storage-link-design.md).
+
+A `"retention"` policy is one retention rule: how long file versions under a `path` prefix are kept
+(`keep_seconds`, `0` = never expire), for one `backup_type` (`"filesystem"` today), optionally
+narrowed by basename `include` globs, for the nodes its `client_filters` select. Its `priority` is
+managed by `policy-server` itself — `CreatePolicy` appends, `UpdatePolicy` preserves, and the
+`ReorderRetentionPolicies` RPC (complete ordered id list in, priorities `1..n` out, rejected if the
+list is incomplete or stale) is the only way to change it; `ListPolicies(type="retention")` returns
+the rules in evaluation order. `agent` turns the rules that match its node into the retention matrix
+for each backup job (see [agent](agent.md#retention-matrix)). Priority is stored in the policy file
+(`policies/retention/<name>.json`: `metadata`, `client_filters`, `backup_type`, `path`, `include`,
+`keep_seconds`, `priority`), so an operator hand-editing files sees and can set it directly. See
+[Policy Server Protocol](../protocols/policy-server.md) and
+[Design: Retention Policies](../superpowers/specs/2026-10-05-retention-policies-design.md).
 
 A `"restore"` policy is a one-shot directive: `client_filters` targets the node that will execute
 the restore, `storage_policy_id` (required, references an existing `"storage"`-typed policy's `id`
@@ -175,6 +193,41 @@ policy — decommissioned, or no longer matched — simply ages out of that poli
 its one row passes the retention window. See
 [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md).
 
+### Restore policy lifecycle
+
+A `"restore"` policy is one-shot: it exists only long enough for the targeted node to pick it up
+and run it, then it deletes itself. `CreatePolicy` generates a stable `job_id` for the policy at
+creation time -- `restorePolicyJobID(name, mode, now)`, prefixed `restore:` when `mode == "restore"`
+(an `rwfs` restore) or `verify:` otherwise -- and logs `event="created"` (with the policy's `id` and
+`job_id`) once the policy is written and reloaded into the cache. That `job_id` is what correlates
+the whole lifecycle: `agent` reports job progress under it, and `api-server`'s `JobStatusService`
+answers whether a given `job_id` has finished (see below).
+
+A background routine, `runRestoreCleanup`, ticks every `RestoreCleanupIntervalSec` (config key,
+default `300` = 5m) and calls `sweepRestorePolicies`, which checks every cached `"restore"`-type
+policy's `job_id` against `api-server`'s `GetPolicyJobStatus` RPC (see
+[api-server's Job-Status gRPC Listener](./api-server.md#job-status-grpc-listener)). A policy with no
+`job_id` at all -- one written to disk before this field existed -- is skipped before the RPC is even
+attempted (an empty `job_id` would otherwise fail every query forever) and logged once per tick at
+`Info` level rather than `Error`, since it's an expected steady state, not an operational failure; such
+a policy is never cleaned up automatically and must be deleted manually if it's no longer needed. A
+policy whose job hasn't finished, or whose query fails, is left alone -- a failed query is logged and
+retried on the next tick, the same best-effort direction `DeletePolicy`'s own check-in cleanup already
+takes. Once a job is reported finished, the policy is kept for `RestoreCleanupGracePeriodSec` (config
+key, default `900` = 15m) past its finish time -- giving any still-in-flight status reads a window to
+observe it -- and then deleted via `policy-server`'s own `DeletePolicy`; only once that delete
+succeeds is `event="deleted"` logged with the policy's `id` and `job_id`, so the log timeline never
+claims a deletion that didn't happen. This is the only case where `policy-server` deletes a policy on
+its own initiative rather than in response to an operator's `DeletePolicy` call.
+
+This single purpose makes `policy-server` a gRPC client as well as a server: alongside serving
+`PolicyService` itself (as it always has), it dials `api-server`'s `JobStatusService` at
+`api_server_host` / `APIServerJobStatusPort` (config keys; the latter is defined once, in
+`api-server`'s own config, and shared here as a second consumer -- the same pattern
+`policy_server_host`/`policy_server_port` already use in reverse, for `api-server`-as-client of
+`policy-server`) over the same mTLS mesh connection every other client uses. See
+[Design: Restore Policy Lifecycle](../superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md).
+
 ### Bootstrap-refresh cert status tracking
 
 Every `GetPolicies` call also records the caller's `bootstrap_refresh_last_error` /
@@ -202,6 +255,12 @@ and serialize as `-62135596800` instead of being omitted. See
   9300)*
 - `CheckinRetentionSec` — how long a check-in row survives with no re-poll before the cleanup
   routine removes it *(default: 86400)*
+- `api_server_host` / `APIServerJobStatusPort` — where `policy-server`'s restore-cleanup sweep dials
+  `api-server`'s `JobStatusService` to ask whether a restore policy's job has finished *(default
+  port: 8091, defined once in `api-server`'s own config)*
+- `RestoreCleanupIntervalSec` — how often the restore-cleanup sweep runs *(default: 300)*
+- `RestoreCleanupGracePeriodSec` — how long a finished restore policy is kept before it's deleted
+  *(default: 900)*
 
 ## Building
 
@@ -214,8 +273,12 @@ make policy-server
 - [issuer](./issuer.md) — mints the operating certificates whose embedded attribute extension
   `policy-server` reads
 - [policyclient](./policyclient.md) — fetches `GetPolicies` on `agent`'s `policy-update` schedule
+- [api-server](./api-server.md) — the `JobStatusService` `policy-server`'s restore-cleanup sweep
+  dials as a client
 - [Policy Server Protocol](../protocols/policy-server.md)
+- [Job Status Protocol](../protocols/jobstatus.md) — the `JobStatusService` this component's restore-cleanup sweep calls as a client
 - [Design: Policy Server](../superpowers/specs/2026-07-10-policy-server-design.md)
 - [Design: Policy Check-in Tracking](../superpowers/specs/2026-08-03-policy-checkin-tracking-design.md)
 - [Design: Bootstrap Certificate Renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
+- [Design: Restore Policy Lifecycle](../superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md)
 - [Architecture](../ARCHITECTURE.md)

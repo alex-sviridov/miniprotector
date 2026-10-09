@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"os"
@@ -14,12 +15,33 @@ import (
 	"time"
 )
 
-// backoffBase and backoffMax are vars (not consts) so tests can shrink them
-// temporarily instead of waiting out real multi-minute backoff windows.
-var (
-	backoffBase = 30 * time.Second
-	backoffMax  = 10 * time.Minute
-)
+// backoffPolicy is an injectable jittered-retry-delay computation, so each
+// consumer (reconcileState here; every processSupervisor, see
+// supervisor.go) can be given its own value instead of sharing
+// package-level vars.
+type backoffPolicy struct {
+	Base, Max time.Duration
+}
+
+// next returns a jittered retry delay for the given number of consecutive
+// failures. Must be called exactly once per failure and the result stored
+// (see reconcileState.recordOutcome), not recomputed on every isDue check
+// -- recomputing it would redraw the jitter each time and make the
+// due-ness threshold unstable.
+func (b backoffPolicy) next(failures int) time.Duration {
+	exp := min(max(failures-1, 0), 8)
+	d := b.Base * time.Duration(1<<exp)
+	if d > b.Max {
+		d = b.Max
+	}
+	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
+}
+
+// defaultBackoffPolicy is the production default for reconcileState and
+// every processSupervisor. A plain default, never mutated by tests: tests
+// that need different timing construct their own backoffPolicy{...} value
+// instead.
+var defaultBackoffPolicy = backoffPolicy{Base: 30 * time.Second, Max: 10 * time.Minute}
 
 // runner executes a policy's binary under ctx; production code uses
 // realExec, tests substitute a fake so they don't actually invoke
@@ -82,21 +104,6 @@ func isDue(p Policy, s PolicyState, now time.Time) bool {
 	return s.NextRetryAt == nil || !now.Before(*s.NextRetryAt)
 }
 
-// backoff returns a jittered retry delay for the given number of
-// consecutive failures. It must be called exactly once per failure and the
-// result stored (see reconcileState.recordOutcome, PolicyState.NextRetryAt)
-// rather than recomputed on every isDue check — recomputing it would
-// redraw the jitter each time and make the due-ness threshold unstable.
-func backoff(failures int) time.Duration {
-	exp := min(max(failures-1, 0), 8)
-	d := backoffBase * time.Duration(1<<exp)
-	if d > backoffMax {
-		d = backoffMax
-	}
-	// half jitter: never near-zero, still spreads retries across a fleet
-	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
-}
-
 // reconcileState bundles the persisted Cache with the mutex guarding it.
 // Before background policies existed, run() only ever touched the cache
 // from its own single goroutine; a Policy with Background == true now
@@ -109,6 +116,7 @@ type reconcileState struct {
 	cache     Cache
 	logger    *slog.Logger
 	inFlight  map[string]bool
+	backoff   backoffPolicy
 }
 
 // tryMarkInFlight marks id as in-flight and returns true if it wasn't
@@ -148,16 +156,42 @@ func isBackupPolicy(p Policy) bool {
 	return strings.HasPrefix(p.ID, "backup:")
 }
 
+// isRestorePolicy reports whether p is a restore/verify task -- their
+// event=start marker comes from policy-server's own "created" log line
+// now (see restore_cleanup.go/write.go), not from agent, so agent must
+// not also emit one. Unlike isBackupPolicy, event=finish is unaffected --
+// agent's own completion line remains the sole finish signal for these
+// kinds.
+func isRestorePolicy(p Policy) bool {
+	return strings.HasPrefix(p.ID, "restore:") || strings.HasPrefix(p.ID, "verify:")
+}
+
+// execWithPrepare runs p.Prepare (if any) and then execute with the combined
+// args; a Prepare failure is the attempt's error and nothing is exec'd.
+func execWithPrepare(ctx context.Context, logger *slog.Logger, execute runner, p Policy) error {
+	args := p.Args
+	if p.Prepare != nil {
+		extra, err := p.Prepare(logger)
+		if err != nil {
+			return fmt.Errorf("prepare %s: %w", p.ID, err)
+		}
+		args = append(append([]string(nil), p.Args...), extra...)
+	}
+	return execute(ctx, p.Binary, args, p.Stdin)
+}
+
 // logExecStart logs that agent is about to dispatch p's exec. Called
 // immediately before execute for both the synchronous and background
 // dispatch paths in run(), so agent's own log always shows an exec
 // starting even if it never finishes (e.g. agent is killed mid-exec).
-// event=start is added for every policy except scheduled backups --
-// brfs's own "Backup reader started" line is that job kind's sole
-// event=start source, so this line staying untagged for backups is
-// deliberate, not an oversight (see isBackupPolicy).
+// event=start is added for every policy except scheduled backups and
+// restore/verify tasks -- brfs's own "Backup reader started" line is
+// backups' sole event=start source (see isBackupPolicy), and
+// policy-server's own "created" line is restore/verify's (see
+// isRestorePolicy), so this line staying untagged for both is
+// deliberate, not an oversight.
 func logExecStart(logger *slog.Logger, p Policy) {
-	if isBackupPolicy(p) {
+	if isBackupPolicy(p) || isRestorePolicy(p) {
 		logger.Info("policy execution started", "policy", p.ID, "binary", p.Binary, "job_id", p.JobID)
 		return
 	}
@@ -221,7 +255,7 @@ func (rs *reconcileState) recordOutcome(id string, attemptErr error, attemptTime
 		state.LastError = ""
 	} else {
 		state.ConsecutiveFailures++
-		retryAt := attemptTime.Add(backoff(state.ConsecutiveFailures))
+		retryAt := attemptTime.Add(rs.backoff.next(state.ConsecutiveFailures))
 		state.NextRetryAt = &retryAt
 		state.LastError = attemptErr.Error()
 		rs.logger.Error("policy execution failed", "policy", id, "error", attemptErr)
@@ -235,7 +269,7 @@ func (rs *reconcileState) recordOutcome(id string, attemptErr error, attemptTime
 
 // prune removes any cache entry whose ID isn't present in currentIDs --
 // called once per reconcile tick, only when that tick's policy list came
-// from a confirmed-good read (run passes ok from policiesFunc), so a
+// from a confirmed-good read (run passes ok from derivedFunc), so a
 // transient unreadable policies-cache.json can never be mistaken for
 // "every backup task was removed" and wipe live backoff/RPO history for
 // tasks that are still current.
@@ -258,7 +292,7 @@ func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
 	}
 }
 
-// run polls policiesFunc() every reconcileInterval, executing and
+// run polls derivedFunc() every reconcileInterval, executing and
 // recording the outcome of any policy isDue reports as due. A due policy
 // with Background == false runs synchronously, exactly as before this
 // type existed. A due policy with Background == true is launched in its
@@ -269,30 +303,25 @@ func (rs *reconcileState) prune(currentIDs map[string]struct{}) {
 // goroutine it launched has finished (each one's execute call receives
 // the same ctx, so a context-respecting runner like realExec terminates
 // rather than being orphaned).
-// storageTasksFunc/storageMgr add ensure-running bwfs supervision alongside
-// the due/execute policy loop below -- either nil disables it entirely,
-// preserving prior behavior exactly (see storage.go).
-func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, policiesFunc func() ([]Policy, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string), storageTasksFunc func() ([]storageTask, bool), storageMgr *storageManager) error {
+// storageMgr adds ensure-running bwfs supervision alongside the due/execute
+// policy loop below, driven by derivedFunc()'s storage-task slice -- a nil
+// storageMgr disables it entirely, preserving prior behavior exactly (see
+// storage.go).
+func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileInterval time.Duration, execute runner, derivedFunc func() ([]Policy, []storageTask, bool), maxConcurrentBackgroundJobs int, onSuccess func(policyID string), storageMgr *storageManager, backoff backoffPolicy) error {
 	cache, err := readCache(cachePath)
 	if err != nil {
 		return err
 	}
-	rs := &reconcileState{cachePath: cachePath, cache: cache, logger: logger}
+	rs := &reconcileState{cachePath: cachePath, cache: cache, logger: logger, backoff: backoff}
 
 	sem := make(chan struct{}, maxConcurrentBackgroundJobs)
 	var wg sync.WaitGroup
 
 	for ctx.Err() == nil {
 		now := time.Now()
-		policyList, ok := policiesFunc()
+		policyList, storageTaskList, ok := derivedFunc()
 
-		var storageTaskList []storageTask
-		storageOk := true
-		if storageTasksFunc != nil {
-			storageTaskList, storageOk = storageTasksFunc()
-		}
-
-		if ok && storageOk {
+		if ok {
 			currentIDs := make(map[string]struct{}, len(policyList)+len(storageTaskList))
 			for _, p := range policyList {
 				currentIDs[p.ID] = struct{}{}
@@ -303,7 +332,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 			rs.prune(currentIDs)
 		}
 
-		if storageMgr != nil && storageOk {
+		if storageMgr != nil && ok {
 			storageMgr.reconcile(ctx, rs, storageTaskList)
 		}
 
@@ -330,7 +359,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 					defer rs.clearInFlight(p.ID)
 					logExecStart(rs.logger, p)
 					start := time.Now()
-					attemptErr := execute(ctx, p.Binary, p.Args, p.Stdin)
+					attemptErr := execWithPrepare(ctx, rs.logger, execute, p)
 					logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 					rs.recordOutcome(p.ID, attemptErr, time.Now())
 					if attemptErr == nil && onSuccess != nil {
@@ -342,7 +371,7 @@ func run(ctx context.Context, logger *slog.Logger, cachePath string, reconcileIn
 
 			logExecStart(rs.logger, p)
 			start := time.Now()
-			attemptErr := execute(ctx, p.Binary, p.Args, p.Stdin)
+			attemptErr := execWithPrepare(ctx, rs.logger, execute, p)
 			logExecCompletion(rs.logger, p, attemptErr, time.Since(start))
 			rs.recordOutcome(p.ID, attemptErr, now)
 			if attemptErr == nil && onSuccess != nil {

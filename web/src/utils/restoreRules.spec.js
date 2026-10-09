@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveFile, resolveFolderState, toggleFolder, toggleFile } from './restoreRules'
+import { resolveFile, resolveFolderState, toggleFolder, toggleFile, ensureFileRule, ensureFolderRule } from './restoreRules'
 
 describe('resolveFile', () => {
   it('is false when no rule matches', () => {
@@ -182,5 +182,44 @@ describe('toggleFile', () => {
     expect(result).toEqual([
       { path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts', storeHost: 'bwfs-1', size: 4096 },
     ])
+  })
+})
+
+describe('ensureFileRule', () => {
+  it('creates an exact include rule when the path is only covered by an ancestor folder rule', () => {
+    const rules = [{ path: '/var', host: null, include: true, destPath: '/var' }]
+    expect(resolveFile(rules, 'web01', '/var/lib/db/dump.sql')).toBe(true) // selected, but only via the ancestor
+    const result = ensureFileRule(rules, 'web01', '/var/lib/db/dump.sql', { notBefore: 100, notAfter: 100 })
+    expect(result).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var' },
+      { path: '/var/lib/db/dump.sql', host: 'web01', include: true, destPath: '/var/lib/db/dump.sql', notBefore: 100, notAfter: 100 },
+    ])
+  })
+
+  it('creates a fresh include rule when nothing covers the path at all', () => {
+    const result = ensureFileRule([], 'web01', '/etc/hosts', { notBefore: 1, notAfter: 1 })
+    expect(result).toEqual([{ path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts', notBefore: 1, notAfter: 1 }])
+  })
+
+  it('is a no-op when an exact rule already exists at (host, path)', () => {
+    const rules = [{ path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }]
+    expect(ensureFileRule(rules, 'web01', '/etc/hosts', { notBefore: 1, notAfter: 1 })).toBe(rules)
+  })
+})
+
+describe('ensureFolderRule', () => {
+  it('creates an exact include rule for a folder only covered by an ancestor folder rule', () => {
+    const rules = [{ path: '/var', host: null, include: true, destPath: '/var' }]
+    expect(resolveFolderState(rules, '/var/lib/db')).toBe('checked') // selected, but only via the ancestor
+    const result = ensureFolderRule(rules, '/var/lib/db', { notBefore: 100, notAfter: 100 })
+    expect(result).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var' },
+      { path: '/var/lib/db', host: null, include: true, destPath: '/var/lib/db', notBefore: 100, notAfter: 100 },
+    ])
+  })
+
+  it('is a no-op when an exact folder rule already exists at path', () => {
+    const rules = [{ path: '/var', host: null, include: true, destPath: '/var' }]
+    expect(ensureFolderRule(rules, '/var', { notBefore: 1, notAfter: 1 })).toBe(rules)
   })
 })

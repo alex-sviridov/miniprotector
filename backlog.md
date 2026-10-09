@@ -25,3 +25,34 @@ policy silently never run — `agent` skips a policy it can't parse a schedule f
 (`src/cmd/agent/backup.go`) rather than erroring at save time. The design deliberately kept `rpo`
 optional; tightening this (requiring a non-empty RPO, the same way `storage_policy_id` was made
 required) is a real option worth reconsidering, not just a bug to patch.
+
+## Adaptive brfs window
+
+`brfs --window` (default from `default_window`) is a static in-flight chunk limit per stream. The
+right value depends on RTT, throughput and how much of a run is deduplicated hash-only traffic, none
+of which are known up front. Size it automatically instead: measure smoothed RTT and achieved
+throughput per stream and set the window to about `RTT × throughput / chunk size` plus headroom,
+clamped to `[1, max]` (BBR-style), with `--window` as the cap or an override. It adds a feedback loop
+that can oscillate and interacts with `--streams` (total in flight is `streams × window`), so measure
+first: run a latency-injected benchmark (`tc netem` at 0, 20 and 100 ms) with the static flag to find
+where the knee actually is and whether one default fails to fit, before building it. Related: the
+window drains at every file boundary, so runs of many small files gain little; pipelining across file
+boundaries is a separate, larger change.
+
+## Key chunk links by FileData, not by file_id
+
+Chunk links (`file_data_chunk_records`) are keyed by `file_id` (source, path, mtime), not by the
+`FileData` uuid. Two consequences of the damaged-data work: a flagged `FileData` row keeps its file's
+surviving links alive (they are shared with any re-upload), and if a re-upload under the same `file_id`
+(same path and mtime) has different content, its links merge with the old ones. The client's whole-file
+CRC32 catches the mixed result on restore, so it is not silent, but the version cannot be restored.
+Consider keying links by `FileData` uuid so each content has its own link set; needs a schema change and
+a migration of existing links.
+
+## api-server: native TLS and per-user authentication
+
+`api-server` serves plain HTTP behind one shared static bearer token (see `docs/SECURITY.md`,
+"api-server transport"). Add optional TLS on its listener and replace the shared token with per-user
+credentials that can expire and be revoked. Also `log-gateway`'s `query_range`/`tail` routes are open
+to every operating-tier certificate, so any enrolled node can read the whole fleet's logs; gate them
+by role together with this.

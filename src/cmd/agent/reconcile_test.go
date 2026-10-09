@@ -34,6 +34,7 @@ type fakeRunner struct {
 	calls     int
 	failN     int
 	lastStdin []byte
+	lastArgs  []string
 }
 
 func (f *fakeRunner) run(ctx context.Context, binary string, args []string, stdin []byte) error {
@@ -41,6 +42,7 @@ func (f *fakeRunner) run(ctx context.Context, binary string, args []string, stdi
 	defer f.mu.Unlock()
 	f.calls++
 	f.lastStdin = stdin
+	f.lastArgs = args
 	if f.failN > 0 {
 		f.failN--
 		return errors.New("simulated failure")
@@ -108,30 +110,24 @@ func TestIsDue_FailingPolicyIgnoresCustomDueFunc(t *testing.T) {
 	assert.True(t, isDue(p, state, now))
 }
 
-func TestBackoff_JitterWithinHalfToFullRange(t *testing.T) {
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 10*time.Second, time.Minute
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
-
+func TestBackoffPolicy_JitterWithinHalfToFullRange(t *testing.T) {
+	bp := backoffPolicy{Base: 10 * time.Second, Max: time.Minute}
 	for failures := 1; failures <= 5; failures++ {
 		exp := min(max(failures-1, 0), 8)
-		full := backoffBase * time.Duration(1<<exp)
-		if full > backoffMax {
-			full = backoffMax
+		full := bp.Base * time.Duration(1<<exp)
+		if full > bp.Max {
+			full = bp.Max
 		}
-		d := backoff(failures)
+		d := bp.next(failures)
 		assert.GreaterOrEqual(t, d, full/2)
 		assert.LessOrEqual(t, d, full)
 	}
 }
 
-func TestBackoff_CappedAtMax(t *testing.T) {
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 10*time.Second, 30*time.Second
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
-
-	d := backoff(20) // huge failure count, must clamp to backoffMax
-	assert.LessOrEqual(t, d, backoffMax)
+func TestBackoffPolicy_CappedAtMax(t *testing.T) {
+	bp := backoffPolicy{Base: 10 * time.Second, Max: 30 * time.Second}
+	d := bp.next(20) // huge failure count, must clamp to Max
+	assert.LessOrEqual(t, d, bp.Max)
 }
 
 func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
@@ -144,7 +140,7 @@ func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil)
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, fr.callCount(), "a healthy 1-hour-interval policy must not re-trigger within the test window")
@@ -159,10 +155,6 @@ func TestRun_ExecutesDuePolicyAndDoesNotRetriggerWithinInterval(t *testing.T) {
 func TestRun_FailedExecutionRecordsFailureAndRetriesAfterBackoff(t *testing.T) {
 	testPolicies := []Policy{{ID: "test-policy", Binary: "false", Interval: time.Hour}}
 
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 20*time.Millisecond, 50*time.Millisecond
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
-
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
 
@@ -170,7 +162,7 @@ func TestRun_FailedExecutionRecordsFailureAndRetriesAfterBackoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil)
+	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr.run, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, backoffPolicy{Base: 20 * time.Millisecond, Max: 50 * time.Millisecond})
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, fr.callCount(), 2, "must retry after the backoff window elapses")
@@ -234,7 +226,7 @@ func TestRun_BackgroundPolicyDoesNotBlockSyncPolicyInSameTick(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil)
+		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -285,7 +277,7 @@ func TestRun_ConcurrencyCapLimitsSimultaneousBackgroundExecs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 1, nil, nil, nil)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 1, nil, nil, defaultBackoffPolicy)
 	}()
 
 	<-entered
@@ -324,7 +316,7 @@ func TestRun_SamePolicyNotRedispatchedWhileStillInFlight(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 5, nil, nil, nil)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 5, nil, nil, defaultBackoffPolicy)
 	}()
 
 	<-entered
@@ -353,7 +345,7 @@ func TestRun_BackgroundExecReceivesCancelledContextOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	}()
 
 	time.Sleep(20 * time.Millisecond) // let the background goroutine launch and block on ctx.Done()
@@ -437,7 +429,7 @@ func TestRun_PrunesOrphanedEntryOnConfirmedGoodTick(t *testing.T) {
 	defer cancel()
 
 	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run,
-		func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil)
+		func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	cache, err := readCache(cachePath)
@@ -475,7 +467,9 @@ func TestRun_DisabledPolicyPrunedViaBackupTasks(t *testing.T) {
 	defer cancel()
 
 	err := run(ctx, testLogger(), stateCachePath, 10*time.Millisecond, fr.run,
-		func() ([]Policy, bool) { return backupTasks(policiesCachePath, testLogger(), conf) }, 2, nil, nil, nil)
+		func() ([]Policy, []storageTask, bool) {
+			return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf, t.TempDir()), nil, true
+		}, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	cache, err := readCache(stateCachePath)
@@ -497,7 +491,7 @@ func TestRun_SkipsPruneWhenPoliciesFuncReportsNotOk(t *testing.T) {
 	// ok=false every tick, mirroring a persistently unreadable
 	// policies-cache.json -- "stale" must survive untouched.
 	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run,
-		func() ([]Policy, bool) { return nil, false }, 2, nil, nil, nil)
+		func() ([]Policy, []storageTask, bool) { return nil, nil, false }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	cache, err := readCache(cachePath)
@@ -534,19 +528,19 @@ func TestRun_PruneRaceResurrectedEntryPrunedAgainNextTick(t *testing.T) {
 
 	var mu sync.Mutex
 	removed := false
-	policiesFunc := func() ([]Policy, bool) {
+	derivedFunc := func() ([]Policy, []storageTask, bool) {
 		mu.Lock()
 		defer mu.Unlock()
 		if removed {
-			return nil, true
+			return nil, nil, true
 		}
-		return []Policy{{ID: "slow-backup", Binary: "slow", Interval: time.Hour, Background: true}}, true
+		return []Policy{{ID: "slow-backup", Binary: "slow", Interval: time.Hour, Background: true}}, nil, true
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, policiesFunc, 2, nil, nil, nil)
+		done <- run(ctx, testLogger(), cachePath, 5*time.Millisecond, blockingRunner, derivedFunc, 2, nil, nil, defaultBackoffPolicy)
 	}()
 
 	<-entered // dispatched while "slow-backup" was still present in the policy list
@@ -603,14 +597,14 @@ func TestRun_StdinIsPassedThroughToRunner(t *testing.T) {
 	cachePath := filepath.Join(dir, "agent-state.json")
 	fr := &fakeRunner{}
 	p := Policy{ID: "restore:x", Binary: "rwfs", Args: []string{"verify"}, Stdin: []byte(`{"rules":[]}`)}
-	policiesFunc := func() ([]Policy, bool) { return []Policy{p}, true }
+	derivedFunc := func() ([]Policy, []storageTask, bool) { return []Policy{p}, nil, true }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	_ = run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, policiesFunc, 2, nil, nil, nil)
+	_ = run(ctx, testLogger(), cachePath, 10*time.Millisecond, fr.run, derivedFunc, 2, nil, nil, defaultBackoffPolicy)
 
 	assert.Equal(t, []byte(`{"rules":[]}`), fr.lastStdin)
 }
@@ -685,6 +679,32 @@ func TestLogExecOutcome_FailureWithoutExitErrorOmitsExitCode(t *testing.T) {
 	assert.False(t, hasExitCode, "a non-exec.ExitError failure must not fabricate an exit_code field")
 }
 
+func TestLogExecOutcome_RestorePolicyOmitsStartButKeepsFinish(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "restore:web01-emergency", JobID: "restore:web01-emergency:1700000000"}
+
+	logExecStart(logger, p)
+	logExecCompletion(logger, p, nil, 250*time.Millisecond)
+
+	out := buf.String()
+	assert.NotContains(t, out, `"event":"start"`, "policy-server's own created event is the start marker now")
+	assert.Contains(t, out, `"event":"finish"`)
+	assert.Contains(t, out, `"status":"success"`)
+}
+
+func TestLogExecOutcome_VerifyPolicyOmitsStartButKeepsFinish(t *testing.T) {
+	logger, buf := testLoggerWithBuffer()
+	p := Policy{ID: "verify:web01-emergency", JobID: "verify:web01-emergency:1700000000"}
+
+	logExecStart(logger, p)
+	logExecCompletion(logger, p, errors.New("boom"), time.Second)
+
+	out := buf.String()
+	assert.NotContains(t, out, `"event":"start"`)
+	assert.Contains(t, out, `"event":"finish"`)
+	assert.Contains(t, out, `"status":"failure"`)
+}
+
 func TestRun_LogsStartAndCompletionForEveryDispatchedExec(t *testing.T) {
 	testPolicies := []Policy{{ID: "test-policy", Binary: "true", JobID: "test-policy:456", Interval: time.Hour}}
 
@@ -696,7 +716,7 @@ func TestRun_LogsStartAndCompletionForEveryDispatchedExec(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, logger, cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil)
+	err := run(ctx, logger, cachePath, 10*time.Millisecond, fr.run, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	out := buf.String()
@@ -710,10 +730,6 @@ func TestRun_CallsOnSuccessAfterASuccessfulExecOnly(t *testing.T) {
 		{ID: "ok-policy", Binary: "true", Interval: time.Hour},
 		{ID: "fail-policy", Binary: "false", Interval: time.Hour},
 	}
-
-	origBase, origMax := backoffBase, backoffMax
-	backoffBase, backoffMax = 20*time.Millisecond, 50*time.Millisecond
-	defer func() { backoffBase, backoffMax = origBase, origMax }()
 
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
@@ -729,7 +745,7 @@ func TestRun_CallsOnSuccessAfterASuccessfulExecOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, bool) { return testPolicies, true }, 2, onSuccess, nil, nil)
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, onSuccess, nil, backoffPolicy{Base: 20 * time.Millisecond, Max: 50 * time.Millisecond})
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -746,6 +762,38 @@ func TestRun_NilOnSuccessIsSafe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, bool) { return testPolicies, true }, 2, nil, nil, nil)
+	err := run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, func() ([]Policy, []storageTask, bool) { return testPolicies, nil, true }, 2, nil, nil, defaultBackoffPolicy)
 	assert.NoError(t, err, "run must not panic when onSuccess is nil")
+}
+
+func TestExecWithPrepare_AppendsPreparedArgsWithoutMutatingPolicyArgs(t *testing.T) {
+	fr := &fakeRunner{}
+	p := Policy{ID: "t", Binary: "brfs", Args: []string{"/data", "--job-id", "j"},
+		Prepare: func(*slog.Logger) ([]string, error) { return []string{"--retention-file", "/x.json"}, nil }}
+
+	require.NoError(t, execWithPrepare(context.Background(), testLogger(), fr.run, p))
+
+	assert.Equal(t, []string{"/data", "--job-id", "j", "--retention-file", "/x.json"}, fr.lastArgs)
+	assert.Equal(t, []string{"/data", "--job-id", "j"}, p.Args)
+}
+
+func TestExecWithPrepare_PrepareErrorFailsTheAttemptWithoutExec(t *testing.T) {
+	fr := &fakeRunner{}
+	p := Policy{ID: "t", Binary: "brfs",
+		Prepare: func(*slog.Logger) ([]string, error) { return nil, errors.New("disk full") }}
+
+	err := execWithPrepare(context.Background(), testLogger(), fr.run, p)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disk full")
+	assert.Equal(t, 0, fr.callCount(), "execute must not run when Prepare fails")
+}
+
+func TestExecWithPrepare_NoPrepareRunsPolicyArgsAsIs(t *testing.T) {
+	fr := &fakeRunner{}
+	p := Policy{ID: "t", Binary: "certclient", Args: []string{"renew"}}
+
+	require.NoError(t, execWithPrepare(context.Background(), testLogger(), fr.run, p))
+
+	assert.Equal(t, []string{"renew"}, fr.lastArgs)
 }

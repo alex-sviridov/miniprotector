@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatBytes } from './format'
+import { formatBytes, formatDurationNs } from './format'
 
 describe('formatBytes', () => {
   it('renders 0 bytes as "0 B"', () => {
@@ -42,5 +42,21 @@ describe('formatBytes', () => {
   it('bumps to the next unit instead of rounding to "1024.0" at a unit boundary', () => {
     expect(formatBytes(1024 * 1024 - 1)).toBe('1.0 MB')
     expect(formatBytes(1024 * 1024 * 1024 - 1)).toBe('1.0 GB')
+  })
+})
+
+describe('formatDurationNs', () => {
+  it('formats nanoseconds (as slog writes a time.Duration) compactly', () => {
+    expect(formatDurationNs(0)).toBe('0 ms')
+    expect(formatDurationNs(250_000_000)).toBe('250 ms')
+    expect(formatDurationNs(1_500_000_000)).toBe('1.5 s')
+    expect(formatDurationNs(42_000_000_000)).toBe('42 s')
+    expect(formatDurationNs(125_000_000_000)).toBe('2 min 5 s')
+    expect(formatDurationNs(3_900_000_000_000)).toBe('1 h 5 min')
+  })
+
+  it('renders a missing value as an em dash', () => {
+    expect(formatDurationNs(null)).toBe('—')
+    expect(formatDurationNs(undefined)).toBe('—')
   })
 })

@@ -22,6 +22,7 @@ api-server --port 8090 --token <bearer-token>
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port` | `api_server_port` config value (default: 8090) | Port the REST listener binds to |
+| `--job-status-port` | `APIServerJobStatusPort` config value (default: 8091) | Port the internal control-plane-only job-status gRPC service listens on |
 | `--token` | `api_server_token` config value | Bearer token required on every REST request |
 | `--debug` | false | Enable debug logging |
 
@@ -62,6 +63,10 @@ unlike `GET /api/v1/jobs`, which translates one REST call into one Loki query, t
 state across calls — one shared Loki tail feeds every subscriber, and a subscriber joining late
 still gets the current state via the snapshot rather than replaying history.
 
+### Catalog Entries
+
+`GET /api/v1/catalog` entries carry a boolean `damaged` (always emitted), mapped from `Entry.damaged`: true when the store has reported the file's backup data as damaged. It lags the store by up to about a minute and does not block restore.
+
 ### Catalog Facet Endpoints
 
 - `GET /api/v1/catalog/clients` — distinct client (source host) facets
@@ -85,6 +90,13 @@ also how a storage policy targets a node (there is no separate `hostname` field;
 fully type-agnostic, looking a policy up by `id` alone. `DELETE /policies/{id}` now has
 type-specific behavior for storage policies: `policy-server` rejects the delete with `400` if the
 `id` names a storage policy still referenced by any backup policy.
+
+A `"retention"` policy (one retention rule, see [Policy Server](policy-server.md)) has its own
+endpoints too: `POST /retention-policies`, `PUT /retention-policies/{id}` (body `name`/
+`client_filters`/`retention: {backup_type, path, include, keep_seconds}`, no `priority`) and
+`POST /retention-policies/reorder` (the complete ordered `ids` list, forwarded to
+`ReorderRetentionPolicies`). `GET /policies?type=retention` returns them in evaluation order, each
+with its `retention` rule and server-assigned `priority`; delete is the shared `DELETE /policies/{id}`.
 
 `POST /policies/adhoc` creates a one-time backup policy from the same fields as an ordinary create
 (`name`/`client_filters`/`object_filters`/`storage_policy_id`) — `api-server` computes `backup_window`
@@ -126,6 +138,19 @@ reported a renewal attempt, with `last_error`/`last_attempt_at` simply omitted, 
 absence isn't an error. See
 [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md).
 
+## Job-Status gRPC Listener
+
+Alongside its REST listener, `api-server` also serves one internal gRPC service,
+`JobStatusService` (`GetPolicyJobStatus`), over its own port (`APIServerJobStatusPort`, default
+`8091`) — mTLS-secured and role-gated to `control-plane` callers, exactly like `policy-server`'s
+`PolicyService` (see `cmd/api-server/authz.go`, mirroring `cmd/policy-server/authz.go`'s pattern).
+This is the *only* inbound mTLS surface on `api-server`: every other RPC it makes
+(`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`) is outbound, and its REST
+API (above) is plain HTTP, outside the mesh entirely, guarded by the bearer token instead. The sole
+caller today is `policy-server`'s restore-cleanup sweep, which polls `GetPolicyJobStatus` to learn
+whether a given restore-verification job has finished before deleting the one-shot policy that
+triggered it.
+
 ## Authentication
 
 Every request must present `Authorization: Bearer <token>`, checked against the single
@@ -136,16 +161,20 @@ RBAC, no per-user identity, including for the policy write endpoints (see
 and for the client write endpoints, whose stakes are notably higher — a leaked token can mint
 enrollment tokens or revoke arbitrary nodes, not just edit backup policies (see
 [Design: clientmanager-admin-api](../superpowers/specs/2026-07-19-clientmanager-admin-api-design.md)).
-Any node holding a valid mesh operating credential can still call
-`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`'s RPCs directly, bypassing
-this token — an accepted continuation of this project's existing "any operating-tier cert may call
-any RPC it can reach"
-convention, not a new gap.
+`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`'s RPCs are reachable by any
+node holding a valid mesh operating credential, bypassing this token entirely — but those RPCs are
+now role-gated to `control-plane` callers, a role `api-server` itself is enrolled with (see
+Certificates below). This bearer token and the per-RPC role check are two independent layers: the
+token gates REST access to `api-server`, the role check gates gRPC access to the backends it calls,
+and neither depends on the other holding. See
+[Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## Configuration Keys
 
 - `api_server_port` — port the REST listener binds to *(default: 8090)*
 - `api_server_token` — bearer token required on every REST request
+- `APIServerJobStatusPort` — port the internal control-plane-only job-status gRPC service listens
+  on *(default: 8091)*
 - `clientmanager_api_host` / `clientmanager_api_port` — where to dial `clientmanager-api`
 - `clientmanager_admin_api_host` / `clientmanager_admin_api_port` — where to dial `clientmanager-admin-api` *(default port: 9501)*
 - `catalog_host` / `catalog_port` — where to dial `catalog`
@@ -160,8 +189,14 @@ convention, not a new gap.
 ## Certificates
 
 Enrolls like any other mesh node (bootstrap credential → `certclient` → `issuer` operating cert) for
-its *outbound* gRPC calls to `clientmanager-api`/`catalog`. The REST listener itself is plain
-HTTP, guarded only by the bearer token above — it is not part of the mTLS mesh.
+its *outbound* gRPC calls to `clientmanager-api`/`catalog`/`policy-server`, and for the same
+identity's *inbound* job-status gRPC listener (above). The REST listener itself is plain HTTP,
+guarded only by the bearer token above — it is not part of the mTLS mesh.
+
+`api-server` is enrolled with `authz-role=control-plane` — required for its outbound calls to
+`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server` to succeed at all, since
+those RPCs now reject any other role. See
+[Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## Deployment
 
@@ -174,12 +209,22 @@ Ships as part of the combined control-plane `docker compose` stack — see
 make api-server
 ```
 
+## Storage status
+
+The same mTLS listener also serves `StorageStatusService.ReportStorageStatus`, role-gated to
+`store`: each `bwfs` posts a report a minute, kept in memory (latest per policy and reporting host,
+lost on restart) and served as `GET /api/v1/storage-policies/{id}/status` — the one REST endpoint
+with no backend gRPC call. See [Storage Status Protocol](../protocols/storagestatus.md).
+
 ## See Also
 
 - [clientmanager-api](./clientmanager-api.md) — one of the two backends this component reads from
 - [clientmanager-admin-api](./clientmanager-admin-api.md) — the write-capable backend behind this component's client-write endpoints
 - [catalog](./catalog.md) — the other backend
+- [Catalog Sync Protocol](../protocols/catalog-sync.md) — `ListEntries` and the facet RPCs this component calls, including `Entry.damaged`
 - [REST API v1](../api/rest-v1.md)
+- [Job Status Protocol](../protocols/jobstatus.md) — the `JobStatusService` this component's gRPC listener serves
+- [Storage Status Protocol](../protocols/storagestatus.md) — the `StorageStatusService` on the same listener, fed by every `bwfs`
 - [Design: api-server](../superpowers/specs/2026-07-14-api-server-design.md)
 - [Design: bootstrap-cert-renewal](../superpowers/specs/2026-08-16-bootstrap-cert-renewal-design.md)
 - [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)

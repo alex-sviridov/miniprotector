@@ -1,7 +1,6 @@
 package filesystem
 
 import (
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"lukechampine.com/blake3"
 
 	"github.com/alex-sviridov/miniprotector/storage"
+	"github.com/alex-sviridov/miniprotector/storage/pack"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -213,7 +213,7 @@ func TestOpenDB_BackfillsPreMigrationFileVersionColumns(t *testing.T) {
 	// fallback contract parseFileID already has for FileDataRecord.
 	insertPreMigrationFileVersion(t, store.RawDB(), "not-a-valid-id", "job3")
 	// A row already carrying its columns must be left exactly as-is.
-	require.NoError(t, store.EnsureFileVersion("job4", "obj-4", "hostb", "/var/log/syslog", "f", nil, 999))
+	require.NoError(t, store.EnsureFileVersion("job4", "obj-4", "hostb", "/var/log/syslog", "f", nil, 999, 0))
 	require.NoError(t, store.Close())
 
 	// Re-opening runs openDB again, which is where the backfill lives.
@@ -278,7 +278,7 @@ func TestOpenDB_BackfillFileVersionTerminatesOnUnparseableObjectID(t *testing.T)
 
 func TestOpenDB_BackfillFileVersionProbeUsesPathIndex(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.EnsureFileVersion("job1", "obj-1", "hosta", "/etc/a.conf", "f", nil, 1000))
+	require.NoError(t, store.EnsureFileVersion("job1", "obj-1", "hosta", "/etc/a.conf", "f", nil, 1000, 0))
 
 	var plan []struct {
 		Detail string
@@ -325,7 +325,7 @@ func TestEnsureBackupJob_SecondCallIsNoOp(t *testing.T) {
 func TestFinalizeBackupJob_SuccessSetsStatusAndFinishedAt(t *testing.T) {
 	store := newTestStore(t)
 	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 100, 0))
 
 	changed, err := store.FinalizeBackupJob("job-1", true)
 	require.NoError(t, err)
@@ -347,8 +347,8 @@ func TestFinalizeBackupJob_FailurePurgesOnlyThatJobsFileVersions(t *testing.T) {
 	store := newTestStore(t)
 	require.NoError(t, store.EnsureBackupJob("job-1", "host-a"))
 	require.NoError(t, store.EnsureBackupJob("job-2", "host-a"))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 100))
-	require.NoError(t, store.EnsureFileVersion("job-2", "obj-2", "hosta", "/path", "f", []byte("meta"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 100, 0))
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-2", "hosta", "/path", "f", []byte("meta"), 100, 0))
 
 	changed, err := store.FinalizeBackupJob("job-1", false)
 	require.NoError(t, err)
@@ -421,18 +421,20 @@ func TestChunkExists_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, storage.ErrChunkNotFound)
 }
 
-func TestStoreChunk_WritesFile(t *testing.T) {
+func TestStoreChunk_AppendsToPackSegment(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk data for testing")
 	hash := makeChunk(t, data)
 
+	before, err := pack.Segments(store.packDir())
+	require.NoError(t, err)
 	require.NoError(t, store.StoreChunk(hash, data))
 
-	// File must exist on disk
-	hexHash := hex.EncodeToString(hash)
-	path := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
-	_, err := os.Stat(path)
-	assert.NoError(t, err)
+	// The record (header + data) must land in the active segment.
+	after, err := pack.Segments(store.packDir())
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, before[0].Size+pack.HeaderSize+int64(len(data)), after[0].Size)
 }
 
 func TestChunkExists_AfterStore(t *testing.T) {
@@ -510,7 +512,7 @@ func TestFileDataExists_TrueAfterFinalize(t *testing.T) {
 	assert.True(t, exists)
 }
 
-func TestMarkChunkCorrupted_RemovesFileFromDiskIfPresent(t *testing.T) {
+func TestMarkChunkCorrupted_RemovesChunkRecord(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk data for corrupted-chunk test")
 	hash := makeChunk(t, data)
@@ -518,26 +520,29 @@ func TestMarkChunkCorrupted_RemovesFileFromDiskIfPresent(t *testing.T) {
 
 	require.NoError(t, store.MarkChunkCorrupted(hash))
 
-	hexHash := hex.EncodeToString(hash)
-	chunkPath := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
-	_, err := os.Stat(chunkPath)
-	assert.True(t, os.IsNotExist(err), "corrupted chunk file must be removed from disk")
+	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound, "corrupted chunk must no longer be indexed")
 }
 
-func TestMarkChunkCorrupted_TolerantOfAlreadyMissingFile(t *testing.T) {
+func TestMarkChunkCorrupted_TolerantOfMissingSegment(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk that is already gone from disk")
 	hash := makeChunk(t, data)
 	require.NoError(t, store.StoreChunk(hash, data))
+	require.NoError(t, store.flush())
 
-	hexHash := hex.EncodeToString(hash)
-	chunkPath := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4], hexHash[4:])
-	require.NoError(t, os.Remove(chunkPath))
+	segs, err := pack.Segments(store.packDir())
+	require.NoError(t, err)
+	for _, seg := range segs {
+		require.NoError(t, pack.RemoveSegment(store.packDir(), seg.ID))
+	}
+	_, err = store.ReadChunk(hash)
+	require.ErrorIs(t, err, pack.ErrSegmentMissing)
 
-	assert.NoError(t, store.MarkChunkCorrupted(hash), "must not error when the chunk file is already gone")
+	assert.NoError(t, store.MarkChunkCorrupted(hash), "must not error when the chunk's segment is already gone")
+	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
 }
 
-func TestMarkChunkCorrupted_InvalidatesDependentFileData(t *testing.T) {
+func TestMarkChunkCorrupted_DependentFileDataNoLongerDeduplicates(t *testing.T) {
 	store := newTestStore(t)
 	data := []byte("chunk shared by a finalized file")
 	hash := makeChunk(t, data)
@@ -587,7 +592,7 @@ func TestFileDataChunks_ReturnsOrderedHashes(t *testing.T) {
 
 func TestEnsureFileVersion_CreatesRow(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/etc/a.conf", "f", []byte("meta"), 12345))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/etc/a.conf", "f", []byte("meta"), 12345, 0))
 
 	v, err := store.LatestFileVersion("obj-1")
 	require.NoError(t, err)
@@ -603,8 +608,8 @@ func TestEnsureFileVersion_CreatesRow(t *testing.T) {
 
 func TestEnsureFileVersion_DuplicateWithinJobIsNoOp(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/etc/a.conf", "f", []byte("first"), 100))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/etc/a.conf", "f", []byte("second"), 200))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/etc/a.conf", "f", []byte("first"), 100, 0))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/etc/a.conf", "f", []byte("second"), 200, 0))
 
 	var count int64
 	require.NoError(t, store.db.Model(&FileVersionRecord{}).
@@ -620,7 +625,7 @@ func TestEnsureFileVersion_DuplicateWithinJobIsNoOp(t *testing.T) {
 func TestFileVersionRecord_SeqNeverReusedAfterDelete(t *testing.T) {
 	store := newTestStore(t)
 
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("v1"), 100, 0))
 
 	var first FileVersionRecord
 	require.NoError(t, store.db.Where("job_id = ? AND object_id = ?", "job-1", "obj-1").First(&first).Error)
@@ -628,7 +633,7 @@ func TestFileVersionRecord_SeqNeverReusedAfterDelete(t *testing.T) {
 	// Simulate FinalizeBackupJob purging a failed job's file_versions rows.
 	require.NoError(t, store.db.Delete(&FileVersionRecord{}, "job_id = ?", "job-1").Error)
 
-	require.NoError(t, store.EnsureFileVersion("job-2", "obj-2", "hosta", "/path", "f", []byte("v2"), 200))
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-2", "hosta", "/path", "f", []byte("v2"), 200, 0))
 
 	var second FileVersionRecord
 	require.NoError(t, store.db.Where("job_id = ? AND object_id = ?", "job-2", "obj-2").First(&second).Error)
@@ -638,8 +643,8 @@ func TestFileVersionRecord_SeqNeverReusedAfterDelete(t *testing.T) {
 
 func TestLatestFileVersion_ReturnsNewest(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta-old"), 100))
-	require.NoError(t, store.EnsureFileVersion("job-2", "obj-1", "hosta", "/path", "f", []byte("meta-new"), 200))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta-old"), 100, 0))
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-1", "hosta", "/path", "f", []byte("meta-new"), 200, 0))
 
 	v, err := store.LatestFileVersion("obj-1")
 	require.NoError(t, err)
@@ -697,7 +702,7 @@ func TestStoreInfo_CountsCorrectly(t *testing.T) {
 	require.NoError(t, store.CreateFileData("file-1", int64(len(data))))
 	require.NoError(t, store.LinkChunkToFileData(hash, "file-1", 0))
 	require.NoError(t, store.FinalizeFileData("file-1", []byte("checksum")))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 0))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 0, 0))
 
 	info, err := store.StoreInfo()
 	require.NoError(t, err)
@@ -744,6 +749,7 @@ func TestVacuum_RemovesOrphanedChunkLinksForIncompleteFileData(t *testing.T) {
 	}
 	store.db.Create(&old)
 	require.NoError(t, store.LinkChunkToFileData(hash, "incomplete-file", 0))
+	require.NoError(t, store.flush()) // links are pending until a flush
 
 	var before int64
 	store.db.Model(&FileDataChunkRecord{}).Where("file_id = ?", "incomplete-file").Count(&before)
@@ -755,25 +761,6 @@ func TestVacuum_RemovesOrphanedChunkLinksForIncompleteFileData(t *testing.T) {
 	var after int64
 	store.db.Model(&FileDataChunkRecord{}).Where("file_id = ?", "incomplete-file").Count(&after)
 	assert.Equal(t, int64(0), after)
-}
-
-func TestVacuum_RemovesOrphanedChunkFiles(t *testing.T) {
-	store := newTestStore(t)
-
-	// Write a chunk file without a DB record
-	data := []byte("orphan chunk data for vacuum test!")
-	hash := makeChunk(t, data)
-	hexHash := hex.EncodeToString(hash)
-	dir := filepath.Join(store.basePath, "chunks", hexHash[0:2], hexHash[2:4])
-	require.NoError(t, os.MkdirAll(dir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, hexHash[4:]), data, 0644))
-
-	result, err := store.Vacuum()
-	require.NoError(t, err)
-	assert.Greater(t, result.BytesReclaimed, int64(0))
-
-	// File must be gone
-	assert.ErrorIs(t, store.ChunkExists(hash), storage.ErrChunkNotFound)
 }
 
 func TestConcurrentStores_NoSQLiteBusy(t *testing.T) {
@@ -871,9 +858,16 @@ func TestMarkChunkCorrupted_ConcurrentWithNewLink_NoOrphanedFileData(t *testing.
 
 		close(start)
 		wg.Wait()
-		require.NoError(t, linkErr, "iteration %d", i)
 
 		exists, err := store.FileDataExists(newFileID)
+		if linkErr != nil {
+			// MarkChunkCorrupted won and flagged the file mid-transfer:
+			// finalize must say so instead of pretending the file is stored.
+			require.ErrorContains(t, linkErr, "no longer exists", "iteration %d", i)
+			require.NoError(t, err)
+			assert.False(t, exists, "iteration %d", i)
+			continue
+		}
 		require.NoError(t, err)
 		if exists {
 			var count int64
@@ -886,9 +880,9 @@ func TestMarkChunkCorrupted_ConcurrentWithNewLink_NoOrphanedFileData(t *testing.
 
 func TestFileVersionsForJob_ReturnsObjectIDsForThatJobOnly(t *testing.T) {
 	store := newTestStore(t)
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-a", "hosta", "/path", "f", []byte("meta"), 1))
-	require.NoError(t, store.EnsureFileVersion("job-1", "obj-b", "hosta", "/path", "f", []byte("meta"), 2))
-	require.NoError(t, store.EnsureFileVersion("job-2", "obj-c", "hosta", "/path", "f", []byte("meta"), 3))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-a", "hosta", "/path", "f", []byte("meta"), 1, 0))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-b", "hosta", "/path", "f", []byte("meta"), 2, 0))
+	require.NoError(t, store.EnsureFileVersion("job-2", "obj-c", "hosta", "/path", "f", []byte("meta"), 3, 0))
 
 	ids, err := store.FileVersionsForJob("job-1")
 	require.NoError(t, err)
@@ -907,8 +901,8 @@ func TestFailStaleInProgressJobs_FlipsOnlyInProgressJobs(t *testing.T) {
 	require.NoError(t, store.EnsureBackupJob("job-stale-1", "host-a"))
 	require.NoError(t, store.EnsureBackupJob("job-stale-2", "host-a"))
 	require.NoError(t, store.EnsureBackupJob("job-done", "host-a"))
-	require.NoError(t, store.EnsureFileVersion("job-stale-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 1))
-	require.NoError(t, store.EnsureFileVersion("job-done", "obj-2", "hosta", "/path", "f", []byte("meta"), 1))
+	require.NoError(t, store.EnsureFileVersion("job-stale-1", "obj-1", "hosta", "/path", "f", []byte("meta"), 1, 0))
+	require.NoError(t, store.EnsureFileVersion("job-done", "obj-2", "hosta", "/path", "f", []byte("meta"), 1, 0))
 
 	changed, err := store.FinalizeBackupJob("job-done", true)
 	require.NoError(t, err)
@@ -960,4 +954,17 @@ func TestCreateFileData_MalformedFileIDLeavesColumnsEmpty(t *testing.T) {
 	assert.Equal(t, "", rec.SourceHost)
 	assert.Equal(t, "not-a-valid-id", rec.Path)
 	assert.Equal(t, int64(0), rec.Mtime)
+}
+
+func TestEnsureFileVersion_StoresExpireAt(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-1", "hosta", "/p", "f", nil, 1, 1_700_000_000))
+	require.NoError(t, store.EnsureFileVersion("job-1", "obj-2", "hosta", "/q", "f", nil, 1, 0))
+
+	var withExpiry, without FileVersionRecord
+	require.NoError(t, store.RawDB().Where("object_id = ?", "obj-1").First(&withExpiry).Error)
+	require.NoError(t, store.RawDB().Where("object_id = ?", "obj-2").First(&without).Error)
+	require.NotNil(t, withExpiry.ExpireAt)
+	assert.Equal(t, int64(1_700_000_000), *withExpiry.ExpireAt)
+	assert.Nil(t, without.ExpireAt, "0 means unset and must be stored as NULL")
 }

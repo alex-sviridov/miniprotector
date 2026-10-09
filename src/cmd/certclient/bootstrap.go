@@ -6,7 +6,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -15,6 +14,9 @@ import (
 
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/ca"
+
+	"github.com/alex-sviridov/miniprotector/common/atomicfile"
+	"github.com/alex-sviridov/miniprotector/common/identity"
 )
 
 // signer is satisfied by *ca.Client. Isolating it lets bootstrap be unit
@@ -32,14 +34,9 @@ func bootstrap(token string, client signer, certsDir string, ttlSec int) error {
 	}
 	req.NotAfter = api.NewTimeDuration(time.Now().Add(time.Duration(ttlSec) * time.Second))
 
-	templateData, err := json.Marshal(struct {
-		Tier string `json:"tier"`
-	}{Tier: "bootstrap"})
-	if err != nil {
-		return fmt.Errorf("marshal template data: %w", err)
-	}
-	req.TemplateData = templateData
-
+	// No TemplateData: the CA's bootstrap provisioner template is static and
+	// ignores caller-supplied data (a caller could otherwise pick its own
+	// tier and attributes -- see docs/SECURITY.md).
 	sign, err := client.Sign(req)
 	if err != nil {
 		return fmt.Errorf("sign request: %w", err)
@@ -68,17 +65,13 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 	if !ok {
 		return fmt.Errorf("unexpected private key type %T", pk)
 	}
-	keyDER, err := x509.MarshalECPrivateKey(ecdsaKey)
-	if err != nil {
-		return fmt.Errorf("marshal private key: %w", err)
-	}
 
 	if err := os.MkdirAll(certsDir, 0o700); err != nil {
 		return fmt.Errorf("create certs dir: %w", err)
 	}
 
 	chain := append(pemCert(leaf), pemCert(intermediate)...)
-	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.crt"), chain, 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(certsDir, "bootstrap.crt"), chain); err != nil {
 		return fmt.Errorf("write bootstrap.crt: %w", err)
 	}
 
@@ -92,13 +85,12 @@ func writeIdentity(certsDir string, sign *api.SignResponse, pk crypto.PrivateKey
 	// because every other component here happens to present its full
 	// leaf+intermediate chain itself.
 	caPEM := append(pemCert(intermediate), pemCert(root)...)
-	if err := os.WriteFile(filepath.Join(certsDir, "ca.crt"), caPEM, 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(certsDir, "ca.crt"), caPEM); err != nil {
 		return fmt.Errorf("write ca.crt: %w", err)
 	}
 
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(filepath.Join(certsDir, "bootstrap.key"), keyPEM, 0o600); err != nil {
-		return fmt.Errorf("write bootstrap.key: %w", err)
+	if err := identity.WriteKey(filepath.Join(certsDir, "bootstrap.key"), ecdsaKey); err != nil {
+		return err
 	}
 
 	return nil

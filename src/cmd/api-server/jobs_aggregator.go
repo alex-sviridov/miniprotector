@@ -14,6 +14,18 @@ const (
 	jobsAggregatorReconcileEvery = 60 * time.Second
 )
 
+// jobsAggregatorSubscribeReconcileTimeout bounds the synchronous reconcile
+// Subscribe runs on the 0->1 subscriber transition. Without this, a
+// log-gateway/Loki that's reachable but hung (not erroring, just never
+// responding) would leave the WebSocket handshake in handleJobsStream
+// blocked forever -- r.Context() has no deadline of its own here, and once
+// the connection is hijacked for the WS upgrade the server's own
+// disconnect-driven cancellation of r.Context() stops working too. Chosen
+// longer than log-gateway's own lokiForwardTimeout (10s, cmd/log-gateway/
+// server.go) so that boundary fires first and produces a real 502/error
+// through the normal path, rather than being pre-empted by this timeout.
+const jobsAggregatorSubscribeReconcileTimeout = 15 * time.Second
+
 // jobsAggregatorSubscriberBuffer bounds how many pending messages one
 // connected browser can be behind before broadcast starts dropping
 // updates for it -- a slow/stuck subscriber must never block delivery to
@@ -77,11 +89,52 @@ func (a *jobAggregator) backoff(failures int) time.Duration {
 	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
 }
 
+// subscriberCount returns how many browsers are currently subscribed --
+// used to decide whether a periodic reconcile is worth running at all.
+func (a *jobAggregator) subscriberCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.subs)
+}
+
+// reconcileIfSubscribed runs reconcile only when at least one browser is
+// currently subscribed -- the periodic 24h, fleet-wide double query costs
+// real Loki load for a value nobody is watching when nothing is.
+func (a *jobAggregator) reconcileIfSubscribed(ctx context.Context) error {
+	if a.subscriberCount() == 0 {
+		return nil
+	}
+	return a.reconcile(ctx)
+}
+
 // Subscribe registers a new listener and returns the current state as a
 // snapshot, alongside the channel future upserts (and future full
 // snapshots, from reconcile) will arrive on. Callers must call unsubscribe
 // exactly once, typically via defer, when they stop reading.
-func (a *jobAggregator) Subscribe() (snapshot []jobDTO, ch chan jobsStreamMsg, unsubscribe func()) {
+//
+// On the 0->1 subscriber transition, Subscribe runs one synchronous
+// reconcile before computing the snapshot -- the periodic reconcileLoop
+// ticker skips work while unsubscribed (reconcileIfSubscribed, above), so
+// without this the first browser to connect after an idle stretch could
+// see a snapshot arbitrarily stale.
+//
+// The subscriberCount() check and the later a.subs[ch] registration are
+// not atomic (they take a.mu separately), so this is not a strict 0->1
+// edge trigger: if two Subscribe calls arrive at genuinely the same
+// instant while a.subs is empty, both can observe zero subscribers and
+// each run their own reconcile before either registers. That's extra,
+// redundant Loki load in that rare window, never a correctness problem --
+// reconcile()'s own state swap is independently protected by a.mu.
+func (a *jobAggregator) Subscribe(ctx context.Context) (snapshot []jobDTO, ch chan jobsStreamMsg, unsubscribe func()) {
+	if a.subscriberCount() == 0 {
+		rctx, cancel := context.WithTimeout(ctx, jobsAggregatorSubscribeReconcileTimeout)
+		err := a.reconcile(rctx)
+		cancel()
+		if err != nil {
+			a.logger.Error("jobAggregator: reconcile on first subscriber failed", "error", err)
+		}
+	}
+
 	ch = make(chan jobsStreamMsg, jobsAggregatorSubscriberBuffer)
 
 	a.mu.Lock()
@@ -134,7 +187,7 @@ func (a *jobAggregator) ingestTailMessage(msg lokiTailMessage) {
 			if event == "" {
 				event = streamEvent
 			}
-			if jobID == "" || (event != "start" && event != "finish") {
+			if jobID == "" || (event != "start" && event != "finish" && event != "created") {
 				continue
 			}
 			status := v.Metadata["status"]
@@ -152,9 +205,12 @@ func (a *jobAggregator) ingestTailMessage(msg lokiTailMessage) {
 				acc = newJobEventAccumulator()
 			}
 			var updated jobDTO
-			if event == "start" {
+			switch event {
+			case "start":
 				updated = acc.ApplyStart(line)
-			} else {
+			case "created":
+				updated = acc.ApplyCreated(line)
+			default:
 				updated = acc.ApplyFinish(line)
 			}
 			a.jobs[jobID] = updated
@@ -176,7 +232,7 @@ func (a *jobAggregator) ingestTailMessage(msg lokiTailMessage) {
 func (a *jobAggregator) reconcile(ctx context.Context) error {
 	until := time.Now()
 	since := until.Add(-jobsAggregatorWindow)
-	const selector = `{binary=~"agent|brfs|bwfs"}`
+	const selector = `{binary=~"agent|brfs|bwfs|policy-server"}`
 
 	starts, _, err := queryEvent(ctx, a.loki, selector, "start", since, until)
 	if err != nil {
@@ -186,7 +242,11 @@ func (a *jobAggregator) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs := pairJobEvents(starts, finishes)
+	createds, _, err := queryEvent(ctx, a.loki, selector, "created", since, until)
+	if err != nil {
+		return err
+	}
+	jobs := pairJobEvents(starts, finishes, createds)
 
 	a.mu.Lock()
 	a.jobs = make(map[string]jobDTO, len(jobs))
@@ -222,7 +282,7 @@ func (a *jobAggregator) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.reconcile(ctx); err != nil {
+			if err := a.reconcileIfSubscribed(ctx); err != nil {
 				a.logger.Error("jobAggregator: periodic reconcile failed", "error", err)
 			}
 		}
@@ -256,7 +316,7 @@ func (a *jobAggregator) tailLoop(ctx context.Context) {
 		// silently sees everything as empty and drops every line -- exactly
 		// mirroring queryEvent's own `| event="%s"` filter (jobs.go), which
 		// works today only because it always references a metadata field.
-		err := a.tailer.Tail(attemptCtx, `{binary=~"agent|brfs|bwfs"} | job_id=~".+"`, time.Now(), func(msg lokiTailMessage) error {
+		err := a.tailer.Tail(attemptCtx, `{binary=~"agent|brfs|bwfs|policy-server"} | job_id=~".+"`, time.Now(), func(msg lokiTailMessage) error {
 			a.ingestTailMessage(msg)
 			return nil
 		})

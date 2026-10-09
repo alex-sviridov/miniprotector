@@ -30,6 +30,7 @@ LOG_GATEWAY_CMD := cmd/log-gateway
 CLIENTMANAGER_API_CMD := cmd/clientmanager-api
 CLIENTMANAGER_ADMIN_API_CMD := cmd/clientmanager-admin-api
 API_SERVER_CMD := cmd/api-server
+MPBENCH_CMD := cmd/mpbench
 
 # Deployment
 CONTROL_PLANE_DIR := deploy/control-plane
@@ -41,7 +42,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server policyclient log-gateway clientmanager-api clientmanager-admin-api api-server test test-e2e lint control-plane-up demo-up demo-down
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server policyclient log-gateway clientmanager-api clientmanager-admin-api api-server mpbench test test-e2e lint control-plane-up demo-up demo-down
 
 # Default target
 all: check-deps proto build
@@ -98,6 +99,12 @@ certclient: $(BINARY_DIR) ## Build certclient binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/certclient ./$(CERTCLIENT_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/certclient"
+
+mpbench: $(BINARY_DIR) ## Build mpbench (end-to-end backup/restore benchmark)
+	@printf "$(BLUE)Building mpbench...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/mpbench ./$(MPBENCH_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/mpbench"
 
 catalogsync: $(BINARY_DIR) ## Build catalogsync binary
 	@printf "$(BLUE)Building catalogsync...$(NC) "
@@ -185,6 +192,11 @@ control-plane-up: ## Initialize (if needed) and start the control-plane stack (c
 		echo -e "$(BLUE)Generating CA provisioner password...$(NC)"; \
 		mkdir -p $(CONTROL_PLANE_DIR)/ca/data/secrets; \
 		openssl rand -base64 32 > $(CONTROL_PLANE_DIR)/ca/data/secrets/password; \
+	fi
+	@if [ ! -f $(CONTROL_PLANE_DIR)/ca/data/secrets/operating_password ]; then \
+		echo -e "$(BLUE)Generating operating provisioner password (issuer only)...$(NC)"; \
+		mkdir -p $(CONTROL_PLANE_DIR)/ca/data/secrets; \
+		openssl rand -base64 32 > $(CONTROL_PLANE_DIR)/ca/data/secrets/operating_password; \
 	fi
 	@cd $(CONTROL_PLANE_DIR) && COMPOSE_BAKE=true docker compose up -d
 	@echo -e "$(GREEN)Control plane up.$(NC) ca: https://localhost:9000  catalog: localhost:15723"

@@ -14,6 +14,7 @@ service PolicyService {
   rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
   rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
   rpc GetNodeCertStatus(GetNodeCertStatusRequest) returns (NodeCertStatus);
+  rpc ReorderRetentionPolicies(ReorderRetentionPoliciesRequest) returns (ReorderRetentionPoliciesResponse);
 }
 
 message GetPoliciesRequest {
@@ -72,6 +73,17 @@ message RestoreRule {
   int64  not_after  = 6; // ...and on/before this unix time; 0 = unbounded. Outside the window = ignored, not a fallback.
 }
 
+// One retention rule: how long file versions under `path` are kept. A
+// "retention" policy is exactly one of these plus the usual client_filters.
+// Rules are evaluated in ascending priority; the first match wins.
+message RetentionRule {
+  string backup_type = 1;      // "filesystem" -- the only value accepted today
+  string path = 2;             // absolute, slash-separated prefix, matched on a segment boundary
+  repeated string include = 3; // optional basename globs that must also match; a "/" is rejected
+  int64  keep_seconds = 4;     // 0 = never expire
+  int32  priority = 5;         // server-assigned, lower is evaluated first; ignored on Create/Update requests
+}
+
 message Policy {
   string name = 1;
   google.protobuf.Timestamp created_at = 2;
@@ -110,6 +122,8 @@ message Policy {
   // docs/superpowers/specs/2026-08-14-restore-verify-execute-split-design.md),
   // so it is simply inert for a verify submission.
   bool overwrite = 21;
+  // "retention" policy only.
+  RetentionRule retention = 23;
 }
 
 message CreatePolicyRequest {
@@ -135,6 +149,8 @@ message CreatePolicyRequest {
   string mode = 15;
   // "restore" policy only. See Policy.overwrite above.
   bool overwrite = 16;
+  // "retention" policy only, required. retention.priority is ignored.
+  RetentionRule retention = 17;
 }
 
 message UpdatePolicyRequest {
@@ -150,6 +166,8 @@ message UpdatePolicyRequest {
   string config = 10;
   google.protobuf.Timestamp disabled_at = 11;
   string storage_policy_id = 12; // backup policy only, required
+  // "retention" only, required. Full replacement; retention.priority is ignored.
+  RetentionRule retention = 13;
 }
 
 message DeletePolicyRequest {
@@ -157,6 +175,17 @@ message DeletePolicyRequest {
 }
 
 message DeletePolicyResponse {}
+
+// ids must be exactly the set of every existing "retention" policy id, in the
+// desired evaluation order; a missing, unknown or duplicate id rejects the
+// whole request. Priorities are rewritten 1..n in that order.
+message ReorderRetentionPoliciesRequest {
+  repeated string ids = 1;
+}
+
+message ReorderRetentionPoliciesResponse {
+  repeated Policy policies = 1; // in the new order
+}
 ```
 
 ## Authorization
@@ -167,6 +196,12 @@ certificate's embedded attribute extension (`mtls.PeerAttributes`, reading the c
 extension `issuer` bakes into every operating certificate it mints). Neither is ever a field on
 `GetPoliciesRequest`. `policy-server`'s listener requires the default operating-tier peer
 certificate — the same requirement every server except `issuer`'s own listener enforces.
+
+Beyond peer identity, every RPC except `GetPolicies` now also requires the caller's operating
+certificate to carry the `control-plane` role — `GetPolicies` deliberately stays open to every
+role, since every enrolled node (`client`, `store`, and `control-plane` alike) calls it on a
+schedule to fetch its own policies. See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
 
 ## Behavior
 
@@ -251,11 +286,31 @@ certificate — the same requirement every server except `issuer`'s own listener
   the `id`) unchanged, overwriting only the file's content. Every write reloads `policy-server`'s own
   in-memory cache synchronously before responding, bypassing the `.changed` sentinel entirely — that
   remains solely the mechanism for an operator's own manual, possibly multi-file, batch edits.
-- `ListPoliciesRequest.type` is an optional filter — `"backup"`, `"storage"`, or `"restore"` restricts the
+- A `"retention"` policy is exactly one retention rule (`retention`: `backup_type`, `path`,
+  optional `include`, `keep_seconds`, `priority`) plus the usual `client_filters`, served to every
+  matching node by `GetPolicies` like any other type. `backup_type` must be `"filesystem"` (the only
+  workload type today); `path` an absolute, clean, slash-separated prefix without `..`; each
+  `include` entry a valid glob **without a `/`** (patterns match file names only — "relative to
+  what?" has no sound answer once a rule's prefix can sit above or below a job's root);
+  `keep_seconds` non-negative, `0` meaning never expire. `priority` is server-managed:
+  `CreatePolicy` appends a new rule after the existing ones (the request's `retention.priority` is
+  ignored), `UpdatePolicy` preserves it (likewise ignored), and `ReorderRetentionPolicies` is the
+  only way to change it. A node evaluates its matching rules in ascending priority and the first
+  one that matches a file's path decides its retention; a built-in default (`agent`'s
+  `RetentionDefaultDays`) is always the last row. See
+  [Design: Retention Policies](../superpowers/specs/2026-10-05-retention-policies-design.md).
+- `ReorderRetentionPolicies` takes the **complete** ordered id list and rewrites every priority to
+  `1..n`. A list that is missing an existing retention policy, has an unknown or non-retention id,
+  or repeats one is rejected with `INVALID_ARGUMENT` before anything is written, so a stale caller
+  (an operator's UI whose list predates another operator's create or delete) can never silently
+  drop or reorder rules it didn't see. It holds the same write lock as `Create`/`Update`/
+  `DeletePolicy`, rewrites only files whose priority actually changes, leaves `updated_at` alone,
+  and requires the `control-plane` role.
+- `ListPoliciesRequest.type` is an optional filter — `"backup"`, `"storage"`, `"restore"`, or `"retention"` restricts the
   response to that type; empty (the default) returns every type, unchanged from before this field
   existed. A `type` value that matches no loaded policy's `Kind()` returns an empty list, not an
   error — there is no closed enum at this layer, `Kind()` is just whatever string the type
-  subfolder produced.
+  subfolder produced. A `"retention"` result is returned in evaluation order (ascending `priority`).
 - `Policy.checkins` is populated only by `ListPolicies` -- `GetPolicies`, `CreatePolicy`, and
   `UpdatePolicy` always leave it empty, the same way `GetPolicies`'s response never echoes back
   `client_filters`. Each entry is one host's most recent check-in for that policy (`hostname` +

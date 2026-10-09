@@ -16,10 +16,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"sort"
+	"time"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/connection"
@@ -32,7 +34,7 @@ import (
 // fetches and writes every resolved file's content (phase 2). jobID rides
 // every RPC call as outgoing job-id metadata, the same convention
 // runVerify uses.
-func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdin io.Reader, quiet bool, streams int, certsDir, jobID string) error {
+func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdin io.Reader, quiet bool, streams, retries int, certsDir, jobID string) error {
 	rules, err := parseRulesStdin(stdin)
 	if err != nil {
 		return err
@@ -44,7 +46,7 @@ func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdi
 	}
 	defer conn.Close()
 
-	return runRestoreWithConn(logger, conn, overwrite, rules, quiet, streams, jobID)
+	return runRestoreWithConn(logger, conn, overwrite, rules, quiet, streams, retries, jobID)
 }
 
 // runRestoreWithConn is runRestore's body, parameterized on an
@@ -52,7 +54,7 @@ func runRestore(logger *slog.Logger, host string, port int, overwrite bool, stdi
 // bufconn dial without duplicating anything past the transport-level
 // connect (runRestore itself is the only production caller). See
 // restore_test.go's runRestoreWithDialer.
-func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bool, rules []RestoreRule, quiet bool, streams int, jobID string) error {
+func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bool, rules []RestoreRule, quiet bool, streams, retries int, jobID string) error {
 	callCtx := jobid.Outgoing(context.Background(), jobID)
 
 	logger.Info("restore starting", "overwrite", overwrite, "rules", len(rules))
@@ -113,7 +115,7 @@ func runRestoreWithConn(logger *slog.Logger, conn *grpc.ClientConn, overwrite bo
 		return err
 	}
 
-	return restoreFileContent(callCtx, logger, restoreClient, files, overwrite, streams)
+	return restoreFileContent(callCtx, logger, restoreClient, files, overwrite, streams, retries)
 }
 
 // createRestoreDirectoryStructure is restore's phase 1: recreate every
@@ -186,8 +188,14 @@ func createRestoreDirectoryStructure(logger *slog.Logger, dirs []restoreDirector
 // only once phase 1 has fully succeeded -- a file's destination directory
 // must already exist. On failure, no summary line is logged, mirroring
 // createRestoreDirectoryStructure's existing convention; the triggering
-// file's own logged error carries the diagnostic.
-func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, files []restoreFile, overwrite bool, streams int) error {
+// file's own logged error carries the diagnostic. The one exception is a
+// file whose backup data bwfs reports as damaged (gRPC DataLoss): it is
+// logged at Error and counted, the other files are restored and committed
+// as usual, and the count is returned as an error after the summary, so
+// the run still exits non-zero. Files are written to temp
+// files and committed (fsync + rename + directory fsync) in batches by a
+// commitQueue; the summary counts only committed files.
+func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, files []restoreFile, overwrite bool, streams, retries int) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -197,7 +205,15 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 			dup.destPath, dup.firstSource, dup.firstPath, dup.secondSource, dup.secondPath)
 	}
 
+	sweepStaleTemp(logger, destDirs(files))
+
+	q := newCommitQueue(restoreCommit, defaultCommitHooks())
+	// Removes whatever is still pending on any early or failed exit; a
+	// no-op after the final successful Flush below.
+	defer q.Abort()
+
 	logger.Info("restoring file content")
+	started := time.Now()
 
 	writeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -215,14 +231,28 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 	}()
 
 	resultCh := runWorkerPool(writeCtx, streams, workCh, func(ctx context.Context, f restoreFile) restoreFileResult {
-		return writeRestoreFile(ctx, client, f, overwrite)
+		return writeRestoreFileWithRetry(ctx, logger, client, f, overwrite, retries, q)
 	})
 
 	var firstErr error
-	filesWritten, skipped := 0, 0
-	var bytesWritten int64
+	skipped, damaged := 0, 0
 	for result := range resultCh {
 		switch {
+		case result.Damaged:
+			// The backup data of this version is lost for good. Aborting
+			// would only cost the user the healthy files too, so it is
+			// counted, logged and the run goes on; nothing of it reaches
+			// the destination (writeRestoreFile removed its temp file, and
+			// an existing file there is left as it was). Checked before
+			// firstErr: a DataLoss is never fallout of cancel(), so it is
+			// counted even after an abort.
+			damaged++
+			logger.Error("backup data damaged, file not restored",
+				"source", result.Source,
+				"path", result.Path,
+				"dest_path", result.DestPath,
+				"reason", result.Err,
+			)
 		case result.Err != nil && firstErr == nil:
 			firstErr = fmt.Errorf("restore file %s: %w", result.DestPath, result.Err)
 			logger.Error("failed to restore file",
@@ -232,6 +262,7 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 				"reason", result.Err,
 			)
 			cancel()
+			q.Abort()
 		case result.Err != nil:
 			// Expected fallout of cancel() above -- not a new independent
 			// failure, so it's not logged individually.
@@ -240,18 +271,41 @@ func restoreFileContent(ctx context.Context, logger *slog.Logger, client pb.Rest
 			logger.Debug("file skipped, already exists",
 				"source", result.Source, "path", result.Path, "dest_path", result.DestPath)
 		default:
-			filesWritten++
-			bytesWritten += result.Bytes
-			logger.Debug("file written",
+			logger.Debug("file verified",
 				"source", result.Source, "path", result.Path, "dest_path", result.DestPath, "bytes", result.Bytes)
 		}
 	}
 
 	if firstErr != nil {
+		if damaged > 0 {
+			return fmt.Errorf("%w (and %s)", firstErr, damagedFilesMessage(damaged))
+		}
 		return firstErr
 	}
-	logger.Info("restore complete", "files_written", filesWritten, "bytes_written", bytesWritten, "skipped", skipped)
+	if err := q.Flush(); err != nil {
+		logger.Error("failed to commit restored files", "reason", err)
+		return fmt.Errorf("commit restored files: %w", err)
+	}
+	committedFiles, committedBytes := q.Stats()
+	elapsed := time.Since(started)
+	logger.Info("restore complete",
+		"files_written", committedFiles,
+		"bytes_written", committedBytes,
+		"skipped", skipped,
+		"damaged", damaged,
+		"duration", elapsed.Round(time.Millisecond).String(),
+		"throughput_mb_s", fmt.Sprintf("%.1f", float64(committedBytes)/1e6/max(elapsed.Seconds(), 1e-9)),
+	)
+	// Returned only now, after the healthy files are committed, so the
+	// run still exits non-zero for what it could not restore.
+	if damaged > 0 {
+		return errors.New(damagedFilesMessage(damaged))
+	}
 	return nil
+}
+
+func damagedFilesMessage(n int) string {
+	return fmt.Sprintf("%d file(s) not restored: backup data damaged", n)
 }
 
 // duplicateDestPath describes two resolved files that would collide at

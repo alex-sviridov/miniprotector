@@ -55,18 +55,9 @@ func writeTestBootstrapCred(t *testing.T, certsDir, hostname string) {
 }
 
 type fakeIssuerClient struct {
-	sans     []string
-	sansErr  error
 	certResp *pb.RequestOperatingCertResponse
 	certErr  error
 	gotCSR   *x509.CertificateRequest
-}
-
-func (f *fakeIssuerClient) DescribeSANs(_ context.Context, _ *pb.DescribeSANsRequest, _ ...grpc.CallOption) (*pb.DescribeSANsResponse, error) {
-	if f.sansErr != nil {
-		return nil, f.sansErr
-	}
-	return &pb.DescribeSANsResponse{Sans: f.sans}, nil
 }
 
 func (f *fakeIssuerClient) RequestOperatingCert(_ context.Context, req *pb.RequestOperatingCertRequest, _ ...grpc.CallOption) (*pb.RequestOperatingCertResponse, error) {
@@ -81,12 +72,11 @@ func (f *fakeIssuerClient) RequestOperatingCert(_ context.Context, req *pb.Reque
 	return f.certResp, nil
 }
 
-func TestRunOperatingRefresh_Success_WritesClientCrtWithMatchingCSR(t *testing.T) {
+func TestRunOperatingRefresh_Success_WritesClientCrtWithHostnameOnlyCSR(t *testing.T) {
 	certsDir := t.TempDir()
 	writeTestBootstrapCred(t, certsDir, "node-1")
 
 	fake := &fakeIssuerClient{
-		sans:     []string{"node-1.internal"},
 		certResp: &pb.RequestOperatingCertResponse{CertChainPem: []byte("fake-chain")},
 	}
 
@@ -99,9 +89,8 @@ func TestRunOperatingRefresh_Success_WritesClientCrtWithMatchingCSR(t *testing.T
 
 	require.NotNil(t, fake.gotCSR)
 	assert.Equal(t, "node-1", fake.gotCSR.Subject.CommonName)
-	// DNSNames must be hostname+sans, matching what certmint.Mint actually
-	// authorizes (append([]string{hostname}, sans...)) -- not sans alone.
-	assert.Equal(t, []string{"node-1", "node-1.internal"}, fake.gotCSR.DNSNames)
+	// The CSR names only the node itself; issuer adds any aliases.
+	assert.Equal(t, []string{"node-1"}, fake.gotCSR.DNSNames)
 
 	_, err = os.Stat(filepath.Join(certsDir, "client.key"))
 	require.NoError(t, err, "client.key should have been generated")
@@ -122,17 +111,6 @@ func TestRunOperatingRefresh_ReusesExistingOperatingKey(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, keyAfterFirst, keyAfterSecond, "client.key must be byte-for-byte unchanged across refreshes")
-}
-
-func TestRunOperatingRefresh_DescribeSANsErrorPropagates_NoClientCrtWritten(t *testing.T) {
-	certsDir := t.TempDir()
-	writeTestBootstrapCred(t, certsDir, "node-1")
-	fake := &fakeIssuerClient{sansErr: assert.AnError}
-
-	err := runOperatingRefresh(context.Background(), certsDir, fake, operatingRefreshTestLogger())
-	assert.Error(t, err)
-	_, statErr := os.Stat(filepath.Join(certsDir, "client.crt"))
-	assert.True(t, os.IsNotExist(statErr))
 }
 
 func TestRunOperatingRefresh_RequestOperatingCertErrorPropagates_NoClientCrtWritten(t *testing.T) {

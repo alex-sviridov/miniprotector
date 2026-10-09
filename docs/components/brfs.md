@@ -19,9 +19,11 @@ brfs <source_folder> --destination <host:port>
 - `<source_folder>` - Directory to backup **(required)**
 - `--destination <host:port>` - Writer destination address **(required)**
 - `--streams <number>` - Number of concurrent streams *(default: config->default_streams)*
+- `--window <number>` - Max chunks in flight per stream; `1` sends one chunk at a time *(default: config->`default_window`, 16; built-in 1 if the config sets none)*
 - `--job-id <id>` - Backup job ID *(default: auto-generated UUID)*
 - `--include <patterns>` - Comma-separated glob patterns; only matching files are backed up *(default: `*`)*
 - `--exclude <patterns>` - Comma-separated glob patterns; matching files and directories are skipped *(default: none)*
+- `--retention-file <path>` - JSON retention matrix resolved by `agent`; each file's `expire_at` is stamped from it *(default: none — no `expire_at` is sent)*
 - `--debug` - Enable debug logging
 - `--quiet` - Suppress stdout logging
 
@@ -50,6 +52,65 @@ brfs /var/log --destination localhost:8080 --debug --streams 5
 the job-id convention `backup:<policy-name>:<slug-of-path>:<short-filter-id>:<unix-timestamp>` — useful when grepping
 `bwfs`'s job history for which policy produced a given run.
 
+## Chunking
+
+`brfs` splits each file into content-defined chunks with FastCDC: minimum 16 KB, average 64 KB,
+maximum 256 KB (`MinChunkSize`, `NormalChunkSize`, `MaxChunkSize` in
+`src/workload/filesystem/chunker.go`). Each chunk is hashed with BLAKE3, and the file as a whole
+gets a CRC32.
+
+Boundaries are chosen from the data itself rather than at fixed offsets, so inserting or removing
+bytes in a file only changes the chunks around the edit; the following chunks keep their hashes and
+deduplicate against the previous backup. With fixed-size chunks a single inserted byte shifted every
+later chunk.
+
+Chunks stored by an older `brfs` that used fixed 64 KB chunks do not deduplicate against
+content-defined chunks, so the first backup after the change stores the data again.
+
+## Sliding window
+
+Each stream keeps up to `--window` chunks in flight at once instead of waiting for a reply to every
+chunk before sending the next. A chunk occupies a window slot from the moment its hash is sent until
+`bwfs` either says it already has the chunk or confirms the chunk's data; the slot is then free for
+the next chunk. A round trip is thereby shared by the whole window rather than paid per chunk, which
+matters on high-latency links and for incremental backups, where almost every chunk is already stored
+and only hashes cross the wire. `--window 1` is the previous stop-and-wait behavior.
+
+Sizing: the window needs to cover the bandwidth-delay product, `RTT × throughput / chunk size`
+(chunks average 64 KB). On a LAN `1`–`2` is enough; across a WAN with tens of milliseconds of RTT,
+`8`–`16` helps (the measured knee at 8 streams and 50 ms is about 16; see [performance tuning](../PERFORMANCE.md)), and a mostly-deduplicated backup (tiny hash-only requests) benefits from a
+larger window than one transferring new data. Past the knee a larger window only costs memory
+(typically `--streams × --window × 64 KB` of chunks held, worst case 256 KB per slot, plus one pooled 256 KB chunker scan buffer per stream reading a file) and queueing delay. The window is per stream and
+within one file; it drains at the end of each file, so many tiny files see little gain. Set the
+site default with `default_window` in `local.conf`; `--window` overrides it per run.
+
+The window is static. Sizing it automatically from measured RTT and throughput is tracked in the
+[backlog](../../backlog.md#adaptive-brfs-window).
+
+Replies from `bwfs` arrive in the order requests were sent, so `brfs` matches them by position and
+treats any other reply as an error. A failed chunk fails its file; replies still in flight for it are
+discarded when the stream moves on to the next file. A stream that fails (for example a rejected
+connection) fails every file queued on it. `bwfs` rebuilds chunk order itself — see
+[Backup Protocol](../protocols/backup.md#in-flight-chunks-sliding-window).
+
+## Statistics
+
+The closing `Backup finished` log line carries the job's totals, so a deduplication ratio is visible
+without querying the store:
+
+| Field | Meaning |
+|-------|---------|
+| `bytes.read` | chunk bytes read from disk, for files the server asked for |
+| `bytes.sent` | chunk bytes the server did not already have, so were transmitted |
+| `bytes.deduplicated` | `bytes.read - bytes.sent` |
+| `dedup_ratio` | `bytes.read / bytes.sent`; `1.00` means nothing was already stored, `0.00` when nothing was sent |
+| `files.sent` / `files.unchanged` | files whose chunks were offered vs. files the server already had |
+| `bytes.unchanged` | size of the unchanged files; they are never read, so not in `bytes.read` |
+
+`bytes.sent` counts chunk payload before gRPC framing or compression. The counters are plain integer
+adds on the stream goroutine already handling the file, summed in `main` from the per-file results, so
+there are no locks or atomics on the hot path and no protocol change.
+
 ## Filtering
 
 A pattern with no `/` matches a file's basename at any depth (`*.tmp` excludes every `.tmp` file
@@ -64,6 +125,21 @@ directories.
 brfs /var/lib/postgres --destination localhost:8080 --include "*.sql" --exclude "tmp"
 ```
 
+## Retention
+
+When `agent` launches `brfs` for a scheduled backup it passes `--retention-file`, a JSON array of
+rows `{"prefix": "<root-relative dir>", "include": ["<glob>"...], "keep_seconds": N}` in priority
+order. `brfs` validates and compiles it once at start, shared read-only by all `--streams`
+workers, and for each file takes the first row whose `prefix` matches on a path-segment boundary
+(`""` matches everything) and whose optional `include` globs match (same glob semantics as
+[Filtering](#filtering)): `expire_at = now + keep_seconds`, or `0` when `keep_seconds` is `0`
+(never expire). It is sent with the file's metadata (see
+[Backup Protocol](../protocols/backup.md#retention-expiry-expire_at)).
+
+An unreadable or invalid retention file makes `brfs` exit non-zero before connecting, so a job
+never silently runs without the retention it was given. Without `--retention-file` (for example a
+hand-run `brfs`) no `expire_at` is sent.
+
 ## Protocol
 
 Communicates with [bwfs](./bwfs.md) (backup writer) using the protocol specified in [doc/protocols/backup.md](../protocols/backup.md).
@@ -76,6 +152,12 @@ to the binary's own directory). Missing or invalid certs are a fatal error befor
 traffic is sent. When `--destination` is a loopback address (`localhost`, `127.0.0.1`, `::1`),
 hostname verification against the server cert's SAN is skipped — the cert must still chain to
 the trusted CA.
+
+## Platform-specific code
+
+File reading is split per OS so it can be tuned independently: `src/workload/filesystem/reader_linux.go`
+and `reader_windows.go` each define `openForRead`, used by the chunk iterator. Metadata
+(`fileinfo_*.go`) is split the same way.
 
 ## Building
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,28 +49,29 @@ func TestRun_BackupTaskFromRealCacheFileExecutesBrfsWithExpectedArgs(t *testing.
 		return nil
 	}
 
-	policiesFunc := func() ([]Policy, bool) { return backupTasks(policiesCachePath, testLogger(), conf) }
+	derivedFunc := func() ([]Policy, []storageTask, bool) {
+		return backupTasks(mustReadCachedPolicies(t, policiesCachePath), testLogger(), conf, t.TempDir()), nil, true
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 
-	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr, policiesFunc, 2, nil, nil, nil)
+	err := run(ctx, testLogger(), cachePath, 5*time.Millisecond, fr, derivedFunc, 2, nil, nil, defaultBackoffPolicy)
 	require.NoError(t, err)
 
 	assert.Equal(t, "brfs", capturedBinary)
-	require.Len(t, capturedArgs, 5)
+	require.Len(t, capturedArgs, 7)
 	assert.Equal(t, "/var/lib/postgres", capturedArgs[0])
 	assert.Equal(t, "--destination", capturedArgs[1])
 	assert.Equal(t, "bwfs-east.internal:8080", capturedArgs[2])
 	assert.Equal(t, "--job-id", capturedArgs[3])
 	assert.Contains(t, capturedArgs[4], "backup:daily-db-backup:var-lib-postgres:")
+	// agent resolves the job's retention matrix just before exec and hands brfs the file.
+	assert.Equal(t, "--retention-file", capturedArgs[5])
+	assert.True(t, strings.HasSuffix(capturedArgs[6], ".json"))
 }
 
 func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *testing.T) {
-	origWindow := storageStabilityWindow
-	storageStabilityWindow = 20 * time.Millisecond
-	defer func() { storageStabilityWindow = origWindow }()
-
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "agent-state.json")
 	policiesCachePath := filepath.Join(dir, "policies-cache.json")
@@ -89,14 +91,20 @@ func TestRun_StorageTaskFromRealCacheFileStartsAndPrunesStorageSupervisors(t *te
 	// the reconcile-loop wiring (both tasks start, both prune together), not
 	// bwfs/catalogsync's real behavior, which is covered by their own
 	// packages.
-	storageTasksFunc := func() ([]storageTask, bool) { return storageTasks(policiesCachePath, testLogger(), script, script) }
+	derivedFunc := func() ([]Policy, []storageTask, bool) {
+		cachedPolicies, ok := readCachedPolicies(policiesCachePath)
+		if !ok {
+			return nil, nil, false
+		}
+		return nil, storageTasks(cachedPolicies, testLogger(), script, script), true
+	}
 	mgr := newStorageManager(testLogger())
+	mgr.stabilityWindow = 20 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec,
-			func() ([]Policy, bool) { return nil, true }, 2, nil, storageTasksFunc, mgr)
+		done <- run(ctx, testLogger(), cachePath, 10*time.Millisecond, realExec, derivedFunc, 2, nil, mgr, defaultBackoffPolicy)
 	}()
 
 	require.Eventually(t, func() bool {

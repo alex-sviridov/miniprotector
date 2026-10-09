@@ -91,13 +91,13 @@ echo "Starting loki..."
 docker compose up -d loki
 
 enroll log-gateway
-enroll clientmanager-api
-enroll catalog
-enroll api-server
-enroll policy-server
+enroll clientmanager-api "authz-role=control-plane"
+enroll catalog "authz-role=control-plane"
+enroll api-server "authz-role=control-plane"
+enroll policy-server "authz-role=control-plane"
 enroll database
 enroll webserver "role=web"
-enroll store
+enroll store "authz-role=store"
 
 # Seeds a fixed, 100-file/~100-150MB dataset on database, backed up once by
 # the seeded demo/policy-server/policies/backup/e2e-fixture.json policy --
@@ -158,5 +158,7 @@ after enrollment -- if the brfs command below fails immediately, wait a bit and 
   docker compose -f demo/docker-compose.yml exec webserver ./agent list-policies
   docker compose -f demo/docker-compose.yml exec store ./agent list-policies
 
-Reset with: docker compose -f demo/docker-compose.yml down -v
+Reset with: make demo-down   (plain `docker compose down -v` also wipes the stack but
+  leaves ad-hoc e2e policy files behind in policy-server/policies/backup/ -- demo-down
+  removes those too)
 MSG

@@ -15,6 +15,7 @@ type EntryRecord struct {
 	ObjectID       string `gorm:"uniqueIndex:idx_store_job_object"`
 	Metadata       []byte
 	Ctime          int64
+	ExpireAt       *int64 // unix seconds; NULL = no expiry recorded / never expires
 	StoreSeq       int64
 	StoreCreatedAt time.Time
 	// SourceHost is the real originating (backed-up) host, decoded from
@@ -29,6 +30,27 @@ type EntryRecord struct {
 	ParentDirectory string `gorm:"index"`
 	ShortFilename   string
 	ReceivedAt      time.Time `gorm:"index"`
+	// Damaged is not a column: ListEntries computes it per row from
+	// catalog_damaged_files (see DamagedFileRecord), so it is read-only and
+	// excluded from migration. It is false wherever a query does not select it.
+	Damaged bool `gorm:"->;-:migration"`
+}
+
+// DamagedFileRecord says that ObjectID (a bwfs file_id) is currently damaged
+// on StoreNode: restoring any version of it from that node will fail. The
+// table holds a snapshot, not a log -- catalogsync periodically sends the
+// node's complete damaged set and ReplaceDamagedFiles swaps it in, so a row
+// that is absent means healthy. It is deliberately not joined to
+// entry_records by a foreign key: damage may be reported before the version
+// row has been replicated.
+type DamagedFileRecord struct {
+	StoreNode string `gorm:"primaryKey"`
+	ObjectID  string `gorm:"primaryKey"`
+}
+
+// TableName names the table after what it holds, as catalog_directories does.
+func (DamagedFileRecord) TableName() string {
+	return "catalog_damaged_files"
 }
 
 // DirectoryRecord is one directory known to exist because some synced

@@ -18,8 +18,8 @@ The quickest path is from the repo root:
 make control-plane-up
 ```
 
-This generates the CA's provisioner password (`ca/data/secrets/password`) if it doesn't already
-exist, then runs `docker compose up -d` for all three services.
+This generates the CA's provisioner passwords (`ca/data/secrets/password` for enrollment tokens,
+`ca/data/secrets/operating_password` for `issuer` alone) if they don't already exist, then runs `docker compose up -d` for all three services.
 
 `catalog` itself needs an mTLS identity before it can start successfully — the same enrollment
 flow any other node uses, with one twist: unlike a bare-metal agent node, `catalog` redeems its

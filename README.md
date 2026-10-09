@@ -71,6 +71,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[client-manager](docs/components/client-manager.md)** - Owns the enrolled-client list and mints enrollment tokens directly: descriptions, RBAC-bound attributes, SAN aliases, revoked status (control-plane component, runs on the CA host)
 - **[clientmanager-admin-api](docs/components/clientmanager-admin-api.md)** - CA-admin-equivalent gRPC writes (issue/revoke/description/attribute/SAN) onto client-manager's enrolled-client data, reachable via `api-server`
 - **[issuer](docs/components/issuer.md)** - Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares `client-manager`'s database (control-plane component, runs on the CA host)
+- **[mpbench](docs/components/mpbench.md)** - Development benchmark — runs the full backup → restore → verify cycle against the real `brfs`/`bwfs`/`rwfs` over an emulated network (RTT, bandwidth) and reports per-phase timings and wire bytes, for measuring the effect of protocol changes
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
 - **[policy-server](docs/components/policy-server.md)** - Serves backup policies filtered by a requesting client's hostname and attribute labels (control-plane component)
@@ -82,12 +83,15 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
 - **[Filesystem Backup Flow](docs/process/filesystem-backup.md)** - End-to-end walk-through of policy → agent → brfs → bwfs, including include/exclude filtering
 - **[Security Model](docs/SECURITY.md)** - mTLS, the two-tier bootstrap/operating credential model, and the revocation trust model
+- **[Performance tuning](docs/PERFORMANCE.md)** - what to adjust (streams, window, gRPC window) and measured values, with `mpbench`
 - **[Backup Protocol](docs/protocols/backup.md)** - brfs → bwfs chunked backup protocol
 - **[List Protocol](docs/protocols/list.md)** - rwfs → bwfs list subprotocol
 - **[Restore Protocol](docs/protocols/restore.md)** - rwfs → bwfs restore/verify subprotocol
-- **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol
+- **[Catalog Sync Protocol](docs/protocols/catalog-sync.md)** - catalogsync → catalog replication protocol (versions, deletions, damaged-file sets)
 - **[Issuer Protocol](docs/protocols/issuer.md)** - issuer operating-certificate minting protocol
 - **[Policy Server Protocol](docs/protocols/policy-server.md)** - policy-server's GetPolicies protocol
+- **[Job Status Protocol](docs/protocols/jobstatus.md)** - api-server's GetPolicyJobStatus protocol, polled by policy-server's restore-cleanup sweep
+- **[Storage Status Protocol](docs/protocols/storagestatus.md)** - bwfs → api-server status report (disk usage, active connections), shown on the storage policy page
 - **[Log Gateway Protocol](docs/protocols/log-gateway.md)** - log-gateway's mTLS-authenticated push-proxy protocol
 - **[Components](docs/components/)** - Individual component documentation
 

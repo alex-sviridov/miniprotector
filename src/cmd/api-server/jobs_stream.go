@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -49,12 +50,36 @@ func (s *server) handleJobLogsStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Includes rwfs, same as handleGetJobLogs (jobs.go) -- this endpoint
-	// returns every raw line for job_id verbatim, no start/finish pairing,
-	// so rwfs's lines (which never carry event/status) are still useful
-	// signal here.
-	query := fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="%s"`, jobID)
-	err = s.lokiTail.Tail(r.Context(), query, start, func(msg lokiTailMessage) error {
+	// r.Context() does not reliably become Done for a hijacked WebSocket
+	// connection -- the server relinquishes ownership of the underlying
+	// conn to Upgrade(), so its usual "cancel ctx when the client goes
+	// away" machinery no longer applies, and this handler's own goroutine
+	// won't return until Tail() does, which is itself waiting on ctx: a
+	// disconnect that never gets noticed. Without an explicit read loop on
+	// conn to detect it, a browser navigating away from a job whose tail
+	// has nothing left to send (the common case -- most jobs are already
+	// finished) leaks the upstream Loki tail connection and its goroutine
+	// forever. handleJobsStream's clientClosed goroutine (jobs_stream_list.go)
+	// and log-gateway's relayTail (cmd/log-gateway/server.go) already
+	// establish this exact pattern; mirrored here.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	// Includes rwfs and policy-server, same as handleGetJobLogs (jobs.go) --
+	// this endpoint returns every raw line for job_id verbatim, no
+	// start/finish pairing, so rwfs's lines (which never carry event/status)
+	// and policy-server's own created/deleted lines for a restore/verify job
+	// are still useful signal here.
+	query := fmt.Sprintf(`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="%s"`, jobID)
+	err = s.lokiTail.Tail(ctx, query, start, func(msg lokiTailMessage) error {
 		for _, stream := range msg.Streams {
 			for _, v := range stream.Values {
 				line := logLineDTO{

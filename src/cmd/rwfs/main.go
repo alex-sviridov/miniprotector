@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/alex-sviridov/miniprotector/common/config"
+	"github.com/alex-sviridov/miniprotector/common/connection"
 	"github.com/alex-sviridov/miniprotector/common/jobid"
 	"github.com/alex-sviridov/miniprotector/common/logging"
 )
@@ -13,7 +14,7 @@ import (
 func main() {
 	const appName = "rwfs"
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 
 	configPath, err := config.ResolveConfigPath()
 	if err != nil {
@@ -27,24 +28,26 @@ func main() {
 		os.Exit(1)
 	}
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
+	connection.SetFlowControlWindow(conf.GrpcWindowBytes)
+	setRestoreCommitLimits(conf.RestoreCommitFiles, conf.RestoreCommitBytes)
 
 	arguments, err := parseArguments(conf)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Arguments error: %v\n", err)
 		os.Exit(1)
 	}
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
 
 	// verify --quiet only suppresses per-file success lines, not all console output.
 	// list --quiet suppresses all console output (original behaviour).
 	quietForLogger := arguments.Quiet && arguments.Action != "verify"
-	ctx = context.WithValue(ctx, "quietMode", quietForLogger)
+	ctx = logging.WithQuietMode(ctx, quietForLogger)
 
 	// Resolve the correlation ID before the logger is built, so every line
 	// rwfs writes carries job_id, and pass it down so the bwfs RPCs carry
 	// it as outgoing metadata too (mirrors brfs/policyclient).
 	jobID := jobid.Resolve(arguments.JobID)
-	ctx = context.WithValue(ctx, "jobId", jobID)
+	ctx = logging.WithJobID(ctx, jobID)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -67,7 +70,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "restore":
-		if err := runRestore(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.Overwrite, os.Stdin, arguments.Quiet, arguments.Streams, certsDir, jobID); err != nil {
+		if err := runRestore(logger, arguments.BwfsHost, arguments.BwfsPort, arguments.Overwrite, os.Stdin, arguments.Quiet, arguments.Streams, arguments.Retries, certsDir, jobID); err != nil {
 			logger.Error("Restore failed", "error", err)
 			os.Exit(1)
 		}

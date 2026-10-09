@@ -45,10 +45,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -87,6 +87,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	jobStatusConn, err := connection.DialNonBlocking(conf.APIServerHost, conf.APIServerJobStatusPort, certsDir)
+	if err != nil {
+		logger.Error("connect to api-server job-status service failed", "error", err)
+		os.Exit(1)
+	}
+	defer jobStatusConn.Close()
+	jobStatusClient := pb.NewJobStatusServiceClient(jobStatusConn)
+
 	srv := NewPolicyServerServer(cache, policiesDir, logger, checkins)
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -100,9 +108,14 @@ func main() {
 
 	go runCheckinCleanup(signalCtx, checkins, checkinCleanupInterval, time.Duration(conf.CheckinRetentionSec)*time.Second, logger)
 
+	go srv.runRestoreCleanup(signalCtx, jobStatusClient,
+		time.Duration(conf.RestoreCleanupIntervalSec)*time.Second,
+		time.Duration(conf.RestoreCleanupGracePeriodSec)*time.Second,
+		logger)
+
 	logger.Info("policy-server started", "port", arguments.Port, "policies_dir", policiesDir)
 
-	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, func(s *grpc.Server) {
+	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
 		pb.RegisterPolicyServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("Server failed", "error", err)

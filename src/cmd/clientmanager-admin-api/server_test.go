@@ -240,3 +240,70 @@ func TestUpdateDescription_EmptyRequestOnUnknownHostnameStillReturnsNotFound(t *
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
+
+func TestAddClient_NoRole_DefaultsToClient(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+
+	_, err := srv.AddClient(context.Background(), &pb.AddClientRequest{Hostname: "node-1"})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "client", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestAddClient_WithRole_StoresGivenRole(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+
+	_, err := srv.AddClient(context.Background(), &pb.AddClientRequest{Hostname: "node-1", Role: "store"})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "store", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestAddClient_InvalidRole_RejectsBeforeMinting(t *testing.T) {
+	srv, _, rec := newTestAdminServer(t)
+
+	_, err := srv.AddClient(context.Background(), &pb.AddClientRequest{Hostname: "node-1", Role: "web"})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Equal(t, 0, rec.calls, "mint must not be called for an invalid role")
+}
+
+func TestReEnrollClient_NoRole_LeavesStoredRoleUnchanged(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, "store"))
+
+	_, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "node-1"})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "store", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestReEnrollClient_WithRole_OverwritesStoredRole(t *testing.T) {
+	srv, store, _ := newTestAdminServer(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.SetKV(t.Context(), "node-1", clientmanagerstore.KindAttribute, clientmanagerstore.RoleAttributeKey, "client"))
+
+	_, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "node-1", Role: "control-plane"})
+	require.NoError(t, err)
+
+	view, err := store.LoadClientView(t.Context(), "node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "control-plane", view.Attributes[clientmanagerstore.RoleAttributeKey])
+}
+
+func TestReEnrollClient_InvalidRole_RejectsBeforeMinting(t *testing.T) {
+	srv, store, rec := newTestAdminServer(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+
+	_, err := srv.ReEnrollClient(context.Background(), &pb.ReEnrollClientRequest{Hostname: "node-1", Role: "web"})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Equal(t, 0, rec.calls, "mint must not be called for an invalid role")
+}

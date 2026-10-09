@@ -70,7 +70,7 @@ func (s *Store) FinalizeBackupJob(jobID string, success bool) (bool, error) {
 		}
 		changed = result.RowsAffected > 0
 		if changed && !success {
-			if err := tx.Delete(&FileVersionRecord{}, "job_id = ?", jobID).Error; err != nil {
+			if _, err := deleteVersions(tx, "job_id = ?", jobID); err != nil {
 				return err
 			}
 		}
@@ -94,7 +94,7 @@ func (s *Store) FailStaleInProgressJobs() (int64, error) {
 		if len(jobIDs) == 0 {
 			return nil
 		}
-		if err := tx.Delete(&FileVersionRecord{}, "job_id IN ?", jobIDs).Error; err != nil {
+		if _, err := deleteVersions(tx, "job_id IN ?", jobIDs); err != nil {
 			return err
 		}
 		now := time.Now()

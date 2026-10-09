@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -356,4 +357,54 @@ func TestToCachedPolicies_RestoreModeAndOverwriteRoundTrip(t *testing.T) {
 	require.Len(t, cached, 1)
 	assert.Equal(t, "restore", cached[0].Mode)
 	assert.True(t, cached[0].Overwrite)
+}
+
+// This is the one hop where a dropped job_id would silently break the
+// whole restore-policy lifecycle's job_id correlation (created -> executed
+// -> deleted, see docs/superpowers/specs/2026-08-23-restore-policy-
+// lifecycle-design.md): agent's restoreTasks (cmd/agent/restore.go) reads
+// CachedPolicy.JobID verbatim and passes it to rwfs as --job-id, with no
+// fallback -- an empty value here means every restore/verify job runs
+// uncorrelated with policy-server's own "created"/"deleted" log lines, and
+// no proto/RPC-level check catches that; only exercising this exact
+// conversion does.
+func TestToCachedPolicies_RestoreJobIDRoundTrips(t *testing.T) {
+	policies := []*pb.Policy{
+		{
+			Type:  "restore",
+			JobId: "verify:web01-emergency:1700000000",
+		},
+	}
+	cached := toCachedPolicies(policies)
+	require.Len(t, cached, 1)
+	assert.Equal(t, "verify:web01-emergency:1700000000", cached[0].JobID)
+}
+
+func TestToCachedPolicies_RetentionRuleRoundTrips(t *testing.T) {
+	cached := toCachedPolicies([]*pb.Policy{
+		{
+			Id:   "ret-1",
+			Name: "keep-logs",
+			Type: "retention",
+			Retention: &pb.RetentionRule{
+				BackupType:  "filesystem",
+				Path:        "/var/log",
+				Include:     []string{"*.log"},
+				KeepSeconds: 2592000,
+				Priority:    3,
+			},
+		},
+		{Id: "b-1", Name: "nightly", Type: "backup"},
+	})
+	require.Len(t, cached, 2)
+
+	data, err := json.Marshal(cached)
+	require.NoError(t, err)
+	var got []CachedPolicy
+	require.NoError(t, json.Unmarshal(data, &got))
+
+	require.NotNil(t, got[0].Retention)
+	assert.Equal(t, RetentionRule{BackupType: "filesystem", Path: "/var/log", Include: []string{"*.log"}, KeepSeconds: 2592000, Priority: 3}, *got[0].Retention)
+	assert.Nil(t, got[1].Retention, "a non-retention policy must not carry a retention rule")
+	assert.NotContains(t, string(data[strings.Index(string(data), `"nightly"`):]), `"retention"`)
 }

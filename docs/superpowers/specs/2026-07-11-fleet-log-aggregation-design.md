@@ -148,8 +148,10 @@ pipeline reads from continuously.
    Vector tails the standardized log directory (below), batches new lines, and pushes them to
    `log-gateway` over mTLS using the node's existing operating certificate
    (`client.crt`/`client.key`) — no new credential type. Its disk buffer provides local resilience
-   across a `log-gateway`/Loki outage; once its configured bound is exceeded, oldest entries are
-   dropped rather than blocking or growing without limit.
+   across a `log-gateway`/Loki outage; once its configured bound is exceeded, the file source pauses
+   (Vector's disk buffer only supports `block` or `drop_newest` — there is no 'drop oldest' mode) rather
+   than discarding newly-arriving lines; see `docs/superpowers/specs/2026-08-22-logging-flow-hardening-design.md`
+   for why `block` was chosen over the originally-picked `drop_newest`.
 
    **Lifecycle:** unlike `certclient`/`policyclient`/`brfs` (short commands `agent` execs to
    completion via the existing `Policy`/`runner` model), Vector is long-running — `agent` starts it
@@ -277,7 +279,8 @@ left false) tails <log_dir>
   -> extracts `binary` label from the filename (low-cardinality: a handful of binary names)
   -> batches lines, pushes to log-gateway over mTLS using client.crt/client.key
      (buffered to its own disk buffer at <var_dir>/vector-buffer if log-gateway/Loki is
-      unreachable; oldest entries drop only once the buffer's configured bound is exceeded)
+      unreachable; the file source pauses (not drops) once the buffer's configured bound is exceeded,
+      resuming once space frees up)
   -> agent restarts it right after every successful operating-refresh (fresh cert available),
      and independently on any unexpected exit (crash-restart with the same backoff as a
      failing policy) -- never left running on a cert past its useful reload point

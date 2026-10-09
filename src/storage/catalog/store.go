@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -31,6 +32,7 @@ type Entry struct {
 	ObjectID        string
 	Metadata        []byte
 	Ctime           int64
+	ExpireAt        int64 // unix seconds; 0 = no expiry recorded / never expires
 	StoreSeq        int64
 	StoreCreatedAt  time.Time
 	SourceHost      string
@@ -53,12 +55,18 @@ func ensureEntries(db *gorm.DB, batch []Entry) error {
 	records := make([]EntryRecord, len(batch))
 	now := time.Now()
 	for i, e := range batch {
+		var expire *int64
+		if e.ExpireAt != 0 {
+			v := e.ExpireAt
+			expire = &v
+		}
 		records[i] = EntryRecord{
 			StoreNode:       e.StoreNode,
 			JobID:           e.JobID,
 			ObjectID:        e.ObjectID,
 			Metadata:        e.Metadata,
 			Ctime:           e.Ctime,
+			ExpireAt:        expire,
 			StoreSeq:        e.StoreSeq,
 			StoreCreatedAt:  e.StoreCreatedAt,
 			SourceHost:      e.SourceHost,
@@ -119,6 +127,48 @@ func (s *Store) SyncBatch(ctx context.Context, entries []Entry, directories []Di
 		}
 		return nil
 	})
+}
+
+// EntryRef names one replicated entry within a single store node's
+// namespace: JobID/ObjectID are only unique per node, so deletion always
+// pairs refs with the storeNode they came from.
+type EntryRef struct {
+	JobID    string
+	ObjectID string
+}
+
+// deleteChunk bounds how many refs one DELETE statement carries (two bind
+// variables each), well under SQLite's variable limit.
+const deleteChunk = 200
+
+// DeleteEntries removes the named entries of storeNode -- the catalog side of
+// bwfs deleting a file version (retention cleanup, or a failed job's purge).
+// Idempotent: an entry the catalog never had (deleted before catalogsync
+// ever replicated it) or has already dropped is simply not counted. Returns
+// how many entries were removed. Directory rows are deliberately left in
+// place; see docs/components/catalog.md.
+func (s *Store) DeleteEntries(ctx context.Context, storeNode string, refs []EntryRef) (int64, error) {
+	var deleted int64
+	err := s.writeDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for start := 0; start < len(refs); start += deleteChunk {
+			end := min(start+deleteChunk, len(refs))
+			conds := make([]string, 0, end-start)
+			args := make([]any, 0, 2*(end-start))
+			for _, r := range refs[start:end] {
+				conds = append(conds, "(job_id = ? AND object_id = ?)")
+				args = append(args, r.JobID, r.ObjectID)
+			}
+			res := tx.Where("store_node = ?", storeNode).
+				Where(strings.Join(conds, " OR "), args...).
+				Delete(&EntryRecord{})
+			if res.Error != nil {
+				return res.Error
+			}
+			deleted += res.RowsAffected
+		}
+		return nil
+	})
+	return deleted, err
 }
 
 // DirectoryChild is one directory returned by ListDirectoryChildren: a
@@ -254,7 +304,15 @@ func (s *Store) ListEntries(ctx context.Context, filter ListEntriesFilter) ([]En
 		limit = maxListEntriesLimit
 	}
 
-	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).Order("id DESC")
+	// damaged is annotated per row with a correlated EXISTS on
+	// catalog_damaged_files' primary key (store_node, object_id): one query
+	// for the page, no N+1, and no join that could duplicate or drop rows. It
+	// matches by file id alone, so it also covers damage that was reported
+	// before this version row was replicated.
+	q := s.readDB.WithContext(ctx).Model(&EntryRecord{}).
+		Select("entry_records.*, EXISTS (SELECT 1 FROM catalog_damaged_files d " +
+			"WHERE d.store_node = entry_records.store_node AND d.object_id = entry_records.object_id) AS damaged").
+		Order("id DESC")
 	if filter.StoreNode != "" {
 		q = q.Where("store_node = ?", filter.StoreNode)
 	}
@@ -309,4 +367,42 @@ func (s *Store) Close() error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// damagedInsertBatch bounds how many rows one INSERT into
+// catalog_damaged_files carries (two bind variables each): 800 variables stays
+// under SQLite's historic default limit of 999, let alone today's 32,766, so
+// a node reporting any number of damaged files never hits the limit.
+const damagedInsertBatch = 400
+
+// ReplaceDamagedFiles makes objectIDs the complete set of file ids currently
+// damaged on storeNode, replacing whatever that node reported before; other
+// nodes' rows are untouched. An empty set clears the node -- that is how a
+// heal (healthy re-upload) or vacuum on bwfs reaches the catalog, since a
+// snapshot carries no "healed" event. The delete and every insert batch run
+// in ONE transaction, so a failure leaves the previous set intact rather than
+// a half-replaced one. Duplicate ids are stored once.
+func (s *Store) ReplaceDamagedFiles(ctx context.Context, storeNode string, objectIDs []string) error {
+	records := make([]DamagedFileRecord, 0, len(objectIDs))
+	seen := make(map[string]struct{}, len(objectIDs))
+	for _, id := range objectIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		records = append(records, DamagedFileRecord{StoreNode: storeNode, ObjectID: id})
+	}
+
+	return s.writeDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("store_node = ?", storeNode).Delete(&DamagedFileRecord{}).Error; err != nil {
+			return fmt.Errorf("clear damaged files: %w", err)
+		}
+		if len(records) == 0 {
+			return nil
+		}
+		if err := tx.CreateInBatches(records, damagedInsertBatch).Error; err != nil {
+			return fmt.Errorf("insert damaged files: %w", err)
+		}
+		return nil
+	})
 }

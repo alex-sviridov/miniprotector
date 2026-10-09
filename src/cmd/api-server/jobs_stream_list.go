@@ -18,7 +18,7 @@ func (s *server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	snapshot, ch, unsubscribe := s.aggregator.Subscribe()
+	snapshot, ch, unsubscribe := s.aggregator.Subscribe(r.Context())
 	defer unsubscribe()
 
 	if err := conn.WriteJSON(jobsStreamMsg{Type: "snapshot", Jobs: snapshot}); err != nil {

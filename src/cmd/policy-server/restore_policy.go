@@ -63,6 +63,14 @@ type RestorePolicy struct {
 	// is "verify" or unset. Not tied to Mode by validation -- the web UI
 	// sends this checkbox unconditionally on every submit.
 	Overwrite bool `json:"overwrite,omitempty"`
+	// JobID correlates this policy's whole lifecycle (created -> executed
+	// -> deleted) under one Loki job_id, shared with agent (used verbatim
+	// as rwfs's --job-id) and with policy-server's own "created"/"deleted"
+	// lifecycle log lines. Generated once, in CreatePolicy, never
+	// regenerated -- a restore/verify task now runs exactly once, so
+	// there is no retry to distinguish with a fresh id. See
+	// docs/superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md.
+	JobID string `json:"job_id,omitempty"`
 }
 
 func parseRestorePolicyJSON(data []byte) (Policy, error) {
@@ -122,6 +130,7 @@ func (p *RestorePolicy) Clone() Policy {
 		Rules:           rules,
 		Mode:            p.Mode,
 		Overwrite:       p.Overwrite,
+		JobID:           p.JobID,
 	}
 }
 
@@ -146,6 +155,7 @@ func (p *RestorePolicy) ToProto(includeClientFilters bool) *pb.Policy {
 		Rules:           rules,
 		Mode:            p.Mode,
 		Overwrite:       p.Overwrite,
+		JobId:           p.JobID,
 	}
 	if !p.Metadata.DisabledAt.IsZero() {
 		pp.DisabledAt = timestamppb.New(p.Metadata.DisabledAt)

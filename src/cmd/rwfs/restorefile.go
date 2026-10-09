@@ -10,12 +10,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
+	"log/slog"
 	"os"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	"github.com/alex-sviridov/miniprotector/common/checksum"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"lukechampine.com/blake3"
 )
 
@@ -24,11 +28,29 @@ const (
 	// stub, like createRestoreDirectory's 0o755, pending real
 	// captured-permission restore in a future round.
 	defaultRestoreFilePerm = 0o644
-	// restoreWriteBufferSize coalesces 64KB chunks (see
-	// workload/filesystem/chunker.go's ChunkSize) into far fewer syscalls --
-	// ~16 chunks per Write instead of one syscall per chunk.
+	// restoreWriteBufferSize coalesces chunks (16-256 KB, average 64 KB; see
+	// workload/filesystem/chunker.go) into far fewer syscalls -- about 16
+	// average chunks per Write instead of one syscall per chunk.
 	restoreWriteBufferSize = 1 << 20 // 1MB
 )
+
+// writebackWriter forwards writes to f and, after each, asks the kernel to
+// start writing that range back (osStartWriteback), so dirty pages drain
+// while the stream is still arriving instead of piling up for the fsync.
+// bufio hands it ~1MB writes, so this is one syscall per MB, not per chunk.
+type writebackWriter struct {
+	f   *os.File
+	off int64
+}
+
+func (w *writebackWriter) Write(p []byte) (int, error) {
+	n, err := w.f.Write(p)
+	if n > 0 {
+		osStartWriteback(w.f, w.off, int64(n))
+		w.off += int64(n)
+	}
+	return n, err
+}
 
 // restoreFile is one file phase 2 must fetch and write to its
 // (dest_path-renamed) destination.
@@ -47,6 +69,33 @@ type restoreFileResult struct {
 	Bytes                  int64
 	Skipped                bool
 	Err                    error
+	// Retryable is true only when Err comes from the network/RPC-facing
+	// call to bwfs (connect, Recv, or an unexpected event type) -- the
+	// same class of failure verifyFileWithRetry already retries. It
+	// stays false (the zero value) for every other failure: a DataLoss
+	// status (see Damaged), integrity mismatches, a pre-existing directory
+	// at the destination, and local disk I/O errors. A blake3_mismatch
+	// (errBlake3Mismatch) still gets one retry of its own; see
+	// restoreAttempts.
+	Retryable bool
+	// Damaged is true when bwfs answered with gRPC DataLoss: the backup
+	// data of this file version is gone for good, so it is never retried,
+	// and restoreFileContent counts it instead of aborting the run.
+	Damaged bool
+}
+
+// errBlake3Mismatch marks a chunk whose data does not match its hash on
+// arrival. Its text is the reason name rwfs has always logged.
+var errBlake3Mismatch = errors.New("blake3_mismatch")
+
+// streamFailure fills base for an error from the RestoreFile stream. A
+// DataLoss status is final (Damaged); any other stream error may be
+// transient and is retried.
+func streamFailure(base restoreFileResult, err error) restoreFileResult {
+	base.Err = fmt.Errorf("stream error: %w", err)
+	base.Damaged = status.Code(err) == codes.DataLoss
+	base.Retryable = !base.Damaged
+	return base
 }
 
 // writeRestoreFile fetches f's content via RestoreFile and writes it to
@@ -54,11 +103,13 @@ type restoreFileResult struct {
 // as verifyFile (verify.go) does. A pre-existing destination file is
 // skipped (not an error) when overwrite is false; a pre-existing
 // directory at the destination is always a hard error, regardless of
-// overwrite. On any failure, a partially-written destination file is
-// removed (best-effort) so a corrupt/incomplete file never looks
-// restored. writeRestoreFile does no logging itself -- see
-// restoreFileContent's per-result handling (restore.go).
-func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f restoreFile, overwrite bool) restoreFileResult {
+// overwrite. Content goes to a hidden temp file beside the destination and,
+// once verified, is handed to q, which renames it into place at its next
+// checkpoint -- so the destination only ever holds a complete, durable
+// file, and an `--overwrite` never destroys the old file early. Any
+// failure removes the temp file. writeRestoreFile does no logging itself --
+// see restoreFileContent's per-result handling (restore.go).
+func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f restoreFile, overwrite bool, q *commitQueue) restoreFileResult {
 	base := restoreFileResult{Source: f.Source, Path: f.Path, DestPath: f.DestPath}
 
 	info, statErr := os.Stat(f.DestPath)
@@ -74,71 +125,69 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		return base
 	}
 	// Falls through here in exactly two cases: the file exists and
-	// overwrite is true (will truncate below), or it doesn't exist at all
-	// (will create below) -- both proceed identically via O_CREATE|O_TRUNC.
+	// overwrite is true (it is replaced at commit), or it doesn't exist at
+	// all (will be created via a temp file below).
 
 	ctx, touch, _, _, stop := withStallWatchdog(parent, streamIdleTimeout)
 	defer stop()
 
 	stream, err := client.RestoreFile(ctx, &pb.RestoreRequest{FileUuid: f.FileUUID})
 	if err != nil {
-		base.Err = fmt.Errorf("stream error: %w", err)
-		return base
+		return streamFailure(base, err)
 	}
 
 	firstEvent, err := stream.Recv()
 	if err != nil {
-		base.Err = fmt.Errorf("stream error: %w", err)
-		return base
+		return streamFailure(base, err)
 	}
 	touch()
 	meta := firstEvent.GetMeta()
 	if meta == nil {
 		base.Err = fmt.Errorf("stream error: expected RestoreFileMeta as first event")
+		base.Retryable = true
 		return base
 	}
 
-	out, err := os.OpenFile(f.DestPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, defaultRestoreFilePerm)
+	out, err := createTempFile(f.DestPath)
 	if err != nil {
 		base.Err = err
 		return base
 	}
-	success := false
-	closed := false
+	// Until the queue owns the file, any early return closes and removes
+	// the temp file -- the real destination is never touched.
+	owned := false
 	defer func() {
-		if !closed {
+		if !owned {
 			out.Close() // Windows disallows removing a file that's still open -- close before remove.
-		}
-		if !success {
-			os.Remove(f.DestPath)
+			os.Remove(out.Name())
 		}
 	}()
 
-	if err := out.Truncate(meta.Size); err != nil {
-		base.Err = err
+	if err := osPreallocate(out, meta.Size); err != nil {
+		base.Err = fmt.Errorf("preallocate: %w", err)
 		return base
 	}
 
-	bufw := bufio.NewWriterSize(out, restoreWriteBufferSize)
+	bufw := bufio.NewWriterSize(&writebackWriter{f: out}, restoreWriteBufferSize)
 	hasher := crc32.NewIEEE()
 	var written int64
 
 	for {
 		event, err := stream.Recv()
 		if err != nil {
-			base.Err = fmt.Errorf("stream error: %w", err)
-			return base
+			return streamFailure(base, err)
 		}
 		touch()
 		chunk := event.GetChunk()
 		if chunk == nil {
 			base.Err = fmt.Errorf("stream error: expected RestoreChunk")
+			base.Retryable = true
 			return base
 		}
 
 		computed := blake3.Sum256(chunk.Data)
 		if !bytes.Equal(computed[:], chunk.Hash) {
-			base.Err = fmt.Errorf("blake3_mismatch: chunk %d", chunk.Index)
+			base.Err = fmt.Errorf("%w: chunk %d", errBlake3Mismatch, chunk.Index)
 			return base
 		}
 
@@ -167,14 +216,50 @@ func writeRestoreFile(parent context.Context, client pb.RestoreServiceClient, f 
 		return base
 	}
 
-	closeErr := out.Close()
-	closed = true
-	if closeErr != nil {
-		base.Err = fmt.Errorf("write error: close: %w", closeErr)
+	// Verified. From here the queue owns the open file and its temp path:
+	// it commits them at the next checkpoint, or removes them on a failed
+	// checkpoint or an aborted run. A queue error is local (not
+	// network-facing), so it is never retried.
+	owned = true
+	if err := q.Add(pendingFile{File: out, TmpPath: out.Name(), DestPath: f.DestPath, Bytes: written}); err != nil {
+		base.Err = fmt.Errorf("commit error: %w", err)
 		return base
 	}
 
-	success = true
 	base.Bytes = written
 	return base
+}
+
+// writeRestoreFileWithRetry retries writeRestoreFile on a retryable
+// (network/RPC-facing) failure up to maxRetries attempts, and on a
+// blake3_mismatch once, sharing withRetry's backoff with
+// verifyFileWithRetry (retry.go) so the two commands can't drift apart. A
+// retry is safe with no extra cleanup: writeRestoreFile's own defer
+// already removes any partial temp file before returning on failure, so
+// each attempt starts from a clean slate (fresh stat, temp file,
+// preallocate). A final failure (DataLoss, CRC mismatch, pre-existing
+// directory, local disk error) surfaces on the first attempt with no
+// backoff wait.
+func writeRestoreFileWithRetry(ctx context.Context, logger *slog.Logger, client pb.RestoreServiceClient, f restoreFile, overwrite bool, maxRetries int, q *commitQueue) restoreFileResult {
+	return withRetry(ctx, logger.With("source", f.Source, "path", f.Path, "dest_path", f.DestPath),
+		func(ctx context.Context) restoreFileResult { return writeRestoreFile(ctx, client, f, overwrite, q) },
+		func(r restoreFileResult) int { return restoreAttempts(r, maxRetries) },
+		func(r restoreFileResult) string { return r.Err.Error() },
+	)
+}
+
+// restoreAttempts is how many attempts in total r's outcome allows (see
+// withRetry): the configured retries for a network error, one retry for a
+// hash mismatch, none for anything else.
+func restoreAttempts(r restoreFileResult, maxRetries int) int {
+	switch {
+	case r.Err == nil:
+		return 1
+	case r.Retryable:
+		return maxRetries
+	case errors.Is(r.Err, errBlake3Mismatch):
+		return hashMismatchAttempts
+	default:
+		return 1
+	}
 }

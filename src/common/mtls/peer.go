@@ -12,12 +12,12 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
-// hostnameFromCert extracts the verified hostname identity from cert: the
+// HostnameFromCert extracts the verified hostname identity from cert: the
 // first SAN entry, falling back to the Subject CommonName if no SAN is
 // present. Shared by PeerHostname (gRPC) and PeerHostnameFromConnState
 // (plain net/http, e.g. log-gateway) so both transports apply the exact
 // same identity rule.
-func hostnameFromCert(cert *x509.Certificate) (string, error) {
+func HostnameFromCert(cert *x509.Certificate) (string, error) {
 	if len(cert.DNSNames) > 0 {
 		return cert.DNSNames[0], nil
 	}
@@ -45,7 +45,7 @@ func PeerHostname(ctx context.Context) (string, error) {
 	if len(tlsInfo.State.PeerCertificates) == 0 {
 		return "", fmt.Errorf("no peer certificate presented")
 	}
-	return hostnameFromCert(tlsInfo.State.PeerCertificates[0])
+	return HostnameFromCert(tlsInfo.State.PeerCertificates[0])
 }
 
 // PeerHostnameFromConnState is PeerHostname's plain-HTTP equivalent, for a
@@ -57,7 +57,7 @@ func PeerHostnameFromConnState(state *tls.ConnectionState) (string, error) {
 	if state == nil || len(state.PeerCertificates) == 0 {
 		return "", fmt.Errorf("no peer certificate presented")
 	}
-	return hostnameFromCert(state.PeerCertificates[0])
+	return HostnameFromCert(state.PeerCertificates[0])
 }
 
 // attributeExtensionOID identifies the custom X.509 extension issuer embeds

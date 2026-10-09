@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
+	"lukechampine.com/blake3"
 
 	pb "github.com/alex-sviridov/miniprotector/api"
 	wfs "github.com/alex-sviridov/miniprotector/storage/filesystem"
@@ -230,6 +231,79 @@ func TestResolveRestoreFilter_FolderPrefixDoesNotOverMatchSiblingPath(t *testing
 	got := collectResolved(t, store, &pb.RestoreFileFilter{Path: "/etc", PathIsPrefix: true})
 	require.Len(t, got, 1)
 	assert.Equal(t, "/etc/a.conf", got[0].Path)
+}
+
+// seedDamagedFile seeds a finalized file with one chunk and a version, then
+// marks that chunk corrupted the way a failed restore does, which flags the
+// file's FileData damaged. It returns the flagged row's uuid.
+func seedDamagedFile(t *testing.T, store *wfs.Store, fileID, jobID string, versionCreatedAtUnix int64) string {
+	t.Helper()
+	data := []byte("chunk of " + fileID)
+	sum := blake3.Sum256(data)
+	require.NoError(t, store.CreateFileData(fileID, int64(len(data))))
+	require.NoError(t, store.StoreChunk(sum[:], data))
+	require.NoError(t, store.LinkChunkToFileData(sum[:], fileID, 0))
+	require.NoError(t, store.FinalizeFileData(fileID, []byte{9}))
+	require.NoError(t, store.RawDB().Create(&wfs.FileVersionRecord{
+		ObjectID: fileID, JobID: jobID, CreatedAt: unixTime(versionCreatedAtUnix),
+	}).Error)
+	require.NoError(t, store.MarkChunkCorrupted(sum[:]))
+
+	var uuids []string
+	require.NoError(t, store.RawDB().Table("file_data_records").
+		Where("file_id = ? AND damaged_at IS NOT NULL", fileID).Pluck("uuid", &uuids).Error)
+	require.Len(t, uuids, 1, "marking the chunk must flag the file")
+	return uuids[0]
+}
+
+// reuploadFile stores the same file_id again, as the next backup does once
+// dedup ignores the damaged row, and returns the new row's uuid.
+func reuploadFile(t *testing.T, store *wfs.Store, fileID string) string {
+	t.Helper()
+	require.NoError(t, store.CreateFileData(fileID, 10))
+	require.NoError(t, store.FinalizeFileData(fileID, []byte{1}))
+	var uuids []string
+	require.NoError(t, store.RawDB().Table("file_data_records").
+		Where("file_id = ? AND damaged_at IS NULL AND checksum IS NOT NULL", fileID).Pluck("uuid", &uuids).Error)
+	require.Len(t, uuids, 1)
+	return uuids[0]
+}
+
+// A damaged file must stay visible to restore: if the resolver hid it, a
+// folder restore would succeed with the file silently missing. Listing it
+// makes RestoreFile fail with DataLoss instead.
+func TestResolveRestoreFilter_StillListsADamagedFile(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	damaged := seedDamagedFile(t, store, "fs://hosta:f:/data/lost.txt:1000", "job1", 5000)
+
+	for _, filter := range []*pb.RestoreFileFilter{
+		{Host: "hosta", Path: "/data/lost.txt"},
+		{Path: "/data", PathIsPrefix: true},
+	} {
+		got := collectResolved(t, store, filter)
+		require.Len(t, got, 1, "filter %v", filter)
+		assert.Equal(t, damaged, got[0].FileUUID)
+	}
+}
+
+// Once the next backup re-uploads the unchanged file, the newer healthy row
+// wins over the damaged one, so restore heals without operator action.
+func TestResolveRestoreFilter_HealthyReuploadWinsOverDamagedRow(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	const fileID = "fs://hosta:f:/data/healed.txt:1000"
+	damaged := seedDamagedFile(t, store, fileID, "job1", 5000)
+	healthy := reuploadFile(t, store, fileID)
+	require.NotEqual(t, damaged, healthy)
+
+	got := collectResolved(t, store, &pb.RestoreFileFilter{Host: "hosta", Path: "/data/healed.txt"})
+	require.Len(t, got, 1)
+	assert.Equal(t, healthy, got[0].FileUUID)
 }
 
 func unixTime(sec int64) time.Time { return time.Unix(sec, 0) }

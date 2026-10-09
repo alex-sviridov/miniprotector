@@ -86,6 +86,95 @@ describe('restoreCart store', () => {
     ])
   })
 
+  it('toggleFile threads notBefore/notAfter onto the created rule when passed', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts', 'bwfs-1', 4096, 1000, 2000)
+    expect(cart.rules).toEqual([
+      {
+        path: '/etc/hosts',
+        host: 'web01',
+        include: true,
+        destPath: '/etc/hosts',
+        storeHost: 'bwfs-1',
+        size: 4096,
+        notBefore: 1000,
+        notAfter: 2000,
+      },
+    ])
+  })
+
+  it('toggleFolder threads notBefore/notAfter onto the created rule when passed', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var', 1000, 2000)
+    expect(cart.rules).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var', notBefore: 1000, notAfter: 2000 },
+    ])
+  })
+
+  it('setVersionWindow updates the matching rule and leaves others untouched', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+    cart.toggleFolder('/var')
+
+    cart.setVersionWindow({ host: 'web01', path: '/etc/hosts' }, 1000, 1000)
+
+    expect(cart.rules).toEqual([
+      { path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts', notBefore: 1000, notAfter: 1000 },
+      { path: '/var', host: null, include: true, destPath: '/var' },
+    ])
+  })
+
+  it('setVersionWindow on a folder rule (host: null) updates its window', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+
+    cart.setVersionWindow({ host: null, path: '/var' }, 500, 600)
+
+    expect(cart.rules).toEqual([{ path: '/var', host: null, include: true, destPath: '/var', notBefore: 500, notAfter: 600 }])
+  })
+
+  it('setVersionWindow is a no-op when no rule matches', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/etc/hosts')
+
+    cart.setVersionWindow({ host: 'web02', path: '/nope' }, 1, 2)
+
+    expect(cart.rules).toEqual([{ path: '/etc/hosts', host: 'web01', include: true, destPath: '/etc/hosts' }])
+  })
+
+  it('ensureFileSelected creates an exact rule for a file only covered by an ancestor folder rule', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+
+    cart.ensureFileSelected('web01', '/var/lib/db/dump.sql', 'bwfs-1', 4096, 100, 100)
+
+    expect(cart.rules).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var' },
+      {
+        path: '/var/lib/db/dump.sql',
+        host: 'web01',
+        include: true,
+        destPath: '/var/lib/db/dump.sql',
+        storeHost: 'bwfs-1',
+        size: 4096,
+        notBefore: 100,
+        notAfter: 100,
+      },
+    ])
+  })
+
+  it('ensureFolderSelected creates an exact rule for a folder only covered by an ancestor folder rule', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+
+    cart.ensureFolderSelected('/var/lib/db', 100, 100)
+
+    expect(cart.rules).toEqual([
+      { path: '/var', host: null, include: true, destPath: '/var' },
+      { path: '/var/lib/db', host: null, include: true, destPath: '/var/lib/db', notBefore: 100, notAfter: 100 },
+    ])
+  })
+
   it('removeEntry unsets a folder wildcard entry', () => {
     const cart = useRestoreCartStore()
     cart.toggleFolder('/var')
@@ -98,5 +187,34 @@ describe('restoreCart store', () => {
     cart.toggleFile('web01', '/etc/hosts')
     cart.removeEntry({ path: '/etc/hosts', host: 'web01', include: true })
     expect(cart.rules).toEqual([])
+  })
+
+  it('toggleFile stores a display-only damaged flag; omitted means not damaged', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/a', 'bwfs', 10, 1, 2, true)
+    cart.toggleFile('web01', '/b', 'bwfs', 10, 1, 2)
+    expect(cart.rules.find((r) => r.path === '/a').damaged).toBe(true)
+    expect(cart.rules.find((r) => r.path === '/b').damaged).toBeFalsy()
+  })
+
+  it('ensureFileSelected stores the damaged flag on a new rule', () => {
+    const cart = useRestoreCartStore()
+    cart.ensureFileSelected('web01', '/a', 'bwfs', 10, 1, 2, true)
+    expect(cart.rules[0].damaged).toBe(true)
+  })
+
+  it('toggleFolder never stores a damaged flag', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFolder('/var')
+    expect(cart.rules[0]).not.toHaveProperty('damaged')
+  })
+
+  it('setDamaged updates an existing file rule and ignores a missing one', () => {
+    const cart = useRestoreCartStore()
+    cart.toggleFile('web01', '/a', 'bwfs', 10, 1, 2, true)
+    cart.setDamaged({ host: 'web01', path: '/a' }, false)
+    expect(cart.rules[0].damaged).toBe(false)
+    cart.setDamaged({ host: 'web01', path: '/nope' }, true)
+    expect(cart.rules).toHaveLength(1)
   })
 })

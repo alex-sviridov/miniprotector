@@ -113,6 +113,15 @@ make demo-down
 Removes every container and volume — the next `make demo-up` starts from a byte-for-byte clean
 slate, including a freshly generated CA and provisioner password.
 
+**Upgrading an existing demo volume:** if this stack was last provisioned before role-based gRPC
+authorization was added, re-running `make demo-up` against it is not enough — `up.sh`'s `enroll()`
+skips both `clientmanager add` and the `authz-role` attribute for any node whose `bootstrap.crt`
+already exists, so already-enrolled nodes come back up with no `authz-role` attribute at all and
+every role-gated RPC call from them is rejected (`PermissionDenied`), breaking `api-server` pages
+and catalog sync with no obvious cause. Run `make demo-down` (which tears down volumes too, per
+above) and then `make demo-up` to re-provision from scratch. See
+[Security Model](../docs/SECURITY.md#role-based-rpc-authorization).
+
 ## See Also
 
 - [Design: Demo Lab Environment v2](../docs/superpowers/specs/2026-07-06-demo-lab-environment-v2-design.md)

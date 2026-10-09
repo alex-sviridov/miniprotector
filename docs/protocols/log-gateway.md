@@ -40,8 +40,12 @@ shipper itself set (see [Security Model](../SECURITY.md)).
 
 Whatever Loki's own push endpoint returns, proxied through unchanged (`204 No Content` on success,
 per Loki's own convention). `502 Bad Gateway` if Loki itself is unreachable. `401 Unauthorized` if
-no verified peer certificate was presented. `413 Request Entity Too Large` if the body exceeds
-`log-gateway`'s 10MB cap. `405 Method Not Allowed` for anything other than `POST`.
+no verified peer certificate was presented. `413 Request Entity Too Large` if the body's declared
+`Content-Length` exceeds `log-gateway`'s 10MB cap (checked before any read). If a caller omits or
+understates `Content-Length` and the actual body exceeds the cap, the streamed forward to Loki
+fails partway through instead, surfacing as `502 Bad Gateway` rather than `413` — see
+[Design: Logging Flow Hardening](../superpowers/specs/2026-08-22-logging-flow-hardening-design.md).
+`405 Method Not Allowed` for anything other than `POST`.
 
 ## `GET /loki/api/v1/query_range`
 

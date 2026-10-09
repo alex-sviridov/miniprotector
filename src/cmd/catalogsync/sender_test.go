@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"log/slog"
 	"testing"
 
@@ -34,4 +36,47 @@ func TestLoggingSender_Send_EmptyBatchSucceeds(t *testing.T) {
 	sender := NewLoggingSender(logger)
 
 	assert.NoError(t, sender.Send(nil))
+}
+
+func TestLoggingSender_SendDeletions_LogsEveryRecordAndSucceeds(t *testing.T) {
+	var buf bytes.Buffer
+	sender := NewLoggingSender(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	require.NoError(t, sender.SendDeletions([]wfs.FileVersionDeletionRecord{
+		{Seq: 1, JobID: "job-1", ObjectID: "gone-1"},
+		{Seq: 2, JobID: "job-1", ObjectID: "gone-2"},
+	}))
+
+	assert.Contains(t, buf.String(), "gone-1")
+	assert.Contains(t, buf.String(), "gone-2")
+	assert.NoError(t, sender.SendDeletions(nil))
+}
+
+// pagesOf yields the given pages, then the empty page that ends the set.
+func pagesOf(pages ...[]string) DamagedPages {
+	return func() ([]string, error) {
+		if len(pages) == 0 {
+			return nil, nil
+		}
+		page := pages[0]
+		pages = pages[1:]
+		return page, nil
+	}
+}
+
+func TestLoggingSender_SendDamaged_DrainsThePagesAndLogsTheCount(t *testing.T) {
+	var buf bytes.Buffer
+	sender := NewLoggingSender(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	require.NoError(t, sender.SendDamaged(pagesOf([]string{"a", "b"}, []string{"c"})))
+
+	assert.Contains(t, buf.String(), "count=3")
+}
+
+func TestLoggingSender_SendDamaged_ReturnsAPageError(t *testing.T) {
+	sender := NewLoggingSender(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	err := sender.SendDamaged(func() ([]string, error) { return nil, errors.New("read failed") })
+
+	assert.ErrorContains(t, err, "read failed")
 }

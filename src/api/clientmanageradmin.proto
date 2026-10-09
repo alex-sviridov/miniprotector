@@ -24,6 +24,10 @@ service ClientManagerAdminService {
 message AddClientRequest {
   string hostname = 1;
   repeated string sans = 2;
+  // Authorization role to assign at enrollment: "control-plane", "store",
+  // or "client". Empty resolves to "client". See
+  // docs/superpowers/specs/2026-08-22-role-based-grpc-authz-design.md.
+  string role = 3;
 }
 
 message AddClientResponse {
@@ -34,6 +38,9 @@ message ReEnrollClientRequest {
   string hostname = 1;
   // Empty means keep the hostname's currently stored SANs.
   repeated string sans = 2;
+  // Authorization role to assign. Empty means keep the hostname's
+  // currently stored role, unchanged.
+  string role = 3;
 }
 
 message ReEnrollClientResponse {

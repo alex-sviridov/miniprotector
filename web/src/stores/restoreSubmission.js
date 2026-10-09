@@ -3,6 +3,7 @@ import { apiFetch } from '../api/client'
 import { useRestoreCartStore } from './restoreCart'
 import { useStoragePoliciesStore } from './storagePolicies'
 import { useRestorePoliciesStore } from './restorePolicies'
+import { entryKey } from '../utils/restoreRules'
 
 // distinctPositiveEntries returns cart.entries (the positively-selected
 // top-level rules), deduped by (host, path) -- submitting the same
@@ -10,7 +11,7 @@ import { useRestorePoliciesStore } from './restorePolicies'
 function distinctPositiveEntries(entries) {
   const seen = new Set()
   return entries.filter((e) => {
-    const key = `${e.host ?? ''}:${e.path}`
+    const key = entryKey(e)
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -36,23 +37,14 @@ async function storesTouchedByEntry(entry) {
 
 // buildRulesByStore groups the cart's rules per store, so each store's
 // restore policy is told to verify only what that store could actually
-// have. Three kinds of rule, three treatments:
+// have, and (entriesByStore) which cart entries that policy's outcome
+// should be reported against -- see restoreSubmission's own module doc at
+// the top of submit() below. Three kinds of rule, three treatments:
 //
 //   - A host-specific (file) *include* rule goes only to the store(s) that
-//     entry's own facet lookup found it on. This is the whole point: rwfs
-//     reports a file-level include rule that matches no row as a
-//     verification failure, so sending store-a's file to store-b would
-//     make store-b's one-shot verification fail forever on a file it never
-//     held.
-//   - A host-agnostic (folder) include rule goes to every store. A folder
-//     rule matching nothing on a given store is not an error (see rwfs's
-//     not-found accounting, which skips host-agnostic rules), and a folder
-//     may legitimately span stores.
-//   - An *exclude* rule of either kind goes to every store. Exclusions can
-//     only ever suppress a selection, never demand a file be present --
-//     rwfs's not-found scan skips them explicitly -- so they are safe
-//     everywhere, and dropping any of them would restore a file the user
-//     deselected.
+//     entry's own facet lookup found it on.
+//   - A host-agnostic (folder) include rule goes to every store.
+//   - An *exclude* rule of either kind goes to every store.
 //
 // Rule order is not significant to consumers: both restoreRules.js's
 // resolveFile and rwfs's resolveRestoreFile resolve by specificity
@@ -62,41 +54,54 @@ async function buildRulesByStore(positiveEntries, allRules) {
   const perEntryStores = await Promise.all(positiveEntries.map((e) => storesTouchedByEntry(e)))
   const allStores = new Set(perEntryStores.flat())
 
-  const sharedRules = allRules.filter((r) => !r.include || !r.host)
+  // A folder-level include rule is only "shared" (sent to every store)
+  // when its own entry actually survived the already-succeeded-for-this-
+  // mode filter above (i.e. is present in positiveEntries) -- otherwise
+  // an already-completed folder tree would get silently re-sent (and
+  // re-restored) on every later submit, since a host-agnostic include
+  // rule always matches `!r.host` regardless of whether it's still
+  // pending. Exclusion rules are unconditionally kept: they're only ever
+  // supporting context for whichever include rules remain active, not a
+  // restore target of their own, so there's nothing to guard against
+  // re-sending.
+  const positiveKeys = new Set(positiveEntries.map(entryKey))
+  const sharedRules = allRules.filter((r) => !r.include || (!r.host && positiveKeys.has(entryKey(r))))
+  const sharedFolderEntries = positiveEntries.filter((e) => e.host === null)
 
-  const fileRulesByStore = new Map()
+  const fileEntriesByStore = new Map()
   positiveEntries.forEach((entry, i) => {
     if (!entry.host) return
     for (const store of perEntryStores[i]) {
-      if (!fileRulesByStore.has(store)) fileRulesByStore.set(store, [])
-      fileRulesByStore.get(store).push(entry)
+      if (!fileEntriesByStore.has(store)) fileEntriesByStore.set(store, [])
+      fileEntriesByStore.get(store).push(entry)
     }
   })
 
   const rulesByStore = new Map()
+  const entriesByStore = new Map()
   for (const store of allStores) {
-    rulesByStore.set(store, [...sharedRules, ...(fileRulesByStore.get(store) || [])])
+    const fileEntries = fileEntriesByStore.get(store) || []
+    rulesByStore.set(store, [...sharedRules, ...fileEntries])
+    entriesByStore.set(store, [...sharedFolderEntries, ...fileEntries])
   }
-  return rulesByStore
+  return { rulesByStore, entriesByStore }
 }
 
-// toWireRule strips the cart's client-only display fields (storeHost,
-// size -- see restoreCart.js's toggleFile) and omits dest_path entirely
-// when it's unchanged from path (the "no rename" case), so a rule nobody
-// renamed produces exactly today's wire shape.
+// toWireRule strips the cart's client-only display fields (storeHost, size
+// -- see restoreCart.js's toggleFile) and omits dest_path entirely when
+// it's unchanged from path (the "no rename" case). not_before/not_after
+// are only ever meaningful on an included rule (see policyserver.proto's
+// RestoreRule doc) -- an excluded rule can carry a stale window from
+// whatever the box's *last checked* state set, so it's deliberately never
+// sent for one.
 function toWireRule(rule) {
   const wire = { host: rule.host, path: rule.path, include: rule.include }
   if (rule.destPath && rule.destPath !== rule.path) wire.dest_path = rule.destPath
+  if (rule.include && rule.notBefore) wire.not_before = rule.notBefore
+  if (rule.include && rule.notAfter) wire.not_after = rule.notAfter
   return wire
 }
 
-// storagePolicyIdForHost finds which storage policy's checkins include
-// storeHost -- the same cross-reference the now-removed resolveStoreAddress
-// helper used to do, but stopping at the policy id: policy-server finishes
-// the resolution live
-// (see server.go's attachDestination), so staying stale is no longer a
-// risk the frontend needs to avoid by resolving all the way to an address
-// itself.
 function storagePolicyIdForHost(storagePolicies, storeHost) {
   for (const policy of storagePolicies) {
     if ((policy.checkins || []).some((c) => c.hostname === storeHost)) return policy.id
@@ -107,7 +112,20 @@ function storagePolicyIdForHost(storagePolicies, storeHost) {
 export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
   state: () => ({
     submitting: false,
-    results: [],
+    // entryKey(entry) -> [{ status: 'submitting'|'success'|'error', jobId?, message?, mode }].
+    // An array because one folder entry can fan out to more than one
+    // storage host's policy, each with its own independent outcome --
+    // almost always length 1 per mode for a file entry, which only ever
+    // touches one store. Also holds at most one outcome per *mode*: a
+    // Verify success and a Restore success for the same (host, path) are
+    // two independent facts and both stay recorded. Persists across
+    // submit() calls (not reset to {} each time) so a completed row's
+    // status/link stays visible after the request that produced it
+    // finishes -- see submit()'s already-succeeded filter below for how
+    // re-submission is guarded (per mode) instead of relying on the cart
+    // being emptied. Cleared per-entry via clearEntry(), called when the
+    // entry is removed from the cart (see RestoreView.vue's remove()).
+    entryStatus: {},
     error: null,
   }),
   actions: {
@@ -117,17 +135,22 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
       const restorePolicies = useRestorePoliciesStore()
 
       this.submitting = true
-      this.results = []
       this.error = null
 
       try {
-        const positiveEntries = distinctPositiveEntries(cart.entries)
+        // A success is only "already succeeded" for *this* mode -- a
+        // completed Verify must never block a later Restore of the same
+        // entry (or vice versa); see restoreCart's design doc for why
+        // there's no other mode-vs-status coupling here.
+        const alreadySucceeded = (entry) =>
+          (this.entryStatus[entryKey(entry)] || []).some((s) => s.status === 'success' && s.mode === mode)
+        const positiveEntries = distinctPositiveEntries(cart.entries).filter((e) => !alreadySucceeded(e))
         if (positiveEntries.length === 0) {
           this.error = 'Nothing selected for restore.'
           return
         }
 
-        const rulesByStore = await buildRulesByStore(positiveEntries, cart.rules)
+        const { rulesByStore, entriesByStore } = await buildRulesByStore(positiveEntries, cart.rules)
 
         await storagePolicies.fetchAll()
         if (storagePolicies.error) {
@@ -135,15 +158,22 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
           return
         }
 
-        const results = []
+        // Drop any prior outcome recorded for *this* mode (a submitting
+        // placeholder, or a stale error being retried) while preserving
+        // outcomes recorded under a different mode -- e.g. an earlier
+        // Verify success must survive a subsequent Restore submission for
+        // the same entry.
+        for (const entry of positiveEntries) {
+          const key = entryKey(entry)
+          const preserved = (this.entryStatus[key] || []).filter((s) => s.mode !== mode)
+          this.entryStatus[key] = [...preserved, { status: 'submitting', mode }]
+        }
+
         for (const [storeHost, rules] of rulesByStore) {
+          const coveredEntries = entriesByStore.get(storeHost)
           const storagePolicyId = storagePolicyIdForHost(storagePolicies.list, storeHost)
           if (!storagePolicyId) {
-            results.push({
-              storeHost,
-              status: 'error',
-              message: `No storage policy found for ${storeHost}`,
-            })
+            this.recordOutcome(coveredEntries, { status: 'error', message: `No storage policy found for ${storeHost}`, mode })
             continue
           }
           try {
@@ -156,17 +186,54 @@ export const useRestoreSubmissionStore = defineStore('restoreSubmission', {
               mode,
               overwrite,
             })
-            results.push({ storeHost, status: 'success', policy, mode })
+            this.recordOutcome(coveredEntries, { status: 'success', jobId: policy.job_id, mode })
           } catch (err) {
-            results.push({ storeHost, status: 'error', message: err.message })
+            this.recordOutcome(coveredEntries, { status: 'error', message: err.message, mode })
           }
         }
-        this.results = results
+
+        // For entries that touched zero storage hosts, they were initialized to
+        // 'submitting' (for this mode) but never passed to recordOutcome. Replace
+        // that placeholder with an explicit error so they don't stay stuck at
+        // 'submitting' forever, without disturbing any other-mode outcomes also
+        // held for this entry.
+        for (const entry of positiveEntries) {
+          const key = entryKey(entry)
+          const status = this.entryStatus[key] || []
+          const stillSubmitting = status.find((s) => s.status === 'submitting' && s.mode === mode)
+          if (stillSubmitting) {
+            this.entryStatus[key] = status.map((s) =>
+              s === stillSubmitting
+                ? { status: 'error', message: 'No storage host found for this selection', mode }
+                : s
+            )
+          }
+        }
       } catch (err) {
         this.error = err.message
       } finally {
         this.submitting = false
       }
+    },
+
+    recordOutcome(entries, outcome) {
+      for (const entry of entries) {
+        const key = entryKey(entry)
+        this.entryStatus[key] = (this.entryStatus[key] || []).filter(
+          (s) => !(s.status === 'submitting' && s.mode === outcome.mode)
+        )
+        this.entryStatus[key].push(outcome)
+      }
+    },
+
+    // clearEntry drops all recorded outcomes (any mode) for one entry --
+    // called when the entry itself is removed from the cart, so a stale
+    // status/badge for a since-removed-and-possibly-re-added entry can't
+    // linger (restoreCart and restoreSubmission are separate stores that
+    // don't import each other, so this is wired at the call site instead;
+    // see RestoreView.vue's remove()).
+    clearEntry(entry) {
+      delete this.entryStatus[entryKey(entry)]
     },
   },
 })

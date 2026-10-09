@@ -2,17 +2,37 @@ import { defineStore } from 'pinia'
 import { apiFetch } from '../api/client'
 import { withRequest } from './helpers'
 import { createLiveStream } from '../utils/wsClient'
-import { parseLogLine } from '../utils/logLine'
+import { parseLogLine, logKey } from '../utils/logLine'
 
 const OVERLAP_MARGIN_SEC = 2
 const RECONCILE_INTERVAL_MS = 60000
-
-function logKey(line) {
-  return `${line.timestamp}|${line.hostname}|${line.binary}`
-}
+const JOB_LOGS_PAGE_SIZE = 500
+const JOB_LOGS_LIVE_CAP = 2000
 
 function isFinishLine(line) {
   return parseLogLine(line.line).fields.event === 'finish'
+}
+
+// Incoming live lines are almost always newer than everything already held
+// (Loki delivers them in emission order), so appending is the common case
+// and stays O(1). A line that arrives out of order (rare -- distinct
+// hosts' clocks can skew slightly) gets a binary-search insert instead of
+// re-sorting the whole array, which is what made the old push+sort
+// approach O(n log n) per incoming line over a job's whole lifetime.
+function insertSorted(lines, line) {
+  const last = lines[lines.length - 1]
+  if (!last || line.timestamp >= last.timestamp) {
+    lines.push(line)
+    return
+  }
+  let lo = 0
+  let hi = lines.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (lines[mid].timestamp <= line.timestamp) lo = mid + 1
+    else hi = mid
+  }
+  lines.splice(lo, 0, line)
 }
 
 export const useJobsStore = defineStore('jobs', {
@@ -24,6 +44,15 @@ export const useJobsStore = defineStore('jobs', {
     logsLoading: false,
     logsError: null,
     logsStatus: 'connecting',
+    hasOlderLogs: false,
+    logsOlderLoading: false,
+    logsOlderError: null,
+    isFollowing: true,
+    // Monotonic count of lines merged via the live/tail path only. The
+    // view's useAutoFollow watches this rather than logs.length so that
+    // paging older history in (loadOlder unshifts up to a page of lines)
+    // is never mistaken for new tail activity.
+    tailSeq: 0,
     _logsStream: null,
     _logsSeen: new Set(),
     _logsReconcileTimer: null,
@@ -47,9 +76,16 @@ export const useJobsStore = defineStore('jobs', {
       await withRequest(
         this,
         async () => {
-          const body = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/logs`)
+          const body = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/logs?limit=${JOB_LOGS_PAGE_SIZE}`)
           this.logs = body.data ?? []
           this._logsSeen = new Set(this.logs.map(logKey))
+          this.hasOlderLogs = body.has_more ?? false
+          this.isFollowing = true
+          // Singleton store: without this reset a previous job's tail
+          // activity would carry over and the view would open showing a
+          // spurious "N new lines" affordance.
+          this.tailSeq = 0
+          this.logsOlderError = null
           // A job that already finished before this page loaded is the
           // common case, not an edge case -- its finish line arrives here,
           // in history, not as a fresh onMessage over the live stream
@@ -63,12 +99,64 @@ export const useJobsStore = defineStore('jobs', {
       )
     },
 
+    // Pages one older page in, using the oldest resident line's timestamp
+    // as the backend's exclusive `ending_before` cursor. A no-op when
+    // there's nothing older to fetch (hasOlderLogs false), nothing
+    // resident yet to derive a cursor from, or a page is already in
+    // flight (a double-click would otherwise issue two requests from the
+    // same cursor and race their prepends and hasOlderLogs writes).
+    //
+    // Failures land in logsOlderLoading/logsOlderError, deliberately
+    // separate from logsLoading/logsError: those drive StatusMessage over
+    // the whole log list, so reusing them would replace logs the user can
+    // already read with a spinner or an error screen. A "load older"
+    // failure belongs inline next to its button instead.
+    //
+    // Deliberately does NOT touch tailSeq -- prepended history is not new
+    // tail activity, and counting it would make the view offer to scroll
+    // the user away from the history they just asked for.
+    async loadOlder(jobId) {
+      if (!this.hasOlderLogs || this.logs.length === 0 || this.logsOlderLoading) return
+      const oldest = this.logs[0]
+      await withRequest(
+        this,
+        async () => {
+          const body = await apiFetch(
+            `/jobs/${encodeURIComponent(jobId)}/logs?limit=${JOB_LOGS_PAGE_SIZE}&ending_before=${oldest.timestamp}`
+          )
+          const older = (body.data ?? []).filter((line) => !this._logsSeen.has(logKey(line)))
+          older.forEach((line) => this._logsSeen.add(logKey(line)))
+          this.logs.unshift(...older)
+          this.hasOlderLogs = body.has_more ?? false
+        },
+        { rethrow: false, loadingKey: 'logsOlderLoading', errorKey: 'logsOlderError' }
+      )
+    },
+
+    // Drives the live-follow eviction gate (see _trimLiveCap): the view's
+    // useAutoFollow composable calls this as the user scrolls away from /
+    // back to the bottom. Returning to following immediately reclaims
+    // whatever grew past the cap while not following, instead of waiting
+    // for the next live line.
+    setFollowing(value) {
+      this.isFollowing = value
+      if (value) this._trimLiveCap()
+    },
+
+    _trimLiveCap() {
+      while (this.logs.length > JOB_LOGS_LIVE_CAP) {
+        const dropped = this.logs.shift()
+        this._logsSeen.delete(logKey(dropped))
+      }
+    },
+
     _mergeLogLine(line) {
       const key = logKey(line)
       if (this._logsSeen.has(key)) return
       this._logsSeen.add(key)
-      this.logs.push(line)
-      this.logs.sort((a, b) => a.timestamp - b.timestamp)
+      insertSorted(this.logs, line)
+      this.tailSeq++
+      if (this.isFollowing) this._trimLiveCap()
       if (isFinishLine(line)) {
         this.logsStatus = 'finished'
         this.disconnectLogsStream()
@@ -92,7 +180,7 @@ export const useJobsStore = defineStore('jobs', {
     },
 
     async _reconcileLogs(jobId) {
-      const body = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/logs`)
+      const body = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/logs?limit=${JOB_LOGS_PAGE_SIZE}`)
       ;(body.data ?? []).forEach((line) => this._mergeLogLine(line))
     },
 

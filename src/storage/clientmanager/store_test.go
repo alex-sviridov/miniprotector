@@ -308,3 +308,76 @@ func TestLoadClientView_UnknownHostnameReturnsErrClientNotFound(t *testing.T) {
 	_, err := store.LoadClientView(t.Context(), "ghost")
 	assert.ErrorIs(t, err, ErrClientNotFound)
 }
+
+func TestSetKV_RoleAttribute_AcceptsValidRole(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindAttribute, RoleAttributeKey, "control-plane"))
+
+	attrs, err := store.KV(t.Context(), "node-1", KindAttribute)
+	require.NoError(t, err)
+	require.Len(t, attrs, 1)
+	assert.Equal(t, "control-plane", attrs[0].Value)
+}
+
+func TestSetKV_RoleAttribute_RejectsInvalidRole(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+
+	err := store.SetKV(t.Context(), "node-1", KindAttribute, RoleAttributeKey, "web")
+	assert.Error(t, err)
+
+	attrs, err := store.KV(t.Context(), "node-1", KindAttribute)
+	require.NoError(t, err)
+	assert.Empty(t, attrs)
+}
+
+func TestSetKV_NonRoleAttributeKeyIsUnvalidated(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+
+	// "role" (not "authz-role") is the pre-existing free-form
+	// policy-targeting label -- SetKV must not validate it.
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindAttribute, "role", "web"))
+}
+
+func TestSetKV_RoleKeyOnDescriptionKindIsUnvalidated(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+
+	require.NoError(t, store.SetKV(t.Context(), "node-1", KindDescription, RoleAttributeKey, "anything"))
+}
+
+func TestAddSAN_RejectsAnotherClientsHostname(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", nil, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-2", nil, time.Now()))
+
+	err := store.AddSAN(t.Context(), "node-2", "node-1")
+	require.ErrorIs(t, err, ErrSANConflict)
+
+	got, err := store.GetClient(t.Context(), "node-2")
+	require.NoError(t, err)
+	assert.Empty(t, got.SANsList())
+}
+
+func TestAddSAN_RejectsAnotherClientsAlias(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"shared.internal"}, time.Now()))
+	require.NoError(t, store.AddClient(t.Context(), "node-2", nil, time.Now()))
+
+	require.ErrorIs(t, store.AddSAN(t.Context(), "node-2", "shared.internal"), ErrSANConflict)
+}
+
+func TestAddClient_RejectsCollidingSANsAndHostnames(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.AddClient(t.Context(), "node-1", []string{"a.internal"}, time.Now()))
+
+	require.ErrorIs(t, store.AddClient(t.Context(), "node-2", []string{"node-1"}, time.Now()), ErrSANConflict)
+	require.ErrorIs(t, store.AddClient(t.Context(), "node-3", []string{"a.internal"}, time.Now()), ErrSANConflict)
+	require.ErrorIs(t, store.AddClient(t.Context(), "a.internal", nil, time.Now()), ErrSANConflict)
+
+	_, err := store.GetClient(t.Context(), "node-2")
+	assert.ErrorIs(t, err, ErrClientNotFound, "a rejected add must not leave a record")
+}

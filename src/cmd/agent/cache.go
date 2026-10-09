@@ -12,8 +12,8 @@ import (
 // PolicyState is one policy's reconciliation history, persisted as part of
 // Cache. NextRetryAt is only meaningful when ConsecutiveFailures > 0 — it's
 // set once when a failure happens (see run in reconcile.go) rather than
-// recomputed from backoff() on every check, so the retry threshold can't
-// drift between checks, or between the daemon and `list-policies`.
+// recomputed from backoffPolicy.next on every check, so the retry threshold
+// can't drift between checks, or between the daemon and `list-policies`.
 type PolicyState struct {
 	LastSuccessAt       *time.Time `json:"last_success_at"`
 	LastAttemptAt       *time.Time `json:"last_attempt_at"`

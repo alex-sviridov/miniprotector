@@ -201,4 +201,24 @@ describe('storagePolicies store', () => {
     await expect(storagePolicies.remove('missing')).rejects.toThrow('policy not found')
     expect(storagePolicies.error).toBe('policy not found')
   })
+
+  it('fetchStatus stores the reports for the policy', async () => {
+    apiFetch.mockResolvedValue({ reports: [{ hostname: 'store-1', state: 'online' }] })
+    const storagePolicies = useStoragePoliciesStore()
+
+    await storagePolicies.fetchStatus('s1')
+
+    expect(apiFetch).toHaveBeenCalledWith('/storage-policies/s1/status')
+    expect(storagePolicies.statusById.s1).toEqual([{ hostname: 'store-1', state: 'online' }])
+    expect(storagePolicies.statusError).toBeNull()
+  })
+
+  it('fetchStatus records an error without throwing', async () => {
+    apiFetch.mockRejectedValue(new Error('boom'))
+    const storagePolicies = useStoragePoliciesStore()
+
+    await storagePolicies.fetchStatus('s1')
+
+    expect(storagePolicies.statusError).toBe('boom')
+  })
 })

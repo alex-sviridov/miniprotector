@@ -1,23 +1,32 @@
 # Chunked Backup Protocol - Design Overview
 
 ## **Core Concept**
-A dual-layer integrity system with smart deduplication that processes files in 512KB chunks, optimizing for both network efficiency and data reliability.
+A dual-layer integrity system with smart deduplication that processes files in content-defined chunks (16-256 KB, average 64 KB), optimizing for both network efficiency and data reliability.
 
 ## **Protocol Flow**
 1. **File-level filtering**: Send metadata first, get `SEND_FILE` or `SKIP_FILE` to avoid unnecessary processing
-2. **Chunk-based transfer**: Split files into 512KB chunks, send hash batches, receive selective requests  
+2. **Chunk-based transfer**: Split files into variable-size content-defined chunks (16-256 KB, average 64 KB), send hash batches, receive selective requests  
 3. **Dual integrity verification**: BLAKE3 per-chunk + CRC32 whole-file validation
+
+## Authorization
+
+`ProcessBackupStream` and `BackupCommit` require the caller's operating certificate to carry the
+`client` role — `brfs` is the only legitimate caller. See
+[Design: Role-Based gRPC Authorization](../superpowers/specs/2026-08-22-role-based-grpc-authz-design.md).
 
 ## **Key Design Decisions**
 
-**Why 512KB chunks?**
+**Why content-defined chunks of 16-256 KB (average 64 KB)?**
+- Chunk boundaries follow the file content (FastCDC), so an insertion or shift in a file changes only the chunks around it and the rest still deduplicate
 - Optimal balance: large enough for network efficiency, small enough for granular deduplication
-- Memory-friendly: predictable RAM usage regardless of file size
-- **Future evolution**: Fixed 512KB will be replaced with variable chunk sizes based on https://github.com/PlakarKorp/go-cdc-chunkers
+- Memory-friendly: a chunk never exceeds 256 KB, so RAM usage is predictable regardless of file size
 
 **Why batch hashes but send chunks individually?**
 - Hashes are small (~32 bytes) → efficient to batch
-- Chunks are large (512KB) → individual sending avoids massive memory buffers
+- Chunks are large (up to 256 KB) → individual sending avoids massive memory buffers
+
+**Why can several chunks be in flight on one stream?**
+- With one chunk at a time, every chunk costs a round trip; a client-side window of N chunks shares it. See [In-flight chunks](#in-flight-chunks-sliding-window)
 
 **Why dual integrity (BLAKE3 + CRC32)?**
 - **BLAKE3**: Ensures each chunk survives network transmission intact
@@ -30,11 +39,37 @@ A dual-layer integrity system with smart deduplication that processes files in 5
 - Massive efficiency gain for incremental backups
 
 **How does the system recover from a corrupted chunk?**
-- A finalized DB record only proves a file was fully backed up *at some point* — it doesn't prove the chunk files are still on disk. The chunk store is a separate filesystem tree that can lose data independently of the metadata DB (deletion, disk corruption)
+- A finalized DB record only proves a file was fully backed up *at some point* — it doesn't prove the chunk data is still intact. The pack segments are separate from the metadata DB and can lose data independently of the metadata DB (deletion, disk corruption)
 - Rather than re-verifying every chunk on every backup (which would erase the efficiency gain from file-level pre-filtering above — it'd mean reading all previously-backed-up data on every run), the server assumes the chunk store is healthy and only reacts when a read actually fails
-- Any chunk read failure during restore or verify (`bwfs`'s `RestoreFile`, used by both `rwfs restore` and `rwfs verify`) marks that chunk corrupted: the chunk file is removed if still present, its DB records are deleted, and the `FileData` of every file that referenced it is invalidated. The DB portion runs inside a single transaction, so a concurrent backup that links a new file to the same chunk hash can never lose that link without its `FileData` being invalidated too
-- The next backup run then sees those files as not-yet-backed-up (their `FileData` is gone) and re-uploads them via the normal `SEND_FILE` path — chunk-level dedup still skips any of the file's chunks that are intact, so only the actually-missing data is re-transferred
+- A chunk that is lost for good when read during restore or verify (`bwfs`'s `RestoreFile`, used by both `rwfs restore` and `rwfs verify`: it fails hash verification or is no longer indexed), or during compaction, is marked corrupted: its chunk record and links are deleted (the bytes stay in the pack segment as dead space until compaction), and the `FileData` of every file that referenced it is **flagged damaged** (`damaged_at`), not deleted, so the loss stays recorded. bwfs logs it once at Error (chunk hash, number of `FileData` rows flagged, up to 5 paths). The DB portion runs inside a single transaction after pending writes are flushed, so links already committed are flagged with it. A link a concurrent backup still has pending can commit after the mark, pointing at a chunk that is no longer indexed; that file is not flagged at once, but it does not go unnoticed: restoring it hits a not-found chunk, which is marked in turn (flagging the file) and fails with `DataLoss`. Read errors that may be transient (I/O, database busy) mark nothing
+- The next backup run then sees those files as not-yet-backed-up (`FileDataExists` ignores damaged rows) and re-uploads them via the normal `SEND_FILE` path — chunk-level dedup still skips any of the file's chunks that are intact, so only the actually-missing data is re-transferred. The re-upload is a newer `FileData` for the same `file_id`, which restore picks over the damaged one
+- The damaged row stays until no file version references it any more, then vacuum removes it like any other unreferenced `FileData`
 - This is a reactive, not a proactive, self-heal: corruption is only detected and fixed when something tries to read the affected chunk (a `verify` run, or a real restore). A proactive integrity-scan routine is a possible future addition, not implemented now
+
+## **Retention Expiry (`expire_at`)**
+
+Each file's metadata message (`FileInfo`) carries the expiry its file version should have:
+
+```proto
+message FileInfo {
+  string file_id = 1;
+  bytes attributes = 2;
+  int64 expire_at = 3; // unix seconds; 0 = no expiry recorded / never expires
+}
+```
+
+`brfs` computes it per file as `now + keep`, where `keep` comes from the first matching row of the
+retention matrix `agent` resolved for the job and handed over via `--retention-file` (see
+[brfs](../components/brfs.md#retention) and [agent](../components/agent.md#retention-matrix)). It
+travels in `FileInfo` and not in stream metadata (like `job-id`) because it is per file, and
+because the `SEND_FILE`/`SKIP_FILE` decision follows immediately: a skipped (unchanged) file still
+records a version for the job, so both the new-file and the skip path store the value on the
+`file_versions` row. `0` means none was sent (a hand-run `brfs` without `--retention-file`) or the
+matching rule says never expire; both are stored as NULL and neither is ever treated as expired.
+Node clocks are assumed synced, since `brfs`'s clock produces the absolute timestamp. `bwfs`'s
+scheduled cleanup deletes a version once its `expire_at` has passed (see
+[bwfs](../components/bwfs.md#scheduled-cleanup-and-vacuum)). See
+[Design: Retention Expiry Stamping](../superpowers/specs/2026-10-05-retention-expiry-stamping-design.md).
 
 ## **Backup Job Tracking & Completion Verification**
 
@@ -93,6 +128,34 @@ commit (crash, network death):
 See [bwfs](../components/bwfs.md) for the schema and config key, and [brfs](../components/brfs.md)
 for the commit-with-retry behavior.
 
+### In-flight chunks (sliding window)
+
+`brfs --window N` lets a stream have up to N chunks in flight: it sends the `ChunkHash` for chunk
+*k+1* before it has seen the reply for chunk *k*, and sends a chunk's `ChunkData` when its
+`ChunkNeeded` reply arrives. **The wire format is unchanged**; what changes is what `bwfs` may
+assume about arrival order, and the contract is:
+
+- **Replies are in request order.** `bwfs` handles a stream's requests one at a time and answers
+  each in turn, so `brfs` matches the *n*-th reply to the *n*-th request that expects one. A
+  `ChunkNeeded` is owed for every `ChunkHash`; a `ChunkResult` for every `ChunkData`; after the last
+  chunk is accounted for the `FileProcessingResult` follows the reply to the request that completed
+  the file. `brfs` waits for that result before starting the next file on the stream, so only one
+  file is in flight per stream.
+- **Chunks are accounted for in arrival order, not index order.** A chunk `bwfs` already holds is
+  accounted for when its hash arrives; a new one when its data arrives. So with a window a stored
+  chunk can be accounted for ahead of an earlier chunk whose data is still in transit. `bwfs`
+  therefore folds each chunk's CRC32 into the whole-file CRC32 in index (byte-offset) order through a
+  reorder buffer, keeping only chunks that arrived ahead of a gap, and treats the file as complete
+  when the chunk flagged `eof` has been folded in — not when it merely arrives. Memory is bounded by
+  the window, never by file size; `bwfs` caps buffered chunks (`maxPendingChunks`, 1024) and rejects
+  a client that exceeds it.
+- **Index is a byte offset**, and each chunk is accounted for exactly once; a repeated or
+  already-passed index is an error. Identical chunks in one window (for example runs of zeros) are
+  fine — they are matched by position, and storing the same chunk twice is idempotent.
+
+A `bwfs` older than this change requires `--window 1`: it folds chunks in arrival order and would
+finalize a file early or compute the wrong file CRC.
+
 Note on the sequence diagram below: the `START_STREAM:jobId:streamId` step shown there is
 conceptual — in the actual gRPC transport this is the `job-id` metadata described above, attached
 when the stream is opened, not a discrete message exchanged over the stream. The diagram also
@@ -116,7 +179,7 @@ sequenceDiagram
             Server-->>Client: SEND_FILE
             
             loop For Each Chunk Batch
-                Note left of Client: Read N chunks (512KB each)<br/>Calculate BLAKE3 hashes<br/>Update file CRC32 incrementally<br/>(same memory buffer, no re-read)
+                Note left of Client: Read N chunks (16-256 KB each)<br/>Calculate BLAKE3 hashes<br/>Update file CRC32 incrementally<br/>(same memory buffer, no re-read)
                 
                 Client->>Server: HASHES:hash1,hash2,hash3,...
                 Note right of Server: Analyze hashes against existing data<br/>Determine needed chunks

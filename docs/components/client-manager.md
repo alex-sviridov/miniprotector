@@ -41,9 +41,12 @@ network interface at all.
 | `--root` | `deploy/control-plane/ca/data/certs/root_ca.crt` | Path to the CA's root certificate |
 | `--provisioner` | `admin@backup.internal` | Provisioner name |
 | `--password-file` | `deploy/control-plane/ca/data/secrets/password` | Path to the provisioner password file |
+| `--role` | `client` on `add`; keep existing on `re-enroll` | Authorization role: `control-plane`, `store`, or `client` |
 
 ## Behavior
 
+- `san add` (and `add --san`) refuses an alias that is another client's hostname or alias — see
+  [Security Model](../SECURITY.md#san-alias-uniqueness).
 - `add` errors if `hostname` is already tracked (use `re-enroll` or `description|attribute|san`
   instead) and records nothing locally unless minting actually succeeded.
 - `revoke`/`unrevoke` set a flag in `client-manager`'s own database — `client-manager` itself has
@@ -60,6 +63,10 @@ network interface at all.
   operating certificate. See [agent](./agent.md) and [certclient](./certclient.md).
 - `list`'s `LAST_SEEN` column now reflects real data once `issuer` has served at least one request
   for that hostname; `never` until then.
+- `add`'s `--role` (default `client`) and `re-enroll`'s `--role` (default: keep the currently
+  stored role) set the node's authorization role, stored as the reserved `authz-role` attribute
+  and enforced by every role-gated RPC in the mesh — see
+  [Security Model](../SECURITY.md#role-based-rpc-authorization).
 
 ## Configuration Keys
 

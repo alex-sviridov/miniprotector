@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,19 +27,18 @@ func TestRestoreTasks_OneTaskPerRestorePolicy(t *testing.T) {
 	cachePath := filepath.Join(dir, "policies-cache.json")
 	writeCachedPoliciesJSON(t, cachePath, []cachedPolicy{
 		{
-			Name: "web01-emergency", Type: "restore",
+			Name: "web01-emergency", Type: "restore", JobID: "verify:web01-emergency:1700000000",
 			Destinations: []string{"bwfs-1:8080"},
 			Rules:        []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
 		},
 		{Name: "nightly", Type: "backup"}, // must contribute zero restore tasks
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "verify:web01-emergency", tasks[0].ID)
 	assert.Equal(t, "rwfs", tasks[0].Binary)
-	assert.True(t, strings.HasPrefix(tasks[0].JobID, "verify:web01-emergency:"), "job id must be stamped with the policy name")
+	assert.Equal(t, "verify:web01-emergency:1700000000", tasks[0].JobID, "job id must come from the cached policy, not be generated here")
 	assert.Equal(t, []string{"verify", "bwfs-1:8080", "--rules-stdin", "--job-id", tasks[0].JobID}, tasks[0].Args)
 	assert.True(t, tasks[0].Background)
 
@@ -58,8 +56,7 @@ func TestRestoreTasks_NoDestinationsSkipsWithNoTask(t *testing.T) {
 		{Name: "dangling", Type: "restore", Rules: []RestoreRule{{Path: "/x", Include: true}}},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	assert.Empty(t, tasks)
 }
 
@@ -74,8 +71,7 @@ func TestRestoreTasks_NoRulesSkipsWithNoTask(t *testing.T) {
 		{Name: "rules-less", Type: "restore", Destinations: []string{"bwfs-1:8080"}},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	assert.Empty(t, tasks)
 }
 
@@ -91,30 +87,23 @@ func TestRestoreTasks_DisabledPolicySkipped(t *testing.T) {
 		},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	assert.Empty(t, tasks)
 }
 
-func TestRestoreTasks_UnreadableCacheReturnsNotOK(t *testing.T) {
-	_, ok := restoreTasks(filepath.Join(t.TempDir(), "missing.json"), testLogger())
-	assert.False(t, ok)
-}
-
-func TestRestoreTasks_DueUntilFirstSuccessThenNeverAgain(t *testing.T) {
+func TestRestoreTasks_DueUntilFirstAttemptThenNeverAgain(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "policies-cache.json")
 	writeCachedPoliciesJSON(t, cachePath, []cachedPolicy{
-		{Name: "x", Type: "restore", Destinations: []string{"bwfs-1:8080"}, Rules: []RestoreRule{{Path: "/x", Include: true}}},
+		{Name: "x", Type: "restore", JobID: "verify:x:1700000000", Destinations: []string{"bwfs-1:8080"}, Rules: []RestoreRule{{Path: "/x", Include: true}}},
 	})
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 
 	now := time.Now()
-	assert.True(t, tasks[0].Due(PolicyState{}, now), "never succeeded is due")
-	success := now.Add(-time.Minute)
-	assert.False(t, tasks[0].Due(PolicyState{LastSuccessAt: &success}, now), "succeeded once is never due again")
+	assert.True(t, tasks[0].Due(PolicyState{}, now), "never attempted is due")
+	attempted := now.Add(-time.Minute)
+	assert.False(t, tasks[0].Due(PolicyState{LastAttemptAt: &attempted}, now), "attempted once (even if it failed) is never due again")
 }
 
 func TestRestoreTasks_RestoreModeUsesRestorePrefixAndRestoreSubcommand(t *testing.T) {
@@ -122,17 +111,16 @@ func TestRestoreTasks_RestoreModeUsesRestorePrefixAndRestoreSubcommand(t *testin
 	cachePath := filepath.Join(dir, "policies-cache.json")
 	writeCachedPoliciesJSON(t, cachePath, []cachedPolicy{
 		{
-			Name: "web01-actual-restore", Type: "restore", Mode: "restore", Overwrite: true,
+			Name: "web01-actual-restore", Type: "restore", Mode: "restore", Overwrite: true, JobID: "restore:web01-actual-restore:1700000000",
 			Destinations: []string{"bwfs-1:8080"},
 			Rules:        []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
 		},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "restore:web01-actual-restore", tasks[0].ID)
-	assert.True(t, strings.HasPrefix(tasks[0].JobID, "restore:web01-actual-restore:"))
+	assert.Equal(t, "restore:web01-actual-restore:1700000000", tasks[0].JobID)
 	assert.Equal(t, []string{"restore", "bwfs-1:8080", "--rules-stdin", "--job-id", tasks[0].JobID, "--overwrite"}, tasks[0].Args)
 }
 
@@ -141,14 +129,13 @@ func TestRestoreTasks_RestoreModeWithoutOverwriteOmitsFlag(t *testing.T) {
 	cachePath := filepath.Join(dir, "policies-cache.json")
 	writeCachedPoliciesJSON(t, cachePath, []cachedPolicy{
 		{
-			Name: "web01-actual-restore", Type: "restore", Mode: "restore", Overwrite: false,
+			Name: "web01-actual-restore", Type: "restore", Mode: "restore", Overwrite: false, JobID: "restore:web01-actual-restore:1700000000",
 			Destinations: []string{"bwfs-1:8080"},
 			Rules:        []RestoreRule{{Host: "web-01", Path: "/var/www/index.html", Include: true}},
 		},
 	})
 
-	tasks, ok := restoreTasks(cachePath, testLogger())
-	require.True(t, ok)
+	tasks := restoreTasks(mustReadCachedPolicies(t, cachePath), testLogger())
 	require.Len(t, tasks, 1)
 	assert.Equal(t, []string{"restore", "bwfs-1:8080", "--rules-stdin", "--job-id", tasks[0].JobID}, tasks[0].Args)
 }

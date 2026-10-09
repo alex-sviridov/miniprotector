@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { test, expect } from '@playwright/test'
+import { test, expect, AUTH_HEADERS } from './helpers/test.js'
 import { COMPOSE_FILE, waitForCatalogFolderRow } from './helpers/policySeeding.js'
+import { submitAndTrackPolicy } from './helpers/restoreUi.js'
 
 const HOST = 'database'
 const FILE_COUNT = 100
@@ -9,11 +10,10 @@ const FILE_COUNT = 100
 // this test never generates data or triggers a backup itself, so repeated
 // runs don't each add a fresh ~100-150MB to the shared store.
 const FIXTURE_SRC_DIR = '/data/e2e-restore-content-fixture'
-const AUTH_HEADERS = { Authorization: 'Bearer dev-placeholder-token-change-me' }
 
 test.describe.configure({ mode: 'serial' })
 
-test('restore writes real file content, verified by checksum, with a folder rename', async ({ page, context }) => {
+test('restore writes real file content, verified by checksum, with a folder rename', async ({ page, context, trackPolicy }) => {
   test.setTimeout(600_000)
 
   await context.addInitScript(() => {
@@ -99,7 +99,6 @@ test('restore writes real file content, verified by checksum, with a folder rena
   // the same demo-up session) find it immediately.
   await waitForCatalogEntryCount(HOST, FIXTURE_SRC_DIR, FILE_COUNT, 360_000)
 
-  let restorePolicyId = null
   try {
     // --- Catalog selection + destination rename, through the real UI ---
     const parentSegments = FIXTURE_SRC_DIR.split('/').filter(Boolean).slice(0, -1) // ['data']
@@ -113,7 +112,10 @@ test('restore writes real file content, verified by checksum, with a folder rena
     const entryKey = `:${FIXTURE_SRC_DIR}`
     await expect(page.getByTestId(`restore-row-${entryKey}`)).toBeVisible()
 
-    await page.getByTestId(`dest-path-text-${entryKey}`).click()
+    // Task 7 (feat(web): restructure the restore cart page for clarity)
+    // moved the edit-trigger click handler off the text span and onto its
+    // own pencil button -- dest-path-text is now display-only.
+    await page.getByTestId(`edit-dest-path-${entryKey}`).click()
     await page.getByTestId(`dest-path-input-${entryKey}`).fill(destDir)
     await page.getByTestId(`dest-path-input-${entryKey}`).press('Enter')
     await expect(page.getByTestId(`dest-path-text-${entryKey}`)).toHaveText(destDir)
@@ -122,18 +124,16 @@ test('restore writes real file content, verified by checksum, with a folder rena
     await expect(destinationSelect.locator('option', { hasText: HOST })).toHaveCount(1)
     await destinationSelect.selectOption(HOST)
 
-    await page.getByTestId('restore-button').click()
-
-    const resultsLocator = page.getByTestId('submission-results')
-    await expect(resultsLocator).toContainText('Started restore policy')
-    const resultText = await resultsLocator.innerText()
-    const restorePolicyName = /Started restore policy (\S+) from/.exec(resultText)[1]
-
-    const restorePoliciesResp = await page.request.get('/api/v1/policies?type=restore', { headers: AUTH_HEADERS })
-    const { data: restorePolicies } = await restorePoliciesResp.json()
-    const restorePolicy = restorePolicies.find((p) => p.name === restorePolicyName)
-    expect(restorePolicy).toBeTruthy()
-    restorePolicyId = restorePolicy.id
+    // submitAndTrackPolicy: click Restore + its confirmation modal (Task 6),
+    // wait for the row's status link, and find/track the created policy by
+    // the job_id that link names (see helpers/restoreUi.js).
+    await submitAndTrackPolicy(page, {
+      entryKey,
+      buttonTestId: 'restore-button',
+      mode: 'restore',
+      confirm: true,
+      trackPolicy,
+    })
 
     dockerExec('./policyclient fetch')
 
@@ -172,14 +172,8 @@ test('restore writes real file content, verified by checksum, with a folder rena
     // Best-effort: a failed cleanup is logged, never thrown, so it can't
     // mask whatever error the try block raised. The fixture source
     // directory and its backup are permanent (seeded once by demo/up.sh),
-    // never deleted here -- only this run's own destination directory and
-    // restore policy are.
-    if (restorePolicyId) {
-      const deleteResp = await page.request.delete(`/api/v1/policies/${restorePolicyId}`, { headers: AUTH_HEADERS })
-      if (!deleteResp.ok()) {
-        console.warn(`cleanup: failed to delete restore policy ${restorePolicyId}, status ${deleteResp.status()}`)
-      }
-    }
+    // never deleted here -- only this run's own destination directory is
+    // (the restore policy itself is now trackPolicy's job).
     try {
       dockerExec(`rm -rf "${destDir}"`)
     } catch (err) {

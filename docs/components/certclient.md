@@ -33,9 +33,9 @@ certclient --debug <subcommand>
   writing `ca.crt` and `bootstrap.crt`/`bootstrap.key`. Gets the token from `--token`, then
   `MP_CERT_TOKEN`, then an interactive stdin prompt, in that order. Trust in the CA is established
   from the token's embedded root fingerprint claim (no separately-distributed root cert needed for
-  this step). The redemption's sign request carries `TemplateData {"tier": "bootstrap"}`, which the
-  CA's custom leaf template turns into a certificate with `extKeyUsage: ["clientAuth"]` only plus
-  the custom `EKUIssuerCaller` marker — see
+  this step). The redemption's sign request carries no `TemplateData`: the CA's `admin@` provisioner
+  uses a static `bootstrap.tpl` that ignores whatever the caller sends and always emits
+  `extKeyUsage: ["clientAuth"]` only plus the custom `EKUIssuerCaller` marker, with no attributes — see
   [Security Model](../SECURITY.md#the-two-tier-credential-model). The sign request now includes an
   explicit `NotAfter` derived from `BootstrapCertTTLSec`, ensuring the issued certificate gets the
   configured lifetime instead of step-ca's own 24-hour default — see
@@ -47,12 +47,11 @@ certclient --debug <subcommand>
   cron/systemd timer) if periodic renewal is wanted.
 - **`operating-refresh`**: dials `issuer` authenticated with the bootstrap credential
   (`connection.ConnectWithIdentity`, presenting `bootstrap.crt`/`bootstrap.key`), derives this
-  node's hostname from the bootstrap certificate's `Subject.CommonName`, calls `DescribeSANs` to
-  learn its current SAN aliases, generates an operating keypair the first time (`client.key`,
+  node's hostname from the bootstrap certificate (`mtls.HostnameFromCert`, the same rule servers use
+  for a peer), generates an operating keypair the first time (`client.key`,
   reused byte-for-byte on every later run — only the certificate is re-obtained each cycle), builds
-  a CSR whose `DNSNames` are `[hostname] + sans` (the CA's authorization check validates
-  `CommonName` and `DNSNames` independently, so the hostname must appear in both — see
-  [Issuer Protocol](../protocols/issuer.md#why-describesans-exists)), and calls
+  a CSR naming only the hostname (`CommonName` and one `DNSNames` entry; `issuer` adds any aliases —
+  see [Issuer Protocol](../protocols/issuer.md#where-sans-come-from)), and calls
   `RequestOperatingCert` to get back a certificate chain written to `client.crt`. On any failure,
   `client.crt` is left untouched. Always refreshes when invoked; there's no expiry check — run it
   on a schedule (`agent`'s `operating-refresh` policy, or a bare cron/systemd timer) if periodic
@@ -72,7 +71,7 @@ make build
 
 - [client-manager](./client-manager.md) — mints the token `bootstrap` redeems
 - [issuer](./issuer.md) — issues the operating certificate `operating-refresh` obtains
-- [Issuer Protocol](../protocols/issuer.md) — `DescribeSANs`/`RequestOperatingCert` RPC details
+- [Issuer Protocol](../protocols/issuer.md) — `RequestOperatingCert` RPC details
 - [agent](./agent.md) — runs `bootstrap-refresh`/`operating-refresh` as scheduled policies
 - [bwfs](./bwfs.md), [brfs](./brfs.md), [rwfs](./rwfs.md) — the services that consume the identity this writes
 - [Security Model](../SECURITY.md)

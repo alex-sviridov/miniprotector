@@ -45,60 +45,120 @@ no data — there's no read-only "guest" mode.
   row per distinct file (source host + path) and handed to a client-side sortable/paginated table
   (`vue-good-table-next`) — grouping over the complete result set means a file's versions are never
   split across a page boundary. Clearing the pattern restores whichever folder was last being browsed
-  (or root, if none). Sizes render human-readable (KB/MB/...); a "Versions" count on multi-version
-  files opens a modal (click anywhere on that row) listing that file's other versions. Each row (folder or file) now also carries a checkbox for staging it into the restore cart (`stores/restoreCart.js`): checking a file adds it by `(source_host, path)`; checking a folder adds one host-agnostic wildcard rule covering everything under it, rather than one entry per file, so a large folder selection stays a single rule. Selection state is *resolved* from this small rule list on demand (longest-matching-path wins, like `.gitignore`), which is also what lets a user drill into an already-selected folder and see its contents pre-checked, then uncheck individual items to carve out exceptions — unchecking shows as a partial/indeterminate checkbox on any ancestor folder row. The cart is in-memory only (no persistence yet) and UI-only: nothing is submitted for restore in this pass.
-- `/restore` — a table, one row per cart selection, listing storage host, source host, source
-  path (folder selections shown as `path/*`), a destination path, and size (file rows only --
-  storage host, source host, and size are `—` on a folder row, since a folder selection can span
-  many of each). The destination path defaults to the source path; clicking it swaps in a text
-  input (`restoreCart.setDestPath`) to rename that selection's restore target, whether a file or a
-  folder -- purely client-side data at this point, sent as `dest_path` on the submitted rule only
-  when it differs from the source path (see
+  (or root, if none). Sizes render human-readable (KB/MB/...); the "Captured" column on every row
+  (folder or file) is a button that opens `VersionsModal` — a real version picker, not just a
+  read-only list: it fetches every version of that exact path (newest first, ignoring the active
+  date filter so the user can reach further back than what's currently browsed), and "Restore this
+  version" on any row pins the restore cart's selection to that version's exact timestamp. The
+  button's own label reflects an already-pinned version for that row's exact `(source_host, path)`
+  when the restore cart has one, falling back to the representative/last-seen default otherwise, the
+  same per-row cart lookup the selection checkbox already does.
+
+  **Damaged badges.** Catalog entries carry a boolean `damaged` (replicated from the store as a
+  snapshot, so it can lag by about a minute; see
+  `docs/superpowers/specs/2026-10-08-catalog-damage-replication-design.md`). A red `Damaged` badge
+  (tooltip: "Backup data for this version is damaged; restore may fail.") appears on a catalog file
+  row when its latest version is damaged (`groupEntriesByFile` exposes this as `group.damaged`), on
+  each damaged row of the versions modal, and on file rows of the restore cart (`restoreCart` keeps a
+  display-only `damaged` flag on file rules, refreshed when a version is pinned or reset: "Use latest" takes
+  the damaged state of the versions modal's newest version, falling back to not damaged when the
+  modal has no versions; a missing flag counts as not damaged). The confirm modal adds an amber line with the number of damaged
+  selected files. These are warnings only: "Restore this version" and Restore stay enabled, and folder
+  rules never show the badge or count because `rwfs` resolves them at restore time. There is no
+  Playwright test: the demo lab cannot create real damage. A folder's
+  versions can span multiple source hosts (each host's own capture of that path is a separate row);
+  the modal calls this out with a note when it detects more than one, since picking a version in that
+  case scopes the selection down to just that host's capture. Each row (folder or file) also carries
+  a checkbox for staging it into the restore cart (`stores/restoreCart.js`): checking a file adds it
+  by `(source_host, path)`; checking a folder adds one host-agnostic wildcard rule covering
+  everything under it, rather than one entry per file, so a large folder selection stays a single
+  rule. Selection state is *resolved* from this small rule list on demand (longest-matching-path
+  wins, like `.gitignore`), which is also what lets a user drill into an already-selected folder and
+  see its contents pre-checked, then uncheck individual items to carve out exceptions — unchecking
+  shows as a partial/indeterminate checkbox on any ancestor folder row. Checking a box (or confirming
+  a version from the modal) defaults the selection's version window to the catalog's *currently
+  active date filter* (previously an unbounded true-latest) — "latest" therefore means latest within
+  whatever range is currently browsed, not latest ever. The cart is in-memory only (no persistence
+  yet); submission itself happens from `/restore` below.
+- `/restore` — a flat table, one row per cart selection, listing source host, source path (folder
+  selections shown as `path/*`), the version captured (see below), a destination path, size (file
+  rows only), and a live status column. Deliberately no storage-host grouping or column: which
+  physical store a file happens to live on is an implementation detail the cart never surfaces, here
+  or anywhere else in this view. The "Captured" column shows a formatted timestamp for a selection
+  pinned to a specific version; for an unpinned one it shows the bare word "Latest" only when the
+  window is genuinely unbounded (an explicit "Use latest" reset), and otherwise the captured filter
+  window's upper-bound date, since an unpinned default is still a real `[notBefore, notAfter]` range
+  rather than an unqualified "latest ever" (via the catalog's or this page's own version picker,
+  `VersionsModal` — clicking the cell reopens it, and "Use latest" resets the pin back to the
+  catalog's active date-filter window at pick time). The destination path defaults to the
+  source path; clicking it swaps in a text input (`restoreCart.setDestPath`) to rename that
+  selection's restore target, whether a file or a folder -- purely client-side data at this point,
+  sent as `dest_path` on the submitted rule only when it differs from the source path (see
   [Design: Restore Destination Rename](../superpowers/specs/2026-08-13-restore-destination-rename-design.md));
   `rwfs restore` now reads it back out and logs it as each resolved file's renamed destination
   path, but nothing writes it to disk yet (see `docs/components/rwfs.md`'s `## restore` section).
-  Each row also has a Remove button
-  that unstages it (toggles the same rule back off, via `restoreCart.removeEntry`). Picking a
-  destination host (from the
-  enrolled-client list, `useClientsStore`) and clicking **Verify** or **Restore** resolves the cart's rules into
-  concrete catalog entries (`GET /catalog`), collapses those to one entry per distinct file (the
-  catalog returns one row per *version*, so a nightly-backed-up file is many rows — only its latest
-  version's row is kept), groups them by the physical `store_host` each file is
-  actually stored on, resolves each group's dial address from a matching `"storage"` policy's
-  checked-in hostname + port, and creates one `"restore"` policy per group (`POST /restore`) — so a
-  selection spanning files backed up to more than one storage destination becomes multiple
-  policies, each scoped to just the files that live there. Results (created policy, or a per-group
-  error such as an unresolvable store address) render inline below the cart, and stay visible even
-  once the cart itself is emptied; one group failing doesn't block the others. A failure of the
-  whole submission (the catalog fetch or the `"storage"` policy lookup itself) is reported as a
-  single submission-level error rather than as a per-group one. Verify and Restore now succeed
+  Each row also has a Remove button that unstages it (toggles the same rule back off, via
+  `restoreCart.removeEntry`).
+
+  Picking a destination host (from the enrolled-client list, `useClientsStore`) and clicking
+  **Verify** submits immediately, but **Restore** now opens `RestoreConfirmModal` first — a summary
+  ("You're about to restore N items (size) to `<host>`", plus callouts when overwrite is on or any
+  items are pinned to an older version, or an amber line when some selected files are known
+  damaged) that must be confirmed (or cancelled) before anything is
+  submitted, so a destructive restore is never one accidental click away. Confirming (or clicking
+  Verify directly) resolves the cart's rules into concrete catalog entries (`GET /catalog`),
+  collapses those to one entry per distinct file (the catalog returns one row per *version*, so a
+  nightly-backed-up file is many rows — only its latest version's row within the pinned/filtered
+  window is kept), groups them by the physical `store_host` each file is actually stored on, resolves
+  each group's dial address from a matching `"storage"` policy's checked-in hostname + port, and
+  creates one `"restore"` policy per group (`POST /restore`) — so a selection spanning files backed
+  up to more than one storage destination becomes multiple policies, each scoped to just the files
+  that live there. Rather than a flat results list, each cart row now tracks its own submission
+  status (`stores/restoreSubmission.js`'s `entryStatus`, keyed per entry — an array, since one folder
+  entry can fan out to more than one store's policy) and renders it as a badge in the row's Status
+  column: "submitting…" while in flight, then a link to the resulting job (`/jobs/:job_id`,
+  live-updating via the jobs store) labeled with that job's current state once a policy is created,
+  or an inline error message for a group that failed (e.g. no storage policy found for its store) —
+  one group failing doesn't block the others, and a row's status persists even after the cart is
+  emptied. A failure of the whole submission (the catalog fetch or the `"storage"` policy lookup
+  itself) is still reported as a single submission-level error. Verify and Restore succeed
   identically at the submission layer: either `mode` creates a real `"restore"`-typed policy and
   `api-server` returns `201` (see
   `docs/superpowers/specs/2026-08-09-restore-policy-type-design.md`) — `api-server` no longer
   rejects `mode: "restore"`. A separate "Overwrite existing files" checkbox (unchecked by default)
   is sent as `overwrite` on every submission, alongside `mode` (`verify` for the Verify button,
-  `restore` for the Restore button). The two modes diverge once `agent` picks up the resulting
-  policy: a `verify` policy runs `rwfs verify` as before, while a `restore` policy runs the new
-  `rwfs restore` subcommand (task/job-ID prefix `restore:<policy-name>`, with `--overwrite`
-  appended when the policy's `overwrite` field is true) — this round, `rwfs restore` only resolves
-  the policy's rules against the live store and logs each file's source path and its
-  `dest_path`-renamed destination path, writing nothing to disk and calling no restore-execution
-  RPC (see `docs/components/rwfs.md`'s `## restore` section and
+  `restore` for the Restore button, both threaded through the confirmation summary above). The two
+  modes diverge once `agent` picks up the resulting policy: a `verify` policy runs `rwfs verify` as
+  before, while a `restore` policy runs the new `rwfs restore` subcommand (task/job-ID prefix
+  `restore:<policy-name>`, with `--overwrite` appended when the policy's `overwrite` field is true)
+  — this round, `rwfs restore` only resolves the policy's rules against the live store and logs each
+  file's source path and its `dest_path`-renamed destination path, writing nothing to disk and
+  calling no restore-execution RPC (see `docs/components/rwfs.md`'s `## restore` section and
   [Design: Restore Execute, Log-Only](../superpowers/specs/2026-08-16-restore-execute-log-only-design.md),
   which supersedes the 501-rejection split originally described in
   [Design: Restore Verify/Execute Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md)).
-  The inline success message reflects which button was clicked: "Started restore policy ..." for a
-  `mode: "restore"` submission vs "Started verification policy ..." for `mode: "verify"`. The
-  sidebar's Restore link still highlights whenever the cart is non-empty.
+  The sidebar's Restore link still highlights whenever the cart is non-empty.
 - `/policies` — every policy (name, RPO, destination), with a "New backup" action opening a form modal for creating new policies (fields: name, RPO, backup window, client filters, object filters (each filter's include/exclude glob patterns entered as individual chips via a reusable `TagInput` component (`components/ui/TagInput.vue`) — each pattern is validated client-side for glob syntax and checked against the rest of its own list for parent/child path overlap, e.g. `/var/log` and `/var/log/app` in the same list, before Save is allowed), destination (a required select over `/storage`'s storage policies, replacing free-text host:port entry)) and clickable policy names navigating to each policy's detail view. The modal (`BackupPolicyFormModal` in `components/backup_policies/`) offers two primary actions: "Save" to persist a new or edited policy, or "Run now" to execute the policy's filters immediately as a one-time ad-hoc backup job (the ad-hoc policy auto-sets its `disabled_at` to expire after its configured timeout, 1h by default) and redirects to `/jobs`, where the resulting job(s) can be found and opened for their log lines — same modal-plus-detail-page pattern as `/storage` below. Linking to:
 - `/policies/:id` — one policy's full record, in two tabs built on a reusable `Tabs` component
   (`components/ui/Tabs.vue`, active tab synced to `?tab=details`/`?tab=checkins` so either can be
   linked directly): `Details` (the default — client filters, object filters, backup window) and
-  `Check-ins` (`components/policies/PolicyCheckins.vue` — every host that has received this policy
+  `Status` (`components/storage/StorageStatus.vue` — one card per reporting storage node: online/stale/offline badge, disk usage bar amber above 85% and red above 95%, active connections, in-progress jobs, uptime, last report; polled every 30s) and `Check-ins` (`components/policies/PolicyCheckins.vue` — every host that has received this policy
   from `policy-server`, each with its most recent check-in time, and a manual Refresh button that
   re-fetches the policy). Edit and Delete buttons sit at the page level, outside the tabs; Edit opens
   `BackupPolicyFormModal` pre-filled with the policy's current values (both "Save" and "Run now" are
   available here). No separate `/policies/new` or `/policies/:id/edit` routes.
+- `/retention` — retention rules in evaluation order: position, name, which clients it applies to,
+  backup type, path (plus any file-name patterns), and how long to keep (`N days` / `Forever`), with
+  a fixed last row explaining the built-in default (7 days unless a node's `RetentionDefaultDays`
+  says otherwise). Rules are checked top to bottom and the first match decides retention; reorder by
+  dragging a row or with its up/down arrows, which sends the complete ordered id list to
+  `POST /retention-policies/reorder` — the list updates immediately and reverts (refetching, since the
+  rejection usually means another operator changed the set) with the error shown if the server
+  refuses. "New Retention Rule" and each row's Edit open `RetentionFormModal` (name, hostnames,
+  labels, backup type, path, optional file-name globs, keep in days or "Keep forever"; validation
+  mirrors `policy-server`'s — absolute path, no `..`, no `/` in a glob, whole days >= 1) and Delete
+  asks for confirmation. Its store is `stores/retentionPolicies.js`; form/display helpers live in
+  `utils/retentionRule.js`. See [Design: Retention Policies](../superpowers/specs/2026-10-05-retention-policies-design.md).
 - `/storage` — every storage policy (name, target hostname, port, storage type), with a "New Storage
   Policy" action opening `StorageEditModal` (fields: name, target hostname, port, storage type —
   `filesystem` only today — and, when `filesystem` is selected, a filesystem path) and clickable
@@ -117,7 +177,11 @@ no data — there's no read-only "guest" mode.
 - `/jobs` — every job across the fleet from the last 24h (job ID, kind, source host, store host,
   started/finished time, state), with client-side search, sort, and pagination via
   `vue-good-table-next` (also used on `/catalog`, `/clients`, and `/policies`), linking to:
-- `/jobs/:job_id` — one job's log lines from the last 24h; each line is parsed from its underlying
+- `/jobs/:job_id` — one job's log lines from the last 24h (for a `cleanup:` / `vacuum:` job — `bwfs`'s
+  scheduled store maintenance — a banner above them summarizes the run from its finish line: versions
+  deleted and deletion-log entries pruned, or chunks/file data removed, segments removed/compacted and bytes reclaimed, plus the
+  duration, "Dry run" for a cleanup that deleted nothing, or the error of a failed run;
+  restore/verify jobs have their own banner); each line is parsed from its underlying
   JSON via `LogLine.vue` into a level-colored `[LEVEL] time binary@hostname: message` summary, with
   the remaining fields (`job_id`, `event`, `status`, etc.) collapsed behind a click — a line that
   isn't valid JSON falls back to plain text
@@ -134,6 +198,26 @@ no data — there's no read-only "guest" mode.
   gives up on the socket and falls back to plain 10s REST polling instead — a stalled page is never
   left looking up to date. See
   [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
+
+  `/jobs/:job_id`'s log view now caps itself at 2000 resident lines while the user is following the
+  live tail (auto-scrolled to the bottom); scrolling away from the bottom pauses that cap so
+  history being read isn't evicted out from under the reader, and returning to the bottom resumes
+  it. A "Load older lines" button (visible whenever the backend reports more history exists) pages
+  further history in via `GET /jobs/{job_id}/logs`'s new `ending_before` cursor — it disables itself
+  while a page is in flight (so a double-click can't race two prepends) and shows any failure as an
+  inline notice beside the button, leaving the already-visible lines on screen. A "N new lines —
+  jump to latest" button appears instead of auto-scrolling once the user has scrolled away from the
+  bottom; its count tracks live tail lines only, so paging older history in never registers as new
+  activity. See
+  [Design: Job Log Pagination & Bounded Retention](../superpowers/specs/2026-08-22-job-log-pagination-design.md).
+
+  For a restore or verify job specifically (`job_id` prefixed `restore:`/`verify:`), the page now
+  shows a human-readable outcome banner above the log itself, instead of leaving the raw log tail as
+  the only way to tell what happened: "in progress" until `agent`'s own `event=finish` line (the
+  authoritative terminal status) appears, then either a failure notice or a success line built from
+  `rwfs`'s own summary log line — file/byte counts written and skipped for a restore, or
+  verified/warning counts for a verify — falling back to a bare "complete" if that summary line
+  hasn't landed yet (e.g. a job that predates this feature).
 
 Every list and detail page's header now shows a breadcrumb trail (e.g. "Policies / nightly-db-backup") above the
 title via `PageHeader`'s `crumbs` prop, and the sidebar (`Sidebar.vue`) carries a small brand mark
@@ -195,4 +279,6 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)/web":/app -w /app node:20-
 - [Design: restore cart submission](../superpowers/specs/2026-08-10-restore-cart-submission-design.md)
 - [Design: Restore Verify/Execute Split](../superpowers/specs/2026-08-14-restore-verify-execute-split-design.md)
 - [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md)
+- [Design: Job Log Pagination & Bounded Retention](../superpowers/specs/2026-08-22-job-log-pagination-design.md)
+- [Design: restore workflow UI clarity](../superpowers/specs/2026-08-27-restore-ui-clarity-design.md)
 - [Architecture](../ARCHITECTURE.md)

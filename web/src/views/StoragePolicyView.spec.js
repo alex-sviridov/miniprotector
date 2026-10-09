@@ -34,6 +34,11 @@ describe('StoragePolicyView', () => {
     expect(storagePolicies.fetchOne).toHaveBeenCalledWith('s1')
   })
 
+  it('fetches the node status on mount', () => {
+    const { storagePolicies } = mountView({ byId: {}, loading: false, error: null })
+    expect(storagePolicies.fetchStatus).toHaveBeenCalledWith('s1')
+  })
+
   it('renders the cached storage policy record', () => {
     const { wrapper } = mountView({
       byId: {

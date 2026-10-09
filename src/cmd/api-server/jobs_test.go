@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -16,9 +17,20 @@ import (
 type fakeLokiClient struct {
 	byQuery map[string][]lokiStream
 	err     error
+
+	calls     int
+	lastStart time.Time
+	lastEnd   time.Time
+	lastLimit int
+	lastQuery string
 }
 
 func (f *fakeLokiClient) QueryRange(ctx context.Context, query string, start, end time.Time, limit int) ([]lokiStream, error) {
+	f.calls++
+	f.lastStart = start
+	f.lastEnd = end
+	f.lastLimit = limit
+	f.lastQuery = query
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -31,24 +43,24 @@ func TestKindFromJobID(t *testing.T) {
 	assert.Equal(t, "", kindFromJobID("no-colon-here"))
 }
 
-func TestBinariesForKind(t *testing.T) {
+func TestBinariesForKind_RestoreAndVerifyIncludePolicyServer(t *testing.T) {
 	assert.Equal(t, "brfs|bwfs", binariesForKind("backup"))
 	assert.Equal(t, "agent", binariesForKind("bootstrap-refresh"))
 	assert.Equal(t, "agent", binariesForKind("operating-refresh"))
 	assert.Equal(t, "agent", binariesForKind("policy-update"))
-	assert.Equal(t, "agent", binariesForKind("verify"))
-	assert.Equal(t, "agent", binariesForKind("restore"))
-	assert.Equal(t, "agent|brfs|bwfs", binariesForKind(""))
+	assert.Equal(t, "agent|policy-server", binariesForKind("verify"))
+	assert.Equal(t, "agent|policy-server", binariesForKind("restore"))
+	assert.Equal(t, "agent|brfs|bwfs|policy-server", binariesForKind(""))
 }
 
 func TestHandleListJobs_PairsStartAndFinishByJobID(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "operating-refresh:1752400500"}},
 			}},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "webserver"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "operating-refresh:1752400500", "status": "success"}},
 			}},
@@ -89,13 +101,13 @@ func TestHandleListJobs_PairsStartAndFinishByJobID(t *testing.T) {
 // brfs/bwfs/agent and Vector all correctly producing and shipping the data.
 func TestHandleListJobs_ReadsJobIDFromStreamLevelStructuredMetadata(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{
 				Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1752400500", "event": "start"},
 				Values: []lokiValue{{Timestamp: 1752400500000000000}},
 			},
 		},
-		`{binary=~"agent|brfs|bwfs"} | event="finish"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="finish"`: {
 			{
 				Stream: map[string]string{"hostname": "webserver", "job_id": "operating-refresh:1752400500", "event": "finish", "status": "success"},
 				Values: []lokiValue{{Timestamp: 1752400501000000000}},
@@ -125,7 +137,7 @@ func TestHandleListJobs_ReadsJobIDFromStreamLevelStructuredMetadata(t *testing.T
 
 func TestHandleListJobs_NoFinishLineMeansInProgress(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs"} | event="start"`: {
+		`{binary=~"agent|brfs|bwfs|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "webserver"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "policy-update:1752400500"}},
 			}},
@@ -242,12 +254,12 @@ func TestHandleListJobs_KindRestoreIsAccepted(t *testing.T) {
 
 func TestHandleListJobs_RestoreKindUsesAgentBinaryLabel(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent"} | event="start"`: {
+		`{binary=~"agent|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-exec:1752400500"}},
 			}},
 		},
-		`{binary=~"agent"} | event="finish"`: {
+		`{binary=~"agent|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "restore:e2e-restore-exec:1752400500", "status": "success"}},
 			}},
@@ -289,12 +301,12 @@ func TestHandleListJobs_KindVerifyIsAccepted(t *testing.T) {
 
 func TestHandleListJobs_VerifyKindUsesAgentBinaryLabel(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent"} | event="start"`: {
+		`{binary=~"agent|policy-server"} | event="start"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400500000000000, Metadata: map[string]string{"job_id": "verify:e2e-restore-verify:1752400500"}},
 			}},
 		},
-		`{binary=~"agent"} | event="finish"`: {
+		`{binary=~"agent|policy-server"} | event="finish"`: {
 			{Stream: map[string]string{"hostname": "database"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Metadata: map[string]string{"job_id": "verify:e2e-restore-verify:1752400500", "status": "success"}},
 			}},
@@ -405,15 +417,54 @@ func TestPairJobEvents_StillMatchesPriorBehaviorViaAccumulator(t *testing.T) {
 	starts := []jobEventLine{{JobID: "a", Hostname: "h1", Timestamp: 1}}
 	finishes := []jobEventLine{{JobID: "a", Hostname: "h1", Timestamp: 2, Status: "success"}}
 
-	got := pairJobEvents(starts, finishes)
+	got := pairJobEvents(starts, finishes, nil)
 
 	require.Len(t, got, 1)
 	assert.Equal(t, "success", got[0].State)
 }
 
+func TestPairJobEvents_CreatedLineAloneShowsInProgressWithNoSourceHost(t *testing.T) {
+	jobs := pairJobEvents(nil, nil, []jobEventLine{
+		{JobID: "restore:x:1", Hostname: "policy-server-1", Timestamp: 500},
+	})
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "in_progress", jobs[0].State)
+	assert.Empty(t, jobs[0].SourceHost)
+}
+
+func TestPairJobEvents_CreatedThenFinishPopulatesSourceHostAndState(t *testing.T) {
+	jobs := pairJobEvents(nil,
+		[]jobEventLine{{JobID: "restore:x:1", Hostname: "web-01", Timestamp: 900, Status: "success"}},
+		[]jobEventLine{{JobID: "restore:x:1", Hostname: "policy-server-1", Timestamp: 500}},
+	)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "success", jobs[0].State)
+	assert.Equal(t, "web-01", jobs[0].SourceHost)
+	require.NotNil(t, jobs[0].StartedAt)
+	assert.Equal(t, int64(500), *jobs[0].StartedAt)
+}
+
+func TestHandleGetJobLogs_SelectorIncludesPolicyServer(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:x:1"`: {},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/restore:x:1/logs", nil)
+	req.SetPathValue("job_id", "restore:x:1")
+	w := httptest.NewRecorder()
+	srv.handleGetJobLogs(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, fake.calls, "must have queried the widened selector exactly")
+	assert.Equal(t, `{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:x:1"`, fake.lastQuery,
+		"must have queried the widened selector's exact content, not just some query -- byQuery returns a zero-value match for any unrecognized key, so this is the only assertion that actually pins the selector string")
+}
+
 func TestHandleGetJobLogs_ReturnsLinesSortedByTimestamp(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="operating-refresh:1752400500"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {
 			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 1752400501000000000, Line: "policy execution completed"},
 				{Timestamp: 1752400500000000000, Line: "policy execution started"},
@@ -457,7 +508,7 @@ func TestHandleGetJobLogs_InvalidJobIDCharacterReturns400(t *testing.T) {
 
 func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:restore-2026-08-13T14:30:00.123Z-store-a:1755094200"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "agent"}, Values: []lokiValue{
 				{Timestamp: 1755094200000000000, Line: "policy execution started"},
 			}},
@@ -478,7 +529,7 @@ func TestHandleGetJobLogs_JobIDWithDotIsAccepted(t *testing.T) {
 
 func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server", hostname=~"database|bwfs-east"} | job_id="backup:nightly:var-www:abcd1234:1752400000"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "brfs"}, Values: []lokiValue{
 				{Timestamp: 1752400000000000000, Line: "Backup reader started"},
 			}},
@@ -502,7 +553,7 @@ func TestHandleGetJobLogs_SourceAndStoreHostNarrowLabelSelector(t *testing.T) {
 
 func TestHandleGetJobLogs_IncludesRwfsBinaryLines(t *testing.T) {
 	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
-		`{binary=~"agent|brfs|bwfs|rwfs"} | job_id="restore:e2e-restore-verify:1755094200"`: {
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="restore:e2e-restore-verify:1755094200"`: {
 			{Stream: map[string]string{"hostname": "database", "binary": "rwfs"}, Values: []lokiValue{
 				{Timestamp: 1755094201000000000, Line: `{"msg":"verified","path":"/var/lib/dbdata/dump.sql"}`},
 			}},
@@ -566,4 +617,220 @@ func TestHandleGetJobLogs_InvalidStoreHostCharacterReturns400(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetJobLogs_DefaultLimitPassedToLoki(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 500, fake.lastLimit)
+}
+
+func TestHandleGetJobLogs_LimitOutsideRangeReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	for _, raw := range []string{"0", "501", "not-a-number"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?limit="+raw, nil)
+		req.Header.Set("Authorization", "Bearer test-token")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "limit=%s should be rejected", raw)
+	}
+}
+
+func TestHandleGetJobLogs_HasMoreTrueWhenPageIsFull(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {
+			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
+				{Timestamp: 100, Line: "a"},
+				{Timestamp: 200, Line: "b"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?limit=2", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, true, body["has_more"])
+}
+
+func TestHandleGetJobLogs_HasMoreFalseWhenPageIsPartial(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {
+			{Stream: map[string]string{"hostname": "webserver", "binary": "agent"}, Values: []lokiValue{
+				{Timestamp: 100, Line: "a"},
+			}},
+		},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?limit=5", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, false, body["has_more"])
+}
+
+func TestHandleGetJobLogs_EndingBeforeNarrowsEndExclusive(t *testing.T) {
+	fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+		`{binary=~"agent|brfs|bwfs|rwfs|policy-server"} | job_id="operating-refresh:1752400500"`: {},
+	}}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	endingBefore := time.Now().Add(-30 * time.Minute).UnixNano()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/jobs/operating-refresh:1752400500/logs?ending_before=%d", endingBefore), nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, endingBefore-1, fake.lastEnd.UnixNano())
+}
+
+func TestHandleGetJobLogs_EndingBeforeInvalidReturns400(t *testing.T) {
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = &fakeLokiClient{}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/operating-refresh:1752400500/logs?ending_before=not-a-number", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetJobLogs_EndingBeforeAtWindowFloorReturnsEmptyWithoutQueryingLoki(t *testing.T) {
+	fake := &fakeLokiClient{}
+	srv := newServer(nil, nil, nil, testLogger())
+	srv.loki = fake
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux, "test-token")
+
+	since := time.Now().Add(-1 * time.Hour).Unix()
+	endingBefore := time.Now().Add(-2 * time.Hour).UnixNano() // before the since floor
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/v1/jobs/operating-refresh:1752400500/logs?since=%d&ending_before=%d", since, endingBefore), nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, []any{}, body["data"])
+	assert.Equal(t, false, body["has_more"])
+	assert.Equal(t, 0, fake.calls, "must not query Loki with an inverted/empty range")
+}
+
+func TestApplyCreated_SeedsStartedAtAndInProgressWithoutSourceHost(t *testing.T) {
+	acc := newJobEventAccumulator()
+	got := acc.ApplyCreated(jobEventLine{JobID: "restore:x:1", Hostname: "policy-server-1", Timestamp: 1000, Status: ""})
+
+	assert.Equal(t, "restore", got.Kind)
+	assert.Equal(t, "in_progress", got.State)
+	require.NotNil(t, got.StartedAt)
+	assert.Equal(t, int64(1000), *got.StartedAt)
+	assert.Empty(t, got.SourceHost, "created event must never attribute the job to policy-server's own hostname")
+}
+
+func TestApplyFinish_SetsSourceHostForRestoreAndVerifyKinds(t *testing.T) {
+	for _, jobID := range []string{"restore:x:1", "verify:x:1"} {
+		acc := newJobEventAccumulator()
+		got := acc.ApplyFinish(jobEventLine{JobID: jobID, Hostname: "web-01", Timestamp: 2000, Status: "success"})
+		assert.Equal(t, "web-01", got.SourceHost, "job_id=%s", jobID)
+	}
+}
+
+func TestApplyFinish_DoesNotSetSourceHostForOtherKinds(t *testing.T) {
+	acc := newJobEventAccumulator()
+	got := acc.ApplyFinish(jobEventLine{JobID: "operating-refresh:1752400500", Hostname: "web-01", Timestamp: 2000, Status: "success"})
+	assert.Empty(t, got.SourceHost)
+}
+
+func TestBinariesForKind_StoreMaintenanceJobsAreBwfsOnly(t *testing.T) {
+	assert.Equal(t, "bwfs", binariesForKind("cleanup"))
+	assert.Equal(t, "bwfs", binariesForKind("vacuum"))
+}
+
+func TestKindFromJobID_StoreMaintenanceJobs(t *testing.T) {
+	assert.Equal(t, "cleanup", kindFromJobID("cleanup:bwfs-east:1752400000"))
+	assert.Equal(t, "vacuum", kindFromJobID("vacuum:bwfs-east:1752400000"))
+}
+
+// A cleanup/vacuum run shows up in the Jobs list like any other job: paired
+// start/finish lines from the bwfs host, with the finish line's status as its
+// state, and selectable with ?kind=.
+func TestHandleListJobs_StoreMaintenanceKindsAreFilterableAndPaired(t *testing.T) {
+	for _, kind := range []string{"cleanup", "vacuum"} {
+		t.Run(kind, func(t *testing.T) {
+			jobID := kind + ":bwfs-east:1752400000"
+			fake := &fakeLokiClient{byQuery: map[string][]lokiStream{
+				`{binary=~"bwfs"} | event="start"`: {
+					{Stream: map[string]string{"hostname": "bwfs-east"}, Values: []lokiValue{
+						{Timestamp: 1752400000000000000, Metadata: map[string]string{"job_id": jobID}},
+					}},
+				},
+				`{binary=~"bwfs"} | event="finish"`: {
+					{Stream: map[string]string{"hostname": "bwfs-east"}, Values: []lokiValue{
+						{Timestamp: 1752400030000000000, Metadata: map[string]string{"job_id": jobID, "status": "success"}},
+					}},
+				},
+			}}
+			srv := newServer(nil, nil, nil, testLogger())
+			srv.loki = fake
+			mux := http.NewServeMux()
+			srv.registerRoutes(mux, "test-token")
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?kind="+kind, nil)
+			req.Header.Set("Authorization", "Bearer test-token")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			data := body["data"].([]any)
+			require.Len(t, data, 1)
+			job := data[0].(map[string]any)
+			assert.Equal(t, kind, job["kind"])
+			assert.Equal(t, "bwfs-east", job["source_host"])
+			assert.Equal(t, "success", job["state"])
+		})
+	}
 }

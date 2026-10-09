@@ -38,10 +38,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.WithValue(context.Background(), "appName", appName)
+	ctx := logging.WithAppName(context.Background(), appName)
 	ctx = context.WithValue(ctx, config.ContextKey, conf)
-	ctx = context.WithValue(ctx, "debugMode", arguments.Debug)
-	ctx = context.WithValue(ctx, "quietMode", false)
+	ctx = logging.WithDebugMode(ctx, arguments.Debug)
+	ctx = logging.WithQuietMode(ctx, false)
 
 	logger, logfile := logging.NewLogger(ctx)
 	defer logfile.Close()
@@ -67,12 +67,14 @@ func main() {
 		defer closer.Close()
 	}
 	cursorFile := filepath.Join(arguments.StoragePath, "catalogsync.cursor")
+	deletionCursorFile := filepath.Join(arguments.StoragePath, "catalogsync-deletions.cursor")
 
 	cfg := syncConfig{
 		BatchSize:      conf.CatalogSyncBatchSize,
 		PollInterval:   time.Duration(conf.CatalogSyncPollIntervalSec) * time.Second,
 		InitialBackoff: initialBackoff,
 		MaxBackoff:     time.Duration(conf.CatalogSyncMaxBackoffSec) * time.Second,
+		DamageInterval: time.Duration(conf.CatalogSyncDamageIntervalSec) * time.Second,
 	}
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -80,7 +82,7 @@ func main() {
 
 	logger.Info("catalogsync started", "storage_path", arguments.StoragePath, "batch_size", cfg.BatchSize)
 
-	if err := run(signalCtx, logger, replicaReader, sender, cursorFile, cfg); err != nil {
+	if err := run(signalCtx, logger, replicaReader, sender, cursorFile, deletionCursorFile, cfg); err != nil {
 		logger.Error("catalogsync exited with error", "error", err)
 		os.Exit(1)
 	}

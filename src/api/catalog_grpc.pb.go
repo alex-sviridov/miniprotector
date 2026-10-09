@@ -20,6 +20,8 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	CatalogService_SyncFileVersions_FullMethodName      = "/catalogservice.CatalogService/SyncFileVersions"
+	CatalogService_DeleteFileVersions_FullMethodName    = "/catalogservice.CatalogService/DeleteFileVersions"
+	CatalogService_ReportDamagedFiles_FullMethodName    = "/catalogservice.CatalogService/ReportDamagedFiles"
 	CatalogService_ListEntries_FullMethodName           = "/catalogservice.CatalogService/ListEntries"
 	CatalogService_ListClientFacets_FullMethodName      = "/catalogservice.CatalogService/ListClientFacets"
 	CatalogService_ListJobFacets_FullMethodName         = "/catalogservice.CatalogService/ListJobFacets"
@@ -33,6 +35,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type CatalogServiceClient interface {
 	SyncFileVersions(ctx context.Context, in *SyncRequest, opts ...grpc.CallOption) (*SyncResponse, error)
+	DeleteFileVersions(ctx context.Context, in *DeleteVersionsRequest, opts ...grpc.CallOption) (*DeleteVersionsResponse, error)
+	ReportDamagedFiles(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DamagedFilesChunk, ReportDamagedFilesResponse], error)
 	ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error)
 	ListClientFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error)
 	ListJobFacets(ctx context.Context, in *ListFacetsRequest, opts ...grpc.CallOption) (*ListFacetsResponse, error)
@@ -58,6 +62,29 @@ func (c *catalogServiceClient) SyncFileVersions(ctx context.Context, in *SyncReq
 	}
 	return out, nil
 }
+
+func (c *catalogServiceClient) DeleteFileVersions(ctx context.Context, in *DeleteVersionsRequest, opts ...grpc.CallOption) (*DeleteVersionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteVersionsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_DeleteFileVersions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) ReportDamagedFiles(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DamagedFilesChunk, ReportDamagedFilesResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &CatalogService_ServiceDesc.Streams[0], CatalogService_ReportDamagedFiles_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DamagedFilesChunk, ReportDamagedFilesResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CatalogService_ReportDamagedFilesClient = grpc.ClientStreamingClient[DamagedFilesChunk, ReportDamagedFilesResponse]
 
 func (c *catalogServiceClient) ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -124,6 +151,8 @@ func (c *catalogServiceClient) ListDirectoryChildren(ctx context.Context, in *Li
 // for forward compatibility.
 type CatalogServiceServer interface {
 	SyncFileVersions(context.Context, *SyncRequest) (*SyncResponse, error)
+	DeleteFileVersions(context.Context, *DeleteVersionsRequest) (*DeleteVersionsResponse, error)
+	ReportDamagedFiles(grpc.ClientStreamingServer[DamagedFilesChunk, ReportDamagedFilesResponse]) error
 	ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error)
 	ListClientFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error)
 	ListJobFacets(context.Context, *ListFacetsRequest) (*ListFacetsResponse, error)
@@ -142,6 +171,12 @@ type UnimplementedCatalogServiceServer struct{}
 
 func (UnimplementedCatalogServiceServer) SyncFileVersions(context.Context, *SyncRequest) (*SyncResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SyncFileVersions not implemented")
+}
+func (UnimplementedCatalogServiceServer) DeleteFileVersions(context.Context, *DeleteVersionsRequest) (*DeleteVersionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteFileVersions not implemented")
+}
+func (UnimplementedCatalogServiceServer) ReportDamagedFiles(grpc.ClientStreamingServer[DamagedFilesChunk, ReportDamagedFilesResponse]) error {
+	return status.Error(codes.Unimplemented, "method ReportDamagedFiles not implemented")
 }
 func (UnimplementedCatalogServiceServer) ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEntries not implemented")
@@ -199,6 +234,31 @@ func _CatalogService_SyncFileVersions_Handler(srv interface{}, ctx context.Conte
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _CatalogService_DeleteFileVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteVersionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).DeleteFileVersions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_DeleteFileVersions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).DeleteFileVersions(ctx, req.(*DeleteVersionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_ReportDamagedFiles_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(CatalogServiceServer).ReportDamagedFiles(&grpc.GenericServerStream[DamagedFilesChunk, ReportDamagedFilesResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CatalogService_ReportDamagedFilesServer = grpc.ClientStreamingServer[DamagedFilesChunk, ReportDamagedFilesResponse]
 
 func _CatalogService_ListEntries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListEntriesRequest)
@@ -320,6 +380,10 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CatalogService_SyncFileVersions_Handler,
 		},
 		{
+			MethodName: "DeleteFileVersions",
+			Handler:    _CatalogService_DeleteFileVersions_Handler,
+		},
+		{
 			MethodName: "ListEntries",
 			Handler:    _CatalogService_ListEntries_Handler,
 		},
@@ -344,6 +408,12 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CatalogService_ListDirectoryChildren_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ReportDamagedFiles",
+			Handler:       _CatalogService_ReportDamagedFiles_Handler,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "api/catalog.proto",
 }

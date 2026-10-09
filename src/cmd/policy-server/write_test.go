@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -893,4 +896,84 @@ func TestCreatePolicy_RestoreUnknownStoragePolicyIdReturnsInvalidArgument(t *tes
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func testLoggerWithBuffer() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewJSONHandler(&buf, nil)), &buf
+}
+
+func TestCreatePolicy_RestoreGeneratesJobIDWithVerifyPrefix(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "web01-emergency",
+		Type:            "restore",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/var/www", Include: true}},
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.JobId)
+	assert.True(t, strings.HasPrefix(resp.JobId, "verify:web01-emergency:"), "got %q", resp.JobId)
+}
+
+func TestCreatePolicy_RestoreModeGeneratesJobIDWithRestorePrefix(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestWriteServer(t, dir)
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "web01-actual-restore",
+		Type:            "restore",
+		Mode:            "restore",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/var/www", Include: true}},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp.JobId, "restore:web01-actual-restore:"), "got %q", resp.JobId)
+}
+
+func TestCreatePolicy_RestoreLogsCreatedEventUnderTheSameJobID(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	logger, buf := testLoggerWithBuffer()
+	srv := NewPolicyServerServer(c, dir, logger, newTestCheckinStore(t))
+	storageID := createTestStoragePolicy(t, srv, "bwfs-east", 8080)
+
+	resp, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name:            "web01-emergency",
+		Type:            "restore",
+		ClientFilters:   &pb.ClientFilters{Hostnames: []string{"web-01"}},
+		StoragePolicyId: storageID,
+		Rules:           []*pb.RestoreRule{{Path: "/var/www", Include: true}},
+	})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, `"event":"created"`)
+	assert.Contains(t, out, resp.JobId)
+	assert.Contains(t, out, "waiting for client to connect")
+}
+
+func TestCreatePolicy_NonRestorePolicyLogsNoCreatedEvent(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCache()
+	require.NoError(t, c.Reload(dir, testLogger()))
+	logger, buf := testLoggerWithBuffer()
+	srv := NewPolicyServerServer(c, dir, logger, newTestCheckinStore(t))
+
+	_, err := srv.CreatePolicy(context.Background(), &pb.CreatePolicyRequest{
+		Name: "east", Type: "storage", Port: 8080, Config: `{}`,
+		ClientFilters: &pb.ClientFilters{Hostnames: []string{"bwfs-east"}},
+	})
+	require.NoError(t, err)
+
+	assert.NotContains(t, buf.String(), `"event":"created"`)
 }

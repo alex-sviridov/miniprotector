@@ -18,7 +18,7 @@ func withArgs(t *testing.T, args []string, fn func()) {
 }
 
 func testConfig() *config.Config {
-	return &config.Config{DefaultPort: 8080}
+	return &config.Config{DefaultPort: 8080, RwfsRetries: 3}
 }
 
 func TestParseArguments_ListWithBwfsTargetOnly(t *testing.T) {
@@ -146,5 +146,76 @@ func TestParseArguments_RestoreInvalidStreamsErrors(t *testing.T) {
 	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin", "--streams", "0"}, func() {
 		_, err := parseArguments(testConfig())
 		assert.Error(t, err)
+	})
+}
+
+func TestParseArguments_RestoreRetriesFlag_DefaultsFromConfig(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin"}, func() {
+		conf := testConfig()
+		conf.RwfsRetries = 7
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 7, args.Retries)
+	})
+}
+
+func TestParseArguments_RestoreRetriesFlag_OverridesConfig(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin", "--retries", "9"}, func() {
+		conf := testConfig()
+		conf.RwfsRetries = 7
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 9, args.Retries)
+	})
+}
+
+func TestParseArguments_RestoreInvalidRetriesErrors(t *testing.T) {
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin", "--retries", "0"}, func() {
+		_, err := parseArguments(testConfig())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--retries must be at least 1")
+	})
+}
+
+func TestParseArguments_VerifyRetriesFlag_DefaultsFromConfig(t *testing.T) {
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080"}, func() {
+		conf := testConfig()
+		conf.RwfsRetries = 7
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 7, args.Retries)
+	})
+}
+
+func TestParseArguments_StreamsDefaultsToConfigDefaultStreams(t *testing.T) {
+	conf := testConfig()
+	conf.DefaultStreams = 8
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080"}, func() {
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 8, args.Streams)
+	})
+	withArgs(t, []string{"rwfs", "restore", "localhost:8080", "--rules-stdin"}, func() {
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 8, args.Streams)
+	})
+}
+
+func TestParseArguments_StreamsFallsBackWhenConfigHasNone(t *testing.T) {
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080"}, func() {
+		args, err := parseArguments(testConfig()) // DefaultStreams == 0
+		require.NoError(t, err)
+		assert.Equal(t, fallbackStreams, args.Streams)
+	})
+}
+
+func TestParseArguments_StreamsFlagOverridesConfig(t *testing.T) {
+	conf := testConfig()
+	conf.DefaultStreams = 8
+	withArgs(t, []string{"rwfs", "verify", "localhost:8080", "--streams", "2"}, func() {
+		args, err := parseArguments(conf)
+		require.NoError(t, err)
+		assert.Equal(t, 2, args.Streams)
 	})
 }

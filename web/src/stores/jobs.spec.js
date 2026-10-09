@@ -48,7 +48,7 @@ describe('jobs store', () => {
 
     await jobs.fetchLogs('backup:nightly:1752400000')
 
-    expect(apiFetch).toHaveBeenCalledWith('/jobs/backup%3Anightly%3A1752400000/logs')
+    expect(apiFetch).toHaveBeenCalledWith('/jobs/backup%3Anightly%3A1752400000/logs?limit=500')
     expect(jobs.logs).toEqual([
       { timestamp: 1752400000123456789, hostname: 'database', binary: 'brfs', line: '{}' },
     ])
@@ -93,7 +93,7 @@ describe('jobs store', () => {
 
       await jobs.connectLogsStream('restore:x:1')
 
-      expect(apiFetch).toHaveBeenCalledWith('/jobs/restore%3Ax%3A1/logs')
+      expect(apiFetch).toHaveBeenCalledWith('/jobs/restore%3Ax%3A1/logs?limit=500')
       expect(createLiveStream).toHaveBeenCalledWith(
         expect.stringMatching(/^\/jobs\/restore%3Ax%3A1\/logs\/stream\?start=\d+$/),
         expect.objectContaining({ onMessage: expect.any(Function), onStatus: expect.any(Function), onFallback: expect.any(Function) })
@@ -216,6 +216,264 @@ describe('jobs store', () => {
       jobs.disconnectJobsStream()
 
       expect(closeSpy).toHaveBeenCalled()
+    })
+  })
+
+  describe('log merge cost and ordering', () => {
+    let liveStreamHandlers
+
+    beforeEach(() => {
+      createLiveStream.mockReset()
+      createLiveStream.mockImplementation((path, handlers) => {
+        liveStreamHandlers = handlers
+        return { close: vi.fn() }
+      })
+    })
+
+    it('inserts an out-of-order line at its correct sorted position', async () => {
+      apiFetch.mockResolvedValue({
+        data: [
+          { timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' },
+          { timestamp: 300, hostname: 'h', binary: 'brfs', line: '{}' },
+        ],
+      })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+
+      liveStreamHandlers.onMessage({ timestamp: 200, hostname: 'h', binary: 'brfs', line: '{"msg":"mid"}' })
+
+      expect(jobs.logs.map((l) => l.timestamp)).toEqual([100, 200, 300])
+    })
+  })
+
+  describe('live-follow cap', () => {
+    let liveStreamHandlers
+
+    beforeEach(() => {
+      createLiveStream.mockReset()
+      createLiveStream.mockImplementation((path, handlers) => {
+        liveStreamHandlers = handlers
+        return { close: vi.fn() }
+      })
+    })
+
+    it('drops the oldest line once the 2000-line cap is exceeded while following', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+
+      for (let i = 0; i < 2001; i++) {
+        liveStreamHandlers.onMessage({ timestamp: i, hostname: 'h', binary: 'brfs', line: '{}' })
+      }
+
+      expect(jobs.logs).toHaveLength(2000)
+      expect(jobs.logs[0].timestamp).toBe(1)
+      expect(jobs.logs.at(-1).timestamp).toBe(2000)
+    })
+
+    it('does not evict while not following, then catches up once following resumes', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+      jobs.setFollowing(false)
+
+      for (let i = 0; i < 2001; i++) {
+        liveStreamHandlers.onMessage({ timestamp: i, hostname: 'h', binary: 'brfs', line: '{}' })
+      }
+      expect(jobs.logs).toHaveLength(2001)
+
+      jobs.setFollowing(true)
+
+      expect(jobs.logs).toHaveLength(2000)
+      expect(jobs.logs[0].timestamp).toBe(1)
+    })
+
+    it('evicts a dropped line from the dedup set too, so a re-delivered old line is re-added rather than silently deduped away', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+
+      for (let i = 0; i < 2001; i++) {
+        liveStreamHandlers.onMessage({ timestamp: i, hostname: 'h', binary: 'brfs', line: '{}' })
+      }
+      expect(jobs.logs.some((l) => l.timestamp === 0)).toBe(false) // evicted
+
+      // Pause eviction before re-delivering the evicted line, so this
+      // assertion isolates "was the dedup key freed up" from "did the cap
+      // immediately re-evict it for being the new oldest line" (both true
+      // is the correct steady-state behavior, but would make this specific
+      // regression -- _logsSeen never freeing the key -- unobservable).
+      jobs.setFollowing(false)
+      liveStreamHandlers.onMessage({ timestamp: 0, hostname: 'h', binary: 'brfs', line: '{}' })
+
+      expect(jobs.logs[0].timestamp).toBe(0)
+    })
+  })
+
+  describe('loadOlder', () => {
+    it('prepends an older page and updates hasOlderLogs from has_more', async () => {
+      apiFetch.mockResolvedValueOnce({
+        data: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        has_more: true,
+      })
+      const jobs = useJobsStore()
+      await jobs.fetchLogs('restore:x:1')
+      expect(jobs.hasOlderLogs).toBe(true)
+
+      apiFetch.mockResolvedValueOnce({
+        data: [{ timestamp: 50, hostname: 'h', binary: 'brfs', line: '{}' }],
+        has_more: false,
+      })
+      await jobs.loadOlder('restore:x:1')
+
+      expect(apiFetch).toHaveBeenLastCalledWith('/jobs/restore%3Ax%3A1/logs?limit=500&ending_before=100')
+      expect(jobs.logs.map((l) => l.timestamp)).toEqual([50, 100])
+      expect(jobs.hasOlderLogs).toBe(false)
+    })
+
+    it('does nothing when hasOlderLogs is false', async () => {
+      apiFetch.mockResolvedValue({ data: [], has_more: false })
+      const jobs = useJobsStore()
+      await jobs.fetchLogs('restore:x:1')
+      apiFetch.mockClear()
+
+      await jobs.loadOlder('restore:x:1')
+
+      expect(apiFetch).not.toHaveBeenCalled()
+    })
+
+    it('records an error and clears the loading flag when the older-page request fails', async () => {
+      apiFetch.mockResolvedValueOnce({
+        data: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        has_more: true,
+      })
+      const jobs = useJobsStore()
+      await jobs.fetchLogs('restore:x:1')
+
+      apiFetch.mockRejectedValueOnce(new Error('boom'))
+      await jobs.loadOlder('restore:x:1')
+
+      expect(jobs.logsOlderError).toBe('boom')
+      expect(jobs.logsOlderLoading).toBe(false)
+      // The already-visible page must survive a failed "load older", and
+      // the button must stay available to retry.
+      expect(jobs.logs.map((l) => l.timestamp)).toEqual([100])
+      expect(jobs.hasOlderLogs).toBe(true)
+      expect(jobs.logsError).toBeNull()
+    })
+
+    it('clears a previous error on a subsequent successful load', async () => {
+      apiFetch.mockResolvedValueOnce({
+        data: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        has_more: true,
+      })
+      const jobs = useJobsStore()
+      await jobs.fetchLogs('restore:x:1')
+
+      apiFetch.mockRejectedValueOnce(new Error('boom'))
+      await jobs.loadOlder('restore:x:1')
+      expect(jobs.logsOlderError).toBe('boom')
+
+      apiFetch.mockResolvedValueOnce({
+        data: [{ timestamp: 50, hostname: 'h', binary: 'brfs', line: '{}' }],
+        has_more: false,
+      })
+      await jobs.loadOlder('restore:x:1')
+
+      expect(jobs.logsOlderError).toBeNull()
+      expect(jobs.logs.map((l) => l.timestamp)).toEqual([50, 100])
+    })
+
+    it('ignores a second call while one page is already in flight', async () => {
+      apiFetch.mockResolvedValueOnce({
+        data: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        has_more: true,
+      })
+      const jobs = useJobsStore()
+      await jobs.fetchLogs('restore:x:1')
+      apiFetch.mockClear()
+
+      let resolveFirst
+      apiFetch.mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve }))
+      const first = jobs.loadOlder('restore:x:1')
+      expect(jobs.logsOlderLoading).toBe(true)
+
+      // Second click, same cursor, while the first request is unresolved.
+      await jobs.loadOlder('restore:x:1')
+      expect(apiFetch).toHaveBeenCalledTimes(1)
+
+      resolveFirst({ data: [{ timestamp: 50, hostname: 'h', binary: 'brfs', line: '{}' }], has_more: false })
+      await first
+
+      expect(jobs.logs.map((l) => l.timestamp)).toEqual([50, 100])
+      expect(jobs.logsOlderLoading).toBe(false)
+    })
+  })
+
+  describe('tailSeq', () => {
+    let liveStreamHandlers
+
+    beforeEach(() => {
+      createLiveStream.mockReset()
+      createLiveStream.mockImplementation((path, handlers) => {
+        liveStreamHandlers = handlers
+        return { close: vi.fn() }
+      })
+    })
+
+    it('increments only for lines merged over the live tail', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+      expect(jobs.tailSeq).toBe(0)
+
+      liveStreamHandlers.onMessage({ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' })
+      expect(jobs.tailSeq).toBe(1)
+
+      // A duplicate is deduped away, so it isn't tail activity either.
+      liveStreamHandlers.onMessage({ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' })
+      expect(jobs.tailSeq).toBe(1)
+    })
+
+    it('does not move when loadOlder prepends history', async () => {
+      // The jump-to-latest affordance keys off tailSeq; if paging history
+      // in bumped it, a user who just scrolled up and clicked "Load older
+      // lines" would be told 500 new lines arrived and offered a button
+      // that scrolls them away from the history they asked for.
+      apiFetch.mockResolvedValueOnce({
+        data: [{ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' }],
+        has_more: true,
+      })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+
+      liveStreamHandlers.onMessage({ timestamp: 200, hostname: 'h', binary: 'brfs', line: '{}' })
+      const seqBefore = jobs.tailSeq
+      expect(seqBefore).toBe(1)
+
+      apiFetch.mockResolvedValueOnce({
+        data: [
+          { timestamp: 10, hostname: 'h', binary: 'brfs', line: '{}' },
+          { timestamp: 20, hostname: 'h', binary: 'brfs', line: '{}' },
+        ],
+        has_more: false,
+      })
+      await jobs.loadOlder('restore:x:1')
+
+      expect(jobs.logs.map((l) => l.timestamp)).toEqual([10, 20, 100, 200])
+      expect(jobs.tailSeq).toBe(seqBefore)
+    })
+
+    it('resets on fetchLogs, so a previously-viewed job\'s tail activity does not carry over', async () => {
+      apiFetch.mockResolvedValue({ data: [] })
+      const jobs = useJobsStore()
+      await jobs.connectLogsStream('restore:x:1')
+      liveStreamHandlers.onMessage({ timestamp: 100, hostname: 'h', binary: 'brfs', line: '{}' })
+      expect(jobs.tailSeq).toBe(1)
+
+      await jobs.fetchLogs('restore:x:2')
+
+      expect(jobs.tailSeq).toBe(0)
     })
   })
 })

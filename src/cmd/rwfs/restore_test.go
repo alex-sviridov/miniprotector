@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ import (
 // dial step against lis, then calls runRestoreWithConn, the exact same
 // package-level resolution/dispatch logic runRestore itself calls after
 // dialing.
-func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, rulesJSON string, overwrite bool, streams int) error {
+func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listener, rulesJSON string, overwrite bool, streams, retries int) error {
 	t.Helper()
 
 	rules, err := parseRulesStdin(strings.NewReader(rulesJSON))
@@ -44,7 +45,7 @@ func runRestoreWithDialer(t *testing.T, logger *slog.Logger, lis *bufconn.Listen
 	require.NoError(t, err)
 	defer conn.Close()
 
-	return runRestoreWithConn(logger, conn, overwrite, rules, false, streams, "test-job")
+	return runRestoreWithConn(logger, conn, overwrite, rules, false, streams, retries, "test-job")
 }
 
 func TestRunRestore_LogsResolvedFileWithRenamedDestPath(t *testing.T) {
@@ -76,7 +77,7 @@ func TestRunRestore_LogsResolvedFileWithRenamedDestPath(t *testing.T) {
 	destDir := t.TempDir() + "/photos_recovered"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4, 1)
 	require.NoError(t, err)
 
 	out := logBuf.String()
@@ -109,7 +110,7 @@ func TestRunRestore_FileLevelRuleMatchingNothingFails(t *testing.T) {
 
 	rulesJSON := `{"rules":[{"host":"hosta","path":"/etc/never-backed-up.conf","include":true}]}`
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 file(s) failed resolution")
 	assert.Contains(t, logBuf.String(), `reason="not found on this store"`)
@@ -133,7 +134,7 @@ func TestRunRestore_FolderLevelRuleMatchingNothingSucceeds(t *testing.T) {
 
 	rulesJSON := `{"rules":[{"host":"","path":"/empty","include":true}]}`
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	assert.NoError(t, err)
 }
 
@@ -175,7 +176,7 @@ func TestRunRestore_CreatesDirectoryStructureForFolderSelection(t *testing.T) {
 	destDir := destBase + "/nested_recovered"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	info, statErr := os.Stat(destDir)
@@ -212,7 +213,7 @@ func TestRunRestore_ReusesExistingDirectory(t *testing.T) {
 	require.NoError(t, os.Mkdir(destDir, 0o755))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	out := logBuf.String()
@@ -244,7 +245,7 @@ func TestRunRestore_AbortsOnDirectoryCreationFailureBeforeSummary(t *testing.T) 
 	require.NoError(t, os.WriteFile(destDir, []byte("data"), 0o644))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/nested","include":true,"dest_path":%q}]}`, destDir)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "blocked")
 
@@ -281,7 +282,7 @@ func TestRunRestore_ParentBeforeChildOrdering(t *testing.T) {
 	destRoot := destBase + "/a"
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/tmp/a","include":true,"dest_path":%q}]}`, destRoot)
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	for _, p := range []string{destRoot, destRoot + "/b", destRoot + "/b/c"} {
@@ -317,7 +318,7 @@ func TestRunRestore_NotFoundAbortsBeforePhase1(t *testing.T) {
 		{"host":"hosta","path":"/etc/never-backed-up.conf","include":true}
 	]}`, destBase+"/nested")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 file(s) failed resolution")
 
@@ -350,7 +351,7 @@ func TestRunRestore_WritesFileContent(t *testing.T) {
 	destBase := t.TempDir()
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
@@ -361,13 +362,13 @@ func TestRunRestore_WritesFileContent(t *testing.T) {
 	assert.Contains(t, out, "restoring file content")
 	assert.Contains(t, out, "restore complete")
 	assert.Contains(t, out, "files_written=1")
-	assert.NotContains(t, out, "file written",
+	assert.NotContains(t, out, "file verified",
 		"the per-file success line must not appear at the default (Info) log level")
 }
 
 // TestRunRestore_DebugLogsPerFileSuccessLine is
 // TestRunRestore_WritesFileContent's counterpart at Debug level -- proves
-// the per-file "file written" line exists and is gated purely by the
+// the per-file "file verified" line exists and is gated purely by the
 // logger's level (slog.LevelDebug), not by a separate --quiet-style flag.
 func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
 	store, err := wfs.New(t.TempDir())
@@ -391,10 +392,10 @@ func TestRunRestore_DebugLogsPerFileSuccessLine(t *testing.T) {
 	destBase := t.TempDir()
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
-	assert.Contains(t, logBuf.String(), "file written")
+	assert.Contains(t, logBuf.String(), "file verified")
 }
 
 func TestRunRestore_OverwriteFalseSkipsExistingFile(t *testing.T) {
@@ -421,7 +422,7 @@ func TestRunRestore_OverwriteFalseSkipsExistingFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(destBase+"/recovered/vacation.jpg", []byte("original content on disk"), 0o644))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.NoError(t, err)
 
 	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
@@ -457,7 +458,7 @@ func TestRunRestore_OverwriteTrueReplacesExistingFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(destBase+"/recovered/vacation.jpg", []byte("stale content on disk"), 0o644))
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4, 1)
 	require.NoError(t, err)
 
 	got, readErr := os.ReadFile(destBase + "/recovered/vacation.jpg")
@@ -493,7 +494,7 @@ func TestRunRestore_FileWriteFailureAbortsWithoutSummary(t *testing.T) {
 	destBase := t.TempDir()
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"hosta","path":"/data/a.txt","include":true,"dest_path":%q}]}`, destBase+"/missing-parent/a.txt")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 
 	out := logBuf.String()
@@ -567,7 +568,7 @@ func TestRestoreFileContent_FirstFailureCancelsOtherInFlightTransfers(t *testing
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	err = restoreFileContent(context.Background(), logger, client, files, false, 2)
+	err = restoreFileContent(context.Background(), logger, client, files, false, 2, 1)
 	require.Error(t, err)
 
 	select {
@@ -602,8 +603,195 @@ func TestRunRestore_DuplicateDestinationAcrossHostsIsHardError(t *testing.T) {
 	// /data/a.txt copies land at the same dest_path.
 	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data","include":true,"dest_path":%q}]}`, destBase+"/recovered")
 
-	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4)
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, false, 4, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), destBase+"/recovered/a.txt")
 	assert.Empty(t, restoreSrv.Requested(), "no file should be fetched once a destination collision is detected")
+}
+
+func TestRunRestore_RecoversFromTransientFileErrorViaRetry(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	seedDirectory(t, store, "hosta", "/data/photos", "job1", 5000)
+	seedRestorableFile(t, store, "hosta", "/data/photos/vacation.jpg", "job1", 5000, []byte("vacation photo bytes"))
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	listSrv := &testResolveServer{store: store}
+	restoreSrv := &flakyRestoreServer{failuresBeforeSuccess: 1, wrapped: &realRestoreServer{store: store}}
+
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	pb.RegisterListServiceServer(grpcSrv, listSrv)
+	pb.RegisterRestoreServiceServer(grpcSrv, restoreSrv)
+	go grpcSrv.Serve(lis)
+	defer grpcSrv.GracefulStop()
+
+	destDir := t.TempDir() + "/photos_recovered"
+	rulesJSON := fmt.Sprintf(`{"rules":[{"host":"","path":"/data/photos","include":true,"dest_path":%q}]}`, destDir)
+
+	err = runRestoreWithDialer(t, logger, lis, rulesJSON, true, 4, 3)
+	require.NoError(t, err, "a single transient failure must not abort the run when retries are available")
+
+	got, readErr := os.ReadFile(destDir + "/vacation.jpg")
+	require.NoError(t, readErr)
+	assert.Equal(t, "vacation photo bytes", string(got))
+	assert.Equal(t, 2, restoreSrv.Calls(), "one failed attempt, then one successful retry")
+}
+
+func TestRestoreFileContent_CommitsAllFilesAcrossCheckpointsAndSweepsStaleTemp(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	destBase := t.TempDir()
+	stale := filepath.Join(destBase, ".old.txt.mptmp-deadbeef")
+	require.NoError(t, os.WriteFile(stale, []byte("junk"), 0o644))
+
+	var files []restoreFile
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		uuid := seedRestorableFileChunks(t, store, "hosta", "/data/"+name, "job1", 1000, [][]byte{[]byte("content " + name)})
+		files = append(files, restoreFile{FileUUID: uuid, Source: "hosta", Path: "/data/" + name, DestPath: filepath.Join(destBase, name)})
+	}
+
+	saved := restoreCommit
+	t.Cleanup(func() { restoreCommit = saved })
+	setRestoreCommitLimits(2, 1<<40) // two mid-run checkpoints plus the final flush
+
+	require.NoError(t, restoreFileContent(context.Background(), discardLogger(), client, files, false, 2, 1))
+
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		got, err := os.ReadFile(filepath.Join(destBase, name))
+		require.NoError(t, err)
+		assert.Equal(t, "content "+name, string(got))
+	}
+	assert.NoFileExists(t, stale)
+	entries, _ := os.ReadDir(destBase)
+	assert.Len(t, entries, 5, "no temp files remain")
+}
+
+func TestRestoreFileContent_FailureLeavesNoTempFiles(t *testing.T) {
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	good := seedRestorableFileChunks(t, store, "hosta", "/data/good.txt", "job1", 1000, [][]byte{[]byte("ok")})
+	client := dialRestoreClient(t, &realRestoreServer{store: store})
+
+	destBase := t.TempDir()
+	files := []restoreFile{
+		{FileUUID: good, Source: "hosta", Path: "/data/good.txt", DestPath: filepath.Join(destBase, "good.txt")},
+		{FileUUID: "does-not-exist", Source: "hosta", Path: "/data/bad.txt", DestPath: filepath.Join(destBase, "bad.txt")},
+	}
+	saved := restoreCommit
+	t.Cleanup(func() { restoreCommit = saved })
+	setRestoreCommitLimits(100, 1<<40)
+
+	err = restoreFileContent(context.Background(), discardLogger(), client, files, false, 1, 1)
+	require.Error(t, err)
+
+	entries, _ := os.ReadDir(destBase)
+	for _, e := range entries {
+		assert.False(t, isTempName(e.Name()), "leftover temp file %s", e.Name())
+	}
+}
+
+// damagedRunFixture seeds healthy files plus one file bwfs reports as
+// damaged (DataLoss mid-stream), for restoreFileContent tests.
+type damagedRunFixture struct {
+	client   pb.RestoreServiceClient
+	destBase string
+	healthy  []restoreFile
+	damaged  restoreFile
+}
+
+func newDamagedRunFixture(t *testing.T, healthyCount int) damagedRunFixture {
+	t.Helper()
+	store, err := wfs.New(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	fx := damagedRunFixture{destBase: t.TempDir()}
+	for i := 0; i < healthyCount; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		uuid := seedRestorableFileChunks(t, store, "hosta", "/data/"+name, "job1", 1000, [][]byte{[]byte("content " + name)})
+		fx.healthy = append(fx.healthy, restoreFile{FileUUID: uuid, Source: "hosta", Path: "/data/" + name, DestPath: filepath.Join(fx.destBase, name)})
+	}
+	fx.damaged = restoreFile{FileUUID: "damaged-uuid", Source: "hosta", Path: "/data/damaged.txt", DestPath: filepath.Join(fx.destBase, "damaged.txt")}
+	fx.client = dialRestoreClient(t, &damagedRestoreServer{
+		afterChunk: true,
+		healthy:    &realRestoreServer{store: store},
+		damaged:    map[string]bool{"damaged-uuid": true},
+	})
+	return fx
+}
+
+func TestRestoreFileContent_DamagedFileDoesNotAbortHealthyFiles(t *testing.T) {
+	fx := newDamagedRunFixture(t, 4)
+	// The damaged file sits between healthy ones, so files are pending in
+	// the commit queue on both sides of its failure.
+	files := []restoreFile{fx.healthy[0], fx.healthy[1], fx.damaged, fx.healthy[2], fx.healthy[3]}
+
+	saved := restoreCommit
+	t.Cleanup(func() { restoreCommit = saved })
+	setRestoreCommitLimits(100, 1<<40) // nothing commits before the final flush
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	err := restoreFileContent(context.Background(), logger, fx.client, files, false, 2, 3)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1 file(s)")
+	assert.Contains(t, err.Error(), "damaged")
+
+	for _, f := range fx.healthy {
+		got, readErr := os.ReadFile(f.DestPath)
+		require.NoError(t, readErr, "healthy file %s must be committed", f.DestPath)
+		assert.Equal(t, "content "+filepath.Base(f.DestPath), string(got))
+	}
+	assert.NoFileExists(t, fx.damaged.DestPath)
+	entries, _ := os.ReadDir(fx.destBase)
+	for _, e := range entries {
+		assert.False(t, isTempName(e.Name()), "leftover temp file %s", e.Name())
+	}
+	assert.Len(t, entries, len(fx.healthy))
+
+	out := logBuf.String()
+	assert.Regexp(t, `level=ERROR .*path=/data/damaged.txt`, out)
+	assert.Contains(t, out, "dest_path="+fx.damaged.DestPath)
+	assert.Contains(t, out, "restore complete", "the healthy files are summarized before the error is returned")
+	assert.Contains(t, out, "files_written=4")
+	assert.Contains(t, out, "damaged=1")
+}
+
+func TestRestoreFileContent_DamagedFileWithOverwriteKeepsExistingFile(t *testing.T) {
+	fx := newDamagedRunFixture(t, 1)
+	require.NoError(t, os.WriteFile(fx.damaged.DestPath, []byte("older but intact"), 0o644))
+
+	err := restoreFileContent(context.Background(), discardLogger(), fx.client,
+		[]restoreFile{fx.damaged, fx.healthy[0]}, true, 1, 1)
+	require.Error(t, err)
+
+	got, readErr := os.ReadFile(fx.damaged.DestPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "older but intact", string(got), "a damaged backup must not replace the file on disk")
+	assert.FileExists(t, fx.healthy[0].DestPath)
+}
+
+func TestRestoreFileContent_OtherFailureAfterDamagedStillAborts(t *testing.T) {
+	fx := newDamagedRunFixture(t, 0)
+	missing := restoreFile{FileUUID: "does-not-exist", Source: "hosta", Path: "/data/missing.txt", DestPath: filepath.Join(fx.destBase, "missing.txt")}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	// One stream keeps the order: the damaged file fails first, then the
+	// missing one fails with an ordinary (NotFound) error.
+	err := restoreFileContent(context.Background(), logger, fx.client, []restoreFile{fx.damaged, missing}, false, 1, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), missing.DestPath, "the aborting failure is the one returned")
+	assert.Contains(t, err.Error(), "1 file(s)", "the damaged count is still reported")
+	assert.Contains(t, logBuf.String(), "failed to restore file")
+	assert.NotContains(t, logBuf.String(), "restore complete")
 }

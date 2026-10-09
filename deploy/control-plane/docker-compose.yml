@@ -4,7 +4,8 @@ services:
     volumes:
       - ./ca/data:/home/step
       - ./ca/entrypoint.sh:/home/step/entrypoint.sh:ro
-      - ./ca/templates/leaf.tpl:/home/step/templates/leaf.tpl:ro
+      - ./ca/templates/bootstrap.tpl:/home/step/templates/bootstrap.tpl:ro
+      - ./ca/templates/operating.tpl:/home/step/templates/operating.tpl:ro
     ports:
       - "9000:9000"
     entrypoint: ["/home/step/entrypoint.sh"]
@@ -21,7 +22,7 @@ services:
       - ./issuer/data:/data
       - ./issuer/local.conf:/data/local.conf:ro
       - ./ca/data/certs/root_ca.crt:/data/root_ca.crt:ro
-      - ./ca/data/secrets/password:/data/secrets/password:ro
+      - ./ca/data/secrets/operating_password:/data/secrets/operating_password:ro
       - ./client-manager/data:/data/client-manager
     environment:
       - MP_CONFIG_PATH=/data

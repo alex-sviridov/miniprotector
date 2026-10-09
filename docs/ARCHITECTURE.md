@@ -8,8 +8,8 @@ A backup system with intelligent deduplication and integrity verification.
 | brfs | Backup Reader for File System — reads files from source, sends via gRPC | Implemented |
 | bwfs | Backup Writer for File System — receives via gRPC, stores chunks + metadata | Implemented |
 | rwfs | Restore Writer for File System — queries bwfs (list, verify, restore) | list, verify, and restore fully implemented -- `restore` creates the resolved directory structure and writes real file content to the destination filesystem |
-| catalogsync | Replicates a bwfs node's file_versions to a backup catalog | Implemented |
-| catalog | Backup Catalog — receives catalogsync's replicated file_versions over gRPC | Implemented |
+| catalogsync | Replicates a bwfs node's file_versions, their deletions and its damaged file set to a backup catalog | Implemented |
+| catalog | Backup Catalog — receives catalogsync's replicated file_versions, deletions and damaged file set over gRPC | Implemented |
 | agent | Node Agent — reconciles local state against embedded policies | Implemented (bootstrap credential renewal, operating-certificate refresh via `issuer`, policy fetch via `policyclient`, policy-driven backup execution via `brfs`, one-shot restore-policy verification via `rwfs verify`, and one-shot restore execution via `rwfs restore` for `mode: "restore"` policies -- both directory structure creation and file content restore are real) |
 | client-manager | Owns the enrolled-client list: descriptions, RBAC-bound attributes, SAN aliases, revoked status; mints enrollment tokens directly | Implemented (enforcement lives in `issuer`, which agent now drives — see below) |
 | issuer | Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares client-manager's database | Implemented (agent integration done; a CA-side custom template for attribute embedding remains separate, later work) |
@@ -17,7 +17,7 @@ A backup system with intelligent deduplication and integrity verification.
 | log-gateway | mTLS-terminating HTTP reverse proxy in front of Loki; gates on a valid operating certificate, forwards the push body unmodified | Implemented (agent bundles, configures, and supervises the Vector process that ships to it) |
 | clientmanager-api | Read-only gRPC daemon exposing `client-manager`'s enrolled-client data (`ListClients`/`GetClient`), sharing its SQLite file the same way `issuer` already does | Implemented |
 | clientmanager-admin-api | CA-admin-equivalent gRPC writes (issue/re-enroll/revoke/unrevoke/description/attribute/SAN) onto the same database, packaged in clientmanager-api's container | Implemented |
-| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate | Implemented |
+| api-server | Read-only REST API in front of `clientmanager-api` and `catalog` — this system's first REST (not gRPC) entry point, for callers without a mesh mTLS client certificate; also serves two inbound mTLS gRPC services: `JobStatusService`, polled by `policy-server`'s restore-cleanup sweep, and `StorageStatusService`, into which every `bwfs` posts a status report each minute (kept in memory, shown on the storage policy page) | Implemented |
 | web | Static Vue frontend over `api-server`'s REST API — this system's first browser UI; served by nginx, no mTLS identity of its own | Implemented |
 
 ## Control Plane vs. Agents
@@ -29,8 +29,13 @@ exercising this whole topology end to end.
 |---|---|---|
 | Components | `deploy/control-plane/ca/` (step-ca container), `catalog`, `policy-server`, `client-manager`, `issuer`, `clientmanager-api`, `clientmanager-admin-api`, `api-server` | `bwfs`, `brfs`, `rwfs`, `certclient`, `agent` |
 | Runs where | On the CA host (`client-manager`, `issuer`, `clientmanager-api`, `clientmanager-admin-api`); `catalog`/`policy-server`/`api-server` run centrally, wherever each deployment lives — see below | Dial `ca_host:9000` outbound for enrollment/renewal and `issuer_host:9200` outbound for operating-certificate refresh, and `policy_server_host:9300` outbound for policy fetching; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
-| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert`/`DescribeSANs` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, fetched by `agent` via `policyclient`); `clientmanager-api` serves `ListClients`/`GetClient` on `:9500` (mTLS); `clientmanager-admin-api` serves `AddClient`/`ReEnrollClient`/`RevokeClient`/`UnrevokeClient`/`UpdateDescription`/`UpdateAttributes`/`UpdateSANs` on `:9501` (mTLS) — a third holder of CA-admin-equivalent access, alongside `client-manager` and `issuer`, stated explicitly rather than left implicit; `api-server` serves this system's first REST (not gRPC) surface on `:8090` (plain HTTP, bearer-token authenticated), dialing `clientmanager-api`, `clientmanager-admin-api`, and `catalog` outbound over mTLS on their behalf — none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
+| Network role | Serves enrollment/renewal/admin (`/sign`, `/renew`, `/roots`, `/provisioners`) on `:9000`; `issuer` serves `RequestOperatingCert` on `:9200` (mTLS); `policy-server` serves `GetPolicies` on `:9300` (mTLS, fetched by `agent` via `policyclient`); `clientmanager-api` serves `ListClients`/`GetClient` on `:9500` (mTLS); `clientmanager-admin-api` serves `AddClient`/`ReEnrollClient`/`RevokeClient`/`UnrevokeClient`/`UpdateDescription`/`UpdateAttributes`/`UpdateSANs` on `:9501` (mTLS) — a third holder of CA-admin-equivalent access, alongside `client-manager` and `issuer`, stated explicitly rather than left implicit; `api-server` serves this system's first REST (not gRPC) surface on `:8090` (plain HTTP, bearer-token authenticated), dialing `clientmanager-api`, `clientmanager-admin-api`, `catalog`, `policy-server`, and `log-gateway` outbound over mTLS on their behalf, and also serves `GetPolicyJobStatus` on its own `:8091` (mTLS, role-gated to `control-plane`, polled by `policy-server`'s restore-cleanup sweep) — its first *inbound* mTLS surface, alongside those outbound ones — none of these has a role in backup traffic | Dial `ca_host:9000` (bootstrap/renew) and `issuer_host:9200` (operating-refresh) outbound only; otherwise mesh with each other over gRPC on `:8080` (mTLS) |
 | Docker/e2e images | Control-plane-only binaries (`client-manager`, `issuer`) never ship onto an agent host or into an agent image | Agent images bundle `certclient` and `agent` — `catalog`'s, `policy-server`'s, `clientmanager-api`'s, and `api-server`'s images are all among them, since each is deployed as an ordinary `agent`-managed enrolled node (see [Control Plane README](../deploy/control-plane/README.md)) |
+
+Each control-plane component above is enrolled with the `control-plane` authorization role;
+`bwfs` (and `catalogsync`, which shares its host) is enrolled with `store`; every other agent node
+defaults to `client`. Every gRPC server enforces this per RPC — see
+[Security Model](SECURITY.md#role-based-rpc-authorization).
 
 `issuer` is the one exception to the "obtained via `certclient`" rule below: it mints and signs its
 own mTLS server identity directly at startup and re-mints it on an internal ticker while running,
@@ -72,19 +77,24 @@ otherwise be a purely operational cost, at the price of shared container-filesys
 the two binaries).
 
 `api-server` is control plane by role and, like `catalog`/`policy-server`, obtains its own mTLS
-identity as an ordinary `agent`-managed enrolled node — but only for its *outbound* calls to
-`clientmanager-api` and `catalog`. Its inbound side is this system's first REST (not gRPC) entry
-point: a plain-HTTP listener on its own port (`api_server_port`, default 8090), guarded by a single
-shared bearer token rather than mesh mTLS, for callers (browsers, admin tools) that don't hold a
-mesh client certificate. Each REST endpoint maps to exactly one backend gRPC call — no
-cross-service aggregation. See [api-server](components/api-server.md) and
-[REST API v1](api/rest-v1.md).
+identity as an ordinary `agent`-managed enrolled node — for its *outbound* calls to
+`clientmanager-api`, `clientmanager-admin-api`, `catalog`, `policy-server`, and `log-gateway`, and
+now also for one *inbound* gRPC service on that same identity: `JobStatusService`
+(`GetPolicyJobStatus`), on its own port (`APIServerJobStatusPort`, default 8091), mTLS-secured and
+role-gated to `control-plane` callers exactly like `policy-server`'s RPCs — polled by
+`policy-server`'s restore-cleanup sweep to learn whether a restore-verification job has finished.
+Its REST side remains this system's first REST (not gRPC) entry point: a plain-HTTP listener on its
+own port (`api_server_port`, default 8090), guarded by a single shared bearer token rather than mesh
+mTLS, for callers (browsers, admin tools) that don't hold a mesh client certificate. Each REST
+endpoint maps to exactly one backend gRPC call — no cross-service aggregation. See
+[api-server](components/api-server.md) and [REST API v1](api/rest-v1.md).
 
 A node's mTLS identity is obtained in two tiers, both via `certclient`: `bootstrap` redeems a
 one-time token minted by `client-manager` for `ca.crt` plus a long-lived `bootstrap.crt`/
 `bootstrap.key` pair; `operating-refresh` then uses that bootstrap credential to authenticate to
 `issuer` and obtain the short-lived `client.crt`/`client.key` that `common/mtls` actually reads for
-every other component's transport. See [client-manager](components/client-manager.md),
+every other component's transport. The CA has two provisioners so that a token holder can only ever
+obtain a bootstrap-tier certificate; only `issuer` can mint operating ones. See [client-manager](components/client-manager.md),
 [issuer](components/issuer.md), [certclient](components/certclient.md), and, for the full
 rationale behind this split and its trust-model trade-offs, [Security Model](SECURITY.md).
 
@@ -121,8 +131,12 @@ to avoid this.
 
 - **brfs** reads files from the source filesystem
 - Connects to **bwfs** via network or Unix socket, authenticated with mutual TLS
-- Sends chunked file data using the backup protocol
-- **bwfs** stores needed chunks on the backup filesystem and records metadata in SQLite
+- Sends chunked file data using the backup protocol, each file's metadata carrying an `expire_at`
+  that `brfs` resolves from the per-job retention matrix `agent` hands it (`--retention-file`)
+- **bwfs** stores needed chunks in append-only pack segments on the backup filesystem (group-commit fsync at file finalize) and records metadata and the chunk index in SQLite
+- **bwfs** also runs scheduled maintenance: **cleanup** deletes file versions past their `expire_at`
+  and **vacuum** reclaims the file data and chunks nothing references any more; deletions are
+  replicated to the catalog by `catalogsync`
 
 ## Restore/Verify Process
 
@@ -177,8 +191,9 @@ graph TB
     rwfs -->|writes files| DstFS
 
     %% Catalog Replication Flow (bwfs's own operation is unaffected either way)
-    DB -->|reads file_versions,<br/>read-only| catalogsync
-    catalogsync -->|SyncFileVersions<br/>gRPC, mTLS| Catalog
+    DB -->|reads file_versions, deletions,<br/>damaged file ids; read-only| catalogsync
+    catalogsync -->|SyncFileVersions,<br/>DeleteFileVersions<br/>gRPC, mTLS| Catalog
+    catalogsync -->|ReportDamagedFiles<br/>damaged set snapshot, periodic<br/>gRPC stream, mTLS| Catalog
 
     classDef filesystem fill:#e1f5fe
     classDef component fill:#f3e5f5

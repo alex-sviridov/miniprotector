@@ -11,9 +11,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,13 +23,18 @@ import (
 )
 
 // maxPushBodyBytes bounds how much of an inbound push body log-gateway will
-// buffer in memory. Every request runs through io.ReadAll, so without a cap
-// a single misbehaving (or compromised) mTLS-authenticated node could send
-// an arbitrarily large body and OOM the gateway -- which, since log-gateway
-// is the sole path to Loki for the whole fleet, would take down ingestion
-// fleet-wide. 10MB is generous for a batched log push (Loki's own default
-// push body limit, distributor.max-recv-msg-size-in-bytes, is in the same
-// ballpark) while still bounding worst-case memory use per request.
+// relay to Loki. The push path streams r.Body straight through rather than
+// buffering it, so this is no longer an in-memory OOM guard -- it's
+// enforced via a fast Content-Length pre-check (the common case: no read,
+// no dial to Loki) plus http.MaxBytesReader as a streaming safety net for a
+// caller that lies about or omits Content-Length, tripping mid-stream. A
+// single misbehaving (or compromised) mTLS-authenticated node still can't
+// use an oversized push to take down ingestion fleet-wide -- it's just
+// rejected (fast 413, or a mid-stream 502 via MaxBytesReader) rather than
+// buffered and OOMing the gateway. 10MB is generous for a batched log push
+// (Loki's own default push body limit, distributor.max-recv-msg-size-in-bytes,
+// is in the same ballpark) while still bounding what log-gateway will relay
+// per request.
 const maxPushBodyBytes = 10 << 20 // 10MB
 
 // maxQueryResponseBytes bounds how much of a query_range response
@@ -117,25 +120,43 @@ func (s *logGatewayServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxPushBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			http.Error(w, "read request body: "+err.Error(), http.StatusRequestEntityTooLarge)
-			return
-		}
-		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
+	// Fast, cheap rejection for the common case (Vector's loki sink always
+	// sets Content-Length for a single batched POST) -- no read, no dial to
+	// Loki. MaxBytesReader below remains the hard safety net for a caller
+	// that omits or understates Content-Length.
+	if r.ContentLength > maxPushBodyBytes {
+		http.Error(w, "request body exceeds size cap", http.StatusRequestEntityTooLarge)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPushBodyBytes)
 
 	ctx, cancel := context.WithTimeout(r.Context(), lokiForwardTimeout)
 	defer cancel()
 
-	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.lokiPushURL, bytes.NewReader(body))
+	// Streams r.Body straight through to Loki instead of buffering the
+	// whole request in memory first -- see docs/superpowers/specs/
+	// 2026-08-22-logging-flow-hardening-design.md. If MaxBytesReader trips
+	// mid-stream (a caller that lied about or omitted Content-Length), the
+	// read error surfaces as a failed Do() below, i.e. 502, not the clean
+	// 413 a pre-buffered read would give -- accepted for this internal,
+	// mTLS-authenticated route, where the cap is an OOM guard, not a
+	// caller-facing validation contract. Streaming also leaves lokiReq's
+	// GetBody unset (http.NewRequestWithContext only populates it for a
+	// handful of known-rewindable body types, which an io.Reader over
+	// r.Body isn't), so the net/http transport can no longer invisibly
+	// retry a request that raced a just-closed pooled connection -- that
+	// race now surfaces as an outright 502 instead of being silently
+	// retried. Bounded: Vector's own loki sink retries independently, so no
+	// data is lost, and the window only opens when Loki closes an idle
+	// connection (a Loki restart, or a quiet period past its own
+	// idle-timeout).
+	lokiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.lokiPushURL, r.Body)
 	if err != nil {
 		http.Error(w, "build loki request: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if r.ContentLength > 0 {
+		lokiReq.ContentLength = r.ContentLength
 	}
 	for _, h := range passthroughHeaders {
 		if v := r.Header.Get(h); v != "" {

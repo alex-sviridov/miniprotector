@@ -38,6 +38,14 @@ No new business logic: every RPC calls the same `storage/clientmanager.Store` me
 `common/certmint.Mint` function `client-manager`'s CLI already uses. See the
 [ClientManagerAdmin protocol](../protocols/clientmanager-admin.md) for the full RPC behavior.
 
+## Authorization
+
+Every RPC requires the caller to hold the `control-plane` role — enforced by a
+`common/mtls.RequireRoles` interceptor wired into this service's listener. `api-server` is
+enrolled with `authz-role=control-plane`; an ordinary fleet node's operating certificate (`client`
+or `store` role) is rejected with `codes.PermissionDenied` before any handler runs. See
+[Security Model](../SECURITY.md#role-based-rpc-authorization).
+
 ## Configuration Keys
 
 - `clientmanager_admin_api_port` — port to listen on *(default: 9501)*

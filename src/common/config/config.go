@@ -82,6 +82,8 @@ func ResolveVarDir(cfg *Config) (string, error) {
 type Config struct {
 	DefaultPort                      int
 	DefaultStreams                   int
+	DefaultWindow                    int // brfs: max in-flight chunks per stream (--window default)
+	GrpcWindowBytes                  int // fixed gRPC flow-control window in bytes; 0 = grpc-go's dynamic default
 	LogDir                           string
 	ClientHashQueryBatchSize         int
 	ConnectionTimeOutSec             int
@@ -92,6 +94,7 @@ type Config struct {
 	CatalogSyncBatchSize             int
 	CatalogSyncPollIntervalSec       int
 	CatalogSyncMaxBackoffSec         int
+	CatalogSyncDamageIntervalSec     int // catalogsync: seconds between damaged-set snapshots sent to the catalog
 	CatalogHost                      string
 	CatalogPort                      int
 	VarPath                          string
@@ -109,17 +112,42 @@ type Config struct {
 	PolicyServerPort                 int
 	PolicyFetchIntervalSec           int
 	BackupWindowGraceSec             int
+	RetentionDefaultDays             int
+	StoreCleanupIntervalSec          int
+	StoreVacuumIntervalSec           int
+	StoreGCBatchSize                 int
+	StoreCleanupDryRun               bool
+	StoreIncompleteFileDataGraceSec  int
+	StoreDeletionLogRetentionSec     int
 	MaxConcurrentBackupJobs          int
 	LogGatewayHost                   string
 	LogGatewayPort                   int
 	ClientManagerAPIHost             string
 	APIServerPort                    int
 	APIServerToken                   string
+	APIServerJobStatusPort           int
 	ClientManagerAdminAPIPort        int
 	ClientManagerAdminAPIHost        string
 	AdhocPolicyTimeoutSec            int
 	CheckinRetentionSec              int
+	APIServerHost                    string
+	RestoreCleanupIntervalSec        int
+	RestoreCleanupGracePeriodSec     int
+	RwfsRetries                      int
+	RestoreCommitFiles               int
+	RestoreCommitBytes               int64
 }
+
+// Bounds for grpc_window_bytes: HTTP/2's initial window may not go below 64KiB
+// (grpc-go ignores smaller values) and is capped well under its 2GiB limit.
+const (
+	MinGrpcWindowBytes = 64 * 1024
+	MaxGrpcWindowBytes = 1 << 30
+)
+
+// MaxRestoreCommitFiles caps restore_commit_files: every pending file holds
+// its descriptor open until the checkpoint.
+const MaxRestoreCommitFiles = 1024
 
 type contextKey string
 
@@ -147,11 +175,13 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncBatchSize:             500,
 		CatalogSyncPollIntervalSec:       5,
 		CatalogSyncMaxBackoffSec:         60,
+		CatalogSyncDamageIntervalSec:     60,
 		CatalogPort:                      15723,
 		ReconcileIntervalSec:             30,
 		IssuerPort:                       9200,
 		ClientManagerAPIPort:             9500,
 		APIServerPort:                    8090,
+		APIServerJobStatusPort:           8091,
 		OperatingCertTTLSec:              3600,
 		BootstrapCertRefreshIntervalSec:  86400,
 		BootstrapCertTTLSec:              7776000,
@@ -161,12 +191,24 @@ func ParseConfig(configPath string) (*Config, error) {
 		PolicyServerPort:                 9300,
 		PolicyFetchIntervalSec:           900,
 		BackupWindowGraceSec:             3600,
+		RetentionDefaultDays:             7,
+		StoreCleanupIntervalSec:          3600,
+		StoreVacuumIntervalSec:           86400,
+		StoreGCBatchSize:                 500,
+		StoreIncompleteFileDataGraceSec:  86400,
+		StoreDeletionLogRetentionSec:     2592000,
 		MaxConcurrentBackupJobs:          2,
 		LogGatewayPort:                   9400,
 		ClientManagerAdminAPIPort:        9501,
 		ConnectionTimeOutSec:             30,
 		AdhocPolicyTimeoutSec:            3600,
 		CheckinRetentionSec:              86400,
+		RestoreCleanupIntervalSec:        300,
+		RestoreCleanupGracePeriodSec:     900,
+		RwfsRetries:                      3,
+		RestoreCommitFiles:               64,
+		RestoreCommitBytes:               64 << 20,
+		DefaultWindow:                    16,
 	}
 	foundFields := make(map[string]bool)
 
@@ -205,6 +247,26 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.DefaultStreams = streams
 			foundFields["default_streams"] = true
+		case "default_window":
+			window, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid default_window value at line %d: %s", lineNum, value)
+			}
+			if window <= 0 {
+				return nil, fmt.Errorf("default_window must be positive at line %d: %s", lineNum, value)
+			}
+			config.DefaultWindow = window
+			foundFields["default_window"] = true
+		case "grpc_window_bytes":
+			bytes, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid grpc_window_bytes value at line %d: %s", lineNum, value)
+			}
+			if bytes != 0 && (bytes < MinGrpcWindowBytes || bytes > MaxGrpcWindowBytes) {
+				return nil, fmt.Errorf("grpc_window_bytes must be 0 or between %d and %d at line %d: %s", MinGrpcWindowBytes, MaxGrpcWindowBytes, lineNum, value)
+			}
+			config.GrpcWindowBytes = bytes
+			foundFields["grpc_window_bytes"] = true
 		case "log_dir":
 			config.LogDir = value
 			foundFields["log_dir"] = true
@@ -284,6 +346,13 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CatalogSyncMaxBackoffSec = number
 			foundFields["CatalogSyncMaxBackoffSec"] = true
+		case "CatalogSyncDamageIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CatalogSyncDamageIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.CatalogSyncDamageIntervalSec = number
+			foundFields["CatalogSyncDamageIntervalSec"] = true
 		case "issuer_host":
 			config.IssuerHost = value
 			foundFields["issuer_host"] = true
@@ -386,6 +455,13 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "api_server_token":
 			config.APIServerToken = value
 			foundFields["api_server_token"] = true
+		case "APIServerJobStatusPort":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid APIServerJobStatusPort value at line %d: %s", lineNum, value)
+			}
+			config.APIServerJobStatusPort = number
+			foundFields["APIServerJobStatusPort"] = true
 		case "PolicyFetchIntervalSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {
@@ -400,6 +476,45 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.BackupWindowGraceSec = number
 			foundFields["BackupWindowGraceSec"] = true
+		case "RetentionDefaultDays":
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 0 {
+				return nil, fmt.Errorf("invalid RetentionDefaultDays value at line %d: %s", lineNum, value)
+			}
+			config.RetentionDefaultDays = number
+			foundFields["RetentionDefaultDays"] = true
+		case "StoreCleanupIntervalSec", "StoreVacuumIntervalSec", "StoreIncompleteFileDataGraceSec", "StoreDeletionLogRetentionSec":
+			// 0 is meaningful for the two intervals (disables that loop) and
+			// harmless for the other two; only negatives are invalid.
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 0 {
+				return nil, fmt.Errorf("invalid %s value at line %d: %s", key, lineNum, value)
+			}
+			switch key {
+			case "StoreCleanupIntervalSec":
+				config.StoreCleanupIntervalSec = number
+			case "StoreVacuumIntervalSec":
+				config.StoreVacuumIntervalSec = number
+			case "StoreIncompleteFileDataGraceSec":
+				config.StoreIncompleteFileDataGraceSec = number
+			case "StoreDeletionLogRetentionSec":
+				config.StoreDeletionLogRetentionSec = number
+			}
+			foundFields[key] = true
+		case "StoreGCBatchSize":
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 1 {
+				return nil, fmt.Errorf("invalid StoreGCBatchSize value at line %d: %s", lineNum, value)
+			}
+			config.StoreGCBatchSize = number
+			foundFields["StoreGCBatchSize"] = true
+		case "StoreCleanupDryRun":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid StoreCleanupDryRun value at line %d: %s", lineNum, value)
+			}
+			config.StoreCleanupDryRun = b
+			foundFields["StoreCleanupDryRun"] = true
 		case "MaxConcurrentBackupJobs":
 			number, err := strconv.Atoi(value)
 			if err != nil {
@@ -427,6 +542,45 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CheckinRetentionSec = number
 			foundFields["CheckinRetentionSec"] = true
+		case "api_server_host":
+			config.APIServerHost = value
+			foundFields["api_server_host"] = true
+		case "RestoreCleanupIntervalSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RestoreCleanupIntervalSec value at line %d: %s", lineNum, value)
+			}
+			config.RestoreCleanupIntervalSec = number
+			foundFields["RestoreCleanupIntervalSec"] = true
+		case "RestoreCleanupGracePeriodSec":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RestoreCleanupGracePeriodSec value at line %d: %s", lineNum, value)
+			}
+			config.RestoreCleanupGracePeriodSec = number
+			foundFields["RestoreCleanupGracePeriodSec"] = true
+		case "RwfsRetries":
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RwfsRetries value at line %d: %s", lineNum, value)
+			}
+			if number <= 0 {
+				return nil, fmt.Errorf("RwfsRetries must be positive at line %d: %s", lineNum, value)
+			}
+			config.RwfsRetries = number
+			foundFields["RwfsRetries"] = true
+		case "restore_commit_files":
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 0 || number > MaxRestoreCommitFiles {
+				return nil, fmt.Errorf("invalid restore_commit_files value at line %d: %s (must be 0-%d)", lineNum, value, MaxRestoreCommitFiles)
+			}
+			config.RestoreCommitFiles = number
+		case "restore_commit_bytes":
+			number, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || number < 0 {
+				return nil, fmt.Errorf("invalid restore_commit_bytes value at line %d: %s (must be >= 0)", lineNum, value)
+			}
+			config.RestoreCommitBytes = number
 		default:
 			return nil, fmt.Errorf("unknown configuration key at line %d: %s", lineNum, key)
 		}
