@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -120,7 +119,7 @@ func TestBootstrap_InvalidTokenErrors(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestBootstrap_SetsBootstrapTierTemplateData(t *testing.T) {
+func TestBootstrap_SendsNoTemplateData(t *testing.T) {
 	root := loadFixtureCert(t, "ca.crt")
 	leaf := loadFixtureCert(t, "client.crt")
 
@@ -132,11 +131,9 @@ func TestBootstrap_SetsBootstrapTierTemplateData(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, signer.gotReq)
-	var got struct {
-		Tier string `json:"tier"`
-	}
-	require.NoError(t, json.Unmarshal(signer.gotReq.TemplateData, &got))
-	assert.Equal(t, "bootstrap", got.Tier)
+	// The CA's bootstrap template is static; sending tier/attributes would
+	// only invite a caller to rely on data the CA must not trust.
+	assert.Empty(t, signer.gotReq.TemplateData)
 }
 
 func TestBootstrap_SetsRequestedNotAfter(t *testing.T) {

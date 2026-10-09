@@ -17,7 +17,37 @@ import (
 var (
 	ErrClientExists   = errors.New("client already exists")
 	ErrClientNotFound = errors.New("client not found")
+	// ErrSANConflict is returned when a SAN alias (or a new hostname) collides
+	// with another client's hostname or SAN alias. A certificate's SANs are
+	// what peers verify when dialing, so two clients sharing a name would let
+	// one present a server certificate valid for the other.
+	ErrSANConflict = errors.New("name already in use by another client")
 )
+
+// checkNameFree returns ErrSANConflict (wrapped with the offending name and
+// owner) if any name in names is the hostname or a SAN alias of a client other
+// than self. Runs against tx so callers can make the check and the write
+// atomic.
+func checkNameFree(tx *gorm.DB, self string, names ...string) error {
+	var recs []ClientRecord
+	if err := tx.Find(&recs).Error; err != nil {
+		return err
+	}
+	for _, rec := range recs {
+		if rec.Hostname == self {
+			continue
+		}
+		owned := append([]string{rec.Hostname}, rec.SANsList()...)
+		for _, name := range names {
+			for _, o := range owned {
+				if o == name {
+					return fmt.Errorf("%w: %q belongs to %q", ErrSANConflict, name, rec.Hostname)
+				}
+			}
+		}
+	}
+	return nil
+}
 
 type Store struct {
 	db *gorm.DB
@@ -49,6 +79,9 @@ func (s *Store) AddClient(ctx context.Context, hostname string, sans []string, a
 		}
 		if count > 0 {
 			return ErrClientExists
+		}
+		if err := checkNameFree(tx, hostname, append([]string{hostname}, sans...)...); err != nil {
+			return err
 		}
 		return tx.Create(&ClientRecord{Hostname: hostname, SANs: string(sansJSON), AddedAt: addedAt}).Error
 	})
@@ -182,19 +215,28 @@ func (s *Store) UnsetKV(ctx context.Context, hostname string, kind KVKind, key s
 
 // AddSAN appends alias to hostname's SAN list if not already present -- a
 // no-op, not an error, if it's already there. Returns ErrClientNotFound if
-// hostname isn't tracked.
+// hostname isn't tracked, and ErrSANConflict if alias is another client's
+// hostname or alias.
 func (s *Store) AddSAN(ctx context.Context, hostname, alias string) error {
-	rec, err := s.GetClient(ctx, hostname)
-	if err != nil {
-		return err
-	}
-	sans := rec.SANsList()
-	for _, existing := range sans {
-		if existing == alias {
-			return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rec ClientRecord
+		if err := tx.First(&rec, "hostname = ?", hostname).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrClientNotFound
+			}
+			return err
 		}
-	}
-	return s.setSANs(ctx, hostname, append(sans, alias))
+		sans := rec.SANsList()
+		for _, existing := range sans {
+			if existing == alias {
+				return nil
+			}
+		}
+		if err := checkNameFree(tx, hostname, alias); err != nil {
+			return err
+		}
+		return setSANs(tx, hostname, append(sans, alias))
+	})
 }
 
 // RemoveSAN removes alias from hostname's SAN list if present -- a no-op,
@@ -212,15 +254,15 @@ func (s *Store) RemoveSAN(ctx context.Context, hostname, alias string) error {
 			filtered = append(filtered, existing)
 		}
 	}
-	return s.setSANs(ctx, hostname, filtered)
+	return setSANs(s.db.WithContext(ctx), hostname, filtered)
 }
 
-func (s *Store) setSANs(ctx context.Context, hostname string, sans []string) error {
+func setSANs(db *gorm.DB, hostname string, sans []string) error {
 	sansJSON, err := json.Marshal(sans)
 	if err != nil {
 		return fmt.Errorf("marshal sans: %w", err)
 	}
-	return s.db.WithContext(ctx).Model(&ClientRecord{}).Where("hostname = ?", hostname).Update("sa_ns", string(sansJSON)).Error
+	return db.Model(&ClientRecord{}).Where("hostname = ?", hostname).Update("sa_ns", string(sansJSON)).Error
 }
 
 func (s *Store) Close() error {

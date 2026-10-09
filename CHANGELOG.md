@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-09 — A token holder can no longer mint its own operating certificate
+
+A security review found that the CA template read the credential tier and the `authz-role` attribute from
+the sign request's `templateData`, which step-ca treats as caller input. Anyone who redeemed an enrollment
+token could call `/sign` directly, ask for `tier=operating` with any role and a lifetime up to 2200h, and get
+a certificate that bypassed `issuer`, so revocation never applied and `/renew` kept it alive indefinitely. The
+CA now has two provisioners: `admin@backup.internal` issues enrollment tokens and uses a static
+`bootstrap.tpl` that ignores caller data, while `operating@backup.internal` has its own password, mounted
+into `issuer` only, a 24h cap, and the attribute-embedding `operating.tpl`. `certclient bootstrap` and
+`issuer` no longer send a tier. Verified against a real step-ca: a forged request now yields a bootstrap-only
+certificate, the enrollment password cannot mint operating tokens, and over-long operating requests are
+refused. Also, `client-manager` now rejects a SAN alias (or new hostname) that collides with another
+client's hostname or alias, and the stale "nothing reads the attribute extension" claim and the
+`api-server` plain-HTTP gap are documented. This is a breaking change with no migration: re-create the CA
+(or re-run the entrypoint) and re-enroll nodes.
+
 ## 2026-10-07 — The catalog and web UI show damaged backup data
 
 Damage was flagged in the store (see the 2026-10-07 entry) but the catalog and web UI still offered a

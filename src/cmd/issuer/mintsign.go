@@ -24,10 +24,8 @@ func mintAndSign(hostname string, sans []string, attributes map[string]string, c
 	}
 
 	templateData, err := json.Marshal(struct {
-		Tier       string            `json:"tier"`
 		Attributes map[string]string `json:"attributes,omitempty"`
 	}{
-		Tier:       "operating",
 		Attributes: attributes,
 	})
 	if err != nil {

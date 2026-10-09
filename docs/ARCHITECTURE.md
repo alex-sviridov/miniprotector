@@ -93,7 +93,8 @@ A node's mTLS identity is obtained in two tiers, both via `certclient`: `bootstr
 one-time token minted by `client-manager` for `ca.crt` plus a long-lived `bootstrap.crt`/
 `bootstrap.key` pair; `operating-refresh` then uses that bootstrap credential to authenticate to
 `issuer` and obtain the short-lived `client.crt`/`client.key` that `common/mtls` actually reads for
-every other component's transport. See [client-manager](components/client-manager.md),
+every other component's transport. The CA has two provisioners so that a token holder can only ever
+obtain a bootstrap-tier certificate; only `issuer` can mint operating ones. See [client-manager](components/client-manager.md),
 [issuer](components/issuer.md), [certclient](components/certclient.md), and, for the full
 rationale behind this split and its trust-model trade-offs, [Security Model](SECURITY.md).
 

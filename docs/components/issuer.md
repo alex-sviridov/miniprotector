@@ -16,8 +16,8 @@ issuer --ca-url https://localhost:9000 --root <path> --provisioner <name> --pass
 |------|---------|-------------|
 | `--ca-url` | `https://localhost:9000` | CA URL |
 | `--root` | `deploy/control-plane/ca/data/certs/root_ca.crt` | Path to the CA's root certificate |
-| `--provisioner` | `admin@backup.internal` | Provisioner name |
-| `--password-file` | `deploy/control-plane/ca/data/secrets/password` | Path to the provisioner password file |
+| `--provisioner` | `operating@backup.internal` | Operating-tier provisioner name (a different provisioner from the one that issues enrollment tokens) |
+| `--password-file` | `deploy/control-plane/ca/data/secrets/operating_password` | Path to the operating provisioner's password file — readable by `issuer` only, never by `client-manager` |
 | `--hostname` | *(required)* | This `issuer` instance's own hostname, embedded as the CommonName/SAN of its self-minted server certificate — must match whatever `issuer_host` other nodes are configured to dial |
 | `--debug` | false | Enable debug logging |
 
@@ -76,9 +76,12 @@ a schedule, which is the client of both of these RPCs — see
 
 **Attribute extension:** `attribute` values are baked into the issued certificate as a real X.509
 extension (OID `1.3.6.1.4.1.61183.1.1`, non-critical, JSON-encoded, present only when a client
-has at least one attribute set), via a custom step-ca leaf template
-(`deploy/control-plane/ca/templates/leaf.tpl`) wired into the CA's provisioner by
-`deploy/control-plane/ca/entrypoint.sh` on first boot. See
+has at least one attribute set), via a custom step-ca template
+(`deploy/control-plane/ca/templates/operating.tpl`) wired into the CA's `operating@backup.internal`
+provisioner by `deploy/control-plane/ca/entrypoint.sh` on every boot. step-ca exposes a sign
+request's `templateData` to templates as caller-controlled input, so only `issuer` can mint tokens
+for that provisioner; the enrollment provisioner uses a separate static `bootstrap.tpl` that ignores
+caller data entirely (see [Security Model](../SECURITY.md#why-two-provisioners)). See
 [Design: Issuer Attribute Template](../superpowers/specs/2026-07-05-issuer-attribute-template-design.md)
 for why the OID is a short, arbitrarily-chosen private-use OID rather than a standards-compliant
 X.667 arc, and why nothing in this codebase yet reads or enforces the extension it embeds.

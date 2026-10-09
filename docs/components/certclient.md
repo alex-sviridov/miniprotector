@@ -33,9 +33,9 @@ certclient --debug <subcommand>
   writing `ca.crt` and `bootstrap.crt`/`bootstrap.key`. Gets the token from `--token`, then
   `MP_CERT_TOKEN`, then an interactive stdin prompt, in that order. Trust in the CA is established
   from the token's embedded root fingerprint claim (no separately-distributed root cert needed for
-  this step). The redemption's sign request carries `TemplateData {"tier": "bootstrap"}`, which the
-  CA's custom leaf template turns into a certificate with `extKeyUsage: ["clientAuth"]` only plus
-  the custom `EKUIssuerCaller` marker — see
+  this step). The redemption's sign request carries no `TemplateData`: the CA's `admin@` provisioner
+  uses a static `bootstrap.tpl` that ignores whatever the caller sends and always emits
+  `extKeyUsage: ["clientAuth"]` only plus the custom `EKUIssuerCaller` marker, with no attributes — see
   [Security Model](../SECURITY.md#the-two-tier-credential-model). The sign request now includes an
   explicit `NotAfter` derived from `BootstrapCertTTLSec`, ensuring the issued certificate gets the
   configured lifetime instead of step-ca's own 24-hour default — see

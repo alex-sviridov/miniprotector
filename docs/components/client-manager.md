@@ -45,6 +45,8 @@ network interface at all.
 
 ## Behavior
 
+- `san add` (and `add --san`) refuses an alias that is another client's hostname or alias — see
+  [Security Model](../SECURITY.md#san-alias-uniqueness).
 - `add` errors if `hostname` is already tracked (use `re-enroll` or `description|attribute|san`
   instead) and records nothing locally unless minting actually succeeded.
 - `revoke`/`unrevoke` set a flag in `client-manager`'s own database — `client-manager` itself has

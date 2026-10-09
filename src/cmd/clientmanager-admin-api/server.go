@@ -59,6 +59,9 @@ func (s *clientManagerAdminServer) AddClient(ctx context.Context, req *pb.AddCli
 	}
 
 	if err := s.store.AddClient(ctx, hostname, req.GetSans(), time.Now()); err != nil {
+		if errors.Is(err, clientmanagerstore.ErrSANConflict) {
+			return nil, status.Errorf(codes.AlreadyExists, "record client: %v", err)
+		}
 		s.logger.Error("AddClient: record failed", "hostname", hostname, "error", err)
 		return nil, status.Errorf(codes.Internal, "record client: %v", err)
 	}
@@ -164,6 +167,9 @@ func (s *clientManagerAdminServer) UpdateSANs(ctx context.Context, req *pb.Updat
 		if err := s.store.AddSAN(ctx, hostname, alias); err != nil {
 			if errors.Is(err, clientmanagerstore.ErrClientNotFound) {
 				return nil, status.Errorf(codes.NotFound, "client %s not found", hostname)
+			}
+			if errors.Is(err, clientmanagerstore.ErrSANConflict) {
+				return nil, status.Errorf(codes.AlreadyExists, "add san: %v", err)
 			}
 			s.logger.Error("UpdateSANs: add failed", "hostname", hostname, "alias", alias, "error", err)
 			return nil, status.Errorf(codes.Internal, "add san: %v", err)

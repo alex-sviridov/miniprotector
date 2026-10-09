@@ -88,6 +88,43 @@ job is authenticating the node to `issuer` when asking for a fresh operating cer
 [Issuer Protocol: why `DescribeSANs` exists](protocols/issuer.md#why-describesans-exists) for the
 exact-match validation constraint that makes this call necessary rather than optional.
 
+## Why two provisioners
+
+step-ca hands a sign request's `templateData` to the certificate template as `.Insecure.User` — the
+name is literal: it is whatever the caller sent. A single provisioner whose template read the
+credential tier and attributes from it would let anyone who redeems an enrollment token call `/sign`
+directly, claim `tier=operating` and any `authz-role`, and pick their own lifetime up to the
+provisioner's maximum. That certificate would bypass `issuer` (and so revocation), and `/renew` would
+extend it forever.
+
+So the CA runs two JWK provisioners, with different keys and different passwords:
+
+| | `admin@backup.internal` | `operating@backup.internal` |
+|---|---|---|
+| Token minted by | `client-manager` (enrollment) | `issuer` only |
+| Password file | `secrets/password` | `secrets/operating_password`, mounted into `issuer` only |
+| Template | `bootstrap.tpl` — static; ignores `templateData` | `operating.tpl` — embeds the attributes `issuer` supplies |
+| Resulting certificate | clientAuth + `EKUIssuerCaller`, no attributes | serverAuth + clientAuth, attributes extension |
+| Max duration | 2200h (`BootstrapCertTTLSec`) | 24h |
+
+`client-manager` can therefore mint enrollment tokens but cannot mint a token the operating
+provisioner accepts. `cmd/issuer/templates_test.go` renders both templates with forged
+`templateData` and asserts the bootstrap one still yields a bootstrap-tier certificate.
+
+## SAN alias uniqueness
+
+Peers verify a server by the SANs in its certificate, so a SAN alias equal to another client's
+hostname or alias would let the aliased node present a server certificate valid for that other name.
+`client-manager` therefore rejects any `san add` / `add --san` whose name is already some other
+client's hostname or alias (`ErrSANConflict`, gRPC `AlreadyExists` on the admin API).
+
+## api-server transport (known gap)
+
+`api-server` serves its REST API over plain HTTP, authenticated by one shared static bearer token
+(no expiry, no rotation, no per-user identity), and acts with its own mesh credential on the caller's
+behalf. It is meant to sit behind a TLS-terminating proxy on a trusted network; do not expose it
+directly. Native TLS and per-user authentication are tracked in `backlog.md`.
+
 ## Role-based RPC authorization
 
 The two-tier credential model above governs *which stage* of a node's lifecycle a certificate is
@@ -129,9 +166,9 @@ every operating-refresh is a fresh `Sign` with a fresh CSR.
 
 `attribute` values land in the certificate itself as a real, non-critical X.509 extension (OID
 `1.3.6.1.4.1.61183.1.1`, JSON-encoded), not just in the `Sign` request sent to the CA — see
-[issuer](components/issuer.md#behavior). Nothing in this codebase yet reads or enforces that
-extension; it exists so a future authorization check can, without another round of
-certificate-issuance changes.
+[issuer](components/issuer.md#behavior). The role-based authorization
+described above reads the `authz-role` entry of this extension from the verified peer
+certificate.
 
 The same mechanism now also gates log shipping: `agent`'s supervised Vector process authenticates
 to `log-gateway` with the node's operating credential, restarted immediately after every successful

@@ -50,7 +50,7 @@ FROM smallstep/step-ca AS ca-demo
 USER root
 COPY --chmod=0755 --from=builder /build/bin/clientmanager /usr/local/bin/clientmanager
 RUN mkdir -p /home/step/templates /data/client-manager && chown step:step /data/client-manager
-COPY --chmod=0644 deploy/control-plane/ca/templates/leaf.tpl /home/step/templates/leaf.tpl
+COPY --chmod=0644 deploy/control-plane/ca/templates/bootstrap.tpl deploy/control-plane/ca/templates/operating.tpl /home/step/templates/
 COPY --chmod=0755 demo/ca/entrypoint.sh /home/step/entrypoint.sh
 USER step
 
@@ -74,8 +74,8 @@ USER issuer
 ENTRYPOINT ["./issuer", "serve", "--hostname", "issuer", \
             "--ca-url", "https://ca:9000", \
             "--root", "/ca-data/certs/root_ca.crt", \
-            "--provisioner", "admin@backup.internal", \
-            "--password-file", "/ca-data/secrets/password"]
+            "--provisioner", "operating@backup.internal", \
+            "--password-file", "/ca-data/secrets/operating_password"]
 
 FROM debian:bookworm-slim AS issuer-controlplane
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -87,8 +87,8 @@ COPY --from=builder /build/bin/issuer ./
 ENTRYPOINT ["./issuer", "serve", "--hostname", "issuer", \
             "--ca-url", "https://step-ca:9000", \
             "--root", "/data/root_ca.crt", \
-            "--provisioner", "admin@backup.internal", \
-            "--password-file", "/data/secrets/password"]
+            "--provisioner", "operating@backup.internal", \
+            "--password-file", "/data/secrets/operating_password"]
 
 FROM debian:bookworm-slim AS api-server
 RUN apt-get update && apt-get install -y --no-install-recommends \

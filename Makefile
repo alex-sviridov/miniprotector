@@ -193,6 +193,11 @@ control-plane-up: ## Initialize (if needed) and start the control-plane stack (c
 		mkdir -p $(CONTROL_PLANE_DIR)/ca/data/secrets; \
 		openssl rand -base64 32 > $(CONTROL_PLANE_DIR)/ca/data/secrets/password; \
 	fi
+	@if [ ! -f $(CONTROL_PLANE_DIR)/ca/data/secrets/operating_password ]; then \
+		echo -e "$(BLUE)Generating operating provisioner password (issuer only)...$(NC)"; \
+		mkdir -p $(CONTROL_PLANE_DIR)/ca/data/secrets; \
+		openssl rand -base64 32 > $(CONTROL_PLANE_DIR)/ca/data/secrets/operating_password; \
+	fi
 	@cd $(CONTROL_PLANE_DIR) && COMPOSE_BAKE=true docker compose up -d
 	@echo -e "$(GREEN)Control plane up.$(NC) ca: https://localhost:9000  catalog: localhost:15723"
 

@@ -48,3 +48,11 @@ surviving links alive (they are shared with any re-upload), and if a re-upload u
 CRC32 catches the mixed result on restore, so it is not silent, but the version cannot be restored.
 Consider keying links by `FileData` uuid so each content has its own link set; needs a schema change and
 a migration of existing links.
+
+## api-server: native TLS and per-user authentication
+
+`api-server` serves plain HTTP behind one shared static bearer token (see `docs/SECURITY.md`,
+"api-server transport"). Add optional TLS on its listener and replace the shared token with per-user
+credentials that can expire and be revoked. Also `log-gateway`'s `query_range`/`tail` routes are open
+to every operating-tier certificate, so any enrolled node can read the whole fleet's logs; gate them
+by role together with this.

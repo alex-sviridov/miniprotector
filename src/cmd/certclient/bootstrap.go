@@ -6,7 +6,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -32,14 +31,9 @@ func bootstrap(token string, client signer, certsDir string, ttlSec int) error {
 	}
 	req.NotAfter = api.NewTimeDuration(time.Now().Add(time.Duration(ttlSec) * time.Second))
 
-	templateData, err := json.Marshal(struct {
-		Tier string `json:"tier"`
-	}{Tier: "bootstrap"})
-	if err != nil {
-		return fmt.Errorf("marshal template data: %w", err)
-	}
-	req.TemplateData = templateData
-
+	// No TemplateData: the CA's bootstrap provisioner template is static and
+	// ignores caller-supplied data (a caller could otherwise pick its own
+	// tier and attributes -- see docs/SECURITY.md).
 	sign, err := client.Sign(req)
 	if err != nil {
 		return fmt.Errorf("sign request: %w", err)
