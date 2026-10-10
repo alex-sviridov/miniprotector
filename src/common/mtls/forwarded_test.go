@@ -132,3 +132,33 @@ func TestWithForwardedChain_ReplacesClientSuppliedValuesAndKeepsOthers(t *testin
 	assert.Equal(t, []string{"keep"}, out.Get("other"))
 	assert.Equal(t, []string{"forged"}, md.Get(ForwardedCertHeader), "input must not be mutated")
 }
+
+func TestForwardedIdentity_CachesSuccessfulVerificationOnly(t *testing.T) {
+	ca := mtlstest.NewCA(t)
+	dir := ca.CertsDir(t, ca.Issue(t, "listener"))
+	good := ca.Issue(t, "node-a").Certificate
+	bad := mtlstest.NewCA(t).Issue(t, "evil").Certificate
+
+	v, err := newForwardedVerifier(dir)
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		_, err := v.verify(forwardedValues(good))
+		require.NoError(t, err)
+	}
+	assert.EqualValues(t, 1, v.verifications.Load(), "same chain must be verified once")
+
+	for i := 0; i < 2; i++ {
+		_, err := v.verify(forwardedValues(bad))
+		require.Error(t, err)
+	}
+	assert.EqualValues(t, 3, v.verifications.Load(), "a rejected chain is re-verified every time, never cached")
+}
+
+func forwardedValues(chain [][]byte) []string {
+	out := make([]string, len(chain))
+	for i, der := range chain {
+		out[i] = string(der)
+	}
+	return out
+}

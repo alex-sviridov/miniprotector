@@ -21,6 +21,7 @@ RWFS_CMD := cmd/rwfs
 CERTCLIENT_CMD := cmd/certclient
 CATALOGSYNC_CMD := cmd/catalogsync
 CATALOG_CMD := cmd/catalog
+LISTENER_CMD := cmd/listener
 AGENT_CMD := cmd/agent
 CLIENTMANAGER_CMD := cmd/clientmanager
 ISSUER_CMD := cmd/issuer
@@ -42,7 +43,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog agent clientmanager issuer policy-server policyclient log-gateway clientmanager-api clientmanager-admin-api api-server mpbench test test-e2e lint control-plane-up demo-up demo-down
+.PHONY: all build clean proto check-deps help brfs bwfs rwfs certclient catalogsync catalog listener agent clientmanager issuer policy-server policyclient log-gateway clientmanager-api clientmanager-admin-api api-server mpbench test test-e2e lint control-plane-up demo-up demo-down
 
 # Default target
 all: check-deps proto build
@@ -117,6 +118,12 @@ catalog: $(BINARY_DIR) ## Build catalog binary
 	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/catalog ./$(CATALOG_CMD)
 	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/catalog"
+
+listener: $(BINARY_DIR) ## Build listener binary
+	@printf "$(BLUE)Building listener...$(NC) "
+	@cd src && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build $(BUILDFLAGS) $(LDFLAGS) -o ../$(BINARY_DIR)/listener ./$(LISTENER_CMD)
+	@echo -e "$(GREEN)Built successfully:$(NC)$(BINARY_DIR)/listener"
 
 agent: $(BINARY_DIR) ## Build agent binary
 	@printf "$(BLUE)Building agent...$(NC) "

@@ -51,7 +51,7 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
    own sockets on shutdown, installs the forwarded-identity interceptor, and uses no TLS credentials.
    The six fronted backends switch to it; `bwfs` and `issuer` keep `StartServer`.
 2. `common/mtls/peer.go`: `peerCert(ctx)` falls back to `x-mp-peer-cert-bin` when the connection has
-   no TLS peer, parses the DER, and re-verifies the chain against `ca.crt` (operating tier) as defence
+   no TLS peer, parses the DER, and re-verifies the chain against `ca.crt` (operating tier; successful verifications are cached per chain until its earliest `NotAfter`, since the ECDSA checks were a third of a small call's CPU) as defence
    in depth against a forged header from a local process. All identity reads (`PeerHostname`,
    `PeerAttributes`, `PeerNotAfter`, `RequireRoles`) go through `peerCert`, so none else changes.
 3. Config (hard cutover, no dual-listen): add `listener_port` (default 9300) and `run_dir`; remove
