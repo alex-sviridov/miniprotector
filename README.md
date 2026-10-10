@@ -110,6 +110,8 @@ make lint
 
 # Run e2e tests against the running demo lab (run `make demo-up` first) -- takes ~3-5 minutes and
 # mutates the demo lab (revokes/reissues a client cert, creates and deletes a policy, creates an
-# ad-hoc backup policy and runs it, and drives the web UI through the resulting catalog data)
+# ad-hoc backup policy and runs it, and drives the web UI through the resulting catalog data). It also
+# checks the control-plane containers: agent is PID 1, only the expected ports listen, a service the
+# listener doesn't host answers UNIMPLEMENTED, and killing the listener or a service is healed by agent
 make test-e2e
 ```
