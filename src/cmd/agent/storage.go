@@ -147,7 +147,8 @@ func newStorageManager(logger *slog.Logger) *storageManager {
 // loop already uses -- recordOutcome is mutex-guarded internally, so this
 // is safe to call from a processSupervisor's own background goroutines
 // concurrently with run()'s main loop, exactly like backup-task goroutines
-// already do.
+// already do. rs may be nil (static running_service tasks are not recorded
+// in agent-state.json).
 func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, tasks []storageTask) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -177,7 +178,11 @@ func (m *storageManager) reconcile(ctx context.Context, rs *reconcileState, task
 			Logger:          m.logger,
 			Backoff:         m.backoff,
 			StabilityWindow: m.stabilityWindow,
-			OnOutcome:       func(err error) { rs.recordOutcome(id, err, time.Now()) },
+			OnOutcome: func(err error) {
+				if rs != nil {
+					rs.recordOutcome(id, err, time.Now())
+				}
+			},
 		})
 		sup.Start(ctx)
 		m.supervisors[t.ID] = sup
