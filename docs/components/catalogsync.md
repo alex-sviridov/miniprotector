@@ -127,7 +127,7 @@ once per `CatalogSyncMaxBackoffSec`; it never affects version or deletion replic
   loop pass. Like the other `CatalogSync*` keys, no further range check is applied
 - `catalog_host` — hostname of the `catalog` service to send batches to; unset means `catalogsync`
   falls back to `LoggingSender`
-- `catalog_port` — port to dial on `catalog_host` *(default: 15723)*
+- `listener_port` — port to dial on `catalog_host`, where that host's [listener](./listener.md) serves `catalog` *(default: 9300)*
 
 ## Building
 

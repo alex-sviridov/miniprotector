@@ -105,7 +105,7 @@ func startStatusReporter(ctx context.Context, logger *slog.Logger, conf *config.
 		logger.Info("status reporting disabled", "policy_id_set", src.policyID != "", "api_server_host_set", conf.APIServerHost != "")
 		return
 	}
-	conn, err := connection.DialNonBlocking(conf.APIServerHost, conf.APIServerJobStatusPort, certsDir)
+	conn, err := connection.DialNonBlocking(conf.APIServerHost, conf.ListenerPort, certsDir)
 	if err != nil {
 		logger.Warn("status reporting disabled: dial api-server failed", "error", err)
 		return

@@ -19,13 +19,12 @@ for the full reasoning, including what packaging both services in one container 
 ## Usage
 
 ```bash
-clientmanager-admin-api --port 9501 --ca-url https://step-ca:9000 --root /data/root_ca.crt \
+clientmanager-admin-api --ca-url https://step-ca:9000 --root /data/root_ca.crt \
     --provisioner admin@backup.internal --password-file /data/secrets/password
 ```
 
 | Flag | Default | Description |
 |------|---------|--------------|
-| `--port` | `clientmanager_admin_api_port` config value (default: 9501) | Port to listen on |
 | `--ca-url` | `https://localhost:9000` | CA URL |
 | `--root` | `deploy/control-plane/ca/data/certs/root_ca.crt` | Path to the CA's root certificate |
 | `--provisioner` | `admin@backup.internal` | Provisioner name |
@@ -46,9 +45,16 @@ enrolled with `authz-role=control-plane`; an ordinary fleet node's operating cer
 or `store` role) is rejected with `codes.PermissionDenied` before any handler runs. See
 [Security Model](../SECURITY.md#role-based-rpc-authorization).
 
+## Listening
+
+`clientmanager-admin-api` opens no TCP port. It listens on a Unix socket under `<run_dir>/services/` (one per gRPC
+service it serves, named after the service) and receives only calls that the host's
+[listener](./listener.md) has already authenticated and forwarded. Callers dial the host's
+`listener_port` (default 9300), not a per-service port.
+
 ## Configuration Keys
 
-- `clientmanager_admin_api_port` — port to listen on *(default: 9501)*
+- `run_dir` — where the service socket is created *(default: `<var_path>/run`)*; must match the host's `listener`
 - `var_path` — must point at the same directory `client-manager`'s SQLite database lives in (shared
   volume with `client-manager`/`issuer`/`clientmanager-api`)
 

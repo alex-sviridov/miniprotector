@@ -78,6 +78,21 @@ func ResolveVarDir(cfg *Config) (string, error) {
 	return filepath.Dir(exePath), nil
 }
 
+// ResolveRunDir determines the directory under which fronted services create
+// their Unix sockets (<run dir>/services): cfg.RunDir if set, otherwise
+// <var dir>/run. The listener and every service it fronts on one host must
+// resolve to the same directory.
+func ResolveRunDir(cfg *Config) (string, error) {
+	if cfg.RunDir != "" {
+		return cfg.RunDir, nil
+	}
+	varDir, err := ResolveVarDir(cfg)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(varDir, "run"), nil
+}
+
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {
 	DefaultPort                      int
@@ -96,12 +111,12 @@ type Config struct {
 	CatalogSyncMaxBackoffSec         int
 	CatalogSyncDamageIntervalSec     int // catalogsync: seconds between damaged-set snapshots sent to the catalog
 	CatalogHost                      string
-	CatalogPort                      int
 	VarPath                          string
+	ListenerPort                     int
+	RunDir                           string
 	ReconcileIntervalSec             int
 	IssuerHost                       string
 	IssuerPort                       int
-	ClientManagerAPIPort             int
 	OperatingCertTTLSec              int
 	BootstrapCertRefreshIntervalSec  int
 	BootstrapCertTTLSec              int
@@ -109,7 +124,6 @@ type Config struct {
 	IssuerSelfCertTTLSec             int
 	IssuerSelfCertRefreshIntervalSec int
 	PolicyServerHost                 string
-	PolicyServerPort                 int
 	PolicyFetchIntervalSec           int
 	BackupWindowGraceSec             int
 	RetentionDefaultDays             int
@@ -125,8 +139,6 @@ type Config struct {
 	ClientManagerAPIHost             string
 	APIServerPort                    int
 	APIServerToken                   string
-	APIServerJobStatusPort           int
-	ClientManagerAdminAPIPort        int
 	ClientManagerAdminAPIHost        string
 	AdhocPolicyTimeoutSec            int
 	CheckinRetentionSec              int
@@ -176,19 +188,16 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncPollIntervalSec:       5,
 		CatalogSyncMaxBackoffSec:         60,
 		CatalogSyncDamageIntervalSec:     60,
-		CatalogPort:                      15723,
+		ListenerPort:                     9300,
 		ReconcileIntervalSec:             30,
 		IssuerPort:                       9200,
-		ClientManagerAPIPort:             9500,
 		APIServerPort:                    8090,
-		APIServerJobStatusPort:           8091,
 		OperatingCertTTLSec:              3600,
 		BootstrapCertRefreshIntervalSec:  86400,
 		BootstrapCertTTLSec:              7776000,
 		OperatingCertFetchIntervalSec:    900,
 		IssuerSelfCertTTLSec:             7776000,
 		IssuerSelfCertRefreshIntervalSec: 86400,
-		PolicyServerPort:                 9300,
 		PolicyFetchIntervalSec:           900,
 		BackupWindowGraceSec:             3600,
 		RetentionDefaultDays:             7,
@@ -199,7 +208,6 @@ func ParseConfig(configPath string) (*Config, error) {
 		StoreDeletionLogRetentionSec:     2592000,
 		MaxConcurrentBackupJobs:          2,
 		LogGatewayPort:                   9400,
-		ClientManagerAdminAPIPort:        9501,
 		ConnectionTimeOutSec:             30,
 		AdhocPolicyTimeoutSec:            3600,
 		CheckinRetentionSec:              86400,
@@ -276,13 +284,16 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "catalog_host":
 			config.CatalogHost = value
 			foundFields["catalog_host"] = true
-		case "catalog_port":
+		case "listener_port":
 			port, err := strconv.Atoi(value)
 			if err != nil {
-				return nil, fmt.Errorf("invalid catalog_port value at line %d: %s", lineNum, value)
+				return nil, fmt.Errorf("invalid listener_port value at line %d: %s", lineNum, value)
 			}
-			config.CatalogPort = port
-			foundFields["catalog_port"] = true
+			config.ListenerPort = port
+			foundFields["listener_port"] = true
+		case "run_dir":
+			config.RunDir = value
+			foundFields["run_dir"] = true
 		case "var_path":
 			config.VarPath = value
 			foundFields["var_path"] = true
@@ -363,13 +374,6 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.IssuerPort = port
 			foundFields["issuer_port"] = true
-		case "clientmanager_api_port":
-			port, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid clientmanager_api_port value at line %d: %s", lineNum, value)
-			}
-			config.ClientManagerAPIPort = port
-			foundFields["clientmanager_api_port"] = true
 		case "OperatingCertTTLSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {
@@ -415,13 +419,6 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "policy_server_host":
 			config.PolicyServerHost = value
 			foundFields["policy_server_host"] = true
-		case "policy_server_port":
-			port, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid policy_server_port value at line %d: %s", lineNum, value)
-			}
-			config.PolicyServerPort = port
-			foundFields["policy_server_port"] = true
 		case "log_gateway_host":
 			config.LogGatewayHost = value
 			foundFields["log_gateway_host"] = true
@@ -438,13 +435,6 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "clientmanager_admin_api_host":
 			config.ClientManagerAdminAPIHost = value
 			foundFields["clientmanager_admin_api_host"] = true
-		case "clientmanager_admin_api_port":
-			port, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid clientmanager_admin_api_port value at line %d: %s", lineNum, value)
-			}
-			config.ClientManagerAdminAPIPort = port
-			foundFields["clientmanager_admin_api_port"] = true
 		case "api_server_port":
 			port, err := strconv.Atoi(value)
 			if err != nil {
@@ -455,13 +445,6 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "api_server_token":
 			config.APIServerToken = value
 			foundFields["api_server_token"] = true
-		case "APIServerJobStatusPort":
-			number, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid APIServerJobStatusPort value at line %d: %s", lineNum, value)
-			}
-			config.APIServerJobStatusPort = number
-			foundFields["APIServerJobStatusPort"] = true
 		case "PolicyFetchIntervalSec":
 			number, err := strconv.Atoi(value)
 			if err != nil {

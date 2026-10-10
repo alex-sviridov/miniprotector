@@ -48,8 +48,7 @@ services:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
     ports:
-      - "9500:9500"
-      - "9501:9501"
+      - "${CLIENTMANAGER_API_BIND:-127.0.0.4}:9300:9300"
     restart: unless-stopped
 
   catalog:
@@ -68,7 +67,7 @@ services:
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
       - STORAGE_PATH=/data/storage
     ports:
-      - "15723:15723"
+      - "${CATALOG_BIND:-127.0.0.2}:9300:9300"
     restart: unless-stopped
 
   api-server:
@@ -107,7 +106,7 @@ services:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
     ports:
-      - "9300:9300"
+      - "${POLICY_SERVER_BIND:-127.0.0.3}:9300:9300"
     restart: unless-stopped
 
   loki:

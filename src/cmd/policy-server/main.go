@@ -87,7 +87,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	jobStatusConn, err := connection.DialNonBlocking(conf.APIServerHost, conf.APIServerJobStatusPort, certsDir)
+	runDir, err := config.ResolveRunDir(conf)
+	if err != nil {
+		logger.Error("run directory resolution failed", "error", err)
+		os.Exit(1)
+	}
+
+	jobStatusConn, err := connection.DialNonBlocking(conf.APIServerHost, conf.ListenerPort, certsDir)
 	if err != nil {
 		logger.Error("connect to api-server job-status service failed", "error", err)
 		os.Exit(1)
@@ -113,9 +119,9 @@ func main() {
 		time.Duration(conf.RestoreCleanupGracePeriodSec)*time.Second,
 		logger)
 
-	logger.Info("policy-server started", "port", arguments.Port, "policies_dir", policiesDir)
+	logger.Info("policy-server started", "run_dir", runDir, "policies_dir", policiesDir)
 
-	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
+	if err := connection.StartServiceServer(signalCtx, logger, certsDir, runDir, roleRequirements(), func(s *grpc.Server) {
 		pb.RegisterPolicyServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("Server failed", "error", err)

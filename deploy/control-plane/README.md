@@ -145,10 +145,13 @@ Then, on the agent node, set in `local.conf`:
 
 ```
 ca_host=<this-host>:9000
-catalog_host=<this-host>:15723
+catalog_host=<this-host>
 ```
 
-(`catalog_host` only matters for nodes running `catalogsync`.)
+(`catalog_host` only matters for nodes running `catalogsync`; it is dialed on `listener_port`, default 9300 — see
+[listener](../../docs/components/listener.md). When several control-plane services share one Docker host, each is
+published on its own bind address via `CATALOG_BIND`, `POLICY_SERVER_BIND` and `CLIENTMANAGER_API_BIND`
+(defaults 127.0.0.2, 127.0.0.3, 127.0.0.4), because every client dials port 9300.)
 
 **Important:** a `catalogsync` process on this same host can simply use `catalog_host=localhost`
 — hostname/SAN verification is skipped for loopback connections regardless of what SAN `catalog`
