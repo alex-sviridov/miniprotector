@@ -27,7 +27,7 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
                    1. handshake, verify client cert (operating tier)
                    2. service name from the gRPC method path
                    3. no socket  → UNIMPLEMENTED; socket refuses → UNAVAILABLE
-                   4. proxy raw frames; set x-mp-peer-cert-bin = verified leaf cert (DER)
+                   4. proxy raw frames; set x-mp-peer-cert-bin = verified cert chain (DER, leaf first)
 ```
 
 - **Transparent proxy.** `grpc.UnknownServiceHandler` plus a passthrough codec. The listener imports
@@ -38,14 +38,17 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
 - **Identity.** The listener always overwrites `x-mp-peer-cert-bin` (client-supplied copies are
   dropped). Backends read the identity from it only on their Unix-socket server, which has no TCP
   listener.
-- **Supervision.** `listener` is a separate binary supervised by `agent` (like `bwfs`), using the same
-  hot-reloaded operating-tier certificate as every other node.
+- **Supervision.** `listener` is a separate binary. In the control-plane containers it is started by the
+  container's `entrypoint.sh` in a restart loop, alongside the service (services there are started by the
+  entrypoint, not by `agent`); `agent` does not supervise it. It uses the same hot-reloaded operating-tier
+  certificate as every other node.
 
 ## Backend-side changes
 
-1. `common/connection`: add `StartServiceServer(ctx, logger, serviceName, runDir, roleRequirements,
-   register)`. It listens on the service's socket (mode 0600), removes a stale socket on start and its
-   own socket on shutdown, installs the forwarded-identity interceptor, and uses no TLS credentials.
+1. `common/connection`: add `StartServiceServer(ctx, logger, certsDir, runDir, roleRequirements,
+   register, opts...)`. It creates one socket (mode 0600) per service the `register` callback registered
+   (read from `GetServiceInfo()`), removes a stale socket on start (refusing if the service is live) and its
+   own sockets on shutdown, installs the forwarded-identity interceptor, and uses no TLS credentials.
    The six fronted backends switch to it; `bwfs` and `issuer` keep `StartServer`.
 2. `common/mtls/peer.go`: `peerCert(ctx)` falls back to `x-mp-peer-cert-bin` when the connection has
    no TLS peer, parses the DER, and re-verifies the chain against `ca.crt` (operating tier) as defence
@@ -55,8 +58,10 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
    `catalog_port`, `policy_server_port`, `clientmanager_api_port`, `clientmanager_admin_api_port`,
    `api_server_job_status_port`. Clients dial `<service>_host:<listener_port>`; the `*_host` keys stay.
    `policy-server` leaves 9300 and creates a socket instead.
-4. Deployment: `agent` supervises `listener` on every host running a fronted service and treats it as a
-   hard prerequisite. Compose files and the demo publish only 9300.
+4. Deployment: the entrypoint of every container running a fronted service starts `listener` in a restart
+   loop. Compose files and the demo publish only 9300; on a single Docker host each fronted container's 9300
+   is published on its own bind address (`<SERVICE>_BIND` env, defaults 127.0.0.2-127.0.0.5), because clients
+   all dial `<host>:9300`.
 
 ## Errors
 
@@ -68,9 +73,10 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
 | Backend status/trailers | Passed through unchanged (role denials stay `PERMISSION_DENIED` from the backend) |
 | Client sends its own `x-mp-peer-cert-bin` | Dropped and overwritten |
 | Local process forges the header on a backend socket | Chain re-verification rejects it; socket mode 0600 is the first defence |
-| Listener shutdown | Graceful stop; in-flight streams get a bounded drain, then are cancelled |
+| Listener shutdown | Graceful stop, as every other server in `common/connection` (no separate drain bound) |
 
-The listener logs one structured line per call (peer hostname, service, method, outcome), never payloads.
+The listener logs one structured line per call (peer hostname, service, method, outcome), never payloads:
+debug level on success, warn on failure.
 
 ## Testing
 
@@ -79,13 +85,13 @@ The listener logs one structured line per call (peer hostname, service, method, 
 - `common/connection`: stale-socket cleanup and socket permissions.
 - `cmd/listener`: routing by method path, both error codes, header overwrite, unary and
   client/server/bidi streaming passthrough.
-- Integration: listener + real `catalog` on a temp run dir; `catalogsync` end to end through it;
-  role-denial cases through the proxy.
+- Integration: listener + the real `catalog` server on a temp run dir; `SyncFileVersions` through the
+  proxy (store role passes, client role is refused by catalog's own authz).
 - e2e/demo: compose files publish only 9300; every fronted service reachable; start order and the
   listener-prerequisite handling work.
 - Regression guard: no fronted backend opens a TCP port.
-- Benchmark: `catalogsync` throughput/latency through the listener vs a direct baseline; `mpbench`
-  (expected unchanged — `bwfs` untouched), reported against baseline.
+- Benchmark: a unary call via the listener vs a direct mTLS server (`common/svcproxy` `BenchmarkUnary`);
+  `mpbench` (expected unchanged — `bwfs` untouched), reported against baseline.
 
 ## Documentation obligations
 

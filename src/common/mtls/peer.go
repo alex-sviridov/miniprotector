@@ -53,8 +53,12 @@ func PeerNotAfter(ctx context.Context) (time.Time, error) {
 }
 
 // peerCert returns the leaf of the verified client certificate on ctx's gRPC
-// peer connection.
+// peer connection. A certificate placed by ForwardedIdentity (listener-fronted
+// backends) takes precedence over the TLS peer.
 func peerCert(ctx context.Context) (*x509.Certificate, error) {
+	if cert, ok := ctx.Value(forwardedPeerKey{}).(*x509.Certificate); ok {
+		return cert, nil
+	}
 	p, ok := peer.FromContext(ctx)
 	if !ok {
 		return nil, fmt.Errorf("no peer information in context")
