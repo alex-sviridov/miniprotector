@@ -2,9 +2,13 @@ package connection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"sort"
+	"time"
 
 	"github.com/alex-sviridov/miniprotector/common/mtls"
 	"google.golang.org/grpc"
@@ -58,4 +62,98 @@ func StartServerWithCredentials(ctx context.Context, logger *slog.Logger, port i
 	}()
 
 	return grpcServer.Serve(listener)
+}
+
+// StartServiceServer serves a backend that sits behind the listener: instead of
+// a TCP port it listens on one Unix socket per gRPC service register adds
+// (<runDir>/services/<ServiceName>.sock, mode 0600). There is no TLS here --
+// the listener has already verified the client -- so every call must carry the
+// certificate chain it forwards (mtls.ForwardedCertHeader); mtls.ForwardedIdentity
+// re-verifies that chain against certsDir/ca.crt before roleRequirements are
+// checked. It blocks until ctx is cancelled (returning nil) or serving fails.
+func StartServiceServer(ctx context.Context, logger *slog.Logger, certsDir, runDir string, roleRequirements map[string][]string, register func(*grpc.Server), opts ...grpc.ServerOption) error {
+	idUnary, idStream, err := mtls.ForwardedIdentity(certsDir)
+	if err != nil {
+		return fmt.Errorf("failed to build forwarded-identity check: %w", err)
+	}
+	roleUnary, roleStream := mtls.RequireRoles(roleRequirements)
+	grpcServer := grpc.NewServer(append([]grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(idUnary, roleUnary),
+		grpc.ChainStreamInterceptor(idStream, roleStream),
+	}, append(windowServerOptions(), opts...)...)...)
+	register(grpcServer)
+
+	names := make([]string, 0)
+	for name := range grpcServer.GetServiceInfo() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return fmt.Errorf("no gRPC services registered")
+	}
+
+	if err := os.MkdirAll(ServicesDir(runDir), 0o700); err != nil {
+		return fmt.Errorf("create services dir: %w", err)
+	}
+	var listeners []net.Listener
+	closeAll := func() {
+		for _, l := range listeners {
+			l.Close() // UnixListener unlinks its socket on Close
+		}
+	}
+	for _, name := range names {
+		path, err := ServiceSocketPath(runDir, name)
+		if err != nil {
+			closeAll()
+			return err
+		}
+		if err := removeStaleSocket(path); err != nil {
+			closeAll()
+			return fmt.Errorf("service %s: %w", name, err)
+		}
+		l, err := net.Listen("unix", path)
+		if err != nil {
+			closeAll()
+			return fmt.Errorf("listen on %s: %w", path, err)
+		}
+		listeners = append(listeners, l)
+		if err := os.Chmod(path, 0o600); err != nil {
+			closeAll()
+			return fmt.Errorf("chmod %s: %w", path, err)
+		}
+		logger.Info("Service socket ready", "service", name, "socket", path)
+	}
+
+	go func() {
+		<-ctx.Done()
+		logger.Info("Shutting down server...")
+		grpcServer.GracefulStop()
+	}()
+
+	errCh := make(chan error, len(listeners))
+	for _, l := range listeners {
+		go func() { errCh <- grpcServer.Serve(l) }()
+	}
+	var first error
+	for range listeners {
+		if err := <-errCh; err != nil && first == nil {
+			first = err
+		}
+	}
+	closeAll()
+	return first
+}
+
+// removeStaleSocket deletes a socket file left behind by a crashed process,
+// but refuses if something is still accepting on it -- a second instance of
+// the same service must not steal the first one's socket.
+func removeStaleSocket(path string) error {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if c, err := net.DialTimeout("unix", path, 200*time.Millisecond); err == nil {
+		c.Close()
+		return fmt.Errorf("already running (socket %s is live)", path)
+	}
+	return os.Remove(path)
 }
