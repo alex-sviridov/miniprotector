@@ -78,6 +78,21 @@ func ResolveVarDir(cfg *Config) (string, error) {
 	return filepath.Dir(exePath), nil
 }
 
+// ResolveRunDir determines the directory under which fronted services create
+// their Unix sockets (<run dir>/services): cfg.RunDir if set, otherwise
+// <var dir>/run. The listener and every service it fronts on one host must
+// resolve to the same directory.
+func ResolveRunDir(cfg *Config) (string, error) {
+	if cfg.RunDir != "" {
+		return cfg.RunDir, nil
+	}
+	varDir, err := ResolveVarDir(cfg)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(varDir, "run"), nil
+}
+
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {
 	DefaultPort                      int
@@ -98,6 +113,8 @@ type Config struct {
 	CatalogHost                      string
 	CatalogPort                      int
 	VarPath                          string
+	ListenerPort                     int
+	RunDir                           string
 	ReconcileIntervalSec             int
 	IssuerHost                       string
 	IssuerPort                       int
@@ -177,6 +194,7 @@ func ParseConfig(configPath string) (*Config, error) {
 		CatalogSyncMaxBackoffSec:         60,
 		CatalogSyncDamageIntervalSec:     60,
 		CatalogPort:                      15723,
+		ListenerPort:                     9300,
 		ReconcileIntervalSec:             30,
 		IssuerPort:                       9200,
 		ClientManagerAPIPort:             9500,
@@ -283,6 +301,16 @@ func ParseConfig(configPath string) (*Config, error) {
 			}
 			config.CatalogPort = port
 			foundFields["catalog_port"] = true
+		case "listener_port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid listener_port value at line %d: %s", lineNum, value)
+			}
+			config.ListenerPort = port
+			foundFields["listener_port"] = true
+		case "run_dir":
+			config.RunDir = value
+			foundFields["run_dir"] = true
 		case "var_path":
 			config.VarPath = value
 			foundFields["var_path"] = true

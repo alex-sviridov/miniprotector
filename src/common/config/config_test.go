@@ -893,3 +893,46 @@ func TestParseConfig_RestoreCommitRejectsInvalid(t *testing.T) {
 		require.Error(t, err, extra)
 	}
 }
+
+func TestParseConfig_ListenerPortDefaultsTo9300(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 9300, conf.ListenerPort)
+}
+
+func TestParseConfig_ListenerPortAndRunDirParsed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nlistener_port=9443\nrun_dir=/run/mp\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	conf, err := ParseConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, 9443, conf.ListenerPort)
+	assert.Equal(t, "/run/mp", conf.RunDir)
+}
+
+func TestParseConfig_InvalidListenerPort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\nlistener_port=abc\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := ParseConfig(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listener_port")
+}
+
+func TestResolveRunDir(t *testing.T) {
+	got, err := ResolveRunDir(&Config{RunDir: "/run/mp"})
+	require.NoError(t, err)
+	assert.Equal(t, "/run/mp", got)
+
+	got, err = ResolveRunDir(&Config{VarPath: "/var/lib/mp"})
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/var/lib/mp", "run"), got)
+}
