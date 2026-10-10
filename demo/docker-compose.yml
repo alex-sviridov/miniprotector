@@ -38,7 +38,7 @@ services:
       - issuer
     volumes:
       - clientmanager-api-data:/data
-      - ./local.conf:/data/local.conf:ro
+      - ./clientmanager-api/local.conf:/data/local.conf:ro
       - client-manager-data:/data/client-manager
     environment:
       - MP_CONFIG_PATH=/data
@@ -55,7 +55,7 @@ services:
       - issuer
     volumes:
       - catalog-data:/data
-      - ./local.conf:/data/local.conf:ro
+      - ./catalog/local.conf:/data/local.conf:ro
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
@@ -75,7 +75,7 @@ services:
       - policy-server
     volumes:
       - api-server-data:/data
-      - ./local.conf:/data/local.conf:ro
+      - ./api-server/local.conf:/data/local.conf:ro
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
@@ -103,7 +103,7 @@ services:
       - issuer
     volumes:
       - policy-server-data:/data
-      - ./local.conf:/data/local.conf:ro
+      - ./policy-server/local.conf:/data/local.conf:ro
       - ./policy-server/policies:/data/policies
     environment:
       - MP_CONFIG_PATH=/data

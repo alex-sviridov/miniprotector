@@ -959,3 +959,25 @@ func TestParseConfig_RunningServiceRejections(t *testing.T) {
 		})
 	}
 }
+
+// The demo's per-service local.conf files exist only to carry their own
+// running_service= lines; everything else must stay identical to the shared
+// demo/local.conf so the lab's settings cannot drift apart.
+func TestDemoServiceConfsMatchSharedConf(t *testing.T) {
+	shared, err := ParseConfig("../../../demo/local.conf")
+	require.NoError(t, err)
+	require.Empty(t, shared.RunningServices, "the shared demo conf is used by containers that run no fixed services")
+
+	files, err := filepath.Glob("../../../demo/*/local.conf")
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	for _, f := range files {
+		t.Run(f, func(t *testing.T) {
+			per, err := ParseConfig(f)
+			require.NoError(t, err)
+			assert.NotEmpty(t, per.RunningServices, "a per-service demo conf should list its services")
+			per.RunningServices = nil
+			assert.Equal(t, shared, per)
+		})
+	}
+}
