@@ -43,8 +43,6 @@ services:
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
-    ports:
-      - "9500:9500"
     restart: unless-stopped
 
   catalog:

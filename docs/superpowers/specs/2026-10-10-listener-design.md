@@ -60,7 +60,7 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
    `policy-server` leaves 9300 and creates a socket instead.
 4. Deployment: the entrypoint of every container running a fronted service starts `listener` in a restart
    loop. Compose files and the demo publish only 9300; on a single Docker host each fronted container's 9300
-   is published on its own bind address (`<SERVICE>_BIND` env, defaults 127.0.0.2-127.0.0.5), because clients
+   is published on its own bind address (`<SERVICE>_BIND` env, defaults 127.0.0.2-127.0.0.4 for `catalog`, `policy-server`, `clientmanager-api`; `api-server`'s gRPC services were never published and still are not), because clients
    all dial `<host>:9300`.
 
 ## Errors

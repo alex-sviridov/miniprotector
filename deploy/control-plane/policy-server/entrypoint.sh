@@ -34,4 +34,10 @@ fi
 # No mkdir/STORAGE_PATH step here, unlike catalog's entrypoint -- policy-server
 # has no local database; its own main.go already os.MkdirAll's
 # $MP_CONFIG_PATH/policies on startup.
+# listener is this host's only control-plane gRPC port (:9300); the service
+# below listens on an internal socket. Restart-looped so a crash cannot strand
+# the host (the service itself is exec'd/backgrounded, so nothing else would
+# notice).
+( while true; do ./listener --debug="${DEBUG:-false}" || true; sleep 1; done ) &
+
 exec ./policy-server --debug="${DEBUG:-false}"

@@ -19,4 +19,10 @@ if [ ! -f /data/certs/client.crt ]; then
 	exit 1
 fi
 
+# listener is this host's only control-plane gRPC port (:9300); the service
+# below listens on an internal socket. Restart-looped so a crash cannot strand
+# the host (the service itself is exec'd/backgrounded, so nothing else would
+# notice).
+( while true; do ./listener --debug="${DEBUG:-false}" || true; sleep 1; done ) &
+
 exec ./api-server --debug="${DEBUG:-false}"
