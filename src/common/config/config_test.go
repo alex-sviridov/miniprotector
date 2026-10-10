@@ -905,3 +905,79 @@ func TestParseConfig_RemovedPortKeysAreRejected(t *testing.T) {
 		})
 	}
 }
+
+func parseWith(t *testing.T, extra string) (*Config, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "local.conf")
+	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n" + extra
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	return ParseConfig(path)
+}
+
+func TestParseConfig_RunningServicesInOrder(t *testing.T) {
+	conf, err := parseWith(t, "running_service=listener --debug=false\nrunning_service=catalog /data/storage\nrunning_service=agentless\n")
+	require.NoError(t, err)
+	assert.Equal(t, []RunningService{
+		{Binary: "listener", Args: []string{"--debug=false"}},
+		{Binary: "catalog", Args: []string{"/data/storage"}},
+		{Binary: "agentless", Args: nil},
+	}, conf.RunningServices)
+}
+
+func TestParseConfig_RunningServicesAbsentByDefault(t *testing.T) {
+	conf, err := parseWith(t, "")
+	require.NoError(t, err)
+	assert.Empty(t, conf.RunningServices)
+}
+
+func TestParseConfig_RunningServiceExpandsEnvironment(t *testing.T) {
+	t.Setenv("MP_TEST_DEBUG", "true")
+	t.Setenv("MP_TEST_EMPTY", "")
+	os.Unsetenv("MP_TEST_UNSET")
+	conf, err := parseWith(t, "running_service=svc --a=$MP_TEST_DEBUG --b=${MP_TEST_DEBUG} --c=${MP_TEST_UNSET:-fallback} --d=${MP_TEST_EMPTY:-empty-uses-default} --e=${MP_TEST_DEBUG:-ignored}\n")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--a=true", "--b=true", "--c=fallback", "--d=empty-uses-default", "--e=true"}, conf.RunningServices[0].Args)
+}
+
+func TestParseConfig_RunningServiceRejections(t *testing.T) {
+	os.Unsetenv("MP_TEST_UNSET_FOR_REJECT")
+	cases := map[string]string{
+		"empty value":        "running_service=\n",
+		"only spaces":        "running_service=   \n",
+		"path separator":     "running_service=./catalog\n",
+		"absolute path":      "running_service=/usr/bin/catalog\n",
+		"double quote":       "running_service=svc --msg \"a b\"\n",
+		"single quote":       "running_service=svc 'a b'\n",
+		"duplicate binary":   "running_service=svc\nrunning_service=svc --x\n",
+		"expands to nothing": "running_service=${MP_TEST_UNSET_FOR_REJECT}\n",
+	}
+	for name, line := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseWith(t, line)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "running_service")
+		})
+	}
+}
+
+// The demo's per-service local.conf files exist only to carry their own
+// running_service= lines; everything else must stay identical to the shared
+// demo/local.conf so the lab's settings cannot drift apart.
+func TestDemoServiceConfsMatchSharedConf(t *testing.T) {
+	shared, err := ParseConfig("../../../demo/local.conf")
+	require.NoError(t, err)
+	require.Empty(t, shared.RunningServices, "the shared demo conf is used by containers that run no fixed services")
+
+	files, err := filepath.Glob("../../../demo/*/local.conf")
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	for _, f := range files {
+		t.Run(f, func(t *testing.T) {
+			per, err := ParseConfig(f)
+			require.NoError(t, err)
+			assert.NotEmpty(t, per.RunningServices, "a per-service demo conf should list its services")
+			per.RunningServices = nil
+			assert.Equal(t, shared, per)
+		})
+	}
+}

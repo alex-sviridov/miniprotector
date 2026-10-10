@@ -60,8 +60,9 @@ directory) like any other mesh member, and reloads it as `agent` refreshes it.
 ## Operations
 
 - **Start order.** Services create their socket when they start and remove it on a clean shutdown; the
-  `listener` finds sockets per call, so either may start first. Control-plane containers start the
-  `listener` from `entrypoint.sh` in a restart loop.
+  `listener` finds sockets per call, so either may start first. In the control-plane containers
+  [agent](./agent.md#running-services) starts and supervises the `listener` (and the service) from
+  `running_service=` lines in `local.conf`, restarting either on crash.
 - **Several services, one Docker host.** Every client dials port 9300, so two fronted services on one Docker
   host need different host addresses. `deploy/control-plane/docker-compose.yml` publishes each on its own
   bind address (`CATALOG_BIND`, `POLICY_SERVER_BIND`, `CLIENTMANAGER_API_BIND`; defaults `127.0.0.2`–`127.0.0.4`).

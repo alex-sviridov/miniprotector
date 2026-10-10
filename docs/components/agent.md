@@ -245,6 +245,39 @@ CRC32 as it writes -- see [rwfs](./rwfs.md)'s `restore` section, [Design: Restor
 Phase](../superpowers/specs/2026-08-16-restore-directory-structure-design.md), and [Design: Restore
 File Content Phase](../superpowers/specs/2026-08-17-restore-file-content-design.md).
 
+## Running services
+
+A node can have `agent` keep its own long-lived processes running — a control-plane container, for
+example, runs *only* `agent`, which starts and supervises the [listener](./listener.md) and the node's
+service. List them in `local.conf`, one `running_service=` line each (the key repeats):
+
+```
+running_service=listener --debug=${DEBUG:-false}
+running_service=catalog ${STORAGE_PATH:-/data/storage} --debug=${DEBUG:-false}
+```
+
+- **Format.** `running_service=<binary> [args...]`. `<binary>` is a bare name resolved next to the `agent`
+  executable (no path separators). Arguments are split on whitespace; quote characters are rejected at
+  parse time instead of being mis-split. `$VAR`, `${VAR}` and `${VAR:-default}` are expanded from `agent`'s
+  environment first (the default applies when the variable is unset or empty), so container settings such as
+  `DEBUG` keep working. A binary listed twice, an empty line, or a path in the binary is a config error.
+- **Start gate.** Nothing starts until `<certs>/client.crt` exists, i.e. after the first successful
+  `operating-refresh` (due immediately on a fresh node, so seconds). `agent` polls every 500 ms and logs once
+  that it is waiting.
+- **Independent of policies.** These services start whether or not the policy cache exists: a fresh
+  `policy-server` has to run before any policy can be fetched from it, so they use their own manager,
+  separate from the policy-driven `bwfs`/`catalogsync` supervision above.
+- **Supervision.** The same machinery as the storage processes: an unexpected exit is logged at error level
+  and the process is restarted with backoff — 1 s for the first restart, doubling up to 30 s for a crash loop (faster
+  than the 30 s base policy-derived tasks use, because a dead `listener` or service takes the host's whole gRPC
+  surface down); SIGTERM to `agent` stops them all. Output goes to `agent`'s
+  stdout/stderr (`docker logs`). Their outcomes are not recorded in `agent-state.json` or
+  `list-policies`.
+- **Bootstrap stays outside.** `agent` reads its hostname from the bootstrap certificate at startup, so
+  `certclient bootstrap|renew` still runs first (the container entrypoints do this, then `exec agent serve`).
+
+Design: [agent running services](../superpowers/specs/2026-10-10-agent-running-services-design.md).
+
 ## Logging and correlation
 
 Every binary `agent` execs writes structured JSON logs to `<log_dir>/<binary-name>.log` (one
@@ -329,6 +362,7 @@ the line isn't JSON or `time` doesn't parse, same fallback `web/src/utils/logLin
 | `MaxConcurrentBackupJobs` | 2 | Upper bound on simultaneously in-flight `brfs` execs launched by backup tasks |
 | `BootstrapCertTTLSec` | 7776000 (90 days) | Intended requested validity for the bootstrap credential. Parsed and defaulted by `common/config`, but not yet consumed by any request path — `certclient bootstrap`/`renew` don't currently pass a requested TTL to the CA, so actual bootstrap credential lifetime is governed entirely by the CA provisioner's own claims today |
 | `log_gateway_host` / `log_gateway_port` | none / 9400 | Where agent's supervised Vector process pushes logs, via `log-gateway` |
+| `running_service` (repeatable) | none | `<binary> [args...]` — a process `agent` keeps running on this node; see [Running services](#running-services) |
 
 ## Building
 

@@ -93,6 +93,44 @@ func ResolveRunDir(cfg *Config) (string, error) {
 	return filepath.Join(varDir, "run"), nil
 }
 
+// RunningService is one `running_service=` line: a binary agent keeps running
+// on this node, with its arguments.
+type RunningService struct {
+	Binary string
+	Args   []string
+}
+
+// parseRunningService expands environment references in value, then splits it
+// into a bare binary name and its arguments. Quotes are rejected rather than
+// mis-split: arguments are whitespace-separated, nothing more.
+func parseRunningService(value string) (RunningService, error) {
+	if strings.ContainsAny(value, `"'`) {
+		return RunningService{}, fmt.Errorf("quote characters are not supported (arguments are split on whitespace)")
+	}
+	fields := strings.Fields(os.Expand(value, expandVar))
+	if len(fields) == 0 {
+		return RunningService{}, fmt.Errorf("empty value (want: <binary> [args...])")
+	}
+	if strings.ContainsAny(fields[0], `/\`) {
+		return RunningService{}, fmt.Errorf("binary %q must be a bare name, resolved next to the agent executable", fields[0])
+	}
+	args := fields[1:]
+	if len(args) == 0 {
+		args = nil
+	}
+	return RunningService{Binary: fields[0], Args: args}, nil
+}
+
+// expandVar resolves $VAR, ${VAR} and ${VAR:-default}; the default applies
+// when the variable is unset or empty. Unset without a default expands to "".
+func expandVar(name string) string {
+	name, def, hasDefault := strings.Cut(name, ":-")
+	if v := os.Getenv(name); v != "" || !hasDefault {
+		return v
+	}
+	return def
+}
+
 // Config holds configuration from /etc/btool/local.conf
 type Config struct {
 	DefaultPort                      int
@@ -114,6 +152,7 @@ type Config struct {
 	VarPath                          string
 	ListenerPort                     int
 	RunDir                           string
+	RunningServices                  []RunningService
 	ReconcileIntervalSec             int
 	IssuerHost                       string
 	IssuerPort                       int
@@ -294,6 +333,17 @@ func ParseConfig(configPath string) (*Config, error) {
 		case "run_dir":
 			config.RunDir = value
 			foundFields["run_dir"] = true
+		case "running_service":
+			svc, err := parseRunningService(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid running_service at line %d: %w", lineNum, err)
+			}
+			for _, existing := range config.RunningServices {
+				if existing.Binary == svc.Binary {
+					return nil, fmt.Errorf("invalid running_service at line %d: %s is listed twice", lineNum, svc.Binary)
+				}
+			}
+			config.RunningServices = append(config.RunningServices, svc)
 		case "var_path":
 			config.VarPath = value
 			foundFields["var_path"] = true

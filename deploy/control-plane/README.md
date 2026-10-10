@@ -5,6 +5,10 @@ certificate authority, the `issuer` operating-certificate service, the backup `c
 `policy-server`. See [Architecture](../../docs/ARCHITECTURE.md) for how these fit into the rest of
 the system.
 
+Each of these containers (and `log-gateway`'s) runs only `agent`: its entrypoint bootstraps or renews the node's credential and
+`exec`s `agent serve`, and `agent` starts and supervises the `listener` and the service named by the
+`running_service=` lines in that service's `local.conf` (see [agent](../../docs/components/agent.md#running-services)).
+
 One `docker-compose.yml` runs all four as separate containers. Each service can also be started
 alone (`docker compose up -d step-ca`, `up -d issuer`, `up -d catalog`, or `up -d policy-server`)
 — useful once a deployment splits them across hosts; just point each service's own `local.conf`'s
@@ -203,8 +207,9 @@ docker run --rm --network control-plane_default \
 # Connect: hand the printed token to catalog and confirm it comes up clean.
 MP_CERT_TOKEN=<printed-token> docker compose up -d catalog
 docker compose logs -f catalog
-# Confirm: catalog stays up (no more crash-loop, and no "agent did not
-# produce an operating certificate within 60s" error), then Ctrl-C.
+# Confirm: the log shows "running services started" (agent starts the listener
+# and catalog once the first operating certificate exists) and the container
+# stays up, then Ctrl-C.
 
 # Revoke: mark catalog-01 revoked. This only needs the shared store, not
 # the CA, so no --ca-url/--root/--password-file (revoke doesn't accept them).

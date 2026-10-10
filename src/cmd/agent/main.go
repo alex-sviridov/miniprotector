@@ -88,6 +88,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	bwfsBinary := resolveExecPath("bwfs")
 	catalogsyncBinary := resolveExecPath("catalogsync")
 	storageMgr := newStorageManager(logger)
+	servicesMgr := newRunningServicesManager(logger)
 
 	derivedFunc := newDerivedFunc(policiesCachePath, filepath.Join(varDir, "retention"), logger, conf, bwfsBinary, catalogsyncBinary)
 
@@ -115,12 +116,15 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	vectorSup.Start(signalCtx)
 	defer vectorSup.Stop()
 	defer storageMgr.StopAll()
+	defer servicesMgr.StopAll()
 
 	onSuccess := func(policyID string) {
 		if policyID == "operating-refresh" {
 			vectorSup.TriggerRestart()
 		}
 	}
+
+	go superviseRunningServices(signalCtx, logger, servicesMgr, certsDir, runningServiceTasks(conf.RunningServices), 500*time.Millisecond)
 
 	logger.Info("agent started", "reconcile_interval", reconcileInterval, "cache_path", cachePath, "vector_config", vectorConfigPath)
 	if err := run(signalCtx, logger, cachePath, reconcileInterval, realExec, derivedFunc, conf.MaxConcurrentBackupJobs, onSuccess, storageMgr, defaultBackoffPolicy); err != nil {
