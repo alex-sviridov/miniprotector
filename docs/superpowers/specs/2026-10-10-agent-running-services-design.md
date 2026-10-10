@@ -30,7 +30,8 @@ running_service=<binary> [args...]
 ## Supervision (`cmd/agent`)
 
 - A dedicated `storageManager` instance supervises the static services. It reuses the generic
-  `processSupervisor`: crash restart with backoff, stability window, SIGTERM on stop, children inherit
+  `processSupervisor`: crash restart with backoff (1 s base, 30 s cap — not the 30 s base policy-derived tasks
+  use, since a dead `listener` takes the host's whole gRPC surface down), stability window, SIGTERM on stop, children inherit
   `agent`'s stdout/stderr (so `docker logs` shows them).
 - It is separate from the policy-derived storage manager because `run()` skips storage reconcile when the
   policy cache is missing or unreadable (`ok == false`). A fresh `policy-server` has to run before any

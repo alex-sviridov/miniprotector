@@ -268,7 +268,9 @@ running_service=catalog ${STORAGE_PATH:-/data/storage} --debug=${DEBUG:-false}
   `policy-server` has to run before any policy can be fetched from it, so they use their own manager,
   separate from the policy-driven `bwfs`/`catalogsync` supervision above.
 - **Supervision.** The same machinery as the storage processes: an unexpected exit is logged at error level
-  and the process is restarted with backoff; SIGTERM to `agent` stops them all. Output goes to `agent`'s
+  and the process is restarted with backoff — 1 s for the first restart, doubling up to 30 s for a crash loop (faster
+  than the 30 s base policy-derived tasks use, because a dead `listener` or service takes the host's whole gRPC
+  surface down); SIGTERM to `agent` stops them all. Output goes to `agent`'s
   stdout/stderr (`docker logs`). Their outcomes are not recorded in `agent-state.json` or
   `list-policies`.
 - **Bootstrap stays outside.** `agent` reads its hostname from the bootstrap certificate at startup, so
