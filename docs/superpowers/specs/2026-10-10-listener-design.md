@@ -39,8 +39,9 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
   dropped). Backends read the identity from it only on their Unix-socket server, which has no TCP
   listener.
 - **Supervision.** `listener` is a separate binary. In the control-plane containers it is started by the
-  container's `entrypoint.sh` in a restart loop, alongside the service (services there are started by the
-  entrypoint, not by `agent`); `agent` does not supervise it. It uses the same hot-reloaded operating-tier
+  container's `agent` (the container's only process), from a `running_service=` line in `local.conf`, together
+  with the service itself (see the agent running-services spec). Originally the entrypoint started it in a
+  restart loop. It uses the same hot-reloaded operating-tier
   certificate as every other node.
 
 ## Backend-side changes
@@ -58,8 +59,7 @@ client ──mTLS──► listener :9300 ──Unix socket──► <run_dir>/s
    `catalog_port`, `policy_server_port`, `clientmanager_api_port`, `clientmanager_admin_api_port`,
    `api_server_job_status_port`. Clients dial `<service>_host:<listener_port>`; the `*_host` keys stay.
    `policy-server` leaves 9300 and creates a socket instead.
-4. Deployment: the entrypoint of every container running a fronted service starts `listener` in a restart
-   loop. Compose files and the demo publish only 9300; on a single Docker host each fronted container's 9300
+4. Deployment: `agent` in every container running a fronted service starts `listener` (a `running_service=` line). Compose files and the demo publish only 9300; on a single Docker host each fronted container's 9300
    is published on its own bind address (`<SERVICE>_BIND` env, defaults 127.0.0.2-127.0.0.4 for `catalog`, `policy-server`, `clientmanager-api`; `api-server`'s gRPC services were never published and still are not), because clients
    all dial `<host>:9300`.
 

@@ -67,7 +67,7 @@ container and use the same `agent`-managed identity (see Deployment).
 ## Deployment
 
 Ships in the *same container* as `clientmanager-api` (one Dockerfile, one `entrypoint.sh`, one
-`agent` process, one mesh enrollment) rather than a separate service — see
+`agent` process — which supervises both services and the `listener` via `running_service=` lines — and one mesh enrollment) rather than a separate service — see
 [`deploy/control-plane/README.md`](../../deploy/control-plane/README.md) and the design spec's
 "Packaging" section for why. Additionally mounts the CA's root certificate and provisioner password
 file read-only, the same two mounts [`issuer`](./issuer.md) already has.
