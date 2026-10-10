@@ -64,28 +64,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	cmConn, err := connection.Connect(conf.ClientManagerAPIHost, conf.ClientManagerAPIPort, conf.ConnectionTimeOutSec, certsDir)
+	cmConn, err := connection.Connect(conf.ClientManagerAPIHost, conf.ListenerPort, conf.ConnectionTimeOutSec, certsDir)
 	if err != nil {
 		logger.Error("connect to clientmanager-api failed", "error", err)
 		os.Exit(1)
 	}
 	defer cmConn.Close()
 
-	cmAdminConn, err := connection.Connect(conf.ClientManagerAdminAPIHost, conf.ClientManagerAdminAPIPort, conf.ConnectionTimeOutSec, certsDir)
+	cmAdminConn, err := connection.Connect(conf.ClientManagerAdminAPIHost, conf.ListenerPort, conf.ConnectionTimeOutSec, certsDir)
 	if err != nil {
 		logger.Error("connect to clientmanager-admin-api failed", "error", err)
 		os.Exit(1)
 	}
 	defer cmAdminConn.Close()
 
-	catalogConn, err := connection.Connect(conf.CatalogHost, conf.CatalogPort, conf.ConnectionTimeOutSec, certsDir)
+	catalogConn, err := connection.Connect(conf.CatalogHost, conf.ListenerPort, conf.ConnectionTimeOutSec, certsDir)
 	if err != nil {
 		logger.Error("connect to catalog failed", "error", err)
 		os.Exit(1)
 	}
 	defer catalogConn.Close()
 
-	policyConn, err := connection.Connect(conf.PolicyServerHost, conf.PolicyServerPort, conf.ConnectionTimeOutSec, certsDir)
+	policyConn, err := connection.Connect(conf.PolicyServerHost, conf.ListenerPort, conf.ConnectionTimeOutSec, certsDir)
 	if err != nil {
 		logger.Error("connect to policy-server failed", "error", err)
 		os.Exit(1)

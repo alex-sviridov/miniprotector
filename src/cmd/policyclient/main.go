@@ -62,7 +62,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Configuration error: policy_server_host not set in local.conf")
 			os.Exit(1)
 		}
-		if err := fetchAndCache(certsDir, conf.PolicyServerHost, conf.PolicyServerPort, conf.ConnectionTimeOutSec, cachePath, jobID, logger); err != nil {
+		if err := fetchAndCache(certsDir, conf.PolicyServerHost, conf.ListenerPort, conf.ConnectionTimeOutSec, cachePath, jobID, logger); err != nil {
 			logger.Error("fetch failed", "error", err)
 			fmt.Fprintf(os.Stderr, "Fetch failed: %v\n", err)
 			os.Exit(1)

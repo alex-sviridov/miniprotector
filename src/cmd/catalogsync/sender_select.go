@@ -21,11 +21,11 @@ func selectSender(conf *config.Config, logger *slog.Logger, certsDir string) (Se
 	if conf.CatalogHost == "" {
 		return NewLoggingSender(logger), nil
 	}
-	grpcSender, err := NewGrpcSender(conf.CatalogHost, conf.CatalogPort, conf.ConnectionTimeOutSec, certsDir)
+	grpcSender, err := NewGrpcSender(conf.CatalogHost, conf.ListenerPort, conf.ConnectionTimeOutSec, certsDir)
 	if err != nil {
 		return nil, fmt.Errorf("catalog_host %s:%d configured but sender could not be created: %w",
-			conf.CatalogHost, conf.CatalogPort, err)
+			conf.CatalogHost, conf.ListenerPort, err)
 	}
-	logger.Info("catalogsync sending to catalog", "catalog_host", conf.CatalogHost, "catalog_port", conf.CatalogPort)
+	logger.Info("catalogsync sending to catalog", "catalog_host", conf.CatalogHost, "listener_port", conf.ListenerPort)
 	return grpcSender, nil
 }

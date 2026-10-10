@@ -207,27 +207,6 @@ func TestParseConfig_CatalogHostParsed(t *testing.T) {
 	assert.Equal(t, "catalog.backup.internal", conf.CatalogHost)
 }
 
-func TestParseConfig_CatalogPortDefaultsTo15723(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "local.conf")
-	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
-
-	conf, err := ParseConfig(path)
-	require.NoError(t, err)
-	assert.Equal(t, 15723, conf.CatalogPort)
-}
-
-func TestParseConfig_CatalogPortParsed(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\ncatalog_port=9443\n"
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
-
-	conf, err := ParseConfig(path)
-	require.NoError(t, err)
-	assert.Equal(t, 9443, conf.CatalogPort)
-}
-
 func TestParseConfig_VarPathOptional(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
@@ -461,28 +440,6 @@ func TestParseConfig_PolicyServerHostParsesCorrectly(t *testing.T) {
 	assert.Equal(t, "policy.backup.internal", conf.PolicyServerHost)
 }
 
-func TestParseConfig_PolicyServerPortDefaultsTo9300(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
-
-	conf, err := ParseConfig(path)
-	require.NoError(t, err)
-	assert.Equal(t, 9300, conf.PolicyServerPort)
-}
-
-func TestParseConfig_PolicyServerPortParsesCorrectly(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "local.conf")
-	content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\npolicy_server_port=9301\n"
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
-
-	conf, err := ParseConfig(path)
-	require.NoError(t, err)
-	assert.Equal(t, 9301, conf.PolicyServerPort)
-}
-
 func TestResolvePoliciesDir_JoinsBaseDirWithPolicies(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(ConfigPathEnvVar, dir)
@@ -596,26 +553,24 @@ func TestParseConfig_ParsesAPIServerAndClientManagerAPIKeys(t *testing.T) {
 	path := filepath.Join(dir, "local.conf")
 	require.NoError(t, os.WriteFile(path, []byte(
 		"default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"+
-			"clientmanager_api_host=clientmanager-api\nclientmanager_api_port=9501\n"+
+			"clientmanager_api_host=clientmanager-api\n"+
 			"api_server_port=8091\napi_server_token=test-token\n",
 	), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
 	require.Equal(t, "clientmanager-api", conf.ClientManagerAPIHost)
-	require.Equal(t, 9501, conf.ClientManagerAPIPort)
 	require.Equal(t, 8091, conf.APIServerPort)
 	require.Equal(t, "test-token", conf.APIServerToken)
 }
 
-func TestParseConfig_ClientManagerAPIPortAndAPIServerPortDefaults(t *testing.T) {
+func TestParseConfig_APIServerPortDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "local.conf")
 	require.NoError(t, os.WriteFile(path, []byte("default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n"), 0o644))
 
 	conf, err := ParseConfig(path)
 	require.NoError(t, err)
-	require.Equal(t, 9500, conf.ClientManagerAPIPort)
 	require.Equal(t, 8090, conf.APIServerPort)
 }
 
@@ -935,4 +890,18 @@ func TestResolveRunDir(t *testing.T) {
 	got, err = ResolveRunDir(&Config{VarPath: "/var/lib/mp"})
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join("/var/lib/mp", "run"), got)
+}
+
+func TestParseConfig_RemovedPortKeysAreRejected(t *testing.T) {
+	for _, key := range []string{"catalog_port", "policy_server_port", "clientmanager_api_port", "clientmanager_admin_api_port", "APIServerJobStatusPort"} {
+		t.Run(key, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "local.conf")
+			content := "default_port=8080\ndefault_streams=4\nlog_dir=/tmp\n" + key + "=1234\n"
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+			_, err := ParseConfig(path)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown configuration key")
+		})
+	}
 }
