@@ -88,7 +88,7 @@ func serve(conf *config.Config, arguments *Arguments, varDir, cachePath, policie
 	bwfsBinary := resolveExecPath("bwfs")
 	catalogsyncBinary := resolveExecPath("catalogsync")
 	storageMgr := newStorageManager(logger)
-	servicesMgr := newStorageManager(logger)
+	servicesMgr := newRunningServicesManager(logger)
 
 	derivedFunc := newDerivedFunc(policiesCachePath, filepath.Join(varDir, "retention"), logger, conf, bwfsBinary, catalogsyncBinary)
 

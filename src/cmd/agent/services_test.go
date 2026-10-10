@@ -119,3 +119,13 @@ func TestStorageManager_ReconcileAcceptsNilReconcileState(t *testing.T) {
 	mgr.reconcile(ctx, nil, []storageTask{{ID: "service:svc", Binary: markerScript(t, dir, marker)}})
 	require.Eventually(t, func() bool { return lines(t, marker) == 1 }, 2*time.Second, 10*time.Millisecond)
 }
+
+// A crashed listener or control-plane service takes its whole host's gRPC
+// surface down, so running services restart within about a second -- unlike
+// policy-derived tasks, whose 30s base backoff suits a flapping backup job.
+func TestRunningServicesManager_RestartsQuicklyButStaysBounded(t *testing.T) {
+	mgr := newRunningServicesManager(testLogger())
+	assert.Equal(t, time.Second, mgr.backoff.Base)
+	assert.LessOrEqual(t, mgr.backoff.Max, time.Minute)
+	assert.Less(t, mgr.backoff.Base, defaultBackoffPolicy.Base)
+}

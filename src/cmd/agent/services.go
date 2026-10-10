@@ -10,6 +10,21 @@ import (
 	"github.com/alex-sviridov/miniprotector/common/config"
 )
 
+// runningServiceBackoff is the crash-restart backoff for running services: a
+// dead listener or control-plane service takes its host's whole gRPC surface
+// down, so the first restart is about a second away (policy-derived tasks use
+// the 30s defaultBackoffPolicy, which suits a flapping backup job), and a crash
+// loop is still bounded at 30s between attempts.
+var runningServiceBackoff = backoffPolicy{Base: time.Second, Max: 30 * time.Second}
+
+// newRunningServicesManager returns the storageManager that supervises
+// running_service processes, separate from the policy-derived one.
+func newRunningServicesManager(logger *slog.Logger) *storageManager {
+	mgr := newStorageManager(logger)
+	mgr.backoff = runningServiceBackoff
+	return mgr
+}
+
 // runningServiceTasks turns `running_service=` config lines into supervised
 // tasks. IDs are "service:<binary>"; the binary is resolved next to agent.
 func runningServiceTasks(services []config.RunningService) []storageTask {
