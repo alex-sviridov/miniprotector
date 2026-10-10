@@ -1,8 +1,8 @@
 # Storage Status Protocol
 
 Each `bwfs server` → `api-server`'s `ReportStorageStatus` RPC, once a minute, mTLS (`common/mtls`).
-Served on the same port as the [Job Status Protocol](jobstatus.md) (`APIServerJobStatusPort`,
-default 8091) and the same mesh identity. The web UI reads the result through
+Served behind the host's [listener](../components/listener.md) (`listener_port`, default 9300) alongside the
+[Job Status Protocol](jobstatus.md), under the same mesh identity. The web UI reads the result through
 `GET /api/v1/storage-policies/{id}/status` ([REST API v1](../api/rest-v1.md)).
 
 ## RPC

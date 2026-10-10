@@ -23,13 +23,19 @@ require the `control-plane` role. See [Security Model](../SECURITY.md#role-based
 ## Usage
 
 ```bash
-policy-server --port 9300
+policy-server
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port` | `9300` (or `policy_server_port` from `local.conf`) | Port to listen on |
 | `--debug` | false | Enable debug logging |
+
+## Listening
+
+`policy-server` opens no TCP port. It listens on a Unix socket under `<run_dir>/services/` (one per gRPC
+service it serves, named after the service) and receives only calls that the host's
+[listener](./listener.md) has already authenticated and forwarded. Callers dial the host's
+`listener_port` (default 9300), not a per-service port.
 
 ## Behavior
 
@@ -222,9 +228,8 @@ its own initiative rather than in response to an operator's `DeletePolicy` call.
 
 This single purpose makes `policy-server` a gRPC client as well as a server: alongside serving
 `PolicyService` itself (as it always has), it dials `api-server`'s `JobStatusService` at
-`api_server_host` / `APIServerJobStatusPort` (config keys; the latter is defined once, in
-`api-server`'s own config, and shared here as a second consumer -- the same pattern
-`policy_server_host`/`policy_server_port` already use in reverse, for `api-server`-as-client of
+`api_server_host` / `listener_port` (config keys; both clients dial the other's host on the same
+`listener_port`, the same pattern `policy_server_host` already uses in reverse, for `api-server`-as-client of
 `policy-server`) over the same mTLS mesh connection every other client uses. See
 [Design: Restore Policy Lifecycle](../superpowers/specs/2026-08-23-restore-policy-lifecycle-design.md).
 
@@ -251,13 +256,12 @@ and serialize as `-62135596800` instead of being omitted. See
 
 ## Configuration Keys
 
-- `policy_server_host` / `policy_server_port` — where `policy-server` listens *(default port:
-  9300)*
+- `policy_server_host` — where `policy-server` runs; clients dial it on `listener_port` *(default: 9300)* — `policy-server` itself listens on a Unix socket behind that host's [listener](./listener.md)
+- `run_dir` — where the service socket is created *(default: `<var_path>/run`)*; must match the host's `listener`
 - `CheckinRetentionSec` — how long a check-in row survives with no re-poll before the cleanup
   routine removes it *(default: 86400)*
-- `api_server_host` / `APIServerJobStatusPort` — where `policy-server`'s restore-cleanup sweep dials
-  `api-server`'s `JobStatusService` to ask whether a restore policy's job has finished *(default
-  port: 8091, defined once in `api-server`'s own config)*
+- `api_server_host` — where `policy-server`'s restore-cleanup sweep dials `api-server`'s
+  `JobStatusService` (on `listener_port`) to ask whether a restore policy's job has finished
 - `RestoreCleanupIntervalSec` — how often the restore-cleanup sweep runs *(default: 300)*
 - `RestoreCleanupGracePeriodSec` — how long a finished restore policy is kept before it's deleted
   *(default: 900)*

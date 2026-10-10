@@ -22,7 +22,6 @@ api-server --port 8090 --token <bearer-token>
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port` | `api_server_port` config value (default: 8090) | Port the REST listener binds to |
-| `--job-status-port` | `APIServerJobStatusPort` config value (default: 8091) | Port the internal control-plane-only job-status gRPC service listens on |
 | `--token` | `api_server_token` config value | Bearer token required on every REST request |
 | `--debug` | false | Enable debug logging |
 
@@ -141,8 +140,8 @@ absence isn't an error. See
 ## Job-Status gRPC Listener
 
 Alongside its REST listener, `api-server` also serves one internal gRPC service,
-`JobStatusService` (`GetPolicyJobStatus`), over its own port (`APIServerJobStatusPort`, default
-`8091`) — mTLS-secured and role-gated to `control-plane` callers, exactly like `policy-server`'s
+`JobStatusService` (`GetPolicyJobStatus`), behind the host's [listener](./listener.md) (Unix socket
+under `<run_dir>/services/`, reached on `listener_port`, default 9300) — mTLS-secured and role-gated to `control-plane` callers, exactly like `policy-server`'s
 `PolicyService` (see `cmd/api-server/authz.go`, mirroring `cmd/policy-server/authz.go`'s pattern).
 This is the *only* inbound mTLS surface on `api-server`: every other RPC it makes
 (`clientmanager-api`/`clientmanager-admin-api`/`catalog`/`policy-server`) is outbound, and its REST
@@ -173,13 +172,8 @@ and neither depends on the other holding. See
 
 - `api_server_port` — port the REST listener binds to *(default: 8090)*
 - `api_server_token` — bearer token required on every REST request
-- `APIServerJobStatusPort` — port the internal control-plane-only job-status gRPC service listens
-  on *(default: 8091)*
-- `clientmanager_api_host` / `clientmanager_api_port` — where to dial `clientmanager-api`
-- `clientmanager_admin_api_host` / `clientmanager_admin_api_port` — where to dial `clientmanager-admin-api` *(default port: 9501)*
-- `catalog_host` / `catalog_port` — where to dial `catalog`
-- `policy_server_host` / `policy_server_port` — where to dial `policy-server` *(default port:
-  9300)*
+- `run_dir` — where the job-status / storage-status service sockets are created *(default: `<var_path>/run`)*; must match the host's `listener`
+- `clientmanager_api_host`, `clientmanager_admin_api_host`, `catalog_host`, `policy_server_host` — where to dial those services; each is dialed on `listener_port` *(default: 9300)*, the port their host's [listener](./listener.md) serves
 - `log_gateway_host` / `log_gateway_port` — where to dial `log-gateway`'s Loki query-proxy route for `GET /api/v1/jobs*`, and its tail-proxy route for the two WS streaming endpoints *(default port: 9400)*
 - `AdhocPolicyTimeoutSec` — how long a `POST /policies/adhoc`-created policy stays active (its `rpo`
   and how far past `now` its `disabled_at` is set) before disabling itself *(default: 3600)*. Set it

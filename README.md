@@ -73,6 +73,7 @@ echo '{"rules":[{"host":"","path":"/data","include":true,"dest_path":"/data_reco
 - **[issuer](docs/components/issuer.md)** - Mints short-lived operating certificates, enforcing revoke and embedding current attributes; shares `client-manager`'s database (control-plane component, runs on the CA host)
 - **[mpbench](docs/components/mpbench.md)** - Development benchmark — runs the full backup → restore → verify cycle against the real `brfs`/`bwfs`/`rwfs` over an emulated network (RTT, bandwidth) and reports per-phase timings and wire bytes, for measuring the effect of protocol changes
 - **[catalogsync](docs/components/catalogsync.md)** - Replicates a bwfs node's file versions to a backup catalog, asynchronously and independent of bwfs's own availability
+- **[listener](docs/components/listener.md)** - Per-host mTLS entry point: one port (default 9300) for all control-plane gRPC services on a host, proxied to each service over a Unix socket
 - **[catalog](docs/components/catalog.md)** - Backup Catalog — receives `catalogsync`'s replicated file versions over gRPC and persists them centrally; control-plane component
 - **[policy-server](docs/components/policy-server.md)** - Serves backup policies filtered by a requesting client's hostname and attribute labels (control-plane component)
 - **[log-gateway](docs/components/log-gateway.md)** - mTLS-authenticating reverse proxy in front of Loki; `agent`'s bundled Vector process ships every node's logs through it (control-plane component)

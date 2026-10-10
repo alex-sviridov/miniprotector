@@ -18,16 +18,21 @@ six read-only query RPCs require `control-plane`. See [Security Model](../SECURI
 ## Usage
 
 ```
-catalog <storage_path> [--port N] [--debug]
+catalog <storage_path> [--debug]
 ```
 
-`storage_path` is where `catalog.db` lives. `--port` defaults to `catalog_port` from
-`local.conf` (15723 if unset).
+`storage_path` is where `catalog.db` lives.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port` | `catalog_port` config value | Port to listen on |
 | `--debug` | false | Enable debug logging |
+
+## Listening
+
+`catalog` opens no TCP port. It listens on a Unix socket under `<run_dir>/services/` (one per gRPC
+service it serves, named after the service) and receives only calls that the host's
+[listener](./listener.md) has already authenticated and forwarded. Callers dial the host's
+`listener_port` (default 9300), not a per-service port.
 
 ## How It Works
 
@@ -69,7 +74,7 @@ persisted keyed by `(store_node, job_id, object_id)`:
 
 ## Configuration Keys
 
-- `catalog_port` — port `catalog` listens on *(default: 15723)*
+- `run_dir` — where the service socket is created *(default: `<var_path>/run`)*; must match the host's `listener`
 
 ## Certificates
 

@@ -18,7 +18,7 @@ policyclient --debug fetch
 |------|------------|---------|-------------|
 | `--debug` | root (applies to all subcommands) | `false` | Enable debug logging |
 
-Requires `policy_server_host` set in `local.conf` (`policy_server_port` defaults to `9300`).
+Requires `policy_server_host` set in `local.conf` (dialed on `listener_port`, default `9300`).
 
 ## Behavior
 

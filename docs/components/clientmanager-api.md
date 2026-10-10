@@ -13,12 +13,11 @@ for why that's a deliberate security property, not an oversight). `clientmanager
 ## Usage
 
 ```bash
-clientmanager-api --port 9500
+clientmanager-api
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port` | `clientmanager_api_port` config value (default: 9500) | Port to listen on |
 | `--debug` | false | Enable debug logging |
 
 ## How It Works
@@ -35,9 +34,16 @@ Both RPCs require the caller to hold the `control-plane` role, enforced the same
 [clientmanager-admin-api](./clientmanager-admin-api.md). See
 [Security Model](../SECURITY.md#role-based-rpc-authorization).
 
+## Listening
+
+`clientmanager-api` opens no TCP port. It listens on a Unix socket under `<run_dir>/services/` (one per gRPC
+service it serves, named after the service) and receives only calls that the host's
+[listener](./listener.md) has already authenticated and forwarded. Callers dial the host's
+`listener_port` (default 9300), not a per-service port.
+
 ## Configuration Keys
 
-- `clientmanager_api_port` — port to listen on *(default: 9500)*
+- `run_dir` — where the service socket is created *(default: `<var_path>/run`)*; must match the host's `listener`
 - `var_path` — must point at the same directory `client-manager`'s SQLite database lives in (shared
   volume with `client-manager`/`issuer`)
 

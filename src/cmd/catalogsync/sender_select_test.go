@@ -40,7 +40,7 @@ func TestSelectSender_NoCatalogHostReturnsLoggingSender(t *testing.T) {
 func TestSelectSender_UnreachableCatalogAtStartupReturnsGrpcSender(t *testing.T) {
 	conf := &config.Config{
 		CatalogHost:          "127.0.0.1",
-		ListenerPort:          freeTCPPort(t), // nothing listening
+		ListenerPort:         freeTCPPort(t), // nothing listening
 		ConnectionTimeOutSec: 1,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -55,7 +55,7 @@ func TestSelectSender_UnreachableCatalogAtStartupReturnsGrpcSender(t *testing.T)
 func TestSelectSender_BadCertsDirReturnsError(t *testing.T) {
 	conf := &config.Config{
 		CatalogHost:          "127.0.0.1",
-		ListenerPort:          freeTCPPort(t),
+		ListenerPort:         freeTCPPort(t),
 		ConnectionTimeOutSec: 1,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

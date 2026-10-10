@@ -153,6 +153,31 @@ certificate lifecycle keeps functioning) until it's backfilled or re-enrolled. S
 [Design: Role-Based gRPC Authorization](superpowers/specs/2026-08-22-role-based-grpc-authz-design.md)
 for the full per-RPC matrix.
 
+## Listener trust boundary
+
+Control-plane gRPC services (`catalog`, `policy-server`, `clientmanager-api`,
+`clientmanager-admin-api`, and `api-server`'s job-status/storage-status services) do not terminate
+TLS themselves: a per-host [`listener`](components/listener.md) does. It verifies the client
+certificate with the same operating-tier check every other server applies (bootstrap-tier
+certificates are rejected), then forwards the call over a Unix socket together with the caller's
+verified certificate chain in the `x-mp-peer-cert-bin` header, which it always overwrites.
+
+This makes the `listener` — its operating certificate and its process — a high-value target: it
+terminates mTLS for every fronted service on its host. The design limits what a compromise or a
+local attacker can do:
+
+- Backends accept a forwarded identity only on their Unix-socket server, which has no TCP listener,
+  so the header cannot be supplied over the network. The socket directory is mode `0700` and each
+  socket `0600`.
+- Each backend re-verifies the forwarded chain against its own `ca.crt` (client-auth usage, expiry,
+  operating tier; successful verifications are cached per chain until it expires), so a local process
+  that forges the header still needs a certificate signed by the CA. A call without a valid forwarded
+  chain is `UNAUTHENTICATED`.
+- Role authorization is unchanged: it stays per-RPC in each service, driven by the attributes in the
+  forwarded certificate, never by a request field.
+- What the `listener` itself can do is route and impersonate: a compromised `listener` could present
+  any chain it has seen. It cannot mint one — certificates are still only issued by `issuer`.
+
 ## Revocation and its trust-model costs
 
 `client-manager revoke <hostname>` sets a flag in `client-manager`'s own SQLite database.
