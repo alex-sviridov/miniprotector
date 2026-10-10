@@ -58,14 +58,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	runDir, err := config.ResolveRunDir(conf)
+	if err != nil {
+		logger.Error("run directory resolution failed", "error", err)
+		os.Exit(1)
+	}
+
 	srv := NewCatalogServer(store, logger)
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	logger.Info("catalog started", "storage_path", arguments.StoragePath, "port", arguments.Port)
+	logger.Info("catalog started", "storage_path", arguments.StoragePath, "run_dir", runDir)
 
-	if err := connection.StartServer(signalCtx, logger, arguments.Port, certsDir, roleRequirements(), func(s *grpc.Server) {
+	if err := connection.StartServiceServer(signalCtx, logger, certsDir, runDir, roleRequirements(), func(s *grpc.Server) {
 		pb.RegisterCatalogServiceServer(s, srv)
 	}); err != nil {
 		logger.Error("Server failed", "error", err)

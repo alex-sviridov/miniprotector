@@ -58,6 +58,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	runDir, err := config.ResolveRunDir(conf)
+	if err != nil {
+		logger.Error("run directory resolution failed", "error", err)
+		os.Exit(1)
+	}
+
 	cmConn, err := connection.Connect(conf.ClientManagerAPIHost, conf.ClientManagerAPIPort, conf.ConnectionTimeOutSec, certsDir)
 	if err != nil {
 		logger.Error("connect to clientmanager-api failed", "error", err)
@@ -117,7 +123,7 @@ func main() {
 	go srv.aggregator.Start(signalCtx)
 
 	go func() {
-		if err := connection.StartServer(signalCtx, logger, arguments.JobStatusPort, certsDir, roleRequirements(), func(s *grpc.Server) {
+		if err := connection.StartServiceServer(signalCtx, logger, certsDir, runDir, roleRequirements(), func(s *grpc.Server) {
 			pb.RegisterJobStatusServiceServer(s, srv)
 			pb.RegisterStorageStatusServiceServer(s, newStorageStatusServer(srv.storageStatus))
 		}); err != nil {
