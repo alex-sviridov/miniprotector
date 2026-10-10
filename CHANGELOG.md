@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here, most recent first.
 
+## 2026-10-10 — listener: one mTLS port per host for control-plane gRPC
+
+Added `listener`, a per-host component that terminates mTLS on a single port (`listener_port`, default 9300), verifies the client certificate and transparently proxies each gRPC call, undecoded, to the local service named in its method path over a Unix socket; a service not running on the host answers `UNIMPLEMENTED`. `catalog`, `policy-server`, `clientmanager-api`, `clientmanager-admin-api` and `api-server`'s job/storage-status services no longer open TCP ports: they receive the caller's verified certificate chain from the listener and re-verify it against their own `ca.crt`, so per-RPC role authorization is unchanged. The per-service port settings (`catalog_port`, `policy_server_port`, `clientmanager_api_port`, `clientmanager_admin_api_port`, `APIServerJobStatusPort`) are removed with no compatibility period; clients dial `<host>:<listener_port>`, and several services on one Docker host are published on separate bind addresses. `bwfs`, `issuer`, `step-ca`, `log-gateway` and the REST API are unchanged and listed in `backlog.md` as follow-ups. A small unary call through the listener takes about 1.8x a direct mTLS call (0.48 ms vs 0.27 ms) and a 256 KiB call about 1.3x; caching the forwarded-chain verification in the backends cut the first measurement of 4.8x. `mpbench` is unchanged against `main` (cold backup 9.61 s vs 9.40 s, warm 3.58 s vs 3.55 s, restore 7.14 s vs 7.14 s, within run-to-run noise), and the demo lab's end-to-end suite passes with every control-plane call going through the listeners.
+
 ## 2026-10-09 — Clients page flags bootstrap certificates nearing expiry
 
 A node offline for longer than its bootstrap certificate's lifetime cannot renew it and needs a fresh
