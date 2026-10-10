@@ -132,9 +132,9 @@ the same local cache (`agent list-policies` inspects it). See [agent](components
 `agent` can also keep a node's own processes running: each `running_service=` line in `local.conf` names a
 binary (plus arguments) that `agent` starts once the node's operating certificate exists and restarts on
 crash, independently of the policy cache. The control-plane containers (`catalog`, `policy-server`,
-`api-server`, `clientmanager-api`) use this: their entrypoint only bootstraps or renews the bootstrap
+`api-server`, `clientmanager-api`, `log-gateway`) use this: their entrypoint only bootstraps or renews the bootstrap
 credential and then `exec`s `agent serve`, and `agent` supervises the [listener](components/listener.md)
-and the service — see [agent](components/agent.md#running-services).
+and the service (`log-gateway` has no `listener`: it is an HTTP service) — see [agent](components/agent.md#running-services).
 
 `client-manager` is control plane by role (an admin-facing tool tracking the enrolled-client
 fleet) but, unlike every other component in this table, has no mTLS identity and no network

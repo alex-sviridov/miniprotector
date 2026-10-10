@@ -5,7 +5,7 @@ certificate authority, the `issuer` operating-certificate service, the backup `c
 `policy-server`. See [Architecture](../../docs/ARCHITECTURE.md) for how these fit into the rest of
 the system.
 
-Each of these containers runs only `agent`: its entrypoint bootstraps or renews the node's credential and
+Each of these containers (and `log-gateway`'s) runs only `agent`: its entrypoint bootstraps or renews the node's credential and
 `exec`s `agent serve`, and `agent` starts and supervises the `listener` and the service named by the
 `running_service=` lines in that service's `local.conf` (see [agent](../../docs/components/agent.md#running-services)).
 

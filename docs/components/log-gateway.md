@@ -54,6 +54,13 @@ byte-for-byte in both directions until either side disconnects — it never pars
 as every other route here. See [log-gateway Protocol](../protocols/log-gateway.md) and
 [Design: Live Job & Log Updates](../superpowers/specs/2026-08-17-live-job-updates-design.md).
 
+## Deployment
+
+In its container `log-gateway` runs under [agent](./agent.md#running-services): the entrypoint bootstraps or
+renews the node's credential and `exec`s `agent serve`, and `local.conf` carries
+`running_service=log-gateway --loki-url ${LOKI_URL:-http://loki:3100} --debug=${DEBUG:-false}`, so `agent`
+starts it once the operating certificate exists and restarts it if it crashes.
+
 ## Building
 
 ```bash

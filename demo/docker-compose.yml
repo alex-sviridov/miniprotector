@@ -129,7 +129,7 @@ services:
       - loki
     volumes:
       - log-gateway-data:/data
-      - ./local.conf:/data/local.conf:ro
+      - ./log-gateway/local.conf:/data/local.conf:ro
     environment:
       - MP_CONFIG_PATH=/data
       - MP_CERT_TOKEN=${MP_CERT_TOKEN:-}
