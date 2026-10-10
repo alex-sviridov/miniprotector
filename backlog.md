@@ -54,3 +54,11 @@ a migration of existing links.
 `api-server` serves plain HTTP behind one shared static bearer token (see `docs/SECURITY.md`,
 "api-server transport"). Add optional TLS on its listener and replace the shared token with per-user
 credentials that can expire and be revoked.
+
+## Listener: more services behind the unified port
+
+Follow-ups to the v1 `listener` ([design](docs/superpowers/specs/2026-10-10-listener-design.md)),
+which fronts control-plane gRPC only. Put `log-gateway` and the REST API (ALPN `http/1.1` dispatch),
+`issuer` (bootstrap-tier certificate check) and `step-ca` (SNI-based raw passthrough, since it owns its
+TLS) behind the same port. For `bwfs`, peek the ClientHello and hand the raw fd over a Unix socket
+(`SCM_RIGHTS`) so the listener leaves the data path (Linux-only).
